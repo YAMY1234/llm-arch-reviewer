@@ -30,22 +30,22 @@ views:
     nodes:
       - {id: in_tokens, label: "input_ids [B,S]", shape: io}
       - {id: embed,     label: "embed_tokens\n(VocabParallelEmbedding)", shape: gemm,
-         code_links: ["models/deepseek_v4.py:1189 embed_tokens"]}
+         code_links: ["models/deepseek_v4.py:1189-1193 embed_tokens", "models/deepseek_v4.py:1276 forward (apply)"]}
       - {id: hc_repeat, label: "unsqueeze(1).repeat(1, hc_mult, 1)\n→ [B,S,hc_mult,D]", shape: elem,
          note: "hc_mult-way replication for mHC",
-         code_links: ["models/deepseek_v4.py:1277"]}
+         code_links: ["models/deepseek_v4.py:1277 hc_mult repeat"]}
       - {id: decoder_stack, label: "for i in 0..N-1:\n  layers[i].forward(...)", shape: block,
          drill: stack,
-         code_links: ["models/deepseek_v4.py:1322"]}
+         code_links: ["models/deepseek_v4.py:1322-1330 decoder loop"]}
       - {id: hc_head_node, label: "hc_head\n(model-level mHC merge)", shape: elem,
-         code_links: ["models/deepseek_v4.py:1233 hc_head", "models/deepseek_v4.py:1347"]}
+         code_links: ["models/deepseek_v4.py:1233-1246 hc_head method", "models/deepseek_v4.py:1347-1349 call site"]}
       - {id: final_norm, label: "RMSNorm\n(model.norm)", shape: norm,
-         code_links: ["models/deepseek_v4.py:1211"]}
+         code_links: ["models/deepseek_v4.py:1211 self.norm decl", "models/deepseek_v4.py:1350 call site"]}
       - {id: nextn_head, label: "NextN (MTP)\n1× DecoderLayer (is_nextn=True)", shape: block,
          drill: nextn, accent: nextn,
-         code_links: ["models/deepseek_v4.py:910 DeepseekV4DecoderLayer (is_nextn=True)"]}
+         code_links: ["models/deepseek_v4.py:910-1172 DeepseekV4DecoderLayer (is_nextn=True path)"]}
       - {id: lm_head,   label: "LM head\n(ParallelLMHead)", shape: gemm,
-         code_links: ["models/deepseek_v4.py:1373-1383"]}
+         code_links: ["models/deepseek_v4.py:1373-1382 ParallelLMHead init"]}
       - {id: out_logits, label: "logits [B,S,V]", shape: io}
     edges:
       - {from: in_tokens,     to: embed,         shape: "[B,S]",          dtype: int32}
@@ -67,20 +67,20 @@ views:
       - {id: stack_in,    label: "x [B,S,hc_mult,D]", shape: io}
       - {id: stack_loop,  label: "for i in 0..N-1:\n  x = layers[i](x, ...)", shape: elem,
          short_doc: "Layers run sequentially. Variant per layer = config.compress_ratios[i].",
-         code_links: ["models/deepseek_v4.py:1322"]}
+         code_links: ["models/deepseek_v4.py:1322-1330 decoder loop", "models/deepseek_v4.py:1198-1210 self.layers (make_layers)"]}
       - {id: layer_ribbon, label: "config.compress_ratios (V4-Pro, 62 layers):\n[128,128, 4,128,4,128, ..., 4,128, 4, 0]\n        ↑ ↑    └── alternating 4 ↔ 128 ──┘    ↑\n        layer 0,1 dense                       last = 0\nDistribution: HCA 31 · CSA 30 · SWA 1",
          shape: io,
          short_doc: "V4-Pro layers 0/1 are c=128 dense; layers 2..60 alternate 4/128; layer 61 is c=0 (SWA). V4-small differs (44 layers, layer 0/1 = c=0).",
-         code_links: ["configs/config_backup_large.json:67", "configs/config_backup_small.json:67"]}
+         code_links: ["configs/config_backup_large.json:67 compress_ratios (V4-Pro)", "configs/config_backup_small.json:67 compress_ratios (V4-small)", "models/deepseek_v4.py:439-445 layer reads compress_ratios[layer_id]"]}
       - {id: layer_csa,   label: "CSA Layer (c=4)\n+ C4Indexer\n× 30 layers (V4-Pro)", shape: block,
          drill: csa_layer, accent: csa,
-         code_links: ["models/deepseek_v4.py:910 DeepseekV4DecoderLayer", "models/deepseek_v4.py:535 (compress_ratio==4 → has indexer)"]}
+         code_links: ["models/deepseek_v4.py:910-1172 DeepseekV4DecoderLayer", "models/deepseek_v4.py:535-544 compress_ratio==4 ⇒ also build C4Indexer"]}
       - {id: layer_hca,   label: "HCA Layer (c=128)\nno indexer\n× 31 layers (V4-Pro)", shape: block,
          drill: hca_layer, accent: hca,
-         code_links: ["models/deepseek_v4.py:910 DeepseekV4DecoderLayer", "models/deepseek_v4.py:521 (compressor only, no indexer)"]}
+         code_links: ["models/deepseek_v4.py:910-1172 DeepseekV4DecoderLayer", "models/deepseek_v4.py:521-534 c=128 ⇒ Compressor only, no Indexer"]}
       - {id: layer_swa,   label: "SWA-dense Layer (c=0)\nno compressor\n× 1 layer (V4-Pro, last)", shape: block,
          drill: swa_layer, accent: swa,
-         code_links: ["models/deepseek_v4.py:910 DeepseekV4DecoderLayer", "models/deepseek_v4.py:521 (compress_ratio==0, no compressor)"]}
+         code_links: ["models/deepseek_v4.py:910-1172 DeepseekV4DecoderLayer", "models/deepseek_v4.py:521-545 c=0 ⇒ neither Compressor nor Indexer"]}
       - {id: stack_out,   label: "x' [B,S,hc_mult,D]\n(after N layers)", shape: io}
     edges:
       - {from: stack_in,     to: stack_loop,   shape: "[B,S,hc_mult,D]", dtype: bf16}
@@ -114,27 +114,27 @@ views:
       - {id: csa_resid_attn,    label: "save residual", shape: elem, note: "for attn block"}
       - {id: csa_hc_pre_attn,   label: "hc_pre #1\n(hc_attn_fn / scale / base)", shape: block,
          drill: hc_pre, accent: csa, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1102", "models/deepseek_v4.py:987 hc_pre"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1102-1104 call site (attn block)"]}
       - {id: csa_in_ln,         label: "input_layernorm\n(RMSNorm)", shape: norm,
-         code_links: ["models/deepseek_v4.py:955"]}
+         code_links: ["models/deepseek_v4.py:955 input_layernorm decl", "models/deepseek_v4.py:1105 call site"]}
       - {id: csa_mqa_block,     label: "MQALayer (self_attn)\nCompressor c=4 + C4Indexer + sparse-MLA", shape: block,
          drill: csa_mqa, accent: csa,
-         code_links: ["models/deepseek_v4.py:403 MQALayer", "models/deepseek_v4.py:1107"]}
+         code_links: ["models/deepseek_v4.py:403-907 MQALayer class", "models/deepseek_v4.py:927-934 self_attn=MQALayer(...)", "models/deepseek_v4.py:1107-1111 self_attn(...) call"]}
       - {id: csa_hc_post_attn,  label: "hc_post #1\n(merge attn output)", shape: block,
          accent: csa, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1059 hc_post", "models/deepseek_v4.py:1113"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1113 call site (attn block)"]}
       - {id: csa_resid_ffn,     label: "save residual", shape: elem, note: "for ffn block"}
       - {id: csa_hc_pre_ffn,    label: "hc_pre #2\n(hc_ffn_fn / scale / base)", shape: block,
          drill: hc_pre, accent: csa, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1115"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1115-1117 call site (ffn block)"]}
       - {id: csa_post_ln,       label: "post_attention_layernorm\n(RMSNorm)", shape: norm,
-         code_links: ["models/deepseek_v4.py:956"]}
+         code_links: ["models/deepseek_v4.py:956-958 post_attention_layernorm decl", "models/deepseek_v4.py:1118 call site"]}
       - {id: csa_mlp_block,     label: "DeepseekV2MoE (mlp)", shape: moe,
          drill: csa_moe, accent: csa,
-         code_links: ["models/deepseek_v2.py:409 DeepseekV2MoE", "models/deepseek_v4.py:945"]}
+         code_links: ["models/deepseek_v2.py:409-1361 DeepseekV2MoE class", "models/deepseek_v4.py:945-953 self.mlp=DeepseekV2MoE(...)", "models/deepseek_v4.py:1151-1156 mlp(...) call"]}
       - {id: csa_hc_post_ffn,   label: "hc_post #2\n(merge ffn output)", shape: block,
          accent: csa, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1166"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1166 call site (ffn block)"]}
       - {id: csa_out,           label: "x' [B,S,hc_mult,D]", shape: io}
     edges:
       - {from: csa_in,           to: csa_resid_attn, shape: "[B,S,hc_mult,D]", dtype: bf16}
@@ -163,25 +163,25 @@ views:
       - {id: hca_resid_attn,    label: "save residual", shape: elem}
       - {id: hca_hc_pre_attn,   label: "hc_pre #1\n(hc_attn_*)", shape: block,
          drill: hc_pre, accent: hca, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1102", "models/deepseek_v4.py:987 hc_pre"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1102-1104 call site (attn block)"]}
       - {id: hca_in_ln,         label: "input_layernorm\n(RMSNorm)", shape: norm,
-         code_links: ["models/deepseek_v4.py:955"]}
+         code_links: ["models/deepseek_v4.py:955 input_layernorm decl", "models/deepseek_v4.py:1105 call site"]}
       - {id: hca_mqa_block,     label: "MQALayer (self_attn)\nCompressor c=128 + sparse-MLA\nno indexer", shape: block,
          drill: hca_mqa, accent: hca,
-         code_links: ["models/deepseek_v4.py:403 MQALayer", "models/deepseek_v4.py:1107"]}
+         code_links: ["models/deepseek_v4.py:403-907 MQALayer class", "models/deepseek_v4.py:927-934 self_attn=MQALayer(...)", "models/deepseek_v4.py:1107-1111 self_attn(...) call"]}
       - {id: hca_hc_post_attn,  label: "hc_post #1", shape: block, accent: hca, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1059 hc_post", "models/deepseek_v4.py:1113"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1113 call site (attn block)"]}
       - {id: hca_resid_ffn,     label: "save residual", shape: elem}
       - {id: hca_hc_pre_ffn,    label: "hc_pre #2\n(hc_ffn_*)", shape: block,
          drill: hc_pre, accent: hca, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1115"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1115-1117 call site (ffn block)"]}
       - {id: hca_post_ln,       label: "post_attention_layernorm\n(RMSNorm)", shape: norm,
-         code_links: ["models/deepseek_v4.py:956"]}
+         code_links: ["models/deepseek_v4.py:956-958 post_attention_layernorm decl", "models/deepseek_v4.py:1118 call site"]}
       - {id: hca_mlp_block,     label: "DeepseekV2MoE (mlp)", shape: moe,
          drill: hca_moe, accent: hca,
-         code_links: ["models/deepseek_v2.py:409 DeepseekV2MoE", "models/deepseek_v4.py:945"]}
+         code_links: ["models/deepseek_v2.py:409-1361 DeepseekV2MoE class", "models/deepseek_v4.py:945-953 self.mlp=DeepseekV2MoE(...)", "models/deepseek_v4.py:1151-1156 mlp(...) call"]}
       - {id: hca_hc_post_ffn,   label: "hc_post #2", shape: block, accent: hca, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1166"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1166 call site (ffn block)"]}
       - {id: hca_out,           label: "x' [B,S,hc_mult,D]", shape: io}
     edges:
       - {from: hca_in,           to: hca_resid_attn,   shape: "[B,S,hc_mult,D]", dtype: bf16}
@@ -213,66 +213,69 @@ views:
       - {id: csa_qkv_a_fuse, label: "wqkv_a (optional fuse)\n[D → q_lora + head_dim]", shape: gemm,
          note: "if SGLANG_OPT_FUSE_WQA_WKV",
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:548 fuse_wqa_wkv", "models/deepseek_v4.py:758"]}
+         code_links: ["models/deepseek_v4.py:548-555 wqkv_a decl (fused fast path)", "models/deepseek_v4.py:758-762 _forward_prepare fused branch"]}
       - {id: csa_wq_a, label: "wq_a (Q down)\n[D → q_lora_rank=1536]", shape: gemm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:557 wq_a"]}
+         code_links: ["models/deepseek_v4.py:557-563 wq_a decl", "models/deepseek_v4.py:763-765 _forward_prepare non-fused branch"]}
       - {id: csa_wkv,  label: "wkv (KV down)\n[D → 512+64]", shape: gemm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:570 wkv"]}
+         code_links: ["models/deepseek_v4.py:564-570 wkv decl", "models/deepseek_v4.py:763-765 _forward_prepare non-fused branch"]}
       # ---- Q 路径 ----
       - {id: csa_q_norm,       label: "q_norm\n(RMSNorm on q_lora)", shape: norm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:766"]}
+         code_links: ["models/deepseek_v4.py:571 q_norm decl", "models/deepseek_v4.py:766-767 q_norm(q) call"]}
       - {id: csa_q_lora_split, label: "q_lora\n(branch to indexer)", shape: io}
       - {id: csa_wq_b,         label: "wq_b (Q up)\n[1536 → Nh·Dh]", shape: gemm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:768"]}
-      - {id: csa_q_view,       label: "view\n[B,S,Nh,Dh]", shape: elem}
+         code_links: ["models/deepseek_v4.py:572-580 wq_b decl", "models/deepseek_v4.py:768 wq_b(q) call"]}
+      - {id: csa_q_view,       label: "view\n[B,S,Nh,Dh]", shape: elem,
+         code_links: ["models/deepseek_v4.py:769 view(-1, n_local_heads, head_dim)"]}
       - {id: csa_q_rmsnorm,    label: "rmsnorm_self (per-head)\n(jit kernel)", shape: norm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:770-773"]}
+         code_links: ["models/deepseek_v4.py:770-773 rmsnorm_self / rms_normalize_triton"]}
       # ---- KV 路径 ----
       - {id: csa_kv_norm,      label: "kv_norm\n(RMSNorm on kv)", shape: norm,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:775"]}
+         code_links: ["models/deepseek_v4.py:581 kv_norm decl", "models/deepseek_v4.py:775 kv_norm(kv) call"]}
       # ---- Fused RoPE (单 kernel 同时 q+k) ----
       - {id: csa_fused_rope,   label: "fused_rope\n(q_rope + k_rope, single kernel)", shape: elem,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:777-782"]}
+         code_links: ["models/deepseek_v4.py:777-782 fused_rope(q,kv)"]}
       # ---- KV cache write ----
       - {id: csa_store_cache,  label: "store_cache\n(fused_store_flashmla_cache)", shape: elem,
          note: "if overlap_store_cache: in prepare; else inside attn_backend.forward",
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:798-803"]}
+         code_links: ["models/deepseek_v4.py:798-803 attn_backend.store_cache"]}
       - {id: csa_kv_cache,     label: "MLA KV cache (fp8)", shape: cache,
-         code_links: ["models/deepseek_v4.py:798-803"]}
+         code_links: ["models/deepseek_v4.py:608-616 RadixAttention(attn_mqa)", "models/deepseek_v4.py:798-803 store_cache write site"]}
       # ---- Compressor + Indexer 并行路径 ----
       - {id: csa_compressor_block, label: "Compressor (main, c=4)\nbackend.forward_core_compressor", shape: block,
          drill: compressor_csa, accent: csa, stage_keys: [compressor_kv_score_proj],
-         code_links: ["models/deepseek_v4.py:524 Compressor (is_in_indexer=False)", "models/deepseek_v4.py:807-813"]}
+         code_links: ["models/deepseek_v4.py:521-534 Compressor decl (is_in_indexer=False)", "models/deepseek_v4.py:807-813 forward_core_compressor call", "layers/attention/compressed/compressor.py:101-140 forward_core_compressor impl"]}
       - {id: csa_compressed_cache, label: "Compressed kv-cache\n(attention pool)", shape: cache,
-         code_links: ["layers/attention/compressed/compressor.py:130 _get_state_pool"]}
+         code_links: ["models/deepseek_v4.py:224-234 Compressor._get_state_pool", "layers/attention/compressed/compressor.py:127-140 set_extra_key_buffer write"]}
       - {id: csa_indexer_block, label: "C4Indexer\nbackend.forward_c4_indexer\n(input: x + q_lora)", shape: block,
          drill: indexer, accent: csa, stage_keys: [indexer],
-         code_links: ["models/deepseek_v4.py:303 C4Indexer", "models/deepseek_v4.py:805-806", "layers/attention/compressed/indexer.py:309"]}
-      - {id: csa_topk_indices, label: "c4_sparse_page_indices\n(top-K)", shape: io}
+         code_links: ["models/deepseek_v4.py:303-392 C4Indexer class", "models/deepseek_v4.py:535-544 indexer decl (c=4 only)", "models/deepseek_v4.py:805-806 indexer(x, q_lora, ...) call", "layers/attention/compressed/indexer.py:309-471 forward_c4_indexer backend"]}
+      - {id: csa_topk_indices, label: "c4_sparse_page_indices\n(top-K)", shape: io,
+         code_links: ["layers/attention/compressed/indexer.py:423-449 topk_transform_512_*"]}
       # ---- sparse-MLA + 后处理 ----
       - {id: csa_attn,        label: "attn_backend.forward (sparse-MLA)\nflash_fwd_splitkv_mla_fp8_sparse", shape: attn,
          stage_keys: [sparse_mla_attn],
-         code_links: ["models/deepseek_v4.py:862"]}
+         code_links: ["models/deepseek_v4.py:862-871 attn_backend.forward call"]}
       - {id: csa_combine,     label: "MLA combine\nflash_fwd_mla_combine", shape: elem,
          stage_keys: [sparse_mla_attn]}
       - {id: csa_inv_rope,    label: "fused_rope (inverse=True)\n(undo on output)", shape: elem,
          stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:873-879"]}
-      - {id: csa_o_view,      label: "view\n[B,S, n_local_groups, -1]", shape: elem}
+         code_links: ["models/deepseek_v4.py:873-879 fused_rope(o, ..., inverse=True)"]}
+      - {id: csa_o_view,      label: "view\n[B,S, n_local_groups, -1]", shape: elem,
+         code_links: ["models/deepseek_v4.py:881 o.view(o.shape[0], n_local_groups, -1)"]}
       - {id: csa_wo_a,        label: "wo_a (O down lora)\nfp8_einsum or einsum tgd,grd→tgr", shape: gemm,
          stage_keys: [attn_output_proj],
-         code_links: ["models/deepseek_v4.py:883-903"]}
+         code_links: ["models/deepseek_v4.py:582-596 wo_a decl", "models/deepseek_v4.py:883-903 wo_a fp8/bf16 einsum"]}
       - {id: csa_wo_b,        label: "wo_b (O up)\n[lora → D]", shape: gemm,
          stage_keys: [attn_output_proj],
-         code_links: ["models/deepseek_v4.py:905"]}
+         code_links: ["models/deepseek_v4.py:597-606 wo_b decl", "models/deepseek_v4.py:905 wo_b(o.flatten(1)) call"]}
       - {id: csa_mqa_out,     label: "out [B,S,D]", shape: io}
     edges:
       # 输入 fan-out
@@ -322,41 +325,43 @@ views:
       - {id: hca_mqa_in, label: "x [B,S,D]", shape: io}
       - {id: hca_qkv_a_fuse, label: "wqkv_a (optional fuse)", shape: gemm,
          note: "if SGLANG_OPT_FUSE_WQA_WKV", stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:548 fuse_wqa_wkv", "models/deepseek_v4.py:758"]}
+         code_links: ["models/deepseek_v4.py:548-555 wqkv_a decl (fused fast path)", "models/deepseek_v4.py:758-762 _forward_prepare fused branch"]}
       - {id: hca_wq_a, label: "wq_a (Q down)\n[D → 1536]", shape: gemm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:557 wq_a"]}
+         code_links: ["models/deepseek_v4.py:557-563 wq_a decl", "models/deepseek_v4.py:763-765 _forward_prepare non-fused branch"]}
       - {id: hca_wkv,  label: "wkv (KV down)\n[D → 576]",  shape: gemm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:570 wkv"]}
+         code_links: ["models/deepseek_v4.py:564-570 wkv decl", "models/deepseek_v4.py:763-765 _forward_prepare non-fused branch"]}
       - {id: hca_q_norm,    label: "q_norm (RMSNorm)",       shape: norm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:766"]}
+         code_links: ["models/deepseek_v4.py:571 q_norm decl", "models/deepseek_v4.py:766-767 q_norm(q) call"]}
       - {id: hca_wq_b,      label: "wq_b (Q up)",            shape: gemm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:768"]}
-      - {id: hca_q_view,    label: "view [B,S,Nh,Dh]",       shape: elem}
+         code_links: ["models/deepseek_v4.py:572-580 wq_b decl", "models/deepseek_v4.py:768 wq_b(q) call"]}
+      - {id: hca_q_view,    label: "view [B,S,Nh,Dh]",       shape: elem,
+         code_links: ["models/deepseek_v4.py:769 view(-1, n_local_heads, head_dim)"]}
       - {id: hca_q_rmsnorm, label: "rmsnorm_self (per-head)",shape: norm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:770-773"]}
+         code_links: ["models/deepseek_v4.py:770-773 rmsnorm_self / rms_normalize_triton"]}
       - {id: hca_kv_norm,   label: "kv_norm (RMSNorm)",      shape: norm, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:775"]}
+         code_links: ["models/deepseek_v4.py:581 kv_norm decl", "models/deepseek_v4.py:775 kv_norm(kv) call"]}
       - {id: hca_fused_rope,label: "fused_rope (q+k)",       shape: elem, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:777-782"]}
+         code_links: ["models/deepseek_v4.py:777-782 fused_rope(q,kv)"]}
       - {id: hca_store_cache, label: "store_cache",           shape: elem, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:798-803"]}
+         code_links: ["models/deepseek_v4.py:798-803 attn_backend.store_cache"]}
       - {id: hca_kv_cache,  label: "MLA KV cache (fp8)",     shape: cache,
-         code_links: ["models/deepseek_v4.py:798-803"]}
+         code_links: ["models/deepseek_v4.py:608-616 RadixAttention(attn_mqa)", "models/deepseek_v4.py:798-803 store_cache write site"]}
       - {id: hca_compressor_block, label: "Compressor (c=128)", shape: block,
          drill: compressor_hca, accent: hca, stage_keys: [compressor_kv_score_proj],
-         code_links: ["models/deepseek_v4.py:524 Compressor (is_in_indexer=False)", "models/deepseek_v4.py:807-813"]}
+         code_links: ["models/deepseek_v4.py:521-534 Compressor decl (is_in_indexer=False)", "models/deepseek_v4.py:807-813 forward_core_compressor call", "layers/attention/compressed/compressor.py:101-140 forward_core_compressor impl"]}
       - {id: hca_compressed_cache, label: "Compressed kv-cache", shape: cache,
-         code_links: ["layers/attention/compressed/compressor.py:130 _get_state_pool"]}
+         code_links: ["models/deepseek_v4.py:224-234 Compressor._get_state_pool", "layers/attention/compressed/compressor.py:127-140 set_extra_key_buffer write"]}
       - {id: hca_attn,      label: "sparse-MLA (FMHA)",      shape: attn, stage_keys: [sparse_mla_attn],
-         code_links: ["models/deepseek_v4.py:862"]}
+         code_links: ["models/deepseek_v4.py:862-871 attn_backend.forward call"]}
       - {id: hca_combine,   label: "MLA combine",            shape: elem, stage_keys: [sparse_mla_attn]}
       - {id: hca_inv_rope,  label: "fused_rope (inverse)",   shape: elem, stage_keys: [attn_qkv_proj_rope],
-         code_links: ["models/deepseek_v4.py:873-879"]}
-      - {id: hca_o_view,    label: "view",                   shape: elem}
+         code_links: ["models/deepseek_v4.py:873-879 fused_rope(o, ..., inverse=True)"]}
+      - {id: hca_o_view,    label: "view",                   shape: elem,
+         code_links: ["models/deepseek_v4.py:881 o.view(o.shape[0], n_local_groups, -1)"]}
       - {id: hca_wo_a,      label: "wo_a",                   shape: gemm, stage_keys: [attn_output_proj],
-         code_links: ["models/deepseek_v4.py:883-903"]}
+         code_links: ["models/deepseek_v4.py:582-596 wo_a decl", "models/deepseek_v4.py:883-903 wo_a fp8/bf16 einsum"]}
       - {id: hca_wo_b,      label: "wo_b",                   shape: gemm, stage_keys: [attn_output_proj],
-         code_links: ["models/deepseek_v4.py:905"]}
+         code_links: ["models/deepseek_v4.py:597-606 wo_b decl", "models/deepseek_v4.py:905 wo_b(o.flatten(1)) call"]}
       - {id: hca_mqa_out,   label: "out [B,S,D]",            shape: io}
     edges:
       - {from: hca_mqa_in,    to: hca_qkv_a_fuse, kind: dashed}
@@ -402,25 +407,25 @@ views:
       - {id: comp_wkv_gate,  label: "wkv_gate (ReplicatedLinear)\n[D → 2·coff·head_dim]\nlinear_bf16_fp32 (jit)", shape: gemm,
          note: "every step",
          stage_keys: [compressor_kv_score_proj],
-         code_links: ["models/deepseek_v4.py:199 wkv_gate", "models/deepseek_v4.py:292 forward"]}
+         code_links: ["models/deepseek_v4.py:199-206 wkv_gate decl", "models/deepseek_v4.py:285-300 Compressor.forward (linear_bf16_fp32 call)"]}
       - {id: comp_kv_score,  label: "kv_score [B,S, 2·coff·head_dim]\n(coff=2 for c=4)", shape: io}
       - {id: comp_ape,       label: "ape (parameter)\n[ratio, coff·head_dim]", shape: io,
-         code_links: ["models/deepseek_v4.py:195 ape"]}
+         code_links: ["models/deepseek_v4.py:195-197 ape decl", "models/deepseek_v4.py:213-222 apply_ape_hotfix"]}
       - {id: comp_ring,      label: "ring buffer (kv_score_buffer)\nattention compress_states pool", shape: cache,
-         code_links: ["models/deepseek_v4.py:228 get_attention_compress_states"]}
+         code_links: ["models/deepseek_v4.py:224-234 _get_state_pool (attention pool)", "models/deepseek_v4.py:262-283 compress_fused (ring access)"]}
       - {id: comp_ring_write,label: "backend.forward_compress\n(ring write + gating logic)", shape: elem,
          note: "every step",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:54-99 forward_compress (full path)", "layers/attention/compressed/compressor.py:82-91 compress_forward kernel call"]}
       - {id: comp_softmax,   label: "softmax + reduce_sum\n(ratio-gated)", shape: elem, note: "every c=4 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:82-91 compress_forward (softmax/reduce inside)"]}
       - {id: comp_norm,      label: "DeepseekRefRMSNorm",  shape: norm, note: "every c=4 steps",
-         code_links: ["models/deepseek_v4.py:204 norm (DeepseekRefRMSNorm)"]}
+         code_links: ["models/deepseek_v4.py:99-111 DeepseekRefRMSNorm class", "models/deepseek_v4.py:207 self.norm decl"]}
       - {id: comp_rope,      label: "fused_norm_rope\n(rotate optional)", shape: elem, note: "every c=4 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:92-98 compress_fused_norm_rope_inplace", "layers/attention/compressed/compressor.py:99 rotate_activation (rotate=True for indexer)"]}
       - {id: comp_store,     label: "fused_store_flashmla_cache", shape: elem, note: "every c=4 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:101-140 forward_core_compressor", "layers/attention/compressed/compressor.py:127-140 set_extra_key_buffer(_fused) write"]}
       - {id: comp_out_cache, label: "Compressed kv-cache\n(attention pool)", shape: cache,
-         code_links: ["layers/attention/compressed/compressor.py:130 _get_state_pool"]}
+         code_links: ["models/deepseek_v4.py:224-234 _get_state_pool (is_in_indexer=False)"]}
     edges:
       - {from: comp_in,        to: comp_wkv_gate, shape: "[B,S,D]", dtype: bf16}
       - {from: comp_wkv_gate,  to: comp_kv_score, shape: "[B,S, 2·coff·Dh]", dtype: fp32}
@@ -439,24 +444,24 @@ views:
       - {id: comph_in,        label: "x [B,S,D]", shape: io}
       - {id: comph_wkv_gate,  label: "wkv_gate (ReplicatedLinear)\n[D → 2·coff·head_dim]\n(coff=1 for c=128)", shape: gemm,
          note: "every step", stage_keys: [compressor_kv_score_proj],
-         code_links: ["models/deepseek_v4.py:199 wkv_gate"]}
+         code_links: ["models/deepseek_v4.py:199-206 wkv_gate decl", "models/deepseek_v4.py:285-300 Compressor.forward (linear_bf16_fp32 call)"]}
       - {id: comph_kv_score,  label: "kv_score [B,S, 2·head_dim]", shape: io}
       - {id: comph_ape,       label: "ape (parameter)", shape: io,
-         code_links: ["models/deepseek_v4.py:195 ape"]}
+         code_links: ["models/deepseek_v4.py:195-197 ape decl"]}
       - {id: comph_ring,      label: "ring buffer", shape: cache,
-         code_links: ["models/deepseek_v4.py:228 get_attention_compress_states"]}
+         code_links: ["models/deepseek_v4.py:224-234 _get_state_pool (attention pool)", "models/deepseek_v4.py:262-283 compress_fused (ring access)"]}
       - {id: comph_ring_write,label: "backend.forward_compress",  shape: elem, note: "every step",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:54-99 forward_compress (full path)", "layers/attention/compressed/compressor.py:82-91 compress_forward kernel call"]}
       - {id: comph_softmax,   label: "softmax + reduce_sum",       shape: elem, note: "every c=128 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:82-91 compress_forward (softmax/reduce inside)"]}
       - {id: comph_norm,      label: "DeepseekRefRMSNorm",         shape: norm, note: "every c=128 steps",
-         code_links: ["models/deepseek_v4.py:204 norm (DeepseekRefRMSNorm)"]}
+         code_links: ["models/deepseek_v4.py:99-111 DeepseekRefRMSNorm class", "models/deepseek_v4.py:207 self.norm decl"]}
       - {id: comph_rope,      label: "fused_norm_rope",            shape: elem, note: "every c=128 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:92-98 compress_fused_norm_rope_inplace"]}
       - {id: comph_store,     label: "fused_store_flashmla_cache", shape: elem, note: "every c=128 steps",
-         code_links: ["layers/attention/compressed/compressor.py:54 forward_compress"]}
+         code_links: ["layers/attention/compressed/compressor.py:101-140 forward_core_compressor", "layers/attention/compressed/compressor.py:127-140 set_extra_key_buffer(_fused) write"]}
       - {id: comph_out_cache, label: "Compressed kv-cache",        shape: cache,
-         code_links: ["layers/attention/compressed/compressor.py:130 _get_state_pool"]}
+         code_links: ["models/deepseek_v4.py:224-234 _get_state_pool (is_in_indexer=False)"]}
     edges:
       - {from: comph_in,        to: comph_wkv_gate, dtype: bf16}
       - {from: comph_wkv_gate,  to: comph_kv_score, dtype: fp32}
@@ -481,28 +486,30 @@ views:
       # ---- 路径 A: 内嵌 Compressor 写 index_k cache ----
       - {id: idx_compressor,  label: "Compressor\n(c=4, is_in_indexer=True, rotate=True)", shape: block,
          drill: compressor_csa, accent: csa, stage_keys: [compressor_kv_score_proj],
-         code_links: ["models/deepseek_v4.py:340 self.compressor", "layers/attention/compressed/indexer.py:255 forward_indexer_compressor"]}
+         code_links: ["models/deepseek_v4.py:340-350 self.compressor decl (in C4Indexer.__init__)", "layers/attention/compressed/compressor.py:142-179 forward_indexer_compressor", "layers/attention/compressed/indexer.py:255-260 multi-stream call site", "layers/attention/compressed/indexer.py:298-303 normal call site"]}
       - {id: idx_index_k,     label: "index_k cache\n(get_index_k_with_scale_buffer)", shape: cache,
-         code_links: ["layers/attention/compressed/indexer.py:304"]}
+         code_links: ["layers/attention/compressed/indexer.py:261-263 multi-stream read", "layers/attention/compressed/indexer.py:304-306 normal read", "layers/attention/compressed/compressor.py:163-178 set_index_k_*"]}
       # ---- 路径 B: q ----
       - {id: idx_wq_b,        label: "wq_b\n[1536 → n_heads·head_dim]", shape: gemm, stage_keys: [indexer],
-         code_links: ["models/deepseek_v4.py:324 wq_b", "models/deepseek_v4.py:357"]}
-      - {id: idx_view,        label: "view [B,S,Nh_idx,Dh_idx]", shape: elem}
-      - {id: idx_fused_rope,  label: "fused_rope (q rope only)", shape: elem, stage_keys: [indexer]}
+         code_links: ["models/deepseek_v4.py:324-331 wq_b decl", "models/deepseek_v4.py:356-366 compute_q (wq_b → rope → rotate)", "models/deepseek_v4.py:357 wq_b call"]}
+      - {id: idx_view,        label: "view [B,S,Nh_idx,Dh_idx]", shape: elem,
+         code_links: ["models/deepseek_v4.py:358 view(-1, n_local_heads, head_dim)"]}
+      - {id: idx_fused_rope,  label: "fused_rope (q rope only)", shape: elem, stage_keys: [indexer],
+         code_links: ["models/deepseek_v4.py:359-364 fused_rope call"]}
       - {id: idx_rotate,      label: "rotate_activation\n(Hadamard)", shape: elem, stage_keys: [indexer],
-         code_links: ["models/deepseek_v4.py:365"]}
+         code_links: ["models/deepseek_v4.py:365 rotate_activation call"]}
       - {id: idx_act_quant,   label: "act_quant (bf16 → fp8)\nq_fp8 + q_scale", shape: elem, stage_keys: [indexer],
-         code_links: ["layers/attention/compressed/indexer.py:269"]}
+         code_links: ["layers/attention/compressed/indexer.py:269 act_quant (multi-stream)", "layers/attention/compressed/indexer.py:295 act_quant (normal)"]}
       # ---- 路径 C: weights ----
       - {id: idx_weights_proj,label: "weights_proj\n[D → n_heads]", shape: gemm, stage_keys: [indexer],
-         code_links: ["models/deepseek_v4.py:332 weights_proj", "models/deepseek_v4.py:368"]}
+         code_links: ["models/deepseek_v4.py:332-339 weights_proj decl", "models/deepseek_v4.py:368-372 compute_weights"]}
       - {id: idx_fused_scale, label: "fused_scale\n(× weight_scale × q_scale)", shape: elem, stage_keys: [indexer],
-         code_links: ["layers/attention/compressed/indexer.py:275"]}
+         code_links: ["layers/attention/compressed/indexer.py:203-223 fused_scale impl", "layers/attention/compressed/indexer.py:275 fused_scale (multi-stream)", "layers/attention/compressed/indexer.py:297 fused_scale (normal)"]}
       # ---- 主算子 + topK ----
       - {id: idx_logits,      label: "fp8_paged_mqa_logits\n(deep_gemm or tilelang)", shape: attn, stage_keys: [indexer],
-         code_links: ["layers/attention/compressed/indexer.py:392"]}
+         code_links: ["layers/attention/compressed/indexer.py:375-401 fp8_paged_mqa_logits dispatch + call"]}
       - {id: idx_topk,        label: "topk_transform_512_v2\n(or v1 / torch)", shape: elem, stage_keys: [indexer],
-         code_links: ["layers/attention/compressed/indexer.py:432-449"]}
+         code_links: ["layers/attention/compressed/indexer.py:423-449 topk_transform_512 dispatch (torch / v2 / v1)"]}
       - {id: idx_out,         label: "c4_sparse_page_indices\n(top-K, int32)", shape: io}
     edges:
       # x 路径
@@ -534,23 +541,23 @@ views:
       - {id: moe_in,         label: "x [B,S,D]",       shape: io}
       - {id: moe_shared,     label: "Shared experts\n(_forward_shared_experts: FC1+SiLU+FC2)", shape: gemm,
          stage_keys: [moe_shared],
-         code_links: ["models/deepseek_v2.py:1131 _forward_shared_experts"]}
+         code_links: ["models/deepseek_v2.py:1266-1274 _forward_shared_experts", "models/deepseek_v2.py:1128-1135 call site (with optional alt_stream)"]}
       # ---- routed branch ----
       - {id: moe_gate,       label: "gate (router)\n[D → n_routed=256]", shape: gemm,
          stage_keys: [moe_topk],
-         code_links: ["models/deepseek_v2.py:1166 self.gate"]}
+         code_links: ["models/deepseek_v2.py:294-407 MoEGate class", "models/deepseek_v2.py:1166 self.gate(hidden_states, ...) call"]}
       - {id: moe_topk_op,    label: "topk\nsoftplus + sqrt + bias\n+ Top-8 + Norm", shape: elem,
          stage_keys: [moe_topk],
-         code_links: ["models/deepseek_v2.py:1168 self.topk"]}
+         code_links: ["models/deepseek_v2.py:1167-1182 self.topk(...) call (incl. is_hash branch)"]}
       - {id: moe_pre_disp,   label: "mega_moe_pre_dispatch\n(pad / quantize / pack)", shape: elem,
          note: "if SGLANG_OPT_MEGA_MOE_FUSED_PRE_DISPATCH",
          stage_keys: [moe_dispatch_combine],
-         code_links: ["models/deepseek_v2.py:1212"]}
+         code_links: ["models/deepseek_v2.py:1201-1243 pre-dispatch block (fused vs. split paths)", "models/deepseek_v2.py:1211-1231 fused mega_moe_pre_dispatch path", "models/deepseek_v2.py:1232-1243 fallback per_token_group_quant + copy_"]}
       - {id: moe_mega,       label: "deep_gemm sm100_fp8_fp4_mega_moe\n(dispatch + grouped GEMM + combine)", shape: gemm,
          stage_keys: [moe_dispatch_combine],
-         code_links: ["models/deepseek_v2.py:_run_mega_routed"]}
+         code_links: ["models/deepseek_v2.py:1149-1264 _run_mega_routed (full)", "models/deepseek_v2.py:1245-1260 deep_gemm.fp8_fp4_mega_moe call"]}
       - {id: moe_sum,        label: "y.add_(shared_output)", shape: elem,
-         code_links: ["models/deepseek_v2.py:1146"]}
+         code_links: ["models/deepseek_v2.py:1107-1147 forward_mega_moe (overlap & sum)", "models/deepseek_v2.py:1145-1146 y.add_(shared_output)"]}
       - {id: moe_out,        label: "out [B,S,D]",     shape: io}
     edges:
       - {from: moe_in,    to: moe_shared,   shape: "[B,S,D]", dtype: bf16}
@@ -577,17 +584,17 @@ views:
       # ---- 路径 1: tilelang (default) ----
       - {id: hcp_tilelang,  label: "mhc_pre (tilelang)\nfuse: sqrsum + RMSNorm + gate proj\n+ hc_split_sinkhorn", shape: elem,
          note: "if SGLANG_OPT_USE_TILELANG_MHC_PRE  ← default in 855",
-         code_links: ["layers/mhc.py:mhc_pre_big_fuse_tilelang_kernel", "models/deepseek_v4.py:1013-1027"]}
+         code_links: ["layers/mhc.py:441-563 mhc_pre wrapper", "layers/mhc.py:117-244 mhc_pre_big_fuse_tilelang kernel", "layers/mhc.py:246-312 mhc_pre_gemm_sqrsum_tilelang kernel", "models/deepseek_v4.py:1013-1027 tilelang call site"]}
       # ---- 路径 2: deep_gemm tf32 (vllm 路径, sglang 已实现未启用) ----
       - {id: hcp_deepgemm,  label: "deep_gemm.tf32_hc_prenorm_gemm\n+ hc_split_sinkhorn", shape: elem,
          note: "if SGLANG_OPT_DEEPGEMM_HC_PRENORM  (vllm fast path)",
-         code_links: ["models/deepseek_v4.py:1029-1055"]}
+         code_links: ["models/deepseek_v4.py:1029-1042 deep_gemm tf32_hc_prenorm_gemm path"]}
       # ---- 路径 3: torch fallback ----
       - {id: hcp_torch,     label: "torch (compile) impl\n+ hc_split_sinkhorn", shape: elem,
          note: "fallback (neither flag set)",
-         code_links: ["models/deepseek_v4.py:994-1001 hc_pre_torch_impl", "models/deepseek_v4.py:1043-1056"]}
+         code_links: ["models/deepseek_v4.py:994-1001 hc_pre_torch_impl", "models/deepseek_v4.py:1043-1057 fallback path + sinkhorn merge"]}
       - {id: hcp_sinkhorn,  label: "hc_split_sinkhorn\n(common, except tilelang fuses it)", shape: elem,
-         code_links: ["layers/mhc.py:hc_split_sinkhorn"]}
+         code_links: ["layers/mhc.py:93-115 hc_split_sinkhorn wrapper", "layers/mhc.py:26-91 hc_split_sinkhorn_kernel (tilelang)", "models/deepseek_v4.py:1046-1057 sinkhorn call site (deep_gemm/torch paths)"]}
       - {id: hcp_out,       label: "(y, post, comb)\ny: [B,S,D]\npost: [B,S,hc_mult]\ncomb: [B,S,hc_mult,hc_mult]", shape: io}
     edges:
       - {from: hcp_in, to: hcp_tilelang, kind: dashed, label: "path 1"}
@@ -606,21 +613,21 @@ views:
     nodes:
       - {id: swa_in,           label: "x [B,S,hc_mult,D]", shape: io}
       - {id: swa_hc_pre_attn,  label: "hc_pre #1", shape: block, drill: hc_pre, accent: swa, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1102", "models/deepseek_v4.py:987 hc_pre"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1102-1104 call site (attn block)"]}
       - {id: swa_in_ln,        label: "input_layernorm", shape: norm,
-         code_links: ["models/deepseek_v4.py:955"]}
+         code_links: ["models/deepseek_v4.py:955 input_layernorm decl", "models/deepseek_v4.py:1105 call site"]}
       - {id: swa_mqa,          label: "MQALayer (compressor=None, indexer=None)\nMLA + sliding window only", shape: block, accent: swa,
-         code_links: ["models/deepseek_v4.py:521-545 (compress_ratio==0 → both None)"]}
+         code_links: ["models/deepseek_v4.py:521-545 c=0 ⇒ neither Compressor nor Indexer is constructed", "models/deepseek_v4.py:403-907 MQALayer class"]}
       - {id: swa_hc_post_attn, label: "hc_post #1", shape: block, accent: swa, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1059 hc_post", "models/deepseek_v4.py:1113"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1113 call site (attn block)"]}
       - {id: swa_hc_pre_ffn,   label: "hc_pre #2", shape: block, drill: hc_pre, accent: swa, stage_keys: [hc_pre],
-         code_links: ["models/deepseek_v4.py:1115"]}
+         code_links: ["models/deepseek_v4.py:987-1057 hc_pre method", "models/deepseek_v4.py:1115-1117 call site (ffn block)"]}
       - {id: swa_post_ln,      label: "post_attention_layernorm", shape: norm,
-         code_links: ["models/deepseek_v4.py:956"]}
+         code_links: ["models/deepseek_v4.py:956-958 post_attention_layernorm decl", "models/deepseek_v4.py:1118 call site"]}
       - {id: swa_mlp,          label: "DeepseekV2MoE", shape: moe, accent: swa, drill: csa_moe,
-         code_links: ["models/deepseek_v2.py:409 DeepseekV2MoE", "models/deepseek_v4.py:945"]}
+         code_links: ["models/deepseek_v2.py:409-1361 DeepseekV2MoE class", "models/deepseek_v4.py:945-953 self.mlp=DeepseekV2MoE(...)", "models/deepseek_v4.py:1151-1156 mlp(...) call"]}
       - {id: swa_hc_post_ffn,  label: "hc_post #2", shape: block, accent: swa, stage_keys: [hc_post],
-         code_links: ["models/deepseek_v4.py:1166"]}
+         code_links: ["models/deepseek_v4.py:1059-1088 hc_post method", "models/deepseek_v4.py:1166 call site (ffn block)"]}
       - {id: swa_out,          label: "x' [B,S,hc_mult,D]", shape: io}
     edges:
       - {from: swa_in,           to: swa_hc_pre_attn, dtype: bf16}
@@ -644,7 +651,7 @@ views:
       - {id: nextn_in,    label: "x [B,S,hc_mult,D]", shape: io}
       - {id: nextn_layer, label: "DecoderLayer\n(is_nextn=True → always MoE)", shape: block, accent: nextn, drill: csa_layer,
          note: "structure same as CSA/HCA layer; ratio per config",
-         code_links: ["models/deepseek_v4.py:917 is_nextn", "models/deepseek_v4.py:935-944"]}
+         code_links: ["models/deepseek_v4.py:910-1172 DeepseekV4DecoderLayer", "models/deepseek_v4.py:917 is_nextn ctor arg", "models/deepseek_v4.py:935-944 _is_layer_sparse(layer_id, is_nextn=True) ⇒ always sparse", "models/deepseek_v4.py:974-985 _is_layer_sparse impl"]}
       - {id: nextn_out,   label: "x' [B,S,hc_mult,D]", shape: io}
     edges:
       - {from: nextn_in,    to: nextn_layer, dtype: bf16}
