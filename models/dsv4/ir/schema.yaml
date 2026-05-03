@@ -1,0 +1,89 @@
+# IR schema for arch-viewer
+# 这份文件只是文档/契约, 不被 build 脚本读取 (build 脚本对 schema 是 implicit 的).
+
+schema_version: "0.1"
+
+description: |
+  arch-viewer 的 Intermediate Representation. 由 4 类对象组成:
+    1. node      — 一个模块/层/算子, 可嵌套 (compound)
+    2. edge      — tensor flow, 带 shape / dtype
+    3. stage     — 一个 profiler 概念上的 "阶段" (PDF 命名)
+    4. profile   — 一份具体测量数据 (一份 yaml 对应一个 source)
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
+node:
+  required:
+    id:        "唯一字符串"
+    label:     "显示名"
+    kind:      "model | layer | module | leaf"
+  optional:
+    parent:        "上层节点 id (compound 嵌套)"
+    variants:      "[csa, hca, nextn] — 这个节点出现在哪些 layer 变体里"
+    code_links:    "['models/deepseek_v4.py:524:Compressor', ...]"
+    stage_keys:    "[stage.id, ...] — 这个 node 关联哪些 stages.yaml 里的 stage"
+    trace_keys:    "['1_mhc_pre', '5_attn_output_proj']  — 直接 hit trace label"
+    pdf_slide_ref: "数字, PDF 页码"
+    short_doc:     "1-2 行描述"
+    optimizations: "[ {id, title, roi_ms, difficulty, status, ref}, ... ]"
+    layout_hint:   "{col: 0..n, row: 0..n} — 顶层手动布局用"
+
+# ---------------------------------------------------------------------------
+# Edge
+# ---------------------------------------------------------------------------
+edge:
+  required:
+    from: "node id"
+    to:   "node id"
+  optional:
+    label:  "线上写啥, e.g. 'kv_score'"
+    shape:  "symbolic, e.g. '[B,S,D]', '[B,S,2*coff*Dh]'"
+    dtype:  "fp4 | fp8 | bf16 | fp32 | tf32"
+    kind:   "data | residual | ring_buffer_write"
+
+# ---------------------------------------------------------------------------
+# Stage (PDF 官方命名 + trace alias 桥接)
+# ---------------------------------------------------------------------------
+stage:
+  required:
+    id:    "唯一, 给 node.stage_keys 用"
+    label: "显示名"
+  optional:
+    pdf_name:       "PDF table 里的列名"
+    trace_aliases:  "['1_mhc_pre', ...] — trace 解析里实际用到的 stage label"
+    description:    "1-2 行"
+    formula:        "PDF 给的 FLOPs / bytes 公式"
+
+# ---------------------------------------------------------------------------
+# Profile (一份测量)
+# ---------------------------------------------------------------------------
+profile:
+  required:
+    meta:
+      source:  "trace | pdf_table | manual"
+      variant: "sglang | vllm | sglang_compressor_branch | pdf_dlsim"
+      config:  "v4_pro | v4_flash"
+      phase:   "prefill | decode"
+      setup:   "freeform"
+    data:
+      "<stage_id>":
+        "<layer_type: HCA|CSA|NEXTN|ALL>":
+          ms_per_iter: "数字 (per iteration, per token-bundle)"
+          # optional:
+          kernels: "[ {name, count, avg_us, total_us, share_pct}, ... ]"
+          notes:   "可选"
+
+# ---------------------------------------------------------------------------
+# Config (shape 实例化)
+# ---------------------------------------------------------------------------
+config:
+  required:
+    name:        "v4_pro / v4_flash"
+    num_layers:  "60"
+    csa_layers:  "[layer_idx, ...]"
+    hca_layers:  "[layer_idx, ...]"
+    nextn_layers:"[layer_idx, ...]"
+    hidden:      "{D: 7168, Dh: 128, ...}"
+    moe:         "{n_routed: 256, n_active: 8, ...}"
+    sparse_mla:  "{topk: 2048, kv_cache_dtype: fp8, ...}"

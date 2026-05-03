@@ -1,0 +1,52 @@
+# PDF projection — V4-Pro Context phase, GB300, BS=1
+# 来源: DeepSeek V4 perf study.pdf 的 DLSim projection table.
+# Phase 0 是手填 placeholder, 数字按 PDF "Context" / "Decode" 表格的 "ms / iter"
+# 列填. 单位: ms / iter. (=== TODO: 等 parse_pdf_table.py 接上, 自动填 ===)
+meta:
+  source: pdf_table
+  variant: pdf_dlsim
+  config: v4_pro
+  phase: prefill
+  setup: "DLSim projection (V4-Pro Ctx, GB300, BS=1, 8k input). 手填 placeholder."
+  pdf_ref: "DeepSeek V4 perf study.pdf table p.??"
+
+data:
+  hc_pre:
+    ALL:
+      ms_per_iter: 12.0
+      notes: "PDF spec: tf32 hc_prenorm fast path"
+  attn_qkv_proj_rope:
+    ALL:
+      ms_per_iter: 145.0
+  compressor_kv_score_proj:
+    HCA:
+      ms_per_iter: 18.0
+    CSA:
+      ms_per_iter: 12.0
+  sparse_mla_attn:
+    HCA:
+      ms_per_iter: 280.0
+    CSA:
+      ms_per_iter: 95.0
+  indexer:
+    HCA:
+      ms_per_iter: 80.0
+  attn_output_proj:
+    ALL:
+      ms_per_iter: 200.0
+      notes: "PDF spec 用 deep_gemm fast path (bf16 cast→fp4)"
+  moe_dispatch_combine:
+    ALL:
+      ms_per_iter: 430.0
+  moe_topk:
+    ALL:
+      ms_per_iter: 2.5
+  moe_shared:
+    ALL:
+      ms_per_iter: 75.0
+  hc_post:
+    ALL:
+      ms_per_iter: 32.0
+  residual_ln:
+    ALL:
+      ms_per_iter: 18.0

@@ -1,0 +1,63 @@
+# V4-Pro shape 实例化
+# 来源: DeepSeek V4 perf study.pdf 配置表 + sglang `deepseek_v4.py` 默认.
+name: v4_pro
+
+num_layers: 60
+# layer 索引规则 (PDF p.5 + sglang config):
+# layer 0   : 仅 dense(无 sparse-MLA), 算 nextn 之外的 dense layer
+# layer 1   : sliding window dense (compress_ratio=0)
+# layer 2..59 (mostly): CSA = compress_ratio 4
+# 部分 layer        : HCA = compress_ratio 128 (有 indexer)
+# 我们 phase-0 简化: CSA 跑 56 个, HCA 跑 4 个 (依据 trace 实测的 ~56/4 出现频率)
+csa_layers:   "[0..3, 5, 7..59 except hca]"
+hca_layers:   "[4, 6, ...]"   # 实际位置由 trace 给出, 这里只是 placeholder
+nextn_layers: "[60]"          # MTP 头, 不算在主 60 层里
+
+hidden:
+  D:  7168          # hidden dim
+  Dh: 128           # head dim
+  Nh: 128           # num heads (q)
+  Nkv: 1            # MQA, kv_heads=1
+  D_compressed_attn: 512     # MLA latent dim
+  Dq_lora: 1536              # q lora rank
+
+mhc:
+  num_pre_groups:  256
+  num_post_groups: 256
+
+compressor:
+  csa_ratio: 4
+  hca_ratio: 128
+  c_off: 64
+  output_dim: 128            # 每路 head 输出 dim (Wkv -> 2*coff*Dh)
+
+indexer:
+  topk: 2048
+  index_dim: 128
+
+moe:
+  n_routed: 256
+  n_active: 8
+  n_shared: 1
+  expert_intermediate: 2048
+  scoring: sigmoid
+  topk_method: noaux_tc
+
+sparse_mla:
+  topk_chunk: 512
+  kv_cache_dtype: fp8
+  q_dtype: fp8
+
+precisions:
+  default: bf16
+  gemm: fp4         # FP4 (deep_gemm fp8_fp4)
+  attn_kv_cache: fp8
+  norm: bf16
+  hc_pre_pdf: tf32  # PDF 给的 spec, 实际跑可能 bf16 (待确认)
+
+# benchmark setup (用于 profile 时读: per_iter_tokens 等)
+bench_setup:
+  prefill_input_len: 8192
+  prefill_iter_tokens: 8192
+  decode_iter_tokens: 1
+  per_iter_steps: 4         # trace 是 4 step prefill 平均

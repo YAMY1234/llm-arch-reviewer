@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-store" />
+<title>llm-arch-reviewer</title>
+<style>
+  :root {
+    --bg:        #fafbfc;
+    --panel:     #ffffff;
+    --border:    #d0d7de;
+    --text:      #24292f;
+    --muted:    #6e7781;
+    --link:      #0969da;
+    --csa:       #d53f47;
+    --hca:       #1f70c1;
+    --swa:       #6f42c1;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  header {
+    padding: 32px 40px 16px; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { margin: 0 0 4px; font-size: 26px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 14px; }
+  header .links { margin-top: 8px; font-size: 13px; }
+  header .links a { color: var(--link); text-decoration: none; margin-right: 14px; }
+  header .links a:hover { text-decoration: underline; }
+  main {
+    padding: 32px 40px; max-width: 1200px; margin: 0 auto; width: 100%; flex: 1;
+  }
+  h2 { font-size: 17px; font-weight: 600; margin: 24px 0 12px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 18px 20px; transition: all 0.15s;
+    text-decoration: none; color: inherit; display: block;
+  }
+  .card:hover { border-color: var(--link); box-shadow: 0 2px 8px rgba(9,105,218,0.08); }
+  .card.placeholder { opacity: 0.5; cursor: default; pointer-events: none; }
+  .card .name { font-size: 16px; font-weight: 600; color: var(--text); }
+  .card .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .card .desc { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+  .card .tags { margin-top: 10px; }
+  .card .tag {
+    display: inline-block; padding: 1px 7px; margin-right: 4px; font-size: 10px;
+    background: #e7f0fe; color: var(--link); border-radius: 10px; font-weight: 500;
+  }
+  .card .tag.csa { background: #fde7e8; color: var(--csa); }
+  .card .tag.hca { background: #e3eef9; color: var(--hca); }
+  .card .tag.swa { background: #efe6f7; color: var(--swa); }
+  .card .tag.coming { background: #f0f0f0; color: var(--muted); }
+  footer { padding: 20px 40px; color: var(--muted); font-size: 12px; text-align: center;
+           border-top: 1px solid var(--border); }
+  footer a { color: var(--link); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .intro {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 18px 22px; margin-bottom: 24px; line-height: 1.6; font-size: 14px;
+  }
+  .intro p { margin: 0 0 8px; }
+  .intro p:last-child { margin: 0; }
+  code { background: #f4f6f8; padding: 1px 5px; border-radius: 3px;
+         font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>llm-arch-reviewer</h1>
+  <div class="sub">interactive architecture diagrams for LLM inference, with profile data overlaid</div>
+  <div class="links">
+    <a href="https://github.com/YAMY1234/llm-arch-reviewer" target="_blank">GitHub ↗</a>
+    <a href="https://github.com/YAMY1234/llm-arch-reviewer#readme" target="_blank">how it works</a>
+    <a href="https://github.com/YAMY1234/llm-arch-reviewer#adding-a-new-model" target="_blank">add a model</a>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <p>每个模型一份**模块化、可缩放、点击钻取**的架构图，旁边叠加来自实测 trace 的耗时与 kernel breakdown。</p>
+    <p>所有数据都是 <a href="https://github.com/YAMY1234/llm-arch-reviewer/tree/main/models" target="_blank">data-driven</a>: 节点 / 边 / shape / drill 关系全部由 IR (yaml) 描述，渲染器 (ELK + SVG) 与模型解耦。要加新模型只需新增一个 <code>models/&lt;name&gt;/</code>。</p>
+  </div>
+
+  <h2>models</h2>
+  <div class="grid">
+
+    <a class="card" href="viewer.html?model=dsv4">
+      <div class="name">DeepSeek-V4</div>
+      <div class="label">62 layers · MoE · sparse-MLA · mHC</div>
+      <div class="desc">
+        Highly Compressed Attention (HCA, c=128) × 31 + Compressed Sparse Attention
+        (CSA, c=4 + indexer) × 30 + 1 SWA-dense + NextN MTP. Profile: sglang prefill / decode
+        on H200 / B200, plus PDF DLSim projection.
+      </div>
+      <div class="tags">
+        <span class="tag hca">HCA</span>
+        <span class="tag csa">CSA</span>
+        <span class="tag swa">SWA</span>
+        <span class="tag">MoE</span>
+        <span class="tag">mHC</span>
+        <span class="tag">NextN</span>
+      </div>
+    </a>
+
+    <div class="card placeholder">
+      <div class="name">Qwen3.5</div>
+      <div class="label">— coming soon —</div>
+      <div class="desc">Qwen3.5 MoE / Dense + speculative decoding (MTP).</div>
+      <div class="tags"><span class="tag coming">planned</span></div>
+    </div>
+
+    <div class="card placeholder">
+      <div class="name">Llama-4</div>
+      <div class="label">— coming soon —</div>
+      <div class="desc">Llama-4 MoE.</div>
+      <div class="tags"><span class="tag coming">planned</span></div>
+    </div>
+
+  </div>
+
+  <h2>about</h2>
+  <div class="intro" style="font-size: 13px;">
+    <p>
+      this site is a hand-authored layout combined with auto-generated profile overlay.
+      see the <a href="https://github.com/YAMY1234/llm-arch-reviewer">repo</a> for IR schema, build pipeline, and how to add a new model.
+    </p>
+    <p>
+      profile data uses sglang traces (prefill / decode) post-processed with kernel-name
+      classification; numbers are rolled up per architectural block, with both
+      <em>per-stage</em> and <em>per-block</em> percentages exposed in the detail panel.
+    </p>
+  </div>
+</main>
+
+<footer>
+  <a href="https://github.com/YAMY1234/llm-arch-reviewer">YAMY1234/llm-arch-reviewer</a> · static site · ELK.js + SVG · pure data-driven
+</footer>
+
+</body>
+</html>

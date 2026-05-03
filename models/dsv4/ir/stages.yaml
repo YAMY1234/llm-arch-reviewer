@@ -1,0 +1,95 @@
+# Stages — 把 PDF 的官方命名 / trace label / IR 三方对齐
+# trace_aliases 必须和 trace-kernel-learning/out/*.csv 的 stage 列一致.
+
+stages:
+  # ---- mHC pre/post ----
+  - id: hc_pre
+    label: "mHC pre (norm + gate-proj)"
+    pdf_name: hc_pre
+    trace_aliases: ["1_mhc_pre"]
+    description: |
+      manifold constrained Hyper-Connection 的前置步骤: per-token 的
+      sqrsum + RMS-norm + gate proj 的融合 (mhc_pre_big_fuse_tilelang_kernel).
+      sglang 当前默认走 SGLANG_OPT_USE_TILELANG_MHC_PRE = True, 比 vllm 用的
+      deep_gemm tf32 prenorm 慢 ~3x.
+
+  - id: hc_post
+    label: "mHC post"
+    pdf_name: hc_post
+    trace_aliases: ["9_mhc_post"]
+
+  # ---- Attention input / output proj ----
+  - id: attn_qkv_proj_rope
+    label: "Q/K/V proj + RoPE + KV cache store"
+    pdf_name: attnGemm
+    trace_aliases: ["2_attn_qkv_proj_rope"]
+    description: |
+      Q proj, KV down/up proj, RoPE, FP8 quant, store to flash-MLA cache.
+      sglang fuse: rmsnorm_self + deepseek_rope_kernel + per_token_group_quant +
+      fused_store_flashmla_cache.
+
+  - id: attn_output_proj
+    label: "Attention output proj (Wo)"
+    pdf_name: attnOutGemm
+    trace_aliases: ["5_attn_output_proj"]
+    description: |
+      attn output projection. prefill 里这一步 245 ms / iter, 占 19.93%, 因为
+      cuBLAS 走 nvjet kernel 而非 deep_gemm fast path.
+
+  # ---- Compressor (CSA c=4 / HCA c=128) ----
+  - id: compressor_kv_score_proj
+    label: "compressor: wkv_gate proj"
+    pdf_name: compressor_kv_score_proj
+    trace_aliases: ["3a_compressor_outer", "3b_compressor_kernel", "3_compressor"]
+    description: |
+      wkv_gate 的 GEMM (Wkv 和 Wgate 融成一个 ReplicatedLinear), 以及
+      ratio-gated 的 flash_c128 / flash_c4 kernel.
+      prefill HCA: 4.05+22.02 = 26.07 ms (主 + indexer-内嵌 双份 compressor).
+
+  # ---- Sparse MLA + Indexer ----
+  - id: sparse_mla_attn
+    label: "sparse-MLA attention"
+    pdf_name: FMHA
+    trace_aliases: ["4c_sparse_mla_attn"]
+    description: |
+      flash_fwd_splitkv_mla_fp8_sparse_kernel + combine.
+      prefill HCA 占 321 ms / iter, decode HCA 占 14.5 ms.
+
+  - id: indexer
+    label: "C4 indexer (logits + topK)"
+    pdf_name: indexer
+    trace_aliases: ["4_indexer", "4a_indexer_python"]
+    description: |
+      C4Indexer 算 query×index_k, top-K, 给 sparse-MLA 的 indices.
+      prefill HCA 这一段 109 ms python+kernel, decode HCA 10.8 ms.
+
+  # ---- MoE ----
+  - id: moe_topk
+    label: "MoE topK gate"
+    pdf_name: moe_topk
+    trace_aliases: ["7a_moe_topk_select"]
+
+  - id: moe_shared
+    label: "MoE shared experts"
+    pdf_name: moe_shared
+    trace_aliases: ["7b_moe_shared_experts"]
+
+  - id: moe_dispatch_combine
+    label: "MoE dispatch + experts + combine (DeepEP)"
+    pdf_name: groupGemmExpert
+    trace_aliases: ["7c_moe_mega_dispatch"]
+    description: |
+      最大头. prefill 460 ms / iter / layer-type. sglang 用 deepep + mega-moe
+      fuse, 单 kernel 完成 dispatch + GEMM + combine.
+
+  # ---- norm/residual misc ----
+  - id: residual_ln
+    label: "residual + RMSNorm"
+    pdf_name: residual_ln
+    trace_aliases: ["6_residual_ln", "8_layernorm_misc"]
+
+  - id: misc
+    label: "misc (quant/clamp/copy/comm)"
+    pdf_name: misc
+    trace_aliases: ["misc_arith", "misc_clamp", "misc_copy",
+                    "misc_quant", "misc_comm", "OTHER"]

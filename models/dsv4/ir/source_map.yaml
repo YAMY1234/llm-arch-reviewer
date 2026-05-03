@@ -1,0 +1,25 @@
+# Source mapping — 把 IR 里 code_links 的本地相对路径 (e.g. "models/deepseek_v4.py:524")
+# 转成 GitHub URL (e.g. https://github.com/sgl-project/sglang/blob/<commit>/python/sglang/srt/models/deepseek_v4.py#L524).
+#
+# build_view.py 读这份文件, 给每个 code_link 生成 url 字段; HTML 渲染层把 link 变成 <a>.
+
+source_map:
+  # 默认: 把 "models/..." / "layers/..." / "configs/..." / "jit_kernel/..." 等
+  # IR 里使用的相对路径 prefix, 加上 sglang repo 的 python/sglang/srt 前缀,
+  # 然后 base_url + commit 拼出最终 URL.
+
+  # 上游 repo + 我们 pin 的 commit (本地 sglang-dsv4 worktree HEAD).
+  # 想要换 fork 或换 branch, 改这两行就好.
+  - prefix: ""        # IR 里直接写 models/.../jit_kernel/... 的全部走这条
+    repo:    "sgl-project/sglang"
+    commit:  "5031406e5c0e985499b4b4ae86e02b859ccf49b8"
+    path_prefix: "python/sglang/srt/"
+    # 例外: configs/config_backup_*.json 也在 srt/ 下, 用同一条规则即可
+
+# 显示策略 (HTML 渲染时用):
+display:
+  # 把长文件路径 e.g. "models/deepseek_v4.py:524 Compressor (...)" 显示成更短的:
+  # "deepseek_v4.py:524 — Compressor (...)"
+  shorten_paths: true
+  # 鼠标 hover 显示完整路径
+  show_full_on_hover: true

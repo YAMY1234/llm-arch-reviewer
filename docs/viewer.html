@@ -1,0 +1,1141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<title>llm-arch-reviewer</title>
+<style>
+  /* PDF 风浅色主题 */
+  :root {
+    --bg:        #fafbfc;
+    --panel:     #ffffff;
+    --panel2:    #f4f6f8;
+    --border:    #d0d7de;
+    --border2:   #b8bfc8;
+    --text:      #1f2328;
+    --muted:     #656d76;
+    --link:      #0969da;
+    --warn:      #bf8700;
+    --hot:       #cf222e;
+    --csa:       #1f6feb;
+    --csa-fill:  #ddebff;
+    --hca:       #8250df;
+    --hca-fill:  #ece4ff;
+    --swa:       #1a7f37;
+    --swa-fill:  #ddf5e1;
+    --nextn:     #bc4c00;
+    --nextn-fill:#ffe1cc;
+    --gemm:      #0550ae;
+    --gemm-fill: #f0f6ff;
+    --norm:      #1a7f37;
+    --norm-fill: #f0fdf4;
+    --elem:      #9a6700;
+    --elem-fill: #fff8c5;
+    --attn:      #6f42c1;
+    --attn-fill: #f5efff;
+    --moe:       #cf222e;
+    --moe-fill:  #ffebe9;
+    --cache:     #57606a;
+    --cache-fill:#f6f8fa;
+    --io:        #57606a;
+    --io-fill:   #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: 44px 36px 1fr;
+    grid-template-areas:
+      "header header"
+      "crumbs crumbs"
+      "main   right";
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    grid-area: header;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  header .controls { display: flex; gap: 10px; align-items: center; }
+  header label { color: var(--muted); }
+  header select, header button {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; font-size: 12px;
+  }
+  header button { cursor: pointer; }
+  header button:hover { border-color: var(--link); }
+
+  nav.crumbs {
+    grid-area: crumbs;
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 16px; background: var(--panel2);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; overflow-x: auto;
+  }
+  nav.crumbs .crumb {
+    color: var(--link); cursor: pointer;
+    padding: 4px 8px; border-radius: 3px;
+  }
+  nav.crumbs .crumb:hover { background: var(--panel); }
+  nav.crumbs .crumb.current { color: var(--text); font-weight: 600; cursor: default; }
+  nav.crumbs .sep { color: var(--muted); }
+  nav.crumbs .title { color: var(--muted); margin-left: auto; padding-right: 8px; }
+
+  main {
+    grid-area: main; overflow: hidden;
+    background: var(--bg);
+    position: relative;
+  }
+  #svg-host {
+    width: 100%; height: 100%;
+    cursor: grab;
+  }
+  #svg-host:active { cursor: grabbing; }
+
+  aside.right {
+    grid-area: right;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 12px 14px;
+  }
+  aside h2 { font-size: 11px; color: var(--muted); margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  aside h3 { font-size: 12px; margin: 14px 0 6px 0; color: var(--text); }
+
+  .kv { display: grid; grid-template-columns: 100px 1fr; gap: 4px 8px; font-size: 12px; }
+  .kv .k { color: var(--muted); }
+  .codelink {
+    display: inline-block; padding: 2px 6px; margin: 2px 4px 2px 0;
+    background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 3px; color: var(--link); font-family: ui-monospace, monospace;
+    font-size: 11px; word-break: break-all; text-decoration: none;
+  }
+  a.codelink:hover { background: #e8f0fe; border-color: var(--link); text-decoration: underline; }
+  a.codelink::after { content: " ↗"; opacity: 0.5; font-family: sans-serif; }
+  a.drill-button {
+    display: inline-block; padding: 6px 14px;
+    background: var(--link); color: white !important;
+    border-radius: 4px; text-decoration: none; font-size: 12px;
+    border: 1px solid var(--link);
+  }
+  a.drill-button:hover { background: #054ea3; border-color: #054ea3; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 10px;
+    font-size: 10px; margin-right: 4px;
+  }
+  .badge.csa   { background: var(--csa-fill);   color: var(--csa);   }
+  .badge.hca   { background: var(--hca-fill);   color: var(--hca);   }
+  .badge.swa   { background: var(--swa-fill);   color: var(--swa);   }
+  .badge.nextn { background: var(--nextn-fill); color: var(--nextn); }
+
+  table.kernels { width: 100%; border-collapse: collapse; font-size: 11px; font-family: ui-monospace, monospace; }
+  table.kernels th, table.kernels td {
+    border-bottom: 1px solid var(--border); padding: 3px 4px; text-align: right;
+  }
+  table.kernels th { color: var(--muted); font-weight: 500; text-align: right; }
+  table.kernels td.name { text-align: left; max-width: 220px; word-break: break-all; }
+
+  .empty { color: var(--muted); font-style: italic; padding: 20px 0; text-align: center; }
+
+  /* SVG 样式 */
+  .node text { user-select: none; pointer-events: none; }
+  .node-bg { fill: var(--panel); stroke: var(--border2); stroke-width: 1.2; }
+  .node.kind-block .node-bg { fill: var(--panel); stroke: var(--csa); stroke-width: 2; }
+  .node.kind-gemm  .node-bg { fill: var(--gemm-fill);  stroke: var(--gemm);  }
+  .node.kind-norm  .node-bg { fill: var(--norm-fill);  stroke: var(--norm);  }
+  .node.kind-elem  .node-bg { fill: var(--elem-fill);  stroke: var(--elem);  }
+  .node.kind-attn  .node-bg { fill: var(--attn-fill);  stroke: var(--attn);  stroke-width: 1.6; }
+  .node.kind-moe   .node-bg { fill: var(--moe-fill);   stroke: var(--moe);   stroke-width: 2; }
+  .node.kind-cache .node-bg { fill: var(--cache-fill); stroke: var(--cache); stroke-dasharray: 0; }
+  .node.kind-io    .node-bg { fill: var(--io-fill);    stroke: var(--io);    stroke-dasharray: 4 3; }
+
+  .node.accent-csa.kind-block .node-bg { stroke: var(--csa); }
+  .node.accent-hca.kind-block .node-bg { stroke: var(--hca); }
+  .node.accent-swa.kind-block .node-bg { stroke: var(--swa); }
+
+  .node.drillable { cursor: pointer; }
+  .node.drillable:hover .node-bg { stroke-width: 3; filter: brightness(0.97); }
+  .node.heat-warm .node-bg { stroke: var(--warn); }
+  .node.heat-hot  .node-bg { stroke: var(--hot); stroke-width: 2.4; }
+
+  .node-label { font-size: 11px; fill: var(--text); }
+  .node-label.title { font-weight: 600; font-size: 12px; }
+  .node-ms { font-size: 10px; fill: var(--muted); font-family: ui-monospace, monospace; }
+  .node-note { font-size: 9.5px; fill: var(--muted); font-style: italic; }
+
+  /* drill 角标 */
+  .drill-mark { fill: var(--link); }
+  .drill-mark text { font-size: 9px; fill: white; font-weight: 700; }
+
+  .edge path { fill: none; stroke: var(--border2); stroke-width: 1.4; }
+  .edge path.arrow { fill: var(--border2); stroke: none; }
+  .edge.kind-residual path { stroke: var(--swa); stroke-dasharray: 5 3; }
+  .edge.kind-residual path.arrow { fill: var(--swa); }
+  .edge.kind-cache_write path { stroke: var(--warn); }
+  .edge.kind-cache_write path.arrow { fill: var(--warn); }
+  .edge.kind-cache_read path { stroke: var(--warn); stroke-dasharray: 4 2; }
+  .edge.kind-cache_read path.arrow { fill: var(--warn); }
+  .edge.kind-dashed path { stroke-dasharray: 5 3; }
+
+  .edge-label {
+    font-size: 10px; fill: var(--muted);
+    font-family: ui-monospace, monospace;
+    pointer-events: none;
+  }
+  .edge-label.dtype { fill: var(--gemm); font-weight: 600; }
+
+  .edge-label-bg { fill: var(--bg); }
+
+  .selected .node-bg { stroke: var(--link) !important; stroke-width: 3 !important; }
+
+  /* 多 view 容器 */
+  .view-frame {
+    fill: rgba(244, 246, 248, 0.6);
+    stroke: var(--border);
+    stroke-width: 1;
+    stroke-dasharray: 6 4;
+  }
+  .view-frame.root {
+    fill: rgba(255, 255, 255, 1);
+    stroke: var(--border2);
+    stroke-dasharray: 0;
+  }
+  .view-frame.active {
+    fill: rgba(255, 255, 255, 1);
+    stroke: var(--link);
+    stroke-width: 1.6;
+    stroke-dasharray: 0;
+  }
+  .view-title-svg {
+    font-size: 12px;
+    font-weight: 600;
+    fill: var(--muted);
+  }
+  .view-group.active .view-title-svg { fill: var(--link); }
+
+  .view-inner.dim { opacity: 0.55; }
+  .view-inner.dim .node.drillable { cursor: pointer; }
+
+  /* 跨 view 虚线 */
+  .cross-view-beam {
+    fill: none;
+    stroke: var(--link);
+    stroke-width: 1.6;
+    stroke-dasharray: 6 4;
+    opacity: 0.75;
+  }
+  .cross-view-beam-label {
+    font-size: 10px;
+    fill: var(--link);
+    font-family: ui-monospace, monospace;
+    pointer-events: none;
+  }
+  .cross-view-beam-dot {
+    fill: var(--link);
+  }
+
+  /* 父 view 里被 drill 进的源节点高亮 */
+  .node.drill-source .node-bg {
+    stroke: var(--link) !important;
+    stroke-width: 2.4 !important;
+    filter: drop-shadow(0 0 4px rgba(9, 105, 218, 0.35));
+  }
+</style>
+<!-- ELK.js bundled (pure JS) -->
+<script src="https://unpkg.com/elkjs@0.9.3/lib/elk.bundled.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>
+    <a href="./index.html" style="color: var(--muted); text-decoration: none; font-weight: 400; font-size: 14px; margin-right: 8px;" title="back to model list">← models</a>
+    <span id="model-title">model</span> architecture
+    <span style="color: var(--muted); font-weight: 400; font-size: 13px;" id="model-subtitle"></span>
+  </h1>
+  <div class="controls">
+    <label>profile:
+      <select id="profile-select"></select>
+    </label>
+    <label>variant:
+      <select id="variant-select">
+        <option value="HCA">HCA</option>
+        <option value="CSA">CSA</option>
+        <option value="ALL">ALL</option>
+      </select>
+    </label>
+    <button id="btn-fit">fit</button>
+    <button id="btn-up">⬆ up</button>
+  </div>
+</header>
+
+<nav class="crumbs">
+  <span id="crumbs-list" style="display: flex; gap: 4px; align-items: center;"></span>
+  <span class="title" id="view-title"></span>
+</nav>
+
+<main>
+  <svg id="svg-host" xmlns="http://www.w3.org/2000/svg"
+       viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <marker id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#b8bfc8"/>
+      </marker>
+      <marker id="arrow-residual" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--swa)"/>
+      </marker>
+      <marker id="arrow-warn" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--warn)"/>
+      </marker>
+    </defs>
+    <g id="svg-root"></g>
+  </svg>
+</main>
+
+<aside class="right">
+  <div id="detail">
+    <div class="empty">单击节点查看详情 (含 block 总览)<br/>双击 module (粗框) 或点 detail 里 "Open ..." 进入下一级</div>
+  </div>
+</aside>
+
+<script>
+"use strict";
+
+// ============================================================
+// state
+// ============================================================
+let DATA = null;
+const elk = new ELK();
+let CURRENT_PROFILE = "sglang_v4_pro_prefill";
+let CURRENT_VARIANT = "HCA";
+
+// VIEW_STACK 现在是"打开的多张图", 从左到右水平排列.
+// drill_from[i] = 第 i 张图是从第 i-1 张图哪个 node 钻进来的 (用于画跨图虚线)
+let VIEW_STACK = ["top"];
+let DRILL_FROM = [null];   // DRILL_FROM[i] = parent view 里 node id; [0] 是 null
+let SELECTED = null;       // {view, nodeId}
+const VIEW_GAP = 110;      // 多张图之间水平间距 (放虚线)
+
+// drill 树 — 从 build 时派生, 后端会注入 DATA.parent. 这里保留 fallback 空对象.
+let PARENT = {};
+
+// ============================================================
+// load — model-aware
+// ============================================================
+function getModelId() {
+  const qs = new URLSearchParams(location.search);
+  const m = qs.get("model");
+  if (m && /^[a-zA-Z0-9_-]+$/.test(m)) return m;
+  return "dsv4";   // 默认; landing page 应该总是带 ?model=
+}
+const MODEL_ID = getModelId();
+const DATA_URL = `${MODEL_ID}/arch_data.json?t=${Date.now()}`;
+
+fetch(DATA_URL, {cache: "no-store"}).then(r => {
+  if (!r.ok) throw new Error(`HTTP ${r.status} for ${DATA_URL}`);
+  return r.json();
+}).then(d => {
+  DATA = d;
+  // 注入 PARENT (build 时派生); 旧数据没有就回退到从 views 现算
+  PARENT = d.parent || derivePARENT(d.views);
+  // header
+  const meta = d.meta || {};
+  document.getElementById("model-title").textContent = meta.model_label || MODEL_ID;
+  document.getElementById("model-subtitle").textContent = meta.subtitle || "ELK + SVG · drill-down";
+  document.title = `${meta.model_label || MODEL_ID} — llm-arch-reviewer`;
+  initUI();
+  parseHash();
+  renderView();
+}).catch(e => {
+  document.body.innerHTML = `<pre style='padding:20px; font-family: ui-monospace, monospace;'>
+load failed: ${e}
+
+tried: ${DATA_URL}
+
+usage:
+  ${location.origin}${location.pathname}?model=dsv4
+
+local dev:
+  cd ~/Documents/Projects/llm-arch-reviewer
+  python3 -m http.server -d docs 8765
+  open http://localhost:8765/viewer.html?model=dsv4
+</pre>`;
+});
+
+function derivePARENT(views) {
+  const p = {};
+  for (const [vname, view] of Object.entries(views)) {
+    for (const n of (view.nodes || [])) {
+      if (n.drill && !(n.drill in p)) p[n.drill] = vname;
+    }
+  }
+  return p;
+}
+
+function initUI() {
+  const psel = document.getElementById("profile-select");
+  for (const pid of Object.keys(DATA.profiles)) {
+    const opt = document.createElement("option");
+    opt.value = pid; opt.textContent = pid;
+    psel.appendChild(opt);
+  }
+  const pref = Object.keys(DATA.profiles).find(p => p.includes("prefill")) || Object.keys(DATA.profiles)[0];
+  psel.value = pref;
+  CURRENT_PROFILE = pref;
+  psel.onchange = () => { CURRENT_PROFILE = psel.value; renderView(); };
+
+  const vsel = document.getElementById("variant-select");
+  vsel.onchange = () => { CURRENT_VARIANT = vsel.value; renderView(); };
+
+  document.getElementById("btn-fit").onclick = () => fitToSvg();
+  document.getElementById("btn-up").onclick = () => goUp();
+  window.addEventListener("hashchange", parseHash);
+
+  // 滚轮缩放 + 拖拽
+  enablePanZoom();
+}
+
+function parseHash() {
+  // 支持 #views=top,stack,hca_layer (栈) 或老式 #view=foo (单 view)
+  const h = location.hash || "";
+  let stack = ["top"];
+  let from = [null];
+  const m1 = h.match(/views=([\w,]+)/);
+  const m2 = h.match(/view=([\w]+)/);
+  if (m1) {
+    const arr = m1[1].split(",").filter(v => v in (DATA?.views || {}));
+    if (arr.length) stack = arr;
+  } else if (m2 && m2[1] in (DATA?.views || {})) {
+    // 单 view 时, 把它的 PARENT 链补全成 stack
+    const trail = [];
+    let cur = m2[1];
+    while (cur) { trail.unshift(cur); cur = PARENT[cur]; }
+    stack = trail;
+  }
+  // 重建 from: 用 PARENT + 寻找父 view 里 drill 到这个 view 的 node id
+  from = stack.map((v, i) => {
+    if (i === 0) return null;
+    return findDrillNodeId(stack[i-1], v);
+  });
+  VIEW_STACK = stack;
+  DRILL_FROM = from;
+  if (DATA) renderView();
+}
+
+// 在 parent view 找哪个 node 的 drill === childView (用于画虚线)
+function findDrillNodeId(parentView, childView) {
+  const v = DATA.views[parentView];
+  if (!v) return null;
+  for (const n of (v.nodes || [])) {
+    if (n.drill === childView) return n.id;
+  }
+  return null;
+}
+
+function syncHash() {
+  location.hash = "views=" + VIEW_STACK.join(",");
+}
+
+function goUp() {
+  if (VIEW_STACK.length <= 1) return;
+  VIEW_STACK.pop();
+  DRILL_FROM.pop();
+  SELECTED = null;
+  syncHash();
+  renderView();
+}
+
+// drill 行为:
+//   - 如果 child 已经在栈最右, 啥也不做
+//   - 否则, 把 child push 到栈右边 (parent 是 fromView). 但若 fromView 不是栈最右,
+//     说明从中间某层点击, 把右边都砍掉再 push.
+function drillFrom(fromView, fromNodeId, childView) {
+  if (!(childView in DATA.views)) return;
+  const fromIdx = VIEW_STACK.indexOf(fromView);
+  if (fromIdx === -1) {
+    // 不在栈里, 当成全新跳转
+    VIEW_STACK = [childView];
+    DRILL_FROM = [null];
+  } else {
+    // 把 fromIdx 右边都砍掉
+    VIEW_STACK = VIEW_STACK.slice(0, fromIdx + 1);
+    DRILL_FROM = DRILL_FROM.slice(0, fromIdx + 1);
+    if (VIEW_STACK[VIEW_STACK.length - 1] !== childView) {
+      VIEW_STACK.push(childView);
+      DRILL_FROM.push(fromNodeId);
+    }
+  }
+  syncHash();
+  renderView();
+}
+
+// 兼容旧 inline href: drillTo(child) 默认从最右 view drill
+function drillTo(childView) {
+  const last = VIEW_STACK[VIEW_STACK.length - 1];
+  drillFrom(last, findDrillNodeId(last, childView), childView);
+}
+
+// ============================================================
+// 面包屑 — 点 crumb 砍栈到那一层
+// ============================================================
+function renderCrumbs() {
+  const el = document.getElementById("crumbs-list");
+  el.innerHTML = "";
+  VIEW_STACK.forEach((v, i) => {
+    const span = document.createElement("span");
+    const isLast = i === VIEW_STACK.length - 1;
+    span.className = "crumb" + (isLast ? " current" : "");
+    span.textContent = v;
+    if (!isLast) {
+      span.onclick = () => {
+        VIEW_STACK = VIEW_STACK.slice(0, i + 1);
+        DRILL_FROM = DRILL_FROM.slice(0, i + 1);
+        SELECTED = null;
+        syncHash();
+        renderView();
+      };
+    }
+    el.appendChild(span);
+    if (!isLast) {
+      const sep = document.createElement("span");
+      sep.className = "sep"; sep.textContent = "›";
+      el.appendChild(sep);
+    }
+  });
+  const titles = VIEW_STACK.map(v => DATA.views[v]?.title || v).join("  ›  ");
+  document.getElementById("view-title").textContent = titles;
+}
+
+// ============================================================
+// 主渲染: 同时 layout 栈里所有 view, 水平拼接
+// ============================================================
+async function renderView() {
+  if (!DATA) return;
+  renderCrumbs();
+
+  // 1) 给每个栈里的 view 算独立 layout
+  const layouts = [];
+  for (const vName of VIEW_STACK) {
+    const view = DATA.views[vName];
+    if (!view) continue;
+    const elkGraph = {
+      id: "root_" + vName,
+      layoutOptions: {
+        "elk.algorithm": "layered",
+        "elk.direction": "DOWN",
+        "elk.edgeRouting": "ORTHOGONAL",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "55",
+        "elk.spacing.nodeNode": "38",
+        "elk.spacing.edgeNode": "20",
+        "elk.spacing.edgeEdge": "14",
+        "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+        "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+        "elk.layered.mergeEdges": "false",
+        "elk.padding": "[top=20,left=20,bottom=20,right=20]",
+      },
+      children: (view.nodes || []).map(n => ({
+        id: n.id, width: nodeWidth(n), height: nodeHeight(n),
+        labels: [{text: n.label || n.id}],
+      })),
+      edges: (view.edges || []).map((e, i) => ({
+        id: `e${i}`, sources: [e.from], targets: [e.to],
+        labels: edgeLabels(e),
+      })),
+    };
+    const lay = await elk.layout(elkGraph);
+    layouts.push({viewName: vName, view, layout: lay});
+  }
+
+  // 2) 水平堆叠. xOffset 累加 + VIEW_GAP
+  let xOff = 0;
+  let maxH = 0;
+  for (const item of layouts) {
+    item.xOffset = xOff;
+    item.yOffset = 0;
+    xOff += (item.layout.width || 0) + VIEW_GAP;
+    if ((item.layout.height || 0) > maxH) maxH = item.layout.height || 0;
+  }
+  // 让所有 view 垂直居中对齐 (用最大高度)
+  for (const item of layouts) {
+    item.yOffset = (maxH - (item.layout.height || 0)) / 2;
+  }
+
+  drawAllViews(layouts, xOff - VIEW_GAP, maxH);
+}
+
+function nodeWidth(n) {
+  // 估宽: 看 label 行长 / shape 类型
+  const lbl = (n.label || n.id);
+  const lines = lbl.split("\n");
+  const longest = Math.max(...lines.map(l => l.length));
+  let w = Math.min(260, Math.max(120, longest * 7.2));
+  if (n.shape === "io") w = Math.max(100, longest * 6.5);
+  if (n.shape === "block" || n.shape === "moe") w = Math.max(180, longest * 7.5);
+  return w;
+}
+function nodeHeight(n) {
+  const lbl = n.label || "";
+  const lineCount = lbl.split("\n").length;
+  let h = 36 + (lineCount - 1) * 14;
+  if (n.note) h += 12;
+  // 给 ms / heat 留点空间
+  if (n.stage_keys && n.stage_keys.length) h += 10;
+  if (n.shape === "io") h = Math.max(28, 18 + lineCount * 12);
+  return h;
+}
+
+function edgeLabels(e) {
+  const out = [];
+  if (e.label) out.push({text: e.label});
+  // shape / dtype 在画的时候单独画, 不让 ELK 摆 (会挤)
+  return out;
+}
+
+// ============================================================
+// SVG 绘制 — 多 view 横排
+// ============================================================
+function drawAllViews(layouts, totalW, totalH) {
+  const root = document.getElementById("svg-root");
+  root.innerHTML = "";
+
+  // 整个画布的 viewBox 留 padding
+  const PAD = 40;
+  const svg = document.getElementById("svg-host");
+  svg.setAttribute("viewBox", `${-PAD} ${-PAD} ${Math.max(800, totalW + 2*PAD)} ${Math.max(500, totalH + 2*PAD)}`);
+
+  // 缓存每个 view 的 layout 信息 (用于跨 view 连虚线)
+  const viewBoxes = []; // {viewName, x, y, w, h, nodeRects: Map<id, {x,y,w,h}>}
+
+  for (let i = 0; i < layouts.length; i++) {
+    const {viewName, view, layout, xOffset, yOffset} = layouts[i];
+    const isLast = i === layouts.length - 1;
+
+    // group for this view
+    const grp = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    grp.setAttribute("class", "view-group" + (isLast ? " active" : ""));
+    grp.setAttribute("transform", `translate(${xOffset}, ${yOffset})`);
+    grp.dataset.view = viewName;
+
+    // view 外框 + 标题 (banner)
+    const W = layout.width || 200, H = layout.height || 100;
+    const frame = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    frame.setAttribute("class", "view-frame" + (isLast ? " active" : "") + (i === 0 ? " root" : ""));
+    frame.setAttribute("x", -8); frame.setAttribute("y", -28);
+    frame.setAttribute("width", W + 16); frame.setAttribute("height", H + 36);
+    frame.setAttribute("rx", 8);
+    grp.appendChild(frame);
+
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    title.setAttribute("class", "view-title-svg");
+    title.setAttribute("x", 0); title.setAttribute("y", -10);
+    title.textContent = view.title || viewName;
+    grp.appendChild(title);
+
+    // dim 非 active view 的内容透明度
+    const inner = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    inner.setAttribute("class", "view-inner" + (isLast ? "" : " dim"));
+    grp.appendChild(inner);
+
+    const childById = new Map((layout.children || []).map(c => [c.id, c]));
+
+    // edges first
+    for (const e of (view.edges || [])) {
+      const src = childById.get(e.from);
+      const dst = childById.get(e.to);
+      if (!src || !dst) continue;
+      const layoutedEdge = (layout.edges || []).find(x => x.sources?.[0] === e.from && x.targets?.[0] === e.to);
+      drawEdge(inner, e, layoutedEdge);
+    }
+
+    // nodes
+    for (const n of (view.nodes || [])) {
+      const c = childById.get(n.id);
+      if (!c) continue;
+      drawNode(inner, n, c, viewName);
+    }
+
+    root.appendChild(grp);
+
+    viewBoxes.push({
+      viewName, x: xOffset, y: yOffset, w: W, h: H,
+      nodeRects: new Map((layout.children || []).map(c => [c.id, {
+        x: xOffset + c.x, y: yOffset + c.y, w: c.width, h: c.height
+      }])),
+    });
+  }
+
+  // 跨 view 虚线连接 (parent.drillNode → child.left-mid)
+  drawCrossViewBeams(root, layouts, viewBoxes);
+}
+
+function drawCrossViewBeams(root, layouts, viewBoxes) {
+  for (let i = 1; i < layouts.length; i++) {
+    const fromNodeId = DRILL_FROM[i];
+    if (!fromNodeId) continue;
+    const parent = viewBoxes[i - 1];
+    const child = viewBoxes[i];
+    const srcRect = parent.nodeRects.get(fromNodeId);
+    if (!srcRect) continue;
+
+    // 起点: 父 node 右边中点
+    const x1 = srcRect.x + srcRect.w;
+    const y1 = srcRect.y + srcRect.h / 2;
+    // 终点: 子 view 左中
+    const x2 = child.x;
+    const y2 = child.y + child.h / 2;
+
+    // 三段折线 (左 → 右 → 下/上 → 右), 用横平竖直保持风格
+    // 但走横向 beam: x1 → 中点 (x1+x2)/2, 然后竖直对齐 y2, 然后到 x2
+    const xm = (x1 + x2) / 2;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "cross-view-beam");
+    path.setAttribute("d", `M ${x1} ${y1} L ${xm} ${y1} L ${xm} ${y2} L ${x2} ${y2}`);
+    root.appendChild(path);
+
+    // beam 标签 ("expand" / "details")
+    const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    lbl.setAttribute("class", "cross-view-beam-label");
+    lbl.setAttribute("x", xm);
+    lbl.setAttribute("y", (y1 + y2) / 2 - 4);
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.textContent = "▸ details";
+    root.appendChild(lbl);
+
+    // 起点圆点 (在父 node 右边)
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("class", "cross-view-beam-dot");
+    dot.setAttribute("cx", x1); dot.setAttribute("cy", y1);
+    dot.setAttribute("r", 3.5);
+    root.appendChild(dot);
+
+    // 高亮父 view 里被 drill 的 node
+    const parentGrp = root.querySelector(`g.view-group[data-view="${parent.viewName}"] .node[data-id="${fromNodeId}"]`);
+    if (parentGrp) parentGrp.classList.add("drill-source");
+  }
+}
+
+function drawEdge(root, e, layoutedEdge) {
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const kind = e.kind || "data";
+  g.setAttribute("class", `edge kind-${kind}`);
+
+  let pathD = "";
+  let labelPos = null;
+  if (layoutedEdge && layoutedEdge.sections && layoutedEdge.sections[0]) {
+    const sec = layoutedEdge.sections[0];
+    const pts = [sec.startPoint, ...(sec.bendPoints || []), sec.endPoint];
+    pathD = "M " + pts.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ");
+    labelPos = midPoint(pts);
+  }
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", pathD);
+  if (kind === "residual")        path.setAttribute("marker-end", "url(#arrow-residual)");
+  else if (kind.startsWith("cache")) path.setAttribute("marker-end", "url(#arrow-warn)");
+  else                            path.setAttribute("marker-end", "url(#arrow-default)");
+  g.appendChild(path);
+
+  // edge label: dtype / shape / label
+  if (labelPos) {
+    const parts = [];
+    if (e.label) parts.push({text: e.label, cls: ""});
+    if (e.shape) parts.push({text: e.shape, cls: ""});
+    if (e.dtype) parts.push({text: e.dtype, cls: "dtype"});
+    if (parts.length) {
+      // bg rect + text
+      let yy = labelPos.y;
+      for (const part of parts) {
+        const tw = part.text.length * 5.8 + 6;
+        const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        bg.setAttribute("class", "edge-label-bg");
+        bg.setAttribute("x", labelPos.x - tw/2);
+        bg.setAttribute("y", yy - 7);
+        bg.setAttribute("width", tw);
+        bg.setAttribute("height", 12);
+        g.appendChild(bg);
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("class", "edge-label " + part.cls);
+        t.setAttribute("x", labelPos.x);
+        t.setAttribute("y", yy + 3);
+        t.setAttribute("text-anchor", "middle");
+        t.textContent = part.text;
+        g.appendChild(t);
+        yy += 13;
+      }
+    }
+  }
+  root.appendChild(g);
+}
+
+function midPoint(pts) {
+  // 找最长的水平段中点 (放 label 最稳)
+  let best = null, bestLen = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i+1];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len > bestLen) { bestLen = len; best = {a, b}; }
+  }
+  if (!best) return null;
+  return {x: (best.a.x + best.b.x) / 2, y: (best.a.y + best.b.y) / 2};
+}
+
+function drawNode(root, n, c, viewName) {
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  const kind = n.shape || "block";
+  const accent = n.accent ? "accent-" + n.accent : "";
+  let cls = `node kind-${kind} ${accent}`;
+  if (n.drill) cls += " drillable";
+
+  // heatmap
+  const ms = nodeMs(n, viewName);
+  const heat = heatLevel(ms, viewName);
+  if (heat) cls += " " + heat;
+
+  if (SELECTED && SELECTED.view === viewName && SELECTED.nodeId === n.id) cls += " selected";
+  g.setAttribute("class", cls);
+  g.setAttribute("data-id", n.id);
+  g.setAttribute("transform", `translate(${c.x}, ${c.y})`);
+
+  // background shape
+  drawShape(g, kind, c.width, c.height);
+
+  // label (multi-line)
+  const lbl = n.label || n.id;
+  const lines = lbl.split("\n");
+  const titleY = 16;
+  let cy = titleY;
+  for (let i = 0; i < lines.length; i++) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("class", "node-label" + (i === 0 ? " title" : ""));
+    t.setAttribute("x", c.width / 2);
+    t.setAttribute("y", cy);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = lines[i];
+    g.appendChild(t);
+    cy += i === 0 ? 14 : 13;
+  }
+
+  // ms / iter
+  if (ms != null && ms > 0) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("class", "node-ms");
+    t.setAttribute("x", c.width / 2);
+    t.setAttribute("y", c.height - 6);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = `${ms.toFixed(2)} ms / iter`;
+    g.appendChild(t);
+  } else if (n.note) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("class", "node-note");
+    t.setAttribute("x", c.width / 2);
+    t.setAttribute("y", c.height - 6);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = n.note;
+    g.appendChild(t);
+  }
+
+  // drill 角标 (右上)
+  if (n.drill) {
+    const dg = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    dg.setAttribute("class", "drill-mark");
+    dg.setAttribute("transform", `translate(${c.width - 14}, 4)`);
+    const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    r.setAttribute("width", 10); r.setAttribute("height", 10);
+    r.setAttribute("rx", 2); r.setAttribute("fill", "var(--link)");
+    dg.appendChild(r);
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", 5); t.setAttribute("y", 8);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = "↳";
+    dg.appendChild(t);
+    g.appendChild(dg);
+  }
+
+  g.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    SELECTED = {view: viewName, nodeId: n.id};
+    // 总是先显示 detail (block aggregate 也需要看), drill 通过 detail 里
+    // 的大 button 或者下面的双击 / shift+click 触发.
+    renderView();
+    showDetail(n, viewName);
+  });
+  g.addEventListener("dblclick", (ev) => {
+    ev.stopPropagation();
+    if (n.drill) drillFrom(viewName, n.id, n.drill);
+  });
+
+  root.appendChild(g);
+}
+
+function drawShape(g, kind, w, h) {
+  const ns = "http://www.w3.org/2000/svg";
+  let bg;
+  if (kind === "norm") {
+    // 六边形
+    const k = 10;
+    bg = document.createElementNS(ns, "polygon");
+    bg.setAttribute("points",
+      `${k},0 ${w-k},0 ${w},${h/2} ${w-k},${h} ${k},${h} 0,${h/2}`);
+  } else if (kind === "elem") {
+    // 圆角矩形 with chamfer
+    bg = document.createElementNS(ns, "rect");
+    bg.setAttribute("rx", 12); bg.setAttribute("ry", 12);
+    bg.setAttribute("width", w); bg.setAttribute("height", h);
+  } else if (kind === "io") {
+    // 平行四边形
+    const sk = 8;
+    bg = document.createElementNS(ns, "polygon");
+    bg.setAttribute("points",
+      `${sk},0 ${w},0 ${w-sk},${h} 0,${h}`);
+  } else if (kind === "cache") {
+    // cylinder approx (圆角矩形 + 顶部椭圆)
+    bg = document.createElementNS(ns, "rect");
+    bg.setAttribute("rx", h/4); bg.setAttribute("ry", h/4);
+    bg.setAttribute("width", w); bg.setAttribute("height", h);
+  } else if (kind === "attn") {
+    bg = document.createElementNS(ns, "rect");
+    bg.setAttribute("rx", 4); bg.setAttribute("ry", 4);
+    bg.setAttribute("width", w); bg.setAttribute("height", h);
+  } else if (kind === "moe" || kind === "block") {
+    bg = document.createElementNS(ns, "rect");
+    bg.setAttribute("rx", 6); bg.setAttribute("ry", 6);
+    bg.setAttribute("width", w); bg.setAttribute("height", h);
+  } else {
+    // gemm + default
+    bg = document.createElementNS(ns, "rect");
+    bg.setAttribute("rx", 2); bg.setAttribute("ry", 2);
+    bg.setAttribute("width", w); bg.setAttribute("height", h);
+  }
+  bg.setAttribute("class", "node-bg");
+  g.appendChild(bg);
+}
+
+// ============================================================
+// profile lookup
+// ============================================================
+function nodeMs(n, viewName) {
+  const e = DATA.enriched[viewName];
+  if (!e) return null;
+  const np = (e.nodes_profile || {})[n.id];
+  if (!np) return null;
+  const prof = np[CURRENT_PROFILE];
+  if (!prof) return null;
+  if (CURRENT_VARIANT in prof) return prof[CURRENT_VARIANT].ms_per_iter;
+  if ("ALL" in prof) return prof["ALL"].ms_per_iter;
+  const vals = Object.values(prof).map(x => x.ms_per_iter);
+  return vals.length ? Math.max(...vals) : null;
+}
+
+function heatLevel(ms, viewName) {
+  if (ms == null) return null;
+  const e = DATA.enriched[viewName];
+  if (!e) return null;
+  let mx = 0;
+  for (const np of Object.values(e.nodes_profile || {})) {
+    const prof = np[CURRENT_PROFILE]; if (!prof) continue;
+    const v = (prof[CURRENT_VARIANT] || prof.ALL || {}).ms_per_iter;
+    if (v && v > mx) mx = v;
+  }
+  if (mx <= 0) return null;
+  const r = ms / mx;
+  if (r >= 0.6) return "heat-hot";
+  if (r >= 0.25) return "heat-warm";
+  return null;
+}
+
+// ============================================================
+// 详情面板
+// ============================================================
+function showDetail(n, viewName) {
+  const ms = nodeMs(n, viewName);
+  const e = DATA.enriched[viewName];
+  const np = (e?.nodes_profile || {})[n.id] || {};
+  const profCur = np[CURRENT_PROFILE] || {};
+
+  const variants = Object.keys(profCur).map(k => `<span class="badge ${k.toLowerCase()}">${k}: ${profCur[k].ms_per_iter.toFixed(2)} ms</span>`).join(" ");
+
+  const codeLinks = (n.code_links || []).map(c => {
+    // 兼容旧格式 (字符串) + 新格式 (对象 {raw,file,line,url,display})
+    if (typeof c === "string") {
+      return `<span class="codelink">${escapeHtml(c)}</span>`;
+    }
+    const disp = escapeHtml(c.display || c.raw || "");
+    const tip  = escapeHtml(c.raw || "");
+    if (c.url) {
+      return `<a class="codelink" href="${escapeHtml(c.url)}" target="_blank" rel="noopener" title="${tip}">${disp}</a>`;
+    }
+    return `<span class="codelink" title="${tip}">${disp}</span>`;
+  }).join("");
+
+  const stageRows = (n.stage_keys || []).map(sk => {
+    const s = DATA.stages[sk]; if (!s) return "";
+    return `<tr><td class="name">${escapeHtml(s.label)}</td><td class="name" style="color:var(--muted)">${(s.trace_aliases||[]).join(", ")}</td></tr>`;
+  }).join("");
+
+  // 当前 variant cell (HCA 或 CSA, 取决于 user toggle)
+  const cell = profCur[CURRENT_VARIANT] || profCur.ALL;
+  const isAggregate = !!(cell && cell.from_aggregate);
+
+  // 整个 block aggregate ms (用作"% of block"分母)
+  const blockMs = cell && cell.ms_per_iter ? cell.ms_per_iter : (ms || 0);
+
+  // kernels (top kernels for this node / aggregate)
+  // 加 "% of block" 列 = kernel.total_us / blockMs / 10
+  let kernelsHtml = "";
+  if (cell && cell.kernels && cell.kernels.length) {
+    const rows = cell.kernels.map(k => {
+      const inStage = k.share_in_stage_pct;
+      const inBlock = blockMs > 0 ? (k.total_us / 1000 / blockMs * 100) : 0;
+      return `<tr>
+        <td class="name" title="${escapeHtml(k.name)}">${escapeHtml(shorten(k.name, 50))}</td>
+        <td>${k.count}</td>
+        <td>${k.avg_us.toFixed(1)}</td>
+        <td>${(k.total_us/1000).toFixed(2)}</td>
+        <td title="this kernel's share within its parent stage">${inStage != null ? inStage.toFixed(0) : ""}%</td>
+        <td title="this kernel's share of the whole block ms">${inBlock.toFixed(1)}%</td>
+      </tr>`;
+    }).join("");
+    const ttl = isAggregate
+      ? `kernels in <b>${escapeHtml(n.drill || "this block")}</b> (${CURRENT_VARIANT}, top ${cell.kernels.length})`
+      : `kernels (${CURRENT_VARIANT})`;
+    kernelsHtml = `<h3>${ttl}</h3>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:4px">
+        <b>%-stage</b>: kernel ms / parent stage ms &nbsp;·&nbsp;
+        <b>%-block</b>: kernel ms / block total ms (${blockMs.toFixed(1)} ms)
+      </div>
+      <table class="kernels"><thead><tr>
+        <th>name</th><th>cnt</th><th>avg µs</th><th>total ms</th>
+        <th title="kernel's share within its parent stage">%-stage</th>
+        <th title="kernel's share of whole block ms">%-block</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // children breakdown (drill view 内部的 sub-node ms 分布, 含 module 子节点)
+  let childrenHtml = "";
+  if (cell && cell.children && cell.children.length) {
+    // 检查 children 是否覆盖 block ms; 若不全 (e.g. 某些 leaf 没 stage_keys), 提示用户
+    const childSum = cell.children.reduce((a, c) => a + c.ms, 0);
+    const coverPct = blockMs > 0 ? (childSum / blockMs * 100) : 0;
+    const coverWarn = coverPct < 90
+      ? ` <span style="color:var(--muted)">(only ${coverPct.toFixed(0)}% covered — some sub-nodes lack stage_keys)</span>`
+      : "";
+
+    const rows = cell.children.map(c => {
+      const kindBadge = c.kind === "module"
+        ? '<span style="background:#e0e7ef; color:#1565c0; padding:0 4px; border-radius:2px; font-size:9px; margin-right:4px">M</span>'
+        : '<span style="background:#f0f0f0; color:#666; padding:0 4px; border-radius:2px; font-size:9px; margin-right:4px">L</span>';
+      return `<tr>
+        <td class="name" title="${escapeHtml(c.label)}">${kindBadge}${escapeHtml(shorten(c.label, 38))}</td>
+        <td style="text-align:right">${c.ms.toFixed(2)}</td>
+        <td style="text-align:right">${c.share_pct.toFixed(1)}%</td>
+        <td><div style="background:var(--link); height:6px; width:${Math.max(2, Math.round(c.share_pct))}%; border-radius:2px;"></div></td>
+      </tr>`;
+    }).join("");
+    childrenHtml = `<h3>internal breakdown (${CURRENT_VARIANT})</h3>
+      <div style="font-size:11px; color:var(--muted); margin-bottom:4px">
+        share = sub-block ms / block total (${blockMs.toFixed(1)} ms)${coverWarn}<br/>
+        <span style="opacity:0.85">L = leaf op (kernel-level), M = module (drillable, ms = sum of its children)</span>
+      </div>
+      <table class="kernels"><thead><tr>
+        <th>sub-block</th><th>ms</th><th>%-block</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // drill big button (only if drillable)
+  const drillBtn = n.drill
+    ? `<div style="margin: 10px 0;">
+         <a class="drill-button" href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">
+           Open <b>${escapeHtml(n.drill)}</b> →
+         </a>
+       </div>`
+    : "";
+
+  // ms badge (含 aggregate 标记)
+  const msBadge = ms != null
+    ? `${ms.toFixed(2)} ms${isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : ''}`
+    : "—";
+
+  document.getElementById("detail").innerHTML = `
+    <h2>${escapeHtml(n.label || n.id)}</h2>
+    ${variants ? `<div style="margin-bottom:8px">${variants}</div>` : ""}
+    <div class="kv">
+      <div class="k">id</div><div>${escapeHtml(n.id)}</div>
+      <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
+      ${n.drill ? `<div class="k">drill →</div><div><a href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">${n.drill}</a></div>` : ""}
+      <div class="k">profile</div><div>${escapeHtml(CURRENT_PROFILE)}</div>
+      <div class="k">ms (cur)</div><div>${msBadge}</div>
+    </div>
+    ${drillBtn}
+    ${n.short_doc ? `<h3>about</h3><div style="color:var(--muted); white-space: pre-wrap">${escapeHtml(n.short_doc)}</div>` : ""}
+    ${n.note ? `<h3>note</h3><div style="color:var(--muted)">${escapeHtml(n.note)}</div>` : ""}
+    ${codeLinks ? `<h3>code links</h3><div>${codeLinks}</div>` : ""}
+    ${childrenHtml}
+    ${stageRows ? `<h3>stages</h3><table class="kernels"><thead><tr><th class="name">label</th><th class="name">trace alias</th></tr></thead><tbody>${stageRows}</tbody></table>` : ""}
+    ${kernelsHtml}
+  `;
+}
+
+window.drillTo = drillTo;
+window.drillFrom = drillFrom;
+
+// ============================================================
+// pan / zoom (CSS transform on svg-root)
+// ============================================================
+let PAN = {x: 0, y: 0, scale: 1};
+function applyPan() {
+  const root = document.getElementById("svg-root");
+  root.setAttribute("transform", `translate(${PAN.x},${PAN.y}) scale(${PAN.scale})`);
+}
+function fitToSvg() {
+  PAN = {x: 0, y: 0, scale: 1};
+  applyPan();
+  // 让 viewBox 自动重设, 触发 SVG preserveAspectRatio 居中
+  // 不需做更多, viewBox 已经在 drawAllViews 里按总宽度算好了.
+}
+
+function enablePanZoom() {
+  const svg = document.getElementById("svg-host");
+  let dragging = false; let last = null;
+  svg.addEventListener("mousedown", (e) => {
+    if (e.target === svg || e.target.id === "svg-root") {
+      dragging = true; last = {x: e.clientX, y: e.clientY};
+    }
+  });
+  window.addEventListener("mouseup", () => dragging = false);
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    PAN.x += (e.clientX - last.x) / PAN.scale;
+    PAN.y += (e.clientY - last.y) / PAN.scale;
+    last = {x: e.clientX, y: e.clientY};
+    applyPan();
+  });
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const old = PAN.scale;
+    const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
+    PAN.scale = Math.max(0.3, Math.min(3, PAN.scale * factor));
+    // 简单缩放, 不做 around-cursor
+    applyPan();
+  }, {passive: false});
+}
+
+// ============================================================
+// utils
+// ============================================================
+function shorten(s, n) { return s.length <= n ? s : s.slice(0, n-3) + "..."; }
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+</script>
+</body>
+</html>
