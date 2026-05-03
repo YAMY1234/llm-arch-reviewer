@@ -998,7 +998,7 @@
           "id": "csa_mqa_in",
           "label": "x [B,S,D]",
           "shape": "io",
-          "note": "input is [B,S,D] (mHC pre 已合并)"
+          "note": "input is [B,S,D] (mHC pre already merged)"
         },
         {
           "id": "csa_qkv_a_fuse",
@@ -3525,7 +3525,7 @@
       "trace_aliases": [
         "1_mhc_pre"
       ],
-      "description": "manifold constrained Hyper-Connection 的前置步骤: per-token 的\nsqrsum + RMS-norm + gate proj 的融合 (mhc_pre_big_fuse_tilelang_kernel).\nsglang 当前默认走 SGLANG_OPT_USE_TILELANG_MHC_PRE = True, 比 vllm 用的\ndeep_gemm tf32 prenorm 慢 ~3x.\n"
+      "description": "Manifold-constrained Hyper-Connection prelude: per-token fused\nsqrsum + RMS-norm + gate-proj (mhc_pre_big_fuse_tilelang_kernel).\nsglang default is SGLANG_OPT_USE_TILELANG_MHC_PRE=True, ~3x slower\nthan the deep_gemm tf32 prenorm path used by vllm.\n"
     },
     "hc_post": {
       "id": "hc_post",
@@ -3551,7 +3551,7 @@
       "trace_aliases": [
         "5_attn_output_proj"
       ],
-      "description": "attn output projection. prefill 里这一步 245 ms / iter, 占 19.93%, 因为\ncuBLAS 走 nvjet kernel 而非 deep_gemm fast path.\n"
+      "description": "Attention output projection. Prefill: 245 ms / iter (19.93% of total),\nbecause cuBLAS dispatches to nvjet kernel instead of the deep_gemm fast path.\n"
     },
     "compressor_kv_score_proj": {
       "id": "compressor_kv_score_proj",
@@ -3562,7 +3562,7 @@
         "3b_compressor_kernel",
         "3_compressor"
       ],
-      "description": "wkv_gate 的 GEMM (Wkv 和 Wgate 融成一个 ReplicatedLinear), 以及\nratio-gated 的 flash_c128 / flash_c4 kernel.\nprefill HCA: 4.05+22.02 = 26.07 ms (主 + indexer-内嵌 双份 compressor).\n"
+      "description": "wkv_gate GEMM (Wkv + Wgate fused into a single ReplicatedLinear), plus the\nratio-gated flash_c128 / flash_c4 kernels.\nPrefill HCA: 4.05 + 22.02 = 26.07 ms (main + indexer-embedded compressor).\n"
     },
     "sparse_mla_attn": {
       "id": "sparse_mla_attn",
@@ -3571,7 +3571,7 @@
       "trace_aliases": [
         "4c_sparse_mla_attn"
       ],
-      "description": "flash_fwd_splitkv_mla_fp8_sparse_kernel + combine.\nprefill HCA 占 321 ms / iter, decode HCA 占 14.5 ms.\n"
+      "description": "flash_fwd_splitkv_mla_fp8_sparse_kernel + combine.\nPrefill HCA: 321 ms / iter; decode HCA: 14.5 ms.\n"
     },
     "indexer": {
       "id": "indexer",
@@ -3581,7 +3581,7 @@
         "4_indexer",
         "4a_indexer_python"
       ],
-      "description": "C4Indexer 算 query×index_k, top-K, 给 sparse-MLA 的 indices.\nprefill HCA 这一段 109 ms python+kernel, decode HCA 10.8 ms.\n"
+      "description": "C4Indexer computes query × index_k, then top-K to produce the sparse-MLA\nindices. Prefill HCA: 109 ms (python + kernel); decode HCA: 10.8 ms.\n"
     },
     "moe_topk": {
       "id": "moe_topk",
@@ -3606,7 +3606,7 @@
       "trace_aliases": [
         "7c_moe_mega_dispatch"
       ],
-      "description": "最大头. prefill 460 ms / iter / layer-type. sglang 用 deepep + mega-moe\nfuse, 单 kernel 完成 dispatch + GEMM + combine.\n"
+      "description": "Single largest stage. Prefill: 460 ms / iter / layer-type. sglang uses\ndeepep + mega-moe fuse: a single kernel does dispatch + GEMM + combine.\n"
     },
     "residual_ln": {
       "id": "residual_ln",
@@ -3742,7 +3742,7 @@
         "variant": "pdf_dlsim",
         "config": "v4_pro",
         "phase": "prefill",
-        "setup": "DLSim projection (V4-Pro Ctx, GB300, BS=1, 8k input). 手填 placeholder.",
+        "setup": "DLSim projection (V4-Pro Ctx, GB300, BS=1, 8k input). Hand-filled placeholder.",
         "pdf_ref": "DeepSeek V4 perf study.pdf table p.??"
       },
       "data": {
@@ -3781,7 +3781,7 @@
         "attn_output_proj": {
           "ALL": {
             "ms_per_iter": 200.0,
-            "notes": "PDF spec 用 deep_gemm fast path (bf16 cast→fp4)"
+            "notes": "PDF spec uses deep_gemm fast path (bf16 cast → fp4)"
           }
         },
         "moe_dispatch_combine": {
