@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "implementation-binding.schema.json",
+  "title": "llm-arch-reviewer implementation binding",
+  "type": "object",
+  "required": ["schema_version", "implementation_id", "label", "model_id", "execution_path_id", "source_repo", "source_commit", "node_bindings"],
+  "properties": {
+    "schema_version": {"const": "implementation-binding.v2"},
+    "implementation_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "label": {"type": "string"},
+    "model_id": {"type": "string"},
+    "execution_path_id": {"type": "string"},
+    "source_repo": {"type": "string", "format": "uri"},
+    "source_commit": {"type": ["string", "integer"]},
+    "container": {"type": "string"},
+    "backend": {"type": "string"},
+    "extends": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9_.-]+$",
+      "description": "Implementation whose source bindings are reused on matching nodes before local overrides are applied."
+    },
+    "node_bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "symbols": {"type": "array", "items": {"type": "string"}},
+          "kernel_signatures": {"type": "array", "items": {"type": "string"}},
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file", "symbol"],
+              "properties": {
+                "file": {"type": "string"},
+                "symbol": {"type": "string"},
+                "line": {"type": "integer", "minimum": 1},
+                "line_end": {"type": "integer", "minimum": 1},
+                "display": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

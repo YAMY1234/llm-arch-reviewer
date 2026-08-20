@@ -1,0 +1,141 @@
+schema_version: execution-plan.v2
+execution_path_id: tp_only
+label: Pure tensor parallel
+model_id: qwen40
+plan_version: 1
+
+parallelism_axes:
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  tp_size: parameterized
+
+default_parameters:
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+constraints:
+  tp_size_min: 2
+
+transforms:
+  - op: annotate_node
+    target: top.embedding
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocab_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: top.embedding
+    node:
+      id: tp_embedding_collective
+      label: "TP token-embedding collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.token_embedding_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+    edge: {shape: "[B,T,H]", dtype: bf16}
+
+  - op: annotate_node
+    target: top.lm_head
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocab_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: top.lm_head
+    node:
+      id: tp_logits_collective
+      label: "TP logits collective\nall-gather"
+      shape: elem
+      semantic_op: execution.tp.logits_collective
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP}
+    edge: {shape: "[B,T,V]", dtype: bf16}
+
+  - op: annotate_node
+    target: ple.ngram_embedding
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocab_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: ple.ngram_embedding
+    node:
+      id: tp_embedding_collective
+      label: "TP N-gram embedding collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.ple_embedding_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+    edge: {dtype: bf16}
+
+  - op: annotate_node
+    target: linear_attention.qkvz_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: output_features_sharded, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: linear_attention.ba_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: output_features_sharded, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: linear_attention.output_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_features_sharded, parallelism: row_parallel}
+
+  - op: insert_after
+    after: linear_layer.linear_attention
+    node:
+      id: tp_attention_collective
+      label: "TP attention output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.linear_attention_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+    edge: {shape: "[B,T,H]", dtype: bf16}
+
+  - op: annotate_node
+    target: qsa_attention.qkv_gate_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: attention_heads_sharded, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: qsa_attention.indexer
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP}
+
+  - op: annotate_node
+    target: qsa_attention.output_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: attention_heads_sharded, parallelism: row_parallel}
+
+  - op: insert_after
+    after: full_layer.qsa_attention
+    node:
+      id: tp_attention_collective
+      label: "TP attention output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.qsa_attention_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+    edge: {shape: "[B,T,H]", dtype: bf16}
+
+  - op: annotate_node
+    target: moe.router
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP}
+
+  - op: annotate_node
+    target: moe.routed_experts
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: expert_hidden_sharded, parallelism: TP}
+
+  - op: annotate_node
+    target: moe.shared_expert
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: hidden_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: moe.combine
+    node:
+      id: tp_output_collective
+      label: "TP MoE output collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+    edge: {shape: "[B,T,H]", dtype: bf16}

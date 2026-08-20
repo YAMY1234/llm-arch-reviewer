@@ -24,6 +24,7 @@ This tool makes the mapping clickable:
 | model | status | notes |
 |-------|--------|-------|
 | [DeepSeek-V4](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=dsv4) | ✅ live | 62-layer (30 CSA + 31 HCA + 1 SWA + NextN), sparse-MLA, MoE, mHC |
+| [Qwen 4.0 Air Example IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen40_v2) | ✅ profiled | stable 48-layer Model IR + pure TP4, Attention DP4, and DP4/EP4 DeepEP paths + pinned SGLang bindings + GB300 CUDA Graph BS1/16/64/256 overlays |
 | Qwen3.5 | planned | |
 | Llama-4 | planned | |
 
@@ -62,12 +63,48 @@ pip install pyyaml
 
 # rebuild data for one model
 python3 models/dsv4/build/build_view.py
+python3 scripts/build_v2.py --model qwen40
 
 # serve docs/ locally (CORS-safe)
 python3 -m http.server -d docs 8765
 open http://localhost:8765/                              # landing
 open 'http://localhost:8765/viewer.html?model=dsv4'      # one model
+open 'http://localhost:8765/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
 ```
+
+## IR-first V2
+
+V2 makes four independently versioned documents explicit:
+
+1. **Model IR** owns stable semantic nodes, symbolic shapes, and data flow.
+2. **Execution Plan** derives topology-specific sharding, placement, and
+   collectives. Pure TP remains the default path.
+3. **Implementation Binding** maps execution nodes to symbols and kernel
+   signatures for one exact source commit.
+4. **Profile** attaches measurements to existing nodes for one exact execution,
+   implementation, hardware, and workload. It cannot create architecture.
+
+```text
+Model IR + Execution Plan -> fingerprinted Execution IR
+Execution IR + Binding + Profile -> static viewer bundle
+```
+
+The viewer exposes execution, implementation, profile, and profile-variant
+selectors for V2 bundles while remaining compatible with legacy bundles.
+
+To add a profile, place an immutable `profile.v2` YAML under the matching
+`catalog/<model>/profiles/<execution_path>/<implementation>/` directory and
+rebuild. If the trace has the same execution fingerprint, no diagram changes.
+Create a new execution plan only when operator flow, sharding, placement, or
+collectives change.
+
+The Qwen 4.0 reference build is:
+
+```bash
+python3 scripts/build_v2.py --model qwen40
+```
+
+Schema documentation lives in `schema/v2/`.
 
 ## Adding a new model
 
@@ -123,6 +160,7 @@ also computes **aggregate ms** for any node that has `drill:`.
 - **layout** — [ELK.js](https://github.com/kieler/elkjs) `org.eclipse.elk.layered`
   (orthogonal routing)
 - **rendering** — pure SVG, no framework
+- **V2 compiler** — Python + PyYAML, deterministic execution fingerprinting
 - **data pipeline** — Python + PyYAML, ~600 LoC
 
 No backend, no build step at deploy time — `docs/` is the entirety of the

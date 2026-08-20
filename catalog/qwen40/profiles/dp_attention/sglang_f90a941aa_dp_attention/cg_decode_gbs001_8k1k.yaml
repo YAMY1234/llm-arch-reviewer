@@ -1,0 +1,428 @@
+schema_version: profile.v2
+profile_id: qwen40_dp_attention_cg_decode_gbs1_8k1k
+label: GB300 · Attention DP4 · TP MoE · CUDA Graph decode · global BS1 · 8k→1k
+model_id: qwen40
+execution_path_id: dp_attention
+implementation_id: sglang_f90a941aa_dp_attention
+variant_id: dp_attention_cg_decode_gbs1_8k1k
+phase: decode
+execution_parameters:
+  tp_size: 4
+  dp_size: 4
+  cp_size: 1
+  ep_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+  cluster: CMH
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 1
+  batch_size_scope: global_request_count
+  concurrency: 1
+  warmup_rounds: 3
+  formal_rounds: 1
+  prompt_source: deterministic-random-ids
+  prompt_seed: 20260819
+  cache_policy: radix-disabled; flush-before-each-case
+  requested_chunked_prefill_size: 8192
+  resolved_chunked_prefill_size: 2048
+  max_prefill_tokens: 8192
+profiler:
+  type: torch
+  rank: all
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: true
+  captured_steps_per_rank: 6
+  selected_iterations: 5
+  skipped_first_profile_step: 1
+  with_stack: false
+  record_shapes: false
+  capture_gate:
+    global_running_reqs: 1
+    global_waiting_reqs: 0
+    global_waiting_uncached_tokens: 0
+  gpu_metric_semantics: maximum per-rank kernel residency; parallel ranks are not
+    summed
+evidence:
+  job_id: 3176720
+  source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+  model_revision: b151fd157ff99b63198ab8558432f0bf43e14d58
+  gdn_backend: triton
+  trace_files:
+  - rank: 0
+    file: qwen40-dp_attention-cudagraph-gbs1-qwen40-dp_attention-cudagraph-gbs1-TP-0-DP-0.trace.json.gz
+    sha256: 6f277d5d099c72a8211856a42f202fd01ad6614496d650cbd12b975511882f72
+  - rank: 1
+    file: qwen40-dp_attention-cudagraph-gbs1-qwen40-dp_attention-cudagraph-gbs1-TP-1-DP-1.trace.json.gz
+    sha256: 11b83294baca1543ce9054066c108c6d6d909e0199d5f991350595a2b82d47ad
+  - rank: 2
+    file: qwen40-dp_attention-cudagraph-gbs1-qwen40-dp_attention-cudagraph-gbs1-TP-2-DP-2.trace.json.gz
+    sha256: 645993051540a41ddaec064c4c3a4ee6392908925383d1b1473198a9442810c3
+  - rank: 3
+    file: qwen40-dp_attention-cudagraph-gbs1-qwen40-dp_attention-cudagraph-gbs1-TP-3-DP-3.trace.json.gz
+    sha256: 598da8e0f8e26c858de9e1987e936d74bd57e1ee533982e171208e10ccb48f13
+  eager_mapping_file: kernel_mapping.tp3.jsonl
+  eager_mapping_sha256: 8484dfbc6dd5f7f317f48ebb4ec44ade741eda06080c0a1d50658b0a57b6f08a
+  mapping_policy: unique kernel signatures plus eager-stack-validated collective order
+  mapped_kernel_duration_ratio: 0.695708
+  critical_decode_step_ms:
+    samples:
+    - 8.147772
+    - 8.160826
+    - 8.157696
+    - 8.144794
+    - 8.187998
+    mean: 8.159817
+    median: 8.157696
+    min: 8.144794
+    max: 8.187998
+  formal_request:
+    latency: 10.06464950600639
+    last_ttft: 0.9027769289677963
+    input_throughput: 9074.2239163848
+    output_throughput: 111.76754439549181
+    overall_throughput: 915.6801729161127
+    started_at_unix: 1787219508.5216613
+    finished_at_unix: 1787219518.6328332
+node_metrics:
+  full_layer.dp_moe_input_gather:
+    ms_per_iter: 0.365154
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.123572
+    - 0.365154
+    kernels:
+    - name: collective (eager-validated order)
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 30.429
+      total_us_per_iter: 365.154
+      share_in_node_pct: 100.0
+  hyperconnection.combine:
+    ms_per_iter: 0.917257
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.897598
+    - 0.917257
+    kernels:
+    - name: hyper-connection combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 9.555
+      total_us_per_iter: 917.257
+      share_in_node_pct: 100.0
+  hyperconnection.mix:
+    ms_per_iter: 1.208439
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 1.195153
+    - 1.208439
+    kernels:
+    - name: hyper-connection mix
+      count: 485
+      count_per_iter: 97.0
+      avg_us: 12.458
+      total_us_per_iter: 1208.439
+      share_in_node_pct: 100.0
+  linear_attention.causal_conv:
+    ms_per_iter: 0.11913
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.058068
+    - 0.11913
+    kernels:
+    - name: GDN causal-conv update
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 3.309
+      total_us_per_iter: 119.13
+      share_in_node_pct: 100.0
+  linear_attention.delta_rule:
+    ms_per_iter: 0.197639
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.059674
+    - 0.197639
+    kernels:
+    - name: GDN recurrent delta rule
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 5.49
+      total_us_per_iter: 197.639
+      share_in_node_pct: 100.0
+  linear_attention.gated_norm:
+    ms_per_iter: 0.07193
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.069076
+    - 0.07193
+    kernels:
+    - name: GDN gated RMSNorm
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.998
+      total_us_per_iter: 71.93
+      share_in_node_pct: 100.0
+  linear_attention.split_pack:
+    ms_per_iter: 0.102099
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.096858
+    - 0.102099
+    kernels:
+    - name: GDN split+pack
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.836
+      total_us_per_iter: 102.099
+      share_in_node_pct: 100.0
+  linear_layer.dp_moe_input_gather:
+    ms_per_iter: 0.804515
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.368712
+    - 0.804515
+    kernels:
+    - name: collective (eager-validated order)
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 22.348
+      total_us_per_iter: 804.515
+      share_in_node_pct: 100.0
+  moe.combine:
+    ms_per_iter: 0.390671
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.367458
+    - 0.390671
+    kernels:
+    - name: MoE routed-expert finalize
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 5.746
+      total_us_per_iter: 275.829
+      share_in_node_pct: 70.6
+    - name: MoE shared/routed combine
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 2.393
+      total_us_per_iter: 114.842
+      share_in_node_pct: 29.4
+  moe.routed_experts:
+    ms_per_iter: 1.413669
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 1.357834
+    - 1.413669
+    kernels:
+    - name: MoE routed-expert GEMM
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 14.726
+      total_us_per_iter: 1413.669
+      share_in_node_pct: 100.0
+  moe.shared_expert:
+    ms_per_iter: 0.179168
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.154523
+    - 0.179168
+    kernels:
+    - name: MoE shared-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 3.733
+      total_us_per_iter: 179.168
+      share_in_node_pct: 100.0
+  moe.topk:
+    ms_per_iter: 0.282612
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.266657
+    - 0.282612
+    kernels:
+    - name: MoE top-k routing
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 5.888
+      total_us_per_iter: 282.612
+      share_in_node_pct: 100.0
+  moe.tp_output_collective:
+    ms_per_iter: 0.35369
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.197851
+    - 0.35369
+    kernels:
+    - name: collective (eager-validated order)
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 7.369
+      total_us_per_iter: 353.69
+      share_in_node_pct: 100.0
+  ple.dp_ngram_input_gather:
+    ms_per_iter: 0.031732
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.008045
+    - 0.031732
+    kernels:
+    - name: collective (eager-validated order)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 31.732
+      total_us_per_iter: 31.732
+      share_in_node_pct: 100.0
+  ple.tp_embedding_collective:
+    ms_per_iter: 0.00473
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.003834
+    - 0.00473
+    kernels:
+    - name: collective (eager-validated order)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 4.73
+      total_us_per_iter: 4.73
+      share_in_node_pct: 100.0
+  qsa_attention.attention_core:
+    ms_per_iter: 0.196193
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.16875
+    - 0.196193
+    kernels:
+    - name: QSA sparse attention
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 10.454
+      total_us_per_iter: 125.453
+      share_in_node_pct: 63.94
+    - name: QSA compact KV
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 3.894
+      total_us_per_iter: 46.733
+      share_in_node_pct: 23.82
+    - name: QSA valid-count preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.606
+      total_us_per_iter: 19.271
+      share_in_node_pct: 9.82
+    - name: QSA graph layout
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 4.736
+      total_us_per_iter: 4.736
+      share_in_node_pct: 2.41
+  qsa_attention.indexer:
+    ms_per_iter: 0.243566
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.168986
+    - 0.243566
+    kernels:
+    - name: QSA index top-k
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 7.321
+      total_us_per_iter: 87.853
+      share_in_node_pct: 36.07
+    - name: QSA index query prep
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 5.6
+      total_us_per_iter: 67.194
+      share_in_node_pct: 27.59
+    - name: QSA index key compression
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 4.964
+      total_us_per_iter: 59.565
+      share_in_node_pct: 24.46
+    - name: QSA block-index expansion
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.413
+      total_us_per_iter: 28.954
+      share_in_node_pct: 11.89
+  qsa_attention.kv_cache:
+    ms_per_iter: 0.022656
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.015693
+    - 0.022656
+    kernels:
+    - name: QSA KV-cache store
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.888
+      total_us_per_iter: 22.656
+      share_in_node_pct: 100.0
+  qsa_attention.qk_norm_rope:
+    ms_per_iter: 0.030727
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.029824
+    - 0.030727
+    kernels:
+    - name: QSA Q/K norm + RoPE
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.561
+      total_us_per_iter: 30.727
+      share_in_node_pct: 100.0
+  top.dp_logits_input_gather:
+    ms_per_iter: 0.008627
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.003418
+    - 0.008627
+    kernels:
+    - name: collective (eager-validated order)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 8.627
+      total_us_per_iter: 8.627
+      share_in_node_pct: 100.0
+  top.tp_logits_collective:
+    ms_per_iter: 0.010317
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.009127
+    - 0.010317
+    kernels:
+    - name: collective (eager-validated order)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 10.317
+      total_us_per_iter: 10.317
+      share_in_node_pct: 100.0

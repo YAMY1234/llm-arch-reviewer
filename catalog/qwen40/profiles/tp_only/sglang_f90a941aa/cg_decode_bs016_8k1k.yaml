@@ -1,0 +1,300 @@
+schema_version: profile.v2
+profile_id: qwen40_tp4_cg_decode_bs16_8k1k
+label: GB300 · pure TP4 · CUDA Graph decode · BS16 · 8k→1k
+model_id: qwen40
+execution_path_id: tp_only
+implementation_id: sglang_f90a941aa
+variant_id: cg_decode_bs16_8k1k
+phase: decode
+execution_parameters:
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+  cluster: CMH
+  slurm_node: nvl72d090-T11
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 16
+  concurrency: 16
+  warmup_rounds: 3
+  formal_rounds: 1
+  prompt_source: deterministic-random-ids
+  prompt_seed: 20260819
+  cache_policy: flush-before-each-case
+  chunked_prefill_size: 8192
+  max_prefill_tokens: 8192
+profiler:
+  type: torch
+  rank: 0
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: true
+  captured_steps: 6
+  selected_iterations: 5
+  skipped_first_profile_step: 1
+  with_stack: false
+  record_shapes: false
+  capture_gate:
+    num_running_reqs: 16
+    num_waiting_reqs: 0
+    num_waiting_uncached_tokens: 0
+  gpu_metric_semantics: aggregate kernel residency per decode iteration
+evidence:
+  job_id: 3175748
+  source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+  model_revision: b151fd157ff99b63198ab8558432f0bf43e14d58
+  trace_file: qwen40-tp4-cudagraph-bs16-qwen40-tp4-cudagraph-bs16-TP-0.trace.json.gz
+  trace_sha256: 04e6f6a6edae7059cf504b3b889e1a6373c199c99356486258c49b209883e080
+  trace_step_name: step[DECODE bs=16]
+  validated_tp_rank_count: 4
+  mapping_policy: high-confidence signatures plus eager-validated TP collective order
+  mapped_kernel_duration_ratio: 0.75433
+  decode_step_ms:
+    samples:
+    - 8.345364
+    - 8.385365
+    - 8.427669
+    - 8.664887
+    - 8.678904
+    mean: 8.500438
+    median: 8.427669
+    min: 8.345364
+    max: 8.678904
+  formal_request:
+    latency: 14.357799978926778
+    last_ttft: 3.9169254929292947
+    input_throughput: 33462.98014516918
+    output_throughput: 1569.2172166204077
+    overall_throughput: 10270.09710515706
+    started_at_unix: 1787215692.26449
+    finished_at_unix: 1787215706.7489738
+node_metrics:
+  full_layer.tp_attention_collective:
+    ms_per_iter: 0.061088
+    kernels:
+    - name: TP all-reduce
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 5.091
+      total_us_per_iter: 61.088
+      share_in_node_pct: 100.0
+  hyperconnection.combine:
+    ms_per_iter: 0.765606
+    kernels:
+    - name: hyper-connection combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 7.975
+      total_us_per_iter: 765.606
+      share_in_node_pct: 100.0
+  hyperconnection.mix:
+    ms_per_iter: 1.239212
+    kernels:
+    - name: hyper-connection mix
+      count: 485
+      count_per_iter: 97.0
+      avg_us: 12.775
+      total_us_per_iter: 1239.212
+      share_in_node_pct: 100.0
+  linear_attention.causal_conv:
+    ms_per_iter: 0.116231
+    kernels:
+    - name: GDN causal-conv update
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 3.229
+      total_us_per_iter: 116.231
+      share_in_node_pct: 100.0
+  linear_attention.delta_rule:
+    ms_per_iter: 0.276956
+    kernels:
+    - name: GDN recurrent delta rule
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 7.693
+      total_us_per_iter: 276.956
+      share_in_node_pct: 100.0
+  linear_attention.gated_norm:
+    ms_per_iter: 0.076301
+    kernels:
+    - name: GDN gated RMSNorm
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.119
+      total_us_per_iter: 76.301
+      share_in_node_pct: 100.0
+  linear_attention.split_pack:
+    ms_per_iter: 0.10818
+    kernels:
+    - name: GDN split+pack
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 3.005
+      total_us_per_iter: 108.18
+      share_in_node_pct: 100.0
+  linear_layer.tp_attention_collective:
+    ms_per_iter: 0.1847
+    kernels:
+    - name: TP all-reduce
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 5.131
+      total_us_per_iter: 184.7
+      share_in_node_pct: 100.0
+  moe.combine:
+    ms_per_iter: 0.354737
+    kernels:
+    - name: MoE routed-expert finalize
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 5.004
+      total_us_per_iter: 240.175
+      share_in_node_pct: 67.71
+    - name: MoE shared/routed combine
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 2.387
+      total_us_per_iter: 114.561
+      share_in_node_pct: 32.29
+  moe.routed_experts:
+    ms_per_iter: 2.530508
+    kernels:
+    - name: MoE routed-expert GEMM
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 26.359
+      total_us_per_iter: 2530.508
+      share_in_node_pct: 100.0
+  moe.shared_expert:
+    ms_per_iter: 0.138017
+    kernels:
+    - name: MoE shared-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 2.875
+      total_us_per_iter: 138.017
+      share_in_node_pct: 100.0
+  moe.topk:
+    ms_per_iter: 0.424746
+    kernels:
+    - name: MoE top-k routing
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 8.849
+      total_us_per_iter: 424.746
+      share_in_node_pct: 100.0
+  moe.tp_output_collective:
+    ms_per_iter: 0.30639
+    kernels:
+    - name: TP all-reduce
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 6.383
+      total_us_per_iter: 306.39
+      share_in_node_pct: 100.0
+  ple.tp_embedding_collective:
+    ms_per_iter: 0.007405
+    kernels:
+    - name: TP all-reduce
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 7.405
+      total_us_per_iter: 7.405
+      share_in_node_pct: 100.0
+  qsa_attention.attention_core:
+    ms_per_iter: 0.294487
+    kernels:
+    - name: QSA compact KV
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.822
+      total_us_per_iter: 117.87
+      share_in_node_pct: 40.03
+    - name: QSA sparse attention
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.527
+      total_us_per_iter: 114.325
+      share_in_node_pct: 38.82
+    - name: QSA graph layout
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 43.137
+      total_us_per_iter: 43.137
+      share_in_node_pct: 14.65
+    - name: QSA valid-count preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.596
+      total_us_per_iter: 19.156
+      share_in_node_pct: 6.5
+  qsa_attention.indexer:
+    ms_per_iter: 0.240277
+    kernels:
+    - name: QSA index top-k
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 7.882
+      total_us_per_iter: 94.586
+      share_in_node_pct: 39.37
+    - name: QSA index key compression
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 5.178
+      total_us_per_iter: 62.138
+      share_in_node_pct: 25.86
+    - name: QSA index query prep
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 4.713
+      total_us_per_iter: 56.551
+      share_in_node_pct: 23.54
+    - name: QSA block-index expansion
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.25
+      total_us_per_iter: 27.002
+      share_in_node_pct: 11.24
+  qsa_attention.kv_cache:
+    ms_per_iter: 0.019834
+    kernels:
+    - name: QSA KV-cache store
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.653
+      total_us_per_iter: 19.834
+      share_in_node_pct: 100.0
+  qsa_attention.qk_norm_rope:
+    ms_per_iter: 0.038881
+    kernels:
+    - name: QSA Q/K norm + RoPE
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 3.24
+      total_us_per_iter: 38.881
+      share_in_node_pct: 100.0
+  top.tp_embedding_collective:
+    ms_per_iter: 0.009459
+    kernels:
+    - name: TP all-reduce
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 9.459
+      total_us_per_iter: 9.459
+      share_in_node_pct: 100.0
+  top.tp_logits_collective:
+    ms_per_iter: 0.01943
+    kernels:
+    - name: TP logits all-gather
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 19.43
+      total_us_per_iter: 19.43
+      share_in_node_pct: 100.0

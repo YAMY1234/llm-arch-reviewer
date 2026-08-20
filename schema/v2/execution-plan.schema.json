@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution-plan.schema.json",
+  "title": "llm-arch-reviewer execution plan",
+  "type": "object",
+  "required": ["schema_version", "execution_path_id", "label", "model_id", "plan_version", "parallelism_axes", "transforms"],
+  "properties": {
+    "schema_version": {"const": "execution-plan.v2"},
+    "execution_path_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "label": {"type": "string"},
+    "model_id": {"type": "string"},
+    "plan_version": {"type": "integer", "minimum": 1},
+    "parallelism_axes": {"type": "object"},
+    "default_parameters": {"type": "object"},
+    "constraints": {"type": "object"},
+    "transforms": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["op", "target", "set"],
+            "properties": {
+              "op": {"const": "annotate_node"},
+              "target": {"type": "string"},
+              "set": {"type": "object"}
+            }
+          },
+          {
+            "type": "object",
+            "required": ["op", "after", "node"],
+            "properties": {
+              "op": {"const": "insert_after"},
+              "after": {"type": "string"},
+              "node": {"type": "object"},
+              "edge": {"type": "object"}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "profile.schema.json",
+  "title": "llm-arch-reviewer profile overlay",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "label", "model_id", "execution_path_id", "implementation_id", "variant_id", "phase", "execution_parameters", "node_metrics"],
+  "properties": {
+    "schema_version": {"const": "profile.v2"},
+    "profile_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "label": {"type": "string"},
+    "model_id": {"type": "string"},
+    "execution_path_id": {"type": "string"},
+    "implementation_id": {"type": "string"},
+    "variant_id": {"type": "string"},
+    "phase": {"type": "string"},
+    "execution_parameters": {
+      "type": "object",
+      "required": ["tp_size", "dp_size", "cp_size", "ep_size"],
+      "properties": {
+        "tp_size": {"type": "integer", "minimum": 1},
+        "dp_size": {"type": "integer", "minimum": 1},
+        "cp_size": {"type": "integer", "minimum": 1},
+        "ep_size": {"type": "integer", "minimum": 1}
+      }
+    },
+    "hardware": {"type": "object"},
+    "workload": {"type": "object"},
+    "profiler": {"type": "object"},
+    "evidence": {"type": "object"},
+    "node_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["ms_per_iter"],
+        "properties": {
+          "ms_per_iter": {"type": "number", "minimum": 0},
+          "kernels": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    }
+  }
+}

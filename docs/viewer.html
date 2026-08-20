@@ -262,15 +262,17 @@
     <span style="color: var(--muted); font-weight: 400; font-size: 13px;" id="model-subtitle"></span>
   </h1>
   <div class="controls">
+    <label id="execution-control" style="display:none">execution:
+      <select id="execution-select"></select>
+    </label>
+    <label id="implementation-control" style="display:none">implementation:
+      <select id="implementation-select"></select>
+    </label>
     <label>profile:
       <select id="profile-select"></select>
     </label>
     <label>variant:
-      <select id="variant-select">
-        <option value="HCA">HCA</option>
-        <option value="CSA">CSA</option>
-        <option value="ALL">ALL</option>
-      </select>
+      <select id="variant-select"></select>
     </label>
     <button id="btn-fit">fit</button>
     <button id="btn-up">⬆ up</button>
@@ -315,14 +317,17 @@
 // ============================================================
 // state
 // ============================================================
+let RAW_DATA = null;
 let DATA = null;
 const elk = new ELK();
 let CURRENT_PROFILE = "sglang_v4_pro_prefill";
-let CURRENT_VARIANT = "HCA";
+let CURRENT_VARIANT = "";
+let CURRENT_EXECUTION = "";
+let CURRENT_IMPLEMENTATION = "";
 
 // VIEW_STACK 现在是"打开的多张图", 从左到右水平排列.
 // drill_from[i] = 第 i 张图是从第 i-1 张图哪个 node 钻进来的 (用于画跨图虚线)
-let VIEW_STACK = ["top"];
+let VIEW_STACK = [];
 let DRILL_FROM = [null];   // DRILL_FROM[i] = parent view 里 node id; [0] 是 null
 let SELECTED = null;       // {view, nodeId}
 const VIEW_GAP = 110;      // 多张图之间水平间距 (放虚线)
@@ -346,9 +351,17 @@ fetch(DATA_URL, {cache: "no-store"}).then(r => {
   if (!r.ok) throw new Error(`HTTP ${r.status} for ${DATA_URL}`);
   return r.json();
 }).then(d => {
+  RAW_DATA = d;
   DATA = d;
+  if (isV2Bundle()) {
+    const qs = new URLSearchParams(location.search);
+    activateV2Selection(
+      qs.get("execution") || d.default_execution_variant,
+      qs.get("implementation") || d.default_implementation,
+    );
+  }
   // 注入 PARENT (build 时派生); 旧数据没有就回退到从 views 现算
-  PARENT = d.parent || derivePARENT(d.views);
+  PARENT = DATA.parent || derivePARENT(DATA.views);
   // header
   const meta = d.meta || {};
   document.getElementById("model-title").textContent = meta.model_label || MODEL_ID;
@@ -376,7 +389,7 @@ Local development:
 
 function derivePARENT(views) {
   const p = {};
-  for (const [vname, view] of Object.entries(views)) {
+  for (const [vname, view] of Object.entries(views || {})) {
     for (const n of (view.nodes || [])) {
       if (n.drill && !(n.drill in p)) p[n.drill] = vname;
     }
@@ -384,17 +397,276 @@ function derivePARENT(views) {
   return p;
 }
 
-function initUI() {
-  const psel = document.getElementById("profile-select");
-  for (const pid of Object.keys(DATA.profiles)) {
+function isV2Bundle() {
+  return !!(RAW_DATA?.execution_variants && RAW_DATA?.implementations);
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function implementationIdsForExecution(executionId) {
+  return Object.entries(RAW_DATA?.implementations || {})
+    .filter(([, impl]) => impl.execution_variant === executionId)
+    .map(([implementationId]) => implementationId);
+}
+
+function applyImplementationBinding(views, implementation) {
+  if (!implementation) return;
+  for (const [target, binding] of Object.entries(implementation.node_bindings || {})) {
+    const dot = target.indexOf(".");
+    if (dot < 1) continue;
+    const viewId = target.slice(0, dot);
+    const nodeId = target.slice(dot + 1);
+    const node = (views[viewId]?.nodes || []).find(candidate => candidate.id === nodeId);
+    if (!node) continue;
+    node.code_links = cloneJson(binding.code_links || []);
+    node.implementation_binding = {
+      implementation_id: implementation.implementation_id,
+      symbols: cloneJson(binding.symbols || []),
+      kernel_signatures: cloneJson(binding.kernel_signatures || []),
+    };
+  }
+}
+
+function activateV2Selection(executionId, implementationId = "") {
+  if (!isV2Bundle()) return;
+  const executionIds = Object.keys(RAW_DATA.execution_variants);
+  if (!executionIds.includes(executionId)) {
+    executionId = RAW_DATA.default_execution_variant || executionIds[0];
+  }
+  const implementationIds = implementationIdsForExecution(executionId);
+  if (!implementationIds.includes(implementationId)) {
+    const preferred = RAW_DATA.default_implementation;
+    implementationId = implementationIds.includes(preferred) ? preferred : (implementationIds[0] || "");
+  }
+
+  const execution = RAW_DATA.execution_variants[executionId];
+  const views = cloneJson(execution.views || {});
+  const implementation = RAW_DATA.implementations[implementationId];
+  applyImplementationBinding(views, implementation);
+
+  CURRENT_EXECUTION = executionId;
+  CURRENT_IMPLEMENTATION = implementationId;
+  DATA = {
+    ...RAW_DATA,
+    views,
+    parent: cloneJson(execution.parent || derivePARENT(views)),
+    enriched: cloneJson(execution.enriched || {}),
+    default_view: execution.default_view || RAW_DATA.default_view,
+  };
+  PARENT = DATA.parent;
+}
+
+function defaultViewName() {
+  const views = DATA?.views || {};
+  if (DATA?.default_view && DATA.default_view in views) return DATA.default_view;
+  if ("top" in views) return "top";
+  return Object.keys(views)[0] || "top";
+}
+
+function variantSortRank(v) {
+  const order = [
+    "HCA", "CSA", "ALL",
+    "MTP_d4_c512", "noMTP_c512", "MTP_d2_c512",
+    "MTP_d4_c64", "noMTP_c64", "MTP_d2_c64",
+  ];
+  const idx = order.indexOf(v);
+  return idx >= 0 ? idx : 1000;
+}
+
+function variantsForProfile(pid) {
+  const variants = new Set();
+  const pdata = DATA?.profiles?.[pid]?.data || {};
+  for (const cell of Object.values(pdata)) {
+    if (!cell || typeof cell !== "object") continue;
+    for (const [variant, value] of Object.entries(cell)) {
+      if (value && typeof value === "object" && "ms_per_iter" in value) {
+        variants.add(variant);
+      }
+    }
+  }
+
+  // Fallback for older/generated data where raw profile payload is absent.
+  if (!variants.size) {
+    for (const enriched of Object.values(DATA?.enriched || {})) {
+      for (const nodeProfile of Object.values(enriched.nodes_profile || {})) {
+        const prof = nodeProfile?.[pid] || {};
+        for (const variant of Object.keys(prof)) variants.add(variant);
+      }
+    }
+  }
+
+  return Array.from(variants).sort((a, b) => {
+    const ra = variantSortRank(a);
+    const rb = variantSortRank(b);
+    if (ra !== rb) return ra - rb;
+    return a.localeCompare(b);
+  });
+}
+
+function defaultVariant(variants, previous = "") {
+  if (previous && variants.includes(previous)) return previous;
+  const preferred = [
+    "HCA", "CSA", "ALL",
+    "MTP_d4_c512", "noMTP_c512", "MTP_d2_c512",
+    "MTP_d4_c64", "noMTP_c64", "MTP_d2_c64",
+  ];
+  for (const v of preferred) {
+    if (variants.includes(v)) return v;
+  }
+  return variants[0] || "";
+}
+
+function refreshVariantOptions(keepCurrent = false) {
+  const vsel = document.getElementById("variant-select");
+  const variants = variantsForProfile(CURRENT_PROFILE);
+  const nextVariant = defaultVariant(variants, keepCurrent ? CURRENT_VARIANT : "");
+
+  vsel.innerHTML = "";
+  if (!variants.length) {
     const opt = document.createElement("option");
-    opt.value = pid; opt.textContent = pid;
+    opt.value = ""; opt.textContent = "—";
+    vsel.appendChild(opt);
+    vsel.disabled = true;
+    CURRENT_VARIANT = "";
+    return;
+  }
+
+  vsel.disabled = false;
+  for (const v of variants) {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = v;
+    vsel.appendChild(opt);
+  }
+  CURRENT_VARIANT = nextVariant;
+  vsel.value = CURRENT_VARIANT;
+}
+
+function profileIdsForSelection() {
+  const ids = Object.keys(DATA?.profiles || {});
+  if (!isV2Bundle()) return ids;
+  return ids.filter(profileId => {
+    const profile = DATA.profiles[profileId];
+    return profile.execution_variant === CURRENT_EXECUTION
+      && (!CURRENT_IMPLEMENTATION || profile.implementation_id === CURRENT_IMPLEMENTATION);
+  });
+}
+
+function refreshProfileOptions(preferred = "") {
+  const psel = document.getElementById("profile-select");
+  const profileIds = profileIdsForSelection();
+  psel.innerHTML = "";
+  if (!profileIds.length) {
+    const opt = document.createElement("option");
+    opt.value = ""; opt.textContent = "—";
+    psel.appendChild(opt);
+    psel.disabled = true;
+    CURRENT_PROFILE = "";
+    refreshVariantOptions(false);
+    return;
+  }
+
+  psel.disabled = false;
+  for (const pid of profileIds) {
+    const opt = document.createElement("option");
+    opt.value = pid;
+    opt.textContent = DATA.profiles[pid]?.meta?.label || pid;
     psel.appendChild(opt);
   }
-  const pref = Object.keys(DATA.profiles).find(p => p.includes("prefill")) || Object.keys(DATA.profiles)[0];
+  const pref = profileIds.includes(preferred)
+    ? preferred
+    : (profileIds.find(p => p.includes("prefill")) || profileIds[0]);
   psel.value = pref;
   CURRENT_PROFILE = pref;
-  psel.onchange = () => { CURRENT_PROFILE = psel.value; renderView(); };
+  refreshVariantOptions(false);
+}
+
+function refreshImplementationOptions(preferred = "") {
+  const control = document.getElementById("implementation-control");
+  const select = document.getElementById("implementation-select");
+  if (!isV2Bundle()) {
+    control.style.display = "none";
+    return;
+  }
+  control.style.display = "";
+  const implementationIds = implementationIdsForExecution(CURRENT_EXECUTION);
+  select.innerHTML = "";
+  for (const implementationId of implementationIds) {
+    const opt = document.createElement("option");
+    opt.value = implementationId;
+    opt.textContent = RAW_DATA.implementations[implementationId]?.label || implementationId;
+    select.appendChild(opt);
+  }
+  const next = implementationIds.includes(preferred)
+    ? preferred
+    : (implementationIds.includes(CURRENT_IMPLEMENTATION) ? CURRENT_IMPLEMENTATION : (implementationIds[0] || ""));
+  CURRENT_IMPLEMENTATION = next;
+  select.value = next;
+  select.disabled = !implementationIds.length;
+}
+
+function syncV2SelectionQuery() {
+  if (!isV2Bundle()) return;
+  const url = new URL(location.href);
+  if (CURRENT_EXECUTION) url.searchParams.set("execution", CURRENT_EXECUTION);
+  if (CURRENT_IMPLEMENTATION) url.searchParams.set("implementation", CURRENT_IMPLEMENTATION);
+  if (CURRENT_PROFILE) url.searchParams.set("profile", CURRENT_PROFILE);
+  history.replaceState(null, "", url);
+}
+
+function resetNavigationForExecution() {
+  VIEW_STACK = [defaultViewName()];
+  DRILL_FROM = [null];
+  SELECTED = null;
+  history.replaceState(null, "", `${location.pathname}${location.search}#views=${VIEW_STACK[0]}`);
+}
+
+function initUI() {
+  if (isV2Bundle()) {
+    const executionControl = document.getElementById("execution-control");
+    const executionSelect = document.getElementById("execution-select");
+    executionControl.style.display = "";
+    executionSelect.innerHTML = "";
+    for (const [executionId, execution] of Object.entries(RAW_DATA.execution_variants)) {
+      const opt = document.createElement("option");
+      opt.value = executionId;
+      opt.textContent = execution.label || execution.execution_path_id || executionId;
+      executionSelect.appendChild(opt);
+    }
+    executionSelect.value = CURRENT_EXECUTION;
+    refreshImplementationOptions(CURRENT_IMPLEMENTATION);
+
+    executionSelect.onchange = () => {
+      activateV2Selection(executionSelect.value, "");
+      refreshImplementationOptions(CURRENT_IMPLEMENTATION);
+      refreshProfileOptions(DATA.default_profile || "");
+      syncV2SelectionQuery();
+      resetNavigationForExecution();
+      renderView();
+    };
+
+    const implementationSelect = document.getElementById("implementation-select");
+    implementationSelect.onchange = () => {
+      activateV2Selection(CURRENT_EXECUTION, implementationSelect.value);
+      refreshProfileOptions(DATA.default_profile || "");
+      syncV2SelectionQuery();
+      resetNavigationForExecution();
+      renderView();
+    };
+  }
+
+  const initialProfile = isV2Bundle()
+    ? (new URLSearchParams(location.search).get("profile") || DATA.default_profile || "")
+    : (DATA.default_profile || "");
+  refreshProfileOptions(initialProfile);
+  const psel = document.getElementById("profile-select");
+  psel.onchange = () => {
+    CURRENT_PROFILE = psel.value;
+    refreshVariantOptions(true);
+    syncV2SelectionQuery();
+    renderView();
+  };
 
   const vsel = document.getElementById("variant-select");
   vsel.onchange = () => { CURRENT_VARIANT = vsel.value; renderView(); };
@@ -410,7 +682,7 @@ function initUI() {
 function parseHash() {
   // 支持 #views=top,stack,hca_layer (栈) 或老式 #view=foo (单 view)
   const h = location.hash || "";
-  let stack = ["top"];
+  let stack = [defaultViewName()];
   let from = [null];
   const m1 = h.match(/views=([\w,]+)/);
   const m2 = h.match(/view=([\w]+)/);
@@ -924,6 +1196,11 @@ function drawShape(g, kind, w, h) {
 // ============================================================
 // profile lookup
 // ============================================================
+function currentVariantCell(prof) {
+  if (!prof) return null;
+  return prof[CURRENT_VARIANT] || prof.ALL || Object.values(prof)[0] || null;
+}
+
 function nodeMs(n, viewName) {
   const e = DATA.enriched[viewName];
   if (!e) return null;
@@ -933,7 +1210,7 @@ function nodeMs(n, viewName) {
   if (!prof) return null;
   if (CURRENT_VARIANT in prof) return prof[CURRENT_VARIANT].ms_per_iter;
   if ("ALL" in prof) return prof["ALL"].ms_per_iter;
-  const vals = Object.values(prof).map(x => x.ms_per_iter);
+  const vals = Object.values(prof).map(x => x.ms_per_iter).filter(v => v != null);
   return vals.length ? Math.max(...vals) : null;
 }
 
@@ -944,7 +1221,7 @@ function heatLevel(ms, viewName) {
   let mx = 0;
   for (const np of Object.values(e.nodes_profile || {})) {
     const prof = np[CURRENT_PROFILE]; if (!prof) continue;
-    const v = (prof[CURRENT_VARIANT] || prof.ALL || {}).ms_per_iter;
+    const v = currentVariantCell(prof)?.ms_per_iter;
     if (v && v > mx) mx = v;
   }
   if (mx <= 0) return null;
@@ -962,6 +1239,16 @@ function showDetail(n, viewName) {
   const e = DATA.enriched[viewName];
   const np = (e?.nodes_profile || {})[n.id] || {};
   const profCur = np[CURRENT_PROFILE] || {};
+  const executionRows = Object.entries(n.execution || {}).map(([key, value]) =>
+    `<tr><td class="name">${escapeHtml(key)}</td><td class="name" style="color:var(--muted)">${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</td></tr>`
+  ).join("");
+  const implementationBinding = n.implementation_binding || {};
+  const symbols = (implementationBinding.symbols || []).map(symbol =>
+    `<span class="codelink">${escapeHtml(symbol)}</span>`
+  ).join("");
+  const kernelSignatures = (implementationBinding.kernel_signatures || []).map(signature =>
+    `<span class="codelink">${escapeHtml(signature)}</span>`
+  ).join("");
 
   const variants = Object.keys(profCur).map(k => `<span class="badge ${k.toLowerCase()}">${k}: ${profCur[k].ms_per_iter.toFixed(2)} ms</span>`).join(" ");
 
@@ -983,8 +1270,8 @@ function showDetail(n, viewName) {
     return `<tr><td class="name">${escapeHtml(s.label)}</td><td class="name" style="color:var(--muted)">${(s.trace_aliases||[]).join(", ")}</td></tr>`;
   }).join("");
 
-  // 当前 variant cell (HCA 或 CSA, 取决于 user toggle)
-  const cell = profCur[CURRENT_VARIANT] || profCur.ALL;
+  // 当前 variant cell; DSV4 通常是 HCA/CSA/ALL, Qwen3.5 decode 是 MTP/noMTP variants.
+  const cell = currentVariantCell(profCur);
   const isAggregate = !!(cell && cell.from_aggregate);
 
   // 整个 block aggregate ms (用作"% of block"分母)
@@ -1074,11 +1361,16 @@ function showDetail(n, viewName) {
       <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
       ${n.drill ? `<div class="k">drill →</div><div><a href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">${n.drill}</a></div>` : ""}
       <div class="k">profile</div><div>${escapeHtml(CURRENT_PROFILE)}</div>
+      ${CURRENT_EXECUTION ? `<div class="k">execution</div><div>${escapeHtml(DATA.execution_variants?.[CURRENT_EXECUTION]?.execution_path_id || CURRENT_EXECUTION)}</div>` : ""}
+      ${CURRENT_IMPLEMENTATION ? `<div class="k">implementation</div><div>${escapeHtml(CURRENT_IMPLEMENTATION)}</div>` : ""}
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
     ${drillBtn}
     ${n.short_doc ? `<h3>about</h3><div style="color:var(--muted); white-space: pre-wrap">${escapeHtml(n.short_doc)}</div>` : ""}
     ${n.note ? `<h3>note</h3><div style="color:var(--muted)">${escapeHtml(n.note)}</div>` : ""}
+    ${executionRows ? `<h3>execution IR</h3><table class="kernels"><tbody>${executionRows}</tbody></table>` : ""}
+    ${symbols ? `<h3>source symbols</h3><div>${symbols}</div>` : ""}
+    ${kernelSignatures ? `<h3>kernel signatures</h3><div>${kernelSignatures}</div>` : ""}
     ${codeLinks ? `<h3>code links</h3><div>${codeLinks}</div>` : ""}
     ${childrenHtml}
     ${stageRows ? `<h3>stages</h3><table class="kernels"><thead><tr><th class="name">label</th><th class="name">trace alias</th></tr></thead><tbody>${stageRows}</tbody></table>` : ""}

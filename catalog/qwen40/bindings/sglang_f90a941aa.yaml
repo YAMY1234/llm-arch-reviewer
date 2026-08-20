@@ -1,0 +1,269 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f90a941aa
+label: SGLang qwen4-main f90a941aa
+model_id: qwen40
+execution_path_id: tp_only
+source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+container: lmsysorg/sglang:nightly-dev-cu13-20260818-c0b6474b
+backend: sglang
+
+node_bindings:
+  top.embedding:
+    symbols: [Qwen4ExpModel._build_embed_tokens, VocabParallelEmbedding]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpModel._build_embed_tokens, display: qwen4_exp.py — token embedding}
+
+  top.tp_embedding_collective:
+    symbols: [VocabParallelEmbedding.forward, tensor_model_parallel_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/vocab_parallel_embedding.py, symbol: VocabParallelEmbedding.forward, display: vocab_parallel_embedding.py — token-embedding all-reduce}
+
+  top.decoder_stack:
+    symbols: [Qwen4ExpModel.forward, Qwen4ExpLinearDecoderLayer, Qwen4ExpAttentionDecoderLayer]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpModel.forward, display: qwen4_exp.py — decoder stack loop}
+
+  top.final_hc_mix:
+    symbols: [Qwen4ExpModel.hyper_connection_mixer, GatedResidualSimple.mix]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpModel.forward::hyper_connection_mixer.mix, display: qwen4_exp.py — final hyper-connection mix}
+
+  top.lm_head:
+    symbols: [Qwen3VLForConditionalGeneration.language_model, ParallelLMHead]
+    links:
+      - {file: python/sglang/srt/models/qwen3_vl.py, symbol: Qwen3VLForConditionalGeneration.language_model, display: qwen3_vl.py — language model wrapper and LM head}
+
+  top.tp_logits_collective:
+    symbols: [LogitsProcessor._get_logits, LogitsProcessor._logits_gatherer]
+    kernel_signatures: [_all_gather_kernel_inner, ncclDevKernel_AllGather, ncclSymkDevKernel_AllGather]
+    links:
+      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._get_logits, display: logits_processor.py — vocabulary-logit all-gather}
+
+  stack.schedule:
+    symbols: [Qwen4ExpTextConfig.layers_block_type, Qwen4ExpModel.forward]
+    links:
+      - {file: python/sglang/srt/configs/qwen4_exp.py, symbol: Qwen4ExpTextConfig.layers_block_type, display: qwen4_exp config — hybrid layer schedule}
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpModel.forward, display: qwen4_exp.py — layer dispatch}
+
+  stack.ple_injection:
+    symbols: [Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_attn, Qwen4ExpPLELayer]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_attn, display: qwen4_exp.py — configured PLE injection}
+
+  linear_layer.attn_hc_mix:
+    symbols: [Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_attn, GatedResidualSimple.mix]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_attn, display: qwen4_exp.py — attention branch mix}
+
+  linear_layer.linear_attention:
+    symbols: [Qwen4ExpLinearDecoderLayer.forward, Qwen3_5GatedDeltaNet]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLinearDecoderLayer.forward, display: qwen4_exp.py — linear-attention layer path}
+
+  linear_layer.attn_hc_combine:
+    symbols: [Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp, GatedResidualSimple.combine]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp, display: qwen4_exp.py — attention branch combine}
+
+  linear_layer.mlp_hc_mix:
+    symbols: [Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp, GatedResidualSimple.mix]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp, display: qwen4_exp.py — MoE branch mix}
+
+  linear_layer.moe:
+    symbols: [Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, Qwen2MoeSparseMoeBlock]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, display: qwen4_exp.py — pure-TP MoE invocation}
+
+  linear_layer.mlp_hc_combine:
+    symbols: [Qwen4ExpLayerExtensionMixin._postprocess_qwen4_exp_layer, GatedResidualSimple.combine]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._postprocess_qwen4_exp_layer, display: qwen4_exp.py — MoE branch combine}
+
+  full_layer.qsa_attention:
+    symbols: [Qwen4ExpAttentionDecoderLayer.self_attention, QSAIndexer, RadixAttention]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer.self_attention, display: qwen4_exp.py — QSA attention path}
+
+  ple.token_history:
+    symbols: [_prepare_ple_batch, ReqToTokenPool.get_ngram_context]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: _prepare_ple_batch, display: qwen4_exp.py — PLE batch and token history}
+
+  ple.ngram_hash:
+    symbols: [Qwen4ExpNGramEmbedding._hash_contexts]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpNGramEmbedding._hash_contexts, display: qwen4_exp.py — N-gram hashing}
+
+  ple.ngram_embedding:
+    symbols: [Qwen4ExpNGramEmbedding._embed_ngram_ids, VocabParallelEmbedding]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpNGramEmbedding._embed_ngram_ids, display: qwen4_exp.py — sharded N-gram lookup}
+
+  ple.tp_embedding_collective:
+    symbols: [VocabParallelEmbedding.forward, tensor_model_parallel_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/vocab_parallel_embedding.py, symbol: VocabParallelEmbedding.forward, display: vocab_parallel_embedding.py — N-gram embedding all-reduce}
+
+  ple.key_value_projection:
+    symbols: [Qwen4ExpPLELayer.key_proj, Qwen4ExpPLELayer.value_proj]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpPLELayer.forward, display: qwen4_exp.py — PLE key/value projections}
+
+  ple.grouped_norm_gate:
+    symbols: [Qwen4ExpPLEGroupedNorm, Qwen4ExpPLELayer.forward]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpPLEGroupedNorm.forward, display: qwen4_exp.py — grouped normalization and gate}
+
+  ple.short_conv:
+    symbols: [Qwen4ExpPLELayer._short_conv]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpPLELayer._short_conv, display: qwen4_exp.py — dilated short convolution}
+
+  ple.context_commit:
+    symbols: [_commit_ple_batch]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: _commit_ple_batch, display: qwen4_exp.py — N-gram context commit}
+
+  hyperconnection.branch_norm:
+    symbols: [GatedResidualSimple]
+    links:
+      - {file: python/sglang/srt/layers/hyperconnection.py, symbol: GatedResidualSimple, display: hyperconnection.py — gated residual implementation}
+
+  hyperconnection.low_rank_gate:
+    symbols: [GatedResidualSimple.mix]
+    links:
+      - {file: python/sglang/srt/layers/hyperconnection.py, symbol: GatedResidualSimple.mix, display: hyperconnection.py — dynamic low-rank gate}
+
+  hyperconnection.mix:
+    symbols: [GatedResidualSimple.mix]
+    links:
+      - {file: python/sglang/srt/layers/hyperconnection.py, symbol: GatedResidualSimple.mix, display: hyperconnection.py — branch mix}
+
+  hyperconnection.combine:
+    symbols: [GatedResidualSimple.combine]
+    links:
+      - {file: python/sglang/srt/layers/hyperconnection.py, symbol: GatedResidualSimple.combine, display: hyperconnection.py — branch combine}
+
+  linear_attention.qkvz_projection:
+    symbols: [Qwen3_5GatedDeltaNet.in_proj_qkvz]
+    links:
+      - {file: python/sglang/srt/models/qwen3_5.py, symbol: Qwen3_5GatedDeltaNet.in_proj_qkvz, display: qwen3_5.py — Q/K/V/Z projection}
+
+  linear_attention.ba_projection:
+    symbols: [Qwen3_5GatedDeltaNet.in_proj_ba]
+    links:
+      - {file: python/sglang/srt/models/qwen3_5.py, symbol: Qwen3_5GatedDeltaNet.in_proj_ba, display: qwen3_5.py — beta/alpha projection}
+
+  linear_attention.split_pack:
+    symbols: [fused_qkvzba_split_reshape_cat_contiguous]
+    kernel_signatures: [fused_qkvzba_split]
+    links:
+      - {file: python/sglang/srt/models/qwen3_5.py, symbol: fused_qkvzba_split_reshape_cat_contiguous, display: qwen3_5.py — fused split and pack}
+
+  linear_attention.causal_conv:
+    symbols: [GDNAttnBackend.forward_extend, causal_conv1d_fn]
+    kernel_signatures: [causal_conv1d]
+    links:
+      - {file: python/sglang/srt/layers/attention/linear/gdn_backend.py, symbol: GDNAttnBackend.forward_extend, display: gdn_backend.py — causal convolution}
+
+  linear_attention.gating:
+    symbols: [fused_gdn_gating]
+    kernel_signatures: [fused_gdn_gating]
+    links:
+      - {file: python/sglang/srt/layers/attention/linear/gdn_backend.py, symbol: fused_gdn_gating, display: gdn_backend.py — DeltaNet gating}
+
+  linear_attention.delta_rule:
+    symbols: [GDNAttnBackend.kernel_dispatcher, FlashInferGDNKernel]
+    kernel_signatures: [chunk_gated_delta_rule, fused_recurrent_gated_delta_rule_packed_decode, gdn_decode_bf16state, gdn_wide_vec_kernel, recompute_w_u, chunk_fwd_kernel_o]
+    links:
+      - {file: python/sglang/srt/layers/attention/linear/gdn_backend.py, symbol: GDNAttnBackend.kernel_dispatcher, display: gdn_backend.py — gated delta-rule recurrence}
+      - {file: python/sglang/srt/layers/attention/linear/kernels/gdn_flashinfer.py, symbol: FlashInferGDNKernel, display: gdn_flashinfer.py — FlashInfer BF16 prefill/decode recurrence}
+
+  linear_attention.gated_norm:
+    symbols: [Qwen3_5GatedDeltaNet.norm, RMSNormGated]
+    links:
+      - {file: python/sglang/srt/models/qwen3_5.py, symbol: Qwen3_5GatedDeltaNet.norm, display: qwen3_5.py — gated RMSNorm}
+
+  linear_attention.output_projection:
+    symbols: [Qwen3_5GatedDeltaNet.out_proj]
+    links:
+      - {file: python/sglang/srt/models/qwen3_5.py, symbol: Qwen3_5GatedDeltaNet.out_proj, display: qwen3_5.py — DeltaNet output projection}
+
+  qsa_attention.qkv_gate_projection:
+    symbols: [Qwen4ExpAttentionDecoderLayer._prepare_qkv_gate]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer._prepare_qkv_gate, display: qwen4_exp.py — Q/K/V/gate projection}
+
+  qsa_attention.indexer:
+    symbols: [Qwen4ExpAttentionDecoderLayer._compute_qsa_topk_indices, QSAIndexer, ReplicatedLinear]
+    kernel_signatures: [qsa_index_q_prep_kernel, qsa_index_k_compress_kernel, fast_topk_kernel, expand_qsa_block_indices_kernel]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer._compute_qsa_topk_indices, display: qwen4_exp.py — QSA top-k indices}
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer, display: qsa_indexer.py — indexer implementation}
+
+  qsa_attention.attention_core:
+    symbols: [Qwen4ExpAttentionDecoderLayer.attn, RadixAttention]
+    kernel_signatures: [qsa_graph_layout_alloc_kernel, fa2_valid_counts, compact_kv, fmhaSm100fKernel_Qkv]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer.self_attention, display: qwen4_exp.py — indexed sparse attention}
+
+  qsa_attention.output_gate:
+    symbols: [Qwen4ExpAttentionDecoderLayer.self_attention]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer.self_attention::sigmoid, display: qwen4_exp.py — output gate}
+
+  qsa_attention.output_projection:
+    symbols: [Qwen4ExpAttentionDecoderLayer.o_proj]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer.o_proj, display: qwen4_exp.py — attention output projection}
+
+  moe.router:
+    symbols: [Qwen2MoeSparseMoeBlock.gate]
+    links:
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.gate, display: qwen2_moe.py — router projection}
+
+  moe.topk:
+    symbols: [Qwen2MoeSparseMoeBlock.topk]
+    kernel_signatures: [moe::dev::routing]
+    links:
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.topk, display: qwen2_moe.py — Top-K routing}
+
+  moe.routed_experts:
+    symbols: [Qwen2MoeSparseMoeBlock.experts, FusedMoE]
+    kernel_signatures: [bmm_, moe::dev::activation]
+    links:
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.experts, display: qwen2_moe.py — routed experts}
+
+  moe.shared_expert:
+    symbols: [Qwen2MoeSparseMoeBlock.shared_expert, Qwen2MoeMLP]
+    kernel_signatures: [act_and_mul]
+    links:
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.shared_expert, display: qwen2_moe.py — shared expert}
+
+  moe.combine:
+    symbols: [Qwen2MoeSparseMoeBlock.forward]
+    kernel_signatures: [moe::dev::finalize]
+    links:
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.forward, display: qwen2_moe.py — routed/shared combine}
+
+  linear_layer.tp_attention_collective:
+    symbols: [attn_tp_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp::attn_tp_all_reduce, display: qwen4_exp.py — pure-TP attention all-reduce}
+
+  full_layer.tp_attention_collective:
+    symbols: [attn_tp_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._prepare_qwen4_exp_mlp::attn_tp_all_reduce, display: qwen4_exp.py — pure-TP attention all-reduce}
+
+  moe.tp_output_collective:
+    symbols: [FusedMoE]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/moe/fused_moe_triton/layer.py, symbol: FusedMoE, display: fused_moe_triton — pure-TP expert output collective}

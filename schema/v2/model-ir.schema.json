@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "model-ir.schema.json",
+  "title": "llm-arch-reviewer stable model IR",
+  "type": "object",
+  "required": ["schema_version", "model_id", "model_label", "ir_version", "default_view", "views"],
+  "properties": {
+    "schema_version": {"const": "model-ir.v2"},
+    "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "model_label": {"type": "string", "minLength": 1},
+    "ir_version": {"type": "integer", "minimum": 1},
+    "default_view": {"type": "string", "minLength": 1},
+    "default_execution_path": {"type": "string"},
+    "dimensions": {"type": "object"},
+    "facts": {"type": "object"},
+    "views": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/view"}
+    }
+  },
+  "$defs": {
+    "view": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "title": {"type": "string"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "label", "shape", "semantic_op"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$"},
+        "label": {"type": "string"},
+        "shape": {"enum": ["io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"]},
+        "semantic_op": {"type": "string"},
+        "drill": {"type": "string"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "kind": {"type": "string"},
+        "shape": {"type": "string"},
+        "dtype": {"type": "string"},
+        "label": {"type": "string"}
+      }
+    }
+  }
+}

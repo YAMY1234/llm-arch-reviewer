@@ -85,8 +85,8 @@
 
 <main>
   <div class="intro">
-    <p>One <strong>modular, zoomable, click-to-drill</strong> architecture diagram per model, with measured per-block ms and kernel breakdown overlaid from real trace data (sglang prefill / decode, with PDF projections where available).</p>
-    <p>Everything is <a href="https://github.com/YAMY1234/llm-arch-reviewer/tree/main/models" target="_blank">data-driven</a>: nodes, edges, shapes, drill relationships — all described in IR YAML; the renderer (ELK + SVG) is fully model-agnostic. Adding a new model means dropping a new <code>models/&lt;name&gt;/</code> directory; no JS changes required.</p>
+    <p>One <strong>modular, zoomable, click-to-drill</strong> architecture diagram per model, with measured per-block ms and kernel breakdown overlaid from real trace data.</p>
+    <p>The V2 catalog is <strong>IR-first</strong>: stable Model IR is compiled with a parallelism-specific Execution Plan, while source commits and measured profiles remain switchable overlays. Code changes no longer redefine the model architecture.</p>
   </div>
 
   <h2>models</h2>
@@ -110,6 +110,29 @@
       </div>
     </a>
 
+    <a class="card" href="viewer.html?model=qwen40_v2">
+      <div class="name">Qwen 4.0 Air Example · IR-first V2</div>
+      <div class="label">48 layers · PLE · QSA · TP4 / Attention DP4 / DeepEP</div>
+      <div class="desc">
+        Stable text-inference IR for the Day-0 BF16 checkpoint: 36 gated DeltaNet layers,
+        12 indexed QSA attention layers, four-branch hyper-connections, N-gram PLE, and a
+        512-expert MoE. Pure TP4 remains the default; separate execution graphs cover
+        Attention DP4 and Attention DP4 + EP4 DeepEP/DeepGEMM, while FlashInfer GDN is a
+        backend overlay on the TP graph. Eager stack evidence pins each binding and GB300
+        CUDA Graph BS1/16/64/256 measurements remain versioned overlays.
+      </div>
+      <div class="tags">
+        <span class="tag">V2</span>
+        <span class="tag">IR-first</span>
+        <span class="tag">TP4</span>
+        <span class="tag">DP4</span>
+        <span class="tag">DeepEP</span>
+        <span class="tag">PLE</span>
+        <span class="tag">QSA</span>
+        <span class="tag">MoE</span>
+      </div>
+    </a>
+
     <div class="card placeholder">
       <div class="name">Qwen3.5</div>
       <div class="label">— coming soon —</div>
@@ -129,8 +152,9 @@
   <h2>about</h2>
   <div class="intro" style="font-size: 13px;">
     <p>
-      this site is a hand-authored layout combined with auto-generated profile overlay.
-      see the <a href="https://github.com/YAMY1234/llm-arch-reviewer">repo</a> for IR schema, build pipeline, and how to add a new model.
+      V2 diagrams are compiled from stable model semantics and execution plans; implementation
+      bindings and profile measurements are independent overlays. Legacy diagrams remain available
+      while catalogs migrate to the new contract.
     </p>
     <p>
       profile data uses sglang traces (prefill / decode) post-processed with kernel-name

@@ -1,0 +1,27 @@
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index ea47d1ed2..1e5c7e1af 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -3107,6 +3107,22 @@ class Scheduler(
+             if running_batch.is_empty():
+                 running_batch.batch_is_full = False
+ 
++        # Profiling-only admission barrier.  A max-prefill-token boundary marks
++        # running_batch full even when request/KV capacity remains.  During the
++        # exact-BS profiling setup, prefer the remaining real prefills until the
++        # requested local decode population is resident.  This environment flag
++        # is intentionally absent from production runs; after the target is met
++        # (and before profiling starts), the normal scheduler path is unchanged.
++        profile_prefill_first_target = int(
++            os.environ.get("SGLANG_PROFILE_PREFILL_FIRST_TARGET", "0")
++        )
++        if (
++            profile_prefill_first_target > 0
++            and len(running_batch.reqs) < profile_prefill_first_target
++            and (self.chunked_req is not None or len(self.waiting_queue) > 0)
++        ):
++            running_batch.batch_is_full = False
++
+         if self.dllm_config is not None:
+             new_batch = self.get_new_batch_dllm(running_batch)
+         else:

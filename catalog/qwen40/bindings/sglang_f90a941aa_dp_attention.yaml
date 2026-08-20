@@ -1,0 +1,51 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f90a941aa_dp_attention
+label: SGLang f90a941aa · Attention DP4 / TP MoE
+model_id: qwen40
+execution_path_id: dp_attention
+source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+container: lmsysorg/sglang:nightly-dev-cu13-20260818-c0b6474b
+backend: sglang
+extends: sglang_f90a941aa
+
+node_bindings:
+  top.dp_logits_input_gather:
+    symbols: [LogitsProcessor._gather_dp_attn_hidden_states, dp_gather_replicate]
+    links:
+      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._gather_dp_attn_hidden_states, display: logits_processor.py — DP-hidden gather before TP LM head}
+
+  top.dp_logits_output_scatter:
+    symbols: [LogitsProcessor._scatter_dp_attn_logits, dp_scatter]
+    links:
+      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._scatter_dp_attn_logits, display: logits_processor.py — logits scatter back to DP rank}
+
+  ple.dp_ngram_input_gather:
+    symbols: [Qwen4ExpNGramEmbedding.forward, dp_gather_replicate]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpNGramEmbedding.forward::dp_gather_replicate, display: qwen4_exp.py — DP N-gram ID gather}
+
+  ple.dp_ngram_output_scatter:
+    symbols: [Qwen4ExpNGramEmbedding.forward, dp_scatter]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpNGramEmbedding.forward::dp_scatter, display: qwen4_exp.py — DP N-gram embedding scatter}
+
+  linear_layer.dp_moe_input_gather:
+    symbols: [Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, dp_gather_replicate]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp::dp_gather_replicate, display: qwen4_exp.py — linear-layer DP-to-TP MoE gather}
+
+  linear_layer.dp_moe_output_scatter:
+    symbols: [Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, dp_scatter]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp::dp_scatter, display: qwen4_exp.py — linear-layer MoE output scatter}
+
+  full_layer.dp_moe_input_gather:
+    symbols: [Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, dp_gather_replicate]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp::dp_gather_replicate, display: qwen4_exp.py — QSA-layer DP-to-TP MoE gather}
+
+  full_layer.dp_moe_output_scatter:
+    symbols: [Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp, dp_scatter]
+    links:
+      - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpLayerExtensionMixin._run_qwen4_exp_mlp::dp_scatter, display: qwen4_exp.py — QSA-layer MoE output scatter}
