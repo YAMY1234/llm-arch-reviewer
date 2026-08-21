@@ -261,6 +261,8 @@ def main() -> int:
             "osl": 1,
             "profile_steps": 1,
             "dp_size": 4,
+            "generation_mode": "target_prefill_isolation",
+            "speculative_generation": False,
             "chunked_prefill_size_requested_global": 32768,
             "max_prefill_tokens_requested_global": 32768,
             "chunked_prefill_size_effective_per_dp_rank": 8192,

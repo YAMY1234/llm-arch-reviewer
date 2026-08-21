@@ -103,11 +103,23 @@ srun \
 
     graph_args=(--disable-cuda-graph)
     draft_args=(--speculative-moe-runner-backend deep_gemm --speculative-moe-a2a-backend deepep)
+    spec_args=(
+      --speculative-algorithm NEXTN
+      --speculative-num-steps 5
+      --speculative-eagle-topk 1
+      --speculative-num-draft-tokens 6
+      --enable-linear-replayssm-spec
+      --linear-replayssm-cache-len 8
+    )
     chunk_args=(--chunked-prefill-size 8192 --max-prefill-tokens 8192)
     if [[ "$PROFILE_KIND" == decode-bs32 ]]; then
       graph_args=(--cuda-graph-max-bs 32)
     elif [[ "$PROFILE_KIND" == prefill8k ]]; then
-      draft_args=(--speculative-moe-runner-backend triton --speculative-moe-a2a-backend none)
+      draft_args=()
+      # This phase isolates one target-model prefill chunk. Frozen MTP
+      # draft code asserts for a one-request-per-DP-rank batch after target
+      # prefill; draft/verify/replay remain covered by attribution and decode.
+      spec_args=()
       # SGLang interprets these budgets globally under Attention DP and divides
       # them by dp_size. 32768 / DP4 therefore preserves one full 8192-token
       # owner-rank chunk instead of silently resolving this capture to 2048.
@@ -148,17 +160,12 @@ srun \
       --deepep-mode low_latency \
       --ep-dispatch-algorithm static \
       --eplb-algorithm deepseek \
-      --speculative-algorithm NEXTN \
-      --speculative-num-steps 5 \
-      --speculative-eagle-topk 1 \
-      --speculative-num-draft-tokens 6 \
-      --enable-linear-replayssm-spec \
-      --linear-replayssm-cache-len 8 \
       --stream-interval 30 \
       --decode-log-interval 10 \
       --enable-layerwise-nvtx-marker \
       --skip-server-warmup \
       "${graph_args[@]}" \
+      "${spec_args[@]}" \
       "${draft_args[@]}" \
       > /run/server.log 2>&1 &
     server_pid=$!
