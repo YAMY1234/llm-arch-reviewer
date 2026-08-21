@@ -68,6 +68,28 @@ def run_batch(
         return [future.result() for future in futures]
 
 
+def summarize_generation_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep token/speculation counters without persisting generated content."""
+
+    rows = []
+    for index, result in enumerate(results):
+        meta = result.get("meta_info") or {}
+        scalar_meta = {
+            str(key): value
+            for key, value in meta.items()
+            if isinstance(value, (str, int, float, bool)) or value is None
+        }
+        output_ids = result.get("output_ids") or []
+        rows.append(
+            {
+                "request_index": index,
+                "output_token_count": len(output_ids),
+                "meta_info": scalar_meta,
+            }
+        )
+    return {"request_count": len(results), "requests": rows}
+
+
 def start_profile(
     base_url: str,
     output_dir: Path,
@@ -213,7 +235,9 @@ def main() -> int:
             with_stack=True,
         )
         protocol["formal"] = {"batch": 4, "isl": 256, "osl": 8, "profile_steps": 8}
-        run_batch(args.base_url, batch_size=4, input_len=256, output_len=8, token_seed=211)
+        formal_results = run_batch(
+            args.base_url, batch_size=4, input_len=256, output_len=8, token_seed=211
+        )
     elif args.kind == "prefill8k":
         protocol["warmup"].append({"batch": 1, "isl": 512, "osl": 1})
         run_batch(args.base_url, batch_size=1, input_len=512, output_len=1, token_seed=307)
@@ -234,7 +258,9 @@ def main() -> int:
             "max_prefill_tokens_requested_global": 32768,
             "chunked_prefill_size_effective_per_dp_rank": 8192,
         }
-        run_batch(args.base_url, batch_size=1, input_len=8192, output_len=1, token_seed=401)
+        formal_results = run_batch(
+            args.base_url, batch_size=1, input_len=8192, output_len=1, token_seed=401
+        )
     else:
         protocol["warmup"].append({"batch": 32, "isl": 32, "osl": 16})
         run_batch(args.base_url, batch_size=32, input_len=32, output_len=16, token_seed=503)
@@ -260,7 +286,7 @@ def main() -> int:
                 num_steps=8,
                 with_stack=False,
             )
-            formal_future.result()
+            formal_results = formal_future.result()
         protocol["formal"] = {
             "batch": 32,
             "per_rank_running": [
@@ -272,6 +298,10 @@ def main() -> int:
             "cuda_graph": True,
             "trigger": trigger,
         }
+
+    protocol["formal"]["response_summary"] = summarize_generation_results(
+        formal_results
+    )
 
     traces = wait_for_traces(trace_dir, args.expected_ranks)
     protocol["start_profile_response"] = response
