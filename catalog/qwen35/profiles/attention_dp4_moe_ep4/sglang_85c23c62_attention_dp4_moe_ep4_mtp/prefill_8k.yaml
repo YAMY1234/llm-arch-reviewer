@@ -1,0 +1,303 @@
+schema_version: profile.v2
+profile_id: qwen35_sglang_attention_dp4_moe_ep4_target_prefill_8k
+label: "Qwen3.5 397B \xB7 SGLang \xB7 DEP4 target-only one-chunk 8K prefill"
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+variant_id: sglang_dep4_target_prefill_8192_cgoff
+phase: prefill
+generation_mode: mtp
+entry_view: top
+execution_parameters:
+  tp_size: 4
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+workload:
+  isl: 8192
+  osl: 1
+  global_batch_size: 4
+  per_rank_batch_size: 1
+  chunk_tokens_per_rank: 8192
+  one_chunk: true
+  speculative_generation: false
+profiler:
+  type: torch
+  rank: all four DEP ranks
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: false
+  gpu_metric_semantics: maximum per-rank kernel residency; parallel ranks are not
+    summed
+evidence:
+  job_id: 3207938
+  source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
+  runtime_source_commit: a31c1e52e947bcbdd0d551c5e2323e96a9bf303b
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  protocol_file: protocol.json
+  protocol_sha256: 37f671767494f99d9dc02ac7e2adf19ca1736da07ff8137a22779e3839e64419
+  trace_files:
+  - rank: 0
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 9e82ec29018e214d448bc0f92694d508a18bc8f9bbbeb5ed677cb9bdd2271216
+  - rank: 1
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-1-DP-1-EP-1.trace.json.gz
+    sha256: 36dc80f38f3de911d764e0b98d8542ba7cf536378f828fdddfbefea32c706700
+  - rank: 2
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-2-DP-2-EP-2.trace.json.gz
+    sha256: 4031516a249d900256e1af2a9e0c8bea9cb1d114157f57735a0e914668cb4109
+  - rank: 3
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-3-DP-3-EP-3.trace.json.gz
+    sha256: 6c6f80edf5232d027fb7705c009754c37ca22c476f17b47471701bf6cb28cb4e
+  mapping_policy: unique signatures plus exact GGGA layer order and eager-stack transfer
+  mapped_or_fusion_duration_ratio: 1.0
+  strict_signature_duration_ratio: 0.59062
+  eager_stack_transfer_duration_ratio: 1.0
+  critical_prefill_wall_ms: 367.889348
+timeline:
+  schema_version: timeline.v1
+  artifact: prefill_8k.timeline.json.gz
+  sha256: 3c9536fd1a5f243db2b5a7e9fa4d148c0fdb09cfd641ebb59a68f78eb94b9835
+  reference_rank: 0
+  step_count: 1
+  event_count: 2376
+  raw_trace_file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+node_states:
+  gdn_moe_block.ba_projection:
+    status: fused
+    included_in: gdn_moe_block.qkvz_projection
+  gdn_moe_block.state_write:
+    status: fused
+    included_in: gdn_moe_block.gated_delta_recurrence
+  full_attention_moe_block.partial_rope:
+    status: fused
+    included_in: full_attention_moe_block.qk_norm
+  full_attention_moe_block.attention_output_gate:
+    status: fused
+    included_in: full_attention_moe_block.qk_norm
+  full_attention_moe_block.kv_state_write:
+    status: fused
+    included_in: full_attention_moe_block.qkv_projection
+  mtp_full_attention_moe_block.partial_rope:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qk_norm
+  mtp_full_attention_moe_block.attention_output_gate:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qk_norm
+  mtp_full_attention_moe_block.kv_state_write:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qkv_projection
+node_metrics:
+  full_attention_moe_block.output_hidden:
+    ms_per_iter: 17.722765
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: target prefill layer fused/auxiliary kernel
+      count: 289
+      count_per_iter: 289.0
+      avg_us: 61.324
+      total_us_per_iter: 17722.765
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 17.36584
+    - 17.722765
+  full_attention_moe_block.qk_norm:
+    ms_per_iter: 4.267842
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 284.523
+      total_us_per_iter: 4267.842
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 4.239682
+    - 4.267842
+  full_attention_moe_block.qkv_projection:
+    ms_per_iter: 0.534212
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 35.614
+      total_us_per_iter: 534.212
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.529541
+    - 0.534212
+  gdn_moe_block.output_gate_norm:
+    ms_per_iter: 6.070895
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output gate norm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 134.909
+      total_us_per_iter: 6070.895
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 6.034513
+    - 6.070895
+  gdn_moe_block.output_hidden:
+    ms_per_iter: 66.079441
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: target prefill layer fused/auxiliary kernel
+      count: 1367
+      count_per_iter: 1367.0
+      avg_us: 48.339
+      total_us_per_iter: 66079.441
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 65.176744
+    - 66.079441
+  gdn_moe_block.qkvz_projection:
+    ms_per_iter: 5.221451
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: GDN QKVZBA split/reshape
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 116.032
+      total_us_per_iter: 5221.451
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 5.211755
+    - 5.221451
+  moe_block.routed_experts:
+    ms_per_iter: 34.90722
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 290.894
+      total_us_per_iter: 34907.22
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 11.437281
+    - 34.90722
+  moe_block.router:
+    ms_per_iter: 1.274249
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 21.237
+      total_us_per_iter: 1274.249
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 1.265384
+    - 1.274249
+  moe_block.shared_expert:
+    ms_per_iter: 0.685096
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared expert activation
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 11.418
+      total_us_per_iter: 685.096
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.607394
+    - 0.685096
+  moe_block.target_ep4_combine:
+    ms_per_iter: 62.162903
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 combine
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 518.024
+      total_us_per_iter: 62162.903
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 16.594022
+    - 62.162903
+  moe_block.target_ep4_dispatch:
+    ms_per_iter: 126.417055
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 1053.475
+      total_us_per_iter: 126417.055
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 5.548335
+    - 126.417055
+  moe_block.target_ep4_pack:
+    ms_per_iter: 0.113665
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch pack
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 1.894
+      total_us_per_iter: 113.665
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.103394
+    - 0.113665
+  moe_block.weighted_combine:
+    ms_per_iter: 2.366993
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE weighted combine
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 39.45
+      total_us_per_iter: 2366.993
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 2.266126
+    - 2.366993

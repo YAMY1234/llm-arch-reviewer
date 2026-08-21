@@ -11,6 +11,7 @@ from models.qwen35.profile.qwen35_graph_mapping import (
     TARGET_PATTERN,
     direct_graph_mapping,
     map_graph_window,
+    map_prefill_window,
 )
 from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
     parse_benchmark_snapshot,
@@ -97,6 +98,45 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
     assert all(event["node"] for event in mapped)
     assert any(event["layer_id"] == 59 for event in mapped)
     assert any(event["node"] == "generation_loop.replay_gdn" for event in mapped)
+
+
+def test_prefill_window_separates_target_layers_from_mtp_seed():
+    events = []
+    for layer_id, kind in enumerate(TARGET_PATTERN):
+        ts = 100.0 + layer_id * 10.0
+        events.append(
+            _kernel(
+                "fused_qkvzba_split_reshape_cat_contiguous_kernel"
+                if kind == "gdn"
+                else "_fused_qk_rmsnorm_rope_gate_kernel",
+                ts,
+            )
+        )
+        events.append(_kernel("moeA2ADispatchKernel", ts + 2.0))
+        events.append(_kernel("moeA2ACombineKernel", ts + 4.0))
+    seed_start = 800.0
+    events.extend(
+        [
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", seed_start),
+            _kernel("deep_ep::internode_ll::dispatch", seed_start + 2.0),
+            _kernel("deep_ep::internode_ll::dispatch", seed_start + 3.0),
+            _kernel("deep_ep::internode_ll::combine", seed_start + 4.0),
+            _kernel("deep_ep::internode_ll::combine", seed_start + 5.0),
+        ]
+    )
+    mapped, validation = map_prefill_window(
+        events,
+        start_us=100.0,
+        end_us=900.0,
+        rank=0,
+        step_index=0,
+        mtp_seed_start_us=seed_start,
+    )
+    assert validation["signature_counts"]["target_gdn_layers"] == 45
+    assert validation["signature_counts"]["target_attention_layers"] == 15
+    assert validation["signature_counts"]["mtp_seed_attention_layers"] == 1
+    assert validation["signature_counts"]["mtp_seed_ep4_dispatch"] == 2
+    assert all(event["layer_id"] is None for event in mapped if event["substage"] == "mtp_seed_prefill")
 
 
 def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):

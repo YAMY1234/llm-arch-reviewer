@@ -29,7 +29,13 @@ TARGET_PATTERN = tuple(
 
 EAGER_SCOPE_FALLBACKS = {
     "gdn_moe_block.output_hidden": "gdn_moe_block.qkvz_projection",
+    # The eager trace records the Python launch under the enclosing attention
+    # backend / MoE combine scope, while the graph trace exposes the fused
+    # implementation kernel as a more specific IR node.
+    "full_attention_moe_block.qk_norm": "full_attention_moe_block.causal_gqa",
+    "full_attention_moe_block.qkv_projection": "full_attention_moe_block.causal_gqa",
     "full_attention_moe_block.output_hidden": "full_attention_moe_block.causal_gqa",
+    "moe_block.weighted_combine": "moe_block.target_ep4_combine",
     "top.decoder_stack": "gdn_moe_block.qkvz_projection",
     "mtp_draft_head.draft_decoder_layer": "mtp_full_attention_moe_block.causal_gqa",
     "generation_loop.accept_prefix": "generation_loop.draft_propose",
@@ -460,8 +466,9 @@ def map_prefill_window(
     end_us: float,
     rank: int,
     step_index: int,
+    mtp_seed_start_us: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Map one complete target-only 8192-token eager prefill forward."""
+    """Map one complete target prefill, optionally including its MTP seed."""
 
     kernels = sorted(
         (
@@ -473,29 +480,51 @@ def map_prefill_window(
         ),
         key=lambda event: float(event.get("ts", 0.0)),
     )
-    anchors = _target_anchors(kernels, target_start=start_us, target_end=end_us)
+    target_end_us = mtp_seed_start_us if mtp_seed_start_us is not None else end_us
+    anchors = _target_anchors(
+        kernels, target_start=start_us, target_end=target_end_us
+    )
     anchor_times = [item[0] for item in anchors]
     mapped: list[dict[str, Any]] = []
     status_us: Counter[str] = Counter()
     for event_index, kernel in enumerate(kernels):
         ts_us = float(kernel.get("ts", 0.0))
         name = str(kernel.get("name", ""))
-        layer_id = max(0, bisect_right(anchor_times, ts_us) - 1)
-        layer_kind = anchors[layer_id][1]
+        mtp_seed = mtp_seed_start_us is not None and ts_us >= mtp_seed_start_us
+        layer_id = None if mtp_seed else max(0, bisect_right(anchor_times, ts_us) - 1)
+        layer_kind = "attention" if mtp_seed else anchors[layer_id][1]
         direct = direct_graph_mapping(
-            name, substage="target_verify", layer_kind=layer_kind
+            name,
+            substage="draft_extend" if mtp_seed else "target_verify",
+            layer_kind=layer_kind,
         )
         if direct is None:
-            view = "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
-            direct = GraphMapping(
-                f"{view}.output_hidden",
-                "target prefill layer fused/auxiliary kernel",
-                "fusion",
-                "structural",
-            )
+            if mtp_seed:
+                direct = GraphMapping(
+                    "mtp_draft_head.draft_decoder_layer",
+                    "MTP seed-prefill fused/auxiliary kernel",
+                    "fusion",
+                    "structural",
+                )
+            else:
+                view = (
+                    "gdn_moe_block"
+                    if layer_kind == "gdn"
+                    else "full_attention_moe_block"
+                )
+                direct = GraphMapping(
+                    f"{view}.output_hidden",
+                    "target prefill layer fused/auxiliary kernel",
+                    "fusion",
+                    "structural",
+                )
         duration_us = float(kernel.get("dur", 0.0))
         status_us[direct.status] += duration_us
-        targets = [*direct.ir_targets, f"layer_schedule.layer_{layer_id:02d}"]
+        targets = list(direct.ir_targets)
+        if layer_id is not None:
+            targets.append(f"layer_schedule.layer_{layer_id:02d}")
+        if mtp_seed:
+            targets.append("generation_loop.draft_propose")
         mapped.append(
             {
                 "event_id": f"r{rank}-p{step_index}-k{event_index}",
@@ -520,7 +549,8 @@ def map_prefill_window(
                 "confidence": direct.confidence,
                 "layer_id": layer_id,
                 "layer_kind": layer_kind,
-                "substage": "target_prefill",
+                "substage": "mtp_seed_prefill" if mtp_seed else "target_prefill",
+                "mtp_round": 0 if mtp_seed else None,
                 "ts_us": ts_us,
                 "dur_us": duration_us,
                 "stream": (kernel.get("args") or {}).get("stream", kernel.get("tid")),
@@ -540,19 +570,39 @@ def map_prefill_window(
         "target_gdn_layers": sum(
             "fused_qkvzba_split" in str(kernel.get("name", "")).lower()
             for kernel in kernels
+            if float(kernel.get("ts", 0.0)) < target_end_us
         ),
         "target_attention_layers": sum(
             "_fused_qk_rmsnorm_rope_gate_kernel"
             in str(kernel.get("name", "")).lower()
             for kernel in kernels
+            if float(kernel.get("ts", 0.0)) < target_end_us
         ),
         "target_ep4_dispatch": sum(
             "moea2adispatchkernel" in str(kernel.get("name", "")).lower()
             for kernel in kernels
+            if float(kernel.get("ts", 0.0)) < target_end_us
         ),
         "target_ep4_combine": sum(
             "moea2acombinekernel" in str(kernel.get("name", "")).lower()
             for kernel in kernels
+            if float(kernel.get("ts", 0.0)) < target_end_us
+        ),
+        "mtp_seed_attention_layers": sum(
+            event["substage"] == "mtp_seed_prefill"
+            and "_fused_qk_rmsnorm_rope_gate_kernel"
+            in event["kernel_name"].lower()
+            for event in mapped
+        ),
+        "mtp_seed_ep4_dispatch": sum(
+            event["substage"] == "mtp_seed_prefill"
+            and event["node"] == "mtp_moe_block.draft_ep4_dispatch"
+            for event in mapped
+        ),
+        "mtp_seed_ep4_combine": sum(
+            event["substage"] == "mtp_seed_prefill"
+            and event["node"] == "mtp_moe_block.draft_ep4_combine"
+            for event in mapped
         ),
     }
     expected = {
@@ -561,6 +611,14 @@ def map_prefill_window(
         "target_ep4_dispatch": 60,
         "target_ep4_combine": 60,
     }
+    if mtp_seed_start_us is not None:
+        expected.update(
+            {
+                "mtp_seed_attention_layers": 1,
+                "mtp_seed_ep4_dispatch": 2,
+                "mtp_seed_ep4_combine": 2,
+            }
+        )
     mismatch = {
         key: {"expected": value, "actual": signature_counts[key]}
         for key, value in expected.items()

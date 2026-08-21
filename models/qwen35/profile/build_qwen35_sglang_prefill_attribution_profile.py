@@ -18,7 +18,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.timeline_artifact import build_timeline_artifact, write_timeline_artifact
-from models.common.trace_mapping import load_trace
+from models.common.trace_mapping import (
+    _primary_gpu_annotations,
+    find_eagle_mtp_prefill_windows,
+    load_trace,
+)
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
@@ -110,17 +114,27 @@ def validate_protocol(path: Path) -> dict[str, Any]:
     return protocol
 
 
-def _annotation(events: list[dict[str, Any]], rank: int) -> dict[str, Any]:
+def _prefill_window(events: list[dict[str, Any]], rank: int):
+    windows = find_eagle_mtp_prefill_windows(
+        events, signature="fused_qkvzba_split"
+    )
+    if len(windows) != 1:
+        raise ValueError(f"rank {rank}: expected one logical MTP prefill, got {len(windows)}")
+    annotations, _track = _primary_gpu_annotations(
+        events, name_prefix="step[EXTEND"
+    )
     candidates = [
         event
-        for event in events
-        if event.get("cat") == "gpu_user_annotation"
-        and event.get("ph") == "X"
+        for event in annotations
+        if windows[0].start_us <= float(event.get("ts", 0.0)) < windows[0].end_us
         and event.get("name") == PREFILL_ANNOTATION
     ]
-    if len(candidates) != 1:
-        raise ValueError(f"rank {rank}: expected one {PREFILL_ANNOTATION}, got {len(candidates)}")
-    return candidates[0]
+    if len(candidates) != 2:
+        raise ValueError(
+            f"rank {rank}: expected target plus MTP-seed {PREFILL_ANNOTATION} ranges, "
+            f"got {len(candidates)}"
+        )
+    return windows[0], float(candidates[1]["ts"])
 
 
 def build(args: argparse.Namespace):
@@ -137,11 +151,16 @@ def build(args: argparse.Namespace):
     all_mappings = []
     for rank, path in sorted(paths_by_rank.items()):
         events = load_trace(path).get("traceEvents") or []
-        annotation = _annotation(events, rank)
-        start_us = float(annotation["ts"])
-        end_us = start_us + float(annotation["dur"])
+        window, mtp_seed_start_us = _prefill_window(events, rank)
+        start_us = window.start_us
+        end_us = window.end_us
         mapped, validation = map_prefill_window(
-            events, start_us=start_us, end_us=end_us, rank=rank, step_index=0
+            events,
+            start_us=start_us,
+            end_us=end_us,
+            rank=rank,
+            step_index=0,
+            mtp_seed_start_us=mtp_seed_start_us,
         )
         rank_metrics[rank] = _metrics_for_rank(mapped, 1)
         rank_validation[rank] = validation
@@ -175,7 +194,7 @@ def build(args: argparse.Namespace):
         steps=[
             {
                 "step_index": 0,
-                "label": "eager attribution · one complete 256-token target prefill",
+                "label": "eager attribution · 256-token target prefill + MTP seed",
                 "trace_start_us": reference_start_us,
                 "duration_us": rank_wall_ms[0] * 1000.0,
                 "events": reference_events,
