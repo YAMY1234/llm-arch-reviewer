@@ -190,6 +190,7 @@ def wait_for_decode_batch(
 ) -> dict[str, Any]:
     deadline = time.monotonic() + 1800
     recent: list[dict[str, Any]] = []
+    exact_since: float | None = None
     while time.monotonic() < deadline:
         if request_future.done():
             request_future.result()
@@ -207,13 +208,31 @@ def wait_for_decode_batch(
         }
         recent.append(sample)
         recent = recent[-64:]
-        if (
+        exact = (
             sample["global_running_reqs"] == batch_size
             and sample["global_waiting_reqs"] == 0
             and sample["global_waiting_uncached_tokens"] == 0
             and max(running) - min(running) <= 1
-        ):
-            return {"trigger": sample, "recent": recent}
+        )
+        if exact:
+            if exact_since is None:
+                exact_since = time.monotonic()
+            # A request appears in ``num_running_reqs`` before its first
+            # target-prefill scheduler step.  Requiring the exact, queue-free
+            # rank distribution to persist prevents a one-step profiler from
+            # being consumed by admission prefill instead of eager MTP decode.
+            # The formal OSL=128 batch remains live for substantially longer
+            # than this bounded settling interval.
+            if time.monotonic() - exact_since >= 2.0:
+                return {
+                    "trigger": sample,
+                    "recent": recent,
+                    "exact_batch_settle_seconds": round(
+                        time.monotonic() - exact_since, 3
+                    ),
+                }
+        else:
+            exact_since = None
         time.sleep(0.2)
     raise RuntimeError(f"timed out waiting for exact decode batch; recent={recent}")
 
