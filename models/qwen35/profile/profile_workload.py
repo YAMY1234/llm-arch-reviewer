@@ -239,8 +239,14 @@ def main() -> int:
             args.base_url, batch_size=4, input_len=256, output_len=8, token_seed=211
         )
     elif args.kind == "prefill8k":
-        protocol["warmup"].append({"batch": 1, "isl": 512, "osl": 1})
-        run_batch(args.base_url, batch_size=1, input_len=512, output_len=1, token_seed=307)
+        # Attention DP4 requires a non-empty local batch on every rank in this
+        # frozen TRTLLM-MHA backend (a zero-request rank divides by batch_size).
+        # Four concurrent requests are round-robin owned one per DP rank, so
+        # every validated rank executes one complete 8192-token chunk.
+        protocol["warmup"].append(
+            {"global_batch": 4, "per_rank_batch": 1, "isl": 512, "osl": 1}
+        )
+        run_batch(args.base_url, batch_size=4, input_len=512, output_len=1, token_seed=307)
         response = start_profile(
             args.base_url,
             trace_dir,
@@ -249,7 +255,8 @@ def main() -> int:
             with_stack=False,
         )
         protocol["formal"] = {
-            "batch": 1,
+            "global_batch": 4,
+            "per_rank_batch": 1,
             "isl": 8192,
             "osl": 1,
             "profile_steps": 1,
@@ -259,7 +266,7 @@ def main() -> int:
             "chunked_prefill_size_effective_per_dp_rank": 8192,
         }
         formal_results = run_batch(
-            args.base_url, batch_size=1, input_len=8192, output_len=1, token_seed=401
+            args.base_url, batch_size=4, input_len=8192, output_len=1, token_seed=401
         )
     else:
         protocol["warmup"].append({"batch": 32, "isl": 32, "osl": 16})
