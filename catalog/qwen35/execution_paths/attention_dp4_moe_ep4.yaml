@@ -1,0 +1,888 @@
+schema_version: execution-plan.v2
+execution_path_id: attention_dp4_moe_ep4
+label: Framework-independent Attention DP4 + MoE EP4 (DEP4)
+model_id: qwen35_397b_a17b
+plan_version: 2
+parallelism_axes:
+  tp_size: 1
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+  attention_axis: data_parallel
+  moe_axis: expert_parallel
+default_parameters:
+  physical_ranks: 4
+  attention_weight_replicas: 4
+  routed_experts_per_rank: 128
+  shared_expert_replicas: 4
+constraints:
+  world_size_equation: physical_ranks = dp_size = ep_size = 4
+  expert_partition: 512 routed experts / EP4 = 128 experts per rank
+  request_state_locality: KV/GDN state follows its attention-DP request owner
+  semantic_dtype_note: The plan preserves bf16 logical activations. Engine-specific FP4 dispatch or FP8 KV encodings
+    belong to implementation/profile overlays.
+transforms:
+- op: annotate_node
+  target: top.embedding
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: top.decoder_stack
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: top.final_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: top.lm_head
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.input_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.qkvz_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.ba_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.causal_conv
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.gated_delta_recurrence
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.output_gate_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.output_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.input_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.qkv_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.qk_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.partial_rope
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.causal_gqa
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.attention_output_gate
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: full_attention_moe_block.output_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_draft_head.fc_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_draft_head.draft_decoder_layer
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_draft_head.shared_lm_head
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: generation_loop.draft_propose
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: generation_loop.target_verify
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: generation_loop.accept_prefix
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: generation_loop.replay_gdn
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_00
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_01
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_02
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_03
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_04
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_05
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_06
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_07
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_08
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_09
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_10
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_11
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_12
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_13
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_14
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_15
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_16
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_17
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_18
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_19
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_20
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_21
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_22
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_23
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_24
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_25
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_26
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_27
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_28
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_29
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_30
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_31
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_32
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_33
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_34
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_35
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_36
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_37
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_38
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_39
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_40
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_41
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_42
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_43
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_44
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_45
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_46
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_47
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_48
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_49
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_50
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_51
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_52
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_53
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_54
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_55
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_56
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_57
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_58
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: layer_schedule.layer_59
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: gdn_moe_block.conv_state_read
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: gdn_moe_block.recurrent_state_read
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: gdn_moe_block.state_write
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: full_attention_moe_block.kv_state_read
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: full_attention_moe_block.kv_state_write
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.attention_keys
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.attention_values
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.gdn_conv_windows
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.gdn_recurrent_states
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.verify_journal
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: generation_loop.tentative_state
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: generation_loop.commit_kv
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: generation_loop.commit_gdn
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: moe_block.router
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: local routing over B_local tokens
+- op: annotate_node
+  target: moe_block.routed_experts
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: expert-local compute
+- op: annotate_node
+  target: moe_block.shared_expert
+  set:
+    execution:
+      placement: replicated on every DEP rank
+      parallelism: attention_dp4
+      sharding: B_local tokens; shared-expert weights replicated
+- op: annotate_node
+  target: moe_block.weighted_combine
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: origin-rank combine
+- op: insert_after
+  after: top.embedding
+  node:
+    id: dp4_request_partition
+    label: Attention-DP4 request partition
+    shape: elem
+    semantic_op: execution.layout.dp4_request_partition
+    node_kind: layout_transform
+    boundary_role: module_boundary
+    execution:
+      placement: request ingress for ranks 0..3
+      collective: local_select
+      parallelism: attention_dp4
+      payload: global logical hidden rows [B,T,H], bf16, row-major
+      result: rank-local hidden rows [B_local,T,H], bf16, row-major
+      dtype: bf16
+      tensor_layout: token-major contiguous; H unsharded
+  edge:
+    shape: '[B,T,H]'
+    dtype: bf16
+- op: insert_after
+  after: moe_block.router
+  node:
+    id: ep4_dispatch
+    label: EP4 variable-size expert dispatch
+    shape: moe
+    semantic_op: execution.collective.moe_dispatch
+    node_kind: communication
+    boundary_role: module_internal
+    execution:
+      placement: all four ranks in the DEP/EP group
+      collective: all_to_all_v
+      parallelism: moe_ep4
+      payload: top-10 routed records [token_id:int32, expert_id:int32, route_weight:fp32, hidden[H]:bf16] in token-major
+        send buckets
+      result: expert-owner buckets [N_recv,H] bf16 plus origin-token and routing metadata; 128 logical experts per
+        rank
+      dtype: structured int32/fp32/bf16
+      tensor_layout: destination-rank-major, then local-expert-major
+  edge:
+    shape: '[N_local,topk,H]'
+    dtype: bf16
+- op: insert_after
+  after: moe_block.routed_experts
+  node:
+    id: ep4_combine
+    label: EP4 routed-output return
+    shape: moe
+    semantic_op: execution.collective.moe_combine
+    node_kind: communication
+    boundary_role: module_internal
+    execution:
+      placement: all four ranks in the DEP/EP group
+      collective: all_to_all_v
+      parallelism: moe_ep4
+      payload: expert outputs [N_recv,H] bf16 with origin-token:int32 and route_weight:fp32, expert-major
+      result: origin-rank routed rows [N_local,topk,H] bf16, token-major
+      dtype: structured int32/fp32/bf16
+      tensor_layout: origin-rank-major on wire; token-major after receive
+  edge:
+    shape: '[N_recv,H]'
+    dtype: bf16
