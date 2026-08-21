@@ -454,6 +454,9 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
     validation = {
         "step_id": step.step_id,
         "rank": step.rank,
+        "context_reqs": step.context_reqs,
+        "context_tokens": step.context_tokens,
+        "generation_reqs": step.generation_reqs,
         "kernel_count": len(kernels),
         "graph_launch_count": step.graph_launch_count,
         "target_gdn_layers": kinds.count("gdn"),
@@ -610,6 +613,9 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
     validation = {
         "step_id": step.step_id,
         "rank": step.rank,
+        "context_reqs": step.context_reqs,
+        "context_tokens": step.context_tokens,
+        "generation_reqs": step.generation_reqs,
         "owner_compute": owner_compute,
         "kernel_count": len(kernels),
         "target_gdn_layers": sum(kind == "gdn" for _index, kind in anchor_pairs),

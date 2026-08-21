@@ -135,6 +135,7 @@ def build(args: argparse.Namespace):
     reference_source = f"{workers[0]}/rank0"
     reference_steps: list[dict[str, Any]] = []
     owner_rank_positions: set[int] = set()
+    shape_observations: list[dict[str, Any]] = []
 
     for (worker, rank), path in sorted(paths.items()):
         source = f"{worker}/rank{rank}"
@@ -160,6 +161,17 @@ def build(args: argparse.Namespace):
                 mapping["worker"] = worker
             source_mappings.extend(mappings)
             source_validations.append(validation)
+            shape_observations.append(
+                {
+                    "worker": worker,
+                    "rank": rank,
+                    "step_id": step.step_id,
+                    "context_reqs": validation["context_reqs"],
+                    "context_tokens": validation["context_tokens"],
+                    "generation_reqs": validation["generation_reqs"],
+                    "owner_compute": validation.get("owner_compute"),
+                }
+            )
             timing_by_step.setdefault(step.step_id, []).append(
                 {
                     "cpu_wall_us": validation["cpu_wall_us"],
@@ -241,6 +253,27 @@ def build(args: argparse.Namespace):
     if attributed_ratio < 0.90:
         raise ValueError(f"TRT {args.phase} mapped+fusion ratio {attributed_ratio:.4f} < 0.90")
 
+    if args.phase == "decode":
+        measured_shape = {
+            "generation_requests": {
+                "samples": [row["generation_reqs"] for row in shape_observations],
+                "min": min(row["generation_reqs"] for row in shape_observations),
+                "median": statistics.median(
+                    row["generation_reqs"] for row in shape_observations
+                ),
+                "max": max(row["generation_reqs"] for row in shape_observations),
+            }
+        }
+    else:
+        owner_shapes = [row for row in shape_observations if row["owner_compute"]]
+        measured_shape = {
+            "owner_context": owner_shapes,
+            "one_chunk_8k_owner_samples": sum(
+                row["context_reqs"] == 1 and row["context_tokens"] == 8192
+                for row in owner_shapes
+            ),
+        }
+
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
@@ -267,6 +300,7 @@ def build(args: argparse.Namespace):
             "warmup_grace_seconds": 1800,
             "mtp_draft_tokens": 6,
             "decode_cuda_graph_batch_cap": 32,
+            "measured_shape": measured_shape,
         },
         "profiler": {
             "type": "nsight_systems_worker_local",
@@ -305,6 +339,7 @@ def build(args: argparse.Namespace):
         "workers": workers,
         "process_checks": process_checks,
         "validations": validations,
+        "shape_observations": shape_observations,
         "owner_rank_positions": sorted(owner_rank_positions),
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),
