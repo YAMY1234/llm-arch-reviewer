@@ -269,54 +269,61 @@ def _gdn_view(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _full_attention_view(config: dict[str, Any]) -> dict[str, Any]:
+def _full_attention_view(config: dict[str, Any], *, mtp: bool = False) -> dict[str, Any]:
     q_width = config["num_attention_heads"] * config["head_dim"]
     kv_width = config["num_key_value_heads"] * config["head_dim"]
+    semantic_prefix = "generation.mtp" if mtp else "qwen3_5"
+    title_prefix = "Qwen3.5 MTP draft" if mtp else "Qwen3.5"
+    moe_view = "mtp_moe_block" if mtp else "moe_block"
+
+    def semantic(suffix: str) -> str:
+        return f"{semantic_prefix}.{suffix}"
+
     return {
-        "title": "Qwen3.5 gated GQA + MoE decoder layer",
+        "title": f"{title_prefix} gated GQA + MoE decoder layer",
         "nodes": [
-            _node("input_hidden", "Layer input", "io", "qwen3_5.layer_input"),
-            _node("input_norm", "Pre-attention RMSNorm", "norm", "qwen3_5.input_rms_norm"),
+            _node("input_hidden", "Layer input", "io", semantic("layer_input")),
+            _node("input_norm", "Pre-attention RMSNorm", "norm", semantic("input_rms_norm")),
             _node(
                 "qkv_projection",
                 "Q/K/V projection",
                 "gemm",
-                "qwen3_5.attention.project_qkv",
+                semantic("attention.project_qkv"),
                 output=f"[N,{q_width + 2 * kv_width}]",
             ),
-            _node("qk_norm", "Per-head Q/K RMSNorm", "norm", "qwen3_5.attention.qk_norm"),
+            _node("qk_norm", "Per-head Q/K RMSNorm", "norm", semantic("attention.qk_norm")),
             _node(
                 "partial_rope",
                 "Partial RoPE (25% of head channels)",
                 "elem",
-                "qwen3_5.attention.partial_rope",
+                semantic("attention.partial_rope"),
             ),
             _node(
                 "kv_state_read",
-                "Read full-attention KV state",
+                "Read draft KV state" if mtp else "Read full-attention KV state",
                 "cache",
-                "qwen3_5.attention.kv_cache.read",
+                semantic("attention.kv_cache.read"),
                 tensor="K,V [B,2,T,256]",
             ),
-            _node("causal_gqa", "Causal grouped-query attention", "attn", "qwen3_5.attention.gqa"),
+            _node("causal_gqa", "Causal grouped-query attention", "attn", semantic("attention.gqa")),
             _node(
                 "kv_state_write",
-                "Append K/V state",
+                "Append draft K/V state" if mtp else "Append K/V state",
                 "cache",
-                "qwen3_5.attention.kv_cache.write",
+                semantic("attention.kv_cache.write"),
             ),
             _node(
                 "attention_output_gate",
                 "Attention output gate",
                 "elem",
-                "qwen3_5.attention.output_gate",
+                semantic("attention.output_gate"),
             ),
-            _node("output_projection", "Attention output projection", "gemm", "qwen3_5.attention.o_proj"),
-            _node("attention_residual", "Attention residual add", "elem", "qwen3_5.residual_add"),
-            _node("post_attention_norm", "Pre-MoE RMSNorm", "norm", "qwen3_5.post_attention_rms_norm"),
-            _node("moe", "Sparse MoE + shared expert", "moe", "qwen3_5.moe", drill="moe_block"),
-            _node("layer_residual", "MoE residual add", "elem", "qwen3_5.residual_add"),
-            _node("output_hidden", "Layer output", "io", "qwen3_5.layer_output"),
+            _node("output_projection", "Attention output projection", "gemm", semantic("attention.o_proj")),
+            _node("attention_residual", "Attention residual add", "elem", semantic("residual_add")),
+            _node("post_attention_norm", "Pre-MoE RMSNorm", "norm", semantic("post_attention_rms_norm")),
+            _node("moe", "Sparse MoE + shared expert", "moe", semantic("moe"), drill=moe_view),
+            _node("layer_residual", "MoE residual add", "elem", semantic("residual_add")),
+            _node("output_hidden", "Layer output", "io", semantic("layer_output")),
         ],
         "edges": [
             _edge("input_hidden", "input_norm", dtype="bf16"),
@@ -342,16 +349,22 @@ def _full_attention_view(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _moe_view(config: dict[str, Any]) -> dict[str, Any]:
+def _moe_view(config: dict[str, Any], *, mtp: bool = False) -> dict[str, Any]:
+    semantic_prefix = "generation.mtp.moe" if mtp else "qwen3_5.moe"
+    title_scope = "MTP draft" if mtp else "target"
+
+    def semantic(suffix: str) -> str:
+        return f"{semantic_prefix}.{suffix}"
+
     return {
-        "title": "Qwen3.5 logical routed + shared expert computation",
+        "title": f"Qwen3.5 {title_scope} logical routed + shared expert computation",
         "nodes": [
-            _node("input_hidden", "MoE input", "io", "qwen3_5.moe.input"),
+            _node("input_hidden", "MoE input", "io", semantic("input")),
             _node(
                 "router",
                 "Router and top-10 selection",
                 "gemm",
-                "qwen3_5.moe.router_topk",
+                semantic("router_topk"),
                 routed_experts=config["num_experts"],
                 experts_per_token=config["num_experts_per_tok"],
             ),
@@ -359,23 +372,23 @@ def _moe_view(config: dict[str, Any]) -> dict[str, Any]:
                 "routed_experts",
                 "512 routed SwiGLU experts",
                 "moe",
-                "qwen3_5.moe.routed_experts",
+                semantic("routed_experts"),
                 expert_intermediate_size=config["moe_intermediate_size"],
             ),
             _node(
                 "shared_expert",
                 "Always-on shared SwiGLU expert",
                 "moe",
-                "qwen3_5.moe.shared_expert",
+                semantic("shared_expert"),
                 intermediate_size=config["shared_expert_intermediate_size"],
             ),
             _node(
                 "weighted_combine",
                 "Weighted routed sum + shared expert",
                 "elem",
-                "qwen3_5.moe.combine",
+                semantic("combine"),
             ),
-            _node("output_hidden", "MoE output", "io", "qwen3_5.moe.output"),
+            _node("output_hidden", "MoE output", "io", semantic("output")),
         ],
         "edges": [
             _edge("input_hidden", "router", shape="[N,H]", dtype="bf16"),
@@ -413,6 +426,24 @@ def _state_view(config: dict[str, Any]) -> dict[str, Any]:
                 tensor=f"[B,15,{config['num_key_value_heads']},T,{config['head_dim']}]",
                 dtype="bf16",
                 note="Runtime profiles may overlay FP8 storage.",
+            ),
+            _node(
+                "mtp_draft_keys",
+                "One-layer MTP draft key cache",
+                "cache",
+                "generation.mtp.state.attention_keys",
+                tensor=f"[B,1,{config['num_key_value_heads']},T,{config['head_dim']}]",
+                dtype="bf16",
+                lifecycle="advance along the candidate chain; trim/reset at the accepted boundary",
+            ),
+            _node(
+                "mtp_draft_values",
+                "One-layer MTP draft value cache",
+                "cache",
+                "generation.mtp.state.attention_values",
+                tensor=f"[B,1,{config['num_key_value_heads']},T,{config['head_dim']}]",
+                dtype="bf16",
+                lifecycle="advance along the candidate chain; trim/reset at the accepted boundary",
             ),
             _node(
                 "gdn_conv_windows",
@@ -453,6 +484,8 @@ def _state_view(config: dict[str, Any]) -> dict[str, Any]:
         "edges": [
             _edge("attention_keys", "verify_journal", kind="snapshot"),
             _edge("attention_values", "verify_journal", kind="snapshot"),
+            _edge("mtp_draft_keys", "verify_journal", kind="draft_boundary"),
+            _edge("mtp_draft_values", "verify_journal", kind="draft_boundary"),
             _edge("gdn_conv_windows", "verify_journal", kind="snapshot"),
             _edge("gdn_recurrent_states", "verify_journal", kind="snapshot"),
             _edge("committed_lengths", "verify_journal", kind="boundary"),
@@ -488,7 +521,7 @@ def _mtp_head_view(config: dict[str, Any]) -> dict[str, Any]:
                 "One full-attention + MoE draft layer",
                 "block",
                 "generation.mtp.decoder_layer",
-                drill="full_attention_moe_block",
+                drill="mtp_full_attention_moe_block",
             ),
             _node("draft_final_norm", "Draft final RMSNorm", "norm", "generation.mtp.final_norm"),
             _node("shared_lm_head", "Target LM head", "gemm", "generation.mtp.shared_lm_head"),
@@ -618,7 +651,7 @@ def build_model_ir(raw_config: dict[str, Any], config_sha256: str) -> dict[str, 
         "schema_version": "model-ir.v2",
         "model_id": "qwen35_397b_a17b",
         "model_label": "Qwen3.5 397B-A17B NVFP4 (text backbone)",
-        "ir_version": 1,
+        "ir_version": 2,
         "default_view": "top",
         "default_execution_path": "attention_dp4_moe_ep4",
         "dimensions": {
@@ -682,6 +715,8 @@ def build_model_ir(raw_config: dict[str, Any], config_sha256: str) -> dict[str, 
             "gdn_moe_block": _gdn_view(text),
             "full_attention_moe_block": _full_attention_view(text),
             "moe_block": _moe_view(text),
+            "mtp_full_attention_moe_block": _full_attention_view(text, mtp=True),
+            "mtp_moe_block": _moe_view(text, mtp=True),
             "state_tensors": _state_view(text),
             "mtp_draft_head": _mtp_head_view(text),
             "generation_loop": _generation_view(),
@@ -700,6 +735,139 @@ def _ep_execution(role: str) -> dict[str, Any]:
         "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
         "role": role,
     }
+
+
+def _moe_scope_transforms(view_id: str, scope: str) -> list[dict[str, Any]]:
+    """Build an explicit, independently bindable EP4 boundary for one MoE scope."""
+    prefix = f"{scope}_ep4"
+    scope_label = "target model" if scope == "target" else "MTP draft model"
+    group = "DEP/EP ranks [0,1,2,3]"
+    wire_contract = (
+        f"{scope} binding must record its own hidden encoding and metadata ABI; "
+        "it must not inherit these choices from the other scope"
+    )
+    return [
+        _annotate(f"{view_id}.router", **_ep_execution(f"{scope_label} local routing")),
+        _annotate(f"{view_id}.routed_experts", **_ep_execution(f"{scope_label} expert-local compute")),
+        _annotate(
+            f"{view_id}.shared_expert",
+            placement="replicated on every DEP rank",
+            parallelism="attention_dp4",
+            sharding="B_local tokens; shared-expert weights replicated",
+            scope=scope,
+        ),
+        _annotate(f"{view_id}.weighted_combine", **_ep_execution(f"{scope_label} origin-rank sum")),
+        {
+            "op": "insert_after",
+            "after": f"{view_id}.router",
+            "node": {
+                "id": f"{prefix}_pack",
+                "label": f"{scope_label} EP4 dispatch pack",
+                "shape": "elem",
+                "semantic_op": "execution.layout.moe_dispatch_pack",
+                "node_kind": "layout_transform",
+                "boundary_role": "module_internal",
+                "execution": {
+                    "scope": scope,
+                    "placement": "each origin rank",
+                    "collective": "none (local stable pack)",
+                    "group": group,
+                    "parallelism": "moe_ep4",
+                    "payload": (
+                        "hidden [N_local,H] bf16, expert_ids [N_local,10] int32, "
+                        "route_weights [N_local,10] fp32, origin_row [N_local] int32"
+                    ),
+                    "result": (
+                        "four destination buckets of logical route records; each record is "
+                        "(origin_rank, origin_row, route_slot, expert_id, weight, hidden[H])"
+                    ),
+                    "dtype": "logical bf16 + int32 + fp32",
+                    "tensor_layout": "destination-rank-major, then expert-id-major, stable origin-row order",
+                },
+            },
+            "edge": {"shape": "[N_local,10] route records", "dtype": "structured"},
+        },
+        {
+            "op": "insert_after",
+            "after": f"{view_id}.{prefix}_pack",
+            "node": {
+                "id": f"{prefix}_dispatch",
+                "label": f"{scope_label} EP4 variable-size dispatch",
+                "shape": "moe",
+                "semantic_op": "execution.collective.moe_dispatch",
+                "node_kind": "communication",
+                "boundary_role": "module_internal",
+                "execution": {
+                    "scope": scope,
+                    "placement": "all four ranks in the DEP/EP group",
+                    "collective": "all_to_all_v",
+                    "group": group,
+                    "parallelism": "moe_ep4",
+                    "payload": "per-destination packed logical route records from the local pack adapter",
+                    "result": (
+                        "expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot "
+                        "and fp32 route-weight metadata; 128 logical experts per rank"
+                    ),
+                    "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                    "tensor_layout": "receive-source-major, then local-expert-major",
+                    "wire_encoding_contract": wire_contract,
+                },
+            },
+            "edge": {"shape": "[N_recv,H] + route metadata", "dtype": "structured"},
+        },
+        {
+            "op": "insert_after",
+            "after": f"{view_id}.routed_experts",
+            "node": {
+                "id": f"{prefix}_combine",
+                "label": f"{scope_label} EP4 routed-output return",
+                "shape": "moe",
+                "semantic_op": "execution.collective.moe_combine",
+                "node_kind": "communication",
+                "boundary_role": "module_internal",
+                "execution": {
+                    "scope": scope,
+                    "placement": "all four ranks in the DEP/EP group",
+                    "collective": "all_to_all_v",
+                    "group": group,
+                    "parallelism": "moe_ep4",
+                    "payload": (
+                        "expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot "
+                        "and fp32 route-weight metadata"
+                    ),
+                    "result": "origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights",
+                    "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                    "tensor_layout": "origin-rank-major on wire; receive-source-major before restore",
+                    "wire_encoding_contract": wire_contract,
+                },
+            },
+            "edge": {"shape": "[N_recv,H] + route metadata", "dtype": "structured"},
+        },
+        {
+            "op": "insert_after",
+            "after": f"{view_id}.{prefix}_combine",
+            "node": {
+                "id": f"{prefix}_restore",
+                "label": f"{scope_label} routed-output restore",
+                "shape": "elem",
+                "semantic_op": "execution.layout.moe_combine_restore",
+                "node_kind": "layout_transform",
+                "boundary_role": "module_internal",
+                "execution": {
+                    "scope": scope,
+                    "placement": "each origin rank",
+                    "collective": "none (local inverse permutation)",
+                    "group": group,
+                    "parallelism": "moe_ep4",
+                    "payload": "returned route records in receive-source-major order",
+                    "result": "[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights",
+                    "dtype": "logical bf16 + fp32",
+                    "tensor_layout": "token-major, route-slot-major, H contiguous",
+                },
+            },
+            "edge": {"shape": "[N_local,10,H]", "dtype": "bf16"},
+        },
+    ]
 
 
 def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
@@ -729,6 +897,13 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
         "full_attention_moe_block.causal_gqa",
         "full_attention_moe_block.attention_output_gate",
         "full_attention_moe_block.output_projection",
+        "mtp_full_attention_moe_block.input_norm",
+        "mtp_full_attention_moe_block.qkv_projection",
+        "mtp_full_attention_moe_block.qk_norm",
+        "mtp_full_attention_moe_block.partial_rope",
+        "mtp_full_attention_moe_block.causal_gqa",
+        "mtp_full_attention_moe_block.attention_output_gate",
+        "mtp_full_attention_moe_block.output_projection",
         "mtp_draft_head.fc_projection",
         "mtp_draft_head.draft_decoder_layer",
         "mtp_draft_head.shared_lm_head",
@@ -746,8 +921,12 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
         "gdn_moe_block.state_write",
         "full_attention_moe_block.kv_state_read",
         "full_attention_moe_block.kv_state_write",
+        "mtp_full_attention_moe_block.kv_state_read",
+        "mtp_full_attention_moe_block.kv_state_write",
         "state_tensors.attention_keys",
         "state_tensors.attention_values",
+        "state_tensors.mtp_draft_keys",
+        "state_tensors.mtp_draft_values",
         "state_tensors.gdn_conv_windows",
         "state_tensors.gdn_recurrent_states",
         "state_tensors.verify_journal",
@@ -765,15 +944,6 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
         )
     transforms.extend(
         [
-            _annotate("moe_block.router", **_ep_execution("local routing over B_local tokens")),
-            _annotate("moe_block.routed_experts", **_ep_execution("expert-local compute")),
-            _annotate(
-                "moe_block.shared_expert",
-                placement="replicated on every DEP rank",
-                parallelism="attention_dp4",
-                sharding="B_local tokens; shared-expert weights replicated",
-            ),
-            _annotate("moe_block.weighted_combine", **_ep_execution("origin-rank combine")),
             {
                 "op": "insert_after",
                 "after": "top.embedding",
@@ -787,6 +957,7 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
                     "execution": {
                         "placement": "request ingress for ranks 0..3",
                         "collective": "local_select",
+                        "group": "attention-DP ranks [0,1,2,3]",
                         "parallelism": "attention_dp4",
                         "payload": "global logical hidden rows [B,T,H], bf16, row-major",
                         "result": "rank-local hidden rows [B_local,T,H], bf16, row-major",
@@ -798,65 +969,37 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
             },
             {
                 "op": "insert_after",
-                "after": "moe_block.router",
+                "after": "generation_loop.commit_tokens",
                 "node": {
-                    "id": "ep4_dispatch",
-                    "label": "EP4 variable-size expert dispatch",
-                    "shape": "moe",
-                    "semantic_op": "execution.collective.moe_dispatch",
-                    "node_kind": "communication",
-                    "boundary_role": "module_internal",
+                    "id": "dp4_output_commit",
+                    "label": "Attention-DP4 owner-local output commit",
+                    "shape": "elem",
+                    "semantic_op": "execution.layout.dp4_output_commit",
+                    "node_kind": "layout_transform",
+                    "boundary_role": "module_boundary",
                     "execution": {
-                        "placement": "all four ranks in the DEP/EP group",
-                        "collective": "all_to_all_v",
-                        "parallelism": "moe_ep4",
-                        "payload": (
-                            "top-10 routed records [token_id:int32, expert_id:int32, "
-                            "route_weight:fp32, hidden[H]:bf16] in token-major send buckets"
-                        ),
-                        "result": (
-                            "expert-owner buckets [N_recv,H] bf16 plus origin-token and "
-                            "routing metadata; 128 logical experts per rank"
-                        ),
-                        "dtype": "structured int32/fp32/bf16",
-                        "tensor_layout": "destination-rank-major, then local-expert-major",
+                        "placement": "request-owning rank",
+                        "collective": "none (owner-local commit)",
+                        "group": "attention-DP ranks [0,1,2,3]",
+                        "parallelism": "attention_dp4",
+                        "payload": "accepted token IDs and committed length for B_local requests",
+                        "result": "owner-local [B_local,accepted] int32 rows for frontend response routing",
+                        "dtype": "int32",
+                        "tensor_layout": "request-major; request identity retained for frontend merge",
                     },
                 },
-                "edge": {"shape": "[N_local,topk,H]", "dtype": "bf16"},
-            },
-            {
-                "op": "insert_after",
-                "after": "moe_block.routed_experts",
-                "node": {
-                    "id": "ep4_combine",
-                    "label": "EP4 routed-output return",
-                    "shape": "moe",
-                    "semantic_op": "execution.collective.moe_combine",
-                    "node_kind": "communication",
-                    "boundary_role": "module_internal",
-                    "execution": {
-                        "placement": "all four ranks in the DEP/EP group",
-                        "collective": "all_to_all_v",
-                        "parallelism": "moe_ep4",
-                        "payload": (
-                            "expert outputs [N_recv,H] bf16 with origin-token:int32 and "
-                            "route_weight:fp32, expert-major"
-                        ),
-                        "result": "origin-rank routed rows [N_local,topk,H] bf16, token-major",
-                        "dtype": "structured int32/fp32/bf16",
-                        "tensor_layout": "origin-rank-major on wire; token-major after receive",
-                    },
-                },
-                "edge": {"shape": "[N_recv,H]", "dtype": "bf16"},
+                "edge": {"shape": "[B_local,accepted]", "dtype": "int32"},
             },
         ]
     )
+    transforms.extend(_moe_scope_transforms("moe_block", "target"))
+    transforms.extend(_moe_scope_transforms("mtp_moe_block", "draft"))
     return {
         "schema_version": "execution-plan.v2",
         "execution_path_id": "attention_dp4_moe_ep4",
         "label": "Framework-independent Attention DP4 + MoE EP4 (DEP4)",
         "model_id": "qwen35_397b_a17b",
-        "plan_version": 2,
+        "plan_version": 3,
         "parallelism_axes": {
             "tp_size": 1,
             "dp_size": 4,
@@ -878,6 +1021,10 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
             "semantic_dtype_note": (
                 "The plan preserves bf16 logical activations. Engine-specific FP4 dispatch "
                 "or FP8 KV encodings belong to implementation/profile overlays."
+            ),
+            "scope_binding": (
+                "Target and MTP draft dispatch/combine are distinct nodes. Every implementation "
+                "must bind their backend, wire dtype, fusion, and padding independently."
             ),
         },
         "transforms": transforms,

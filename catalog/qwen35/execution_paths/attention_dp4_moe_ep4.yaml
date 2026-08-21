@@ -2,7 +2,7 @@ schema_version: execution-plan.v2
 execution_path_id: attention_dp4_moe_ep4
 label: Framework-independent Attention DP4 + MoE EP4 (DEP4)
 model_id: qwen35_397b_a17b
-plan_version: 2
+plan_version: 3
 parallelism_axes:
   tp_size: 1
   dp_size: 4
@@ -21,6 +21,8 @@ constraints:
   request_state_locality: KV/GDN state follows its attention-DP request owner
   semantic_dtype_note: The plan preserves bf16 logical activations. Engine-specific FP4 dispatch or FP8 KV encodings
     belong to implementation/profile overlays.
+  scope_binding: Target and MTP draft dispatch/combine are distinct nodes. Every implementation must bind their
+    backend, wire dtype, fusion, and padding independently.
 transforms:
 - op: annotate_node
   target: top.embedding
@@ -160,6 +162,62 @@ transforms:
       state_ownership: KV and GDN state stay with the request-owning DP rank
 - op: annotate_node
   target: full_attention_moe_block.output_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.input_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.qkv_projection
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.qk_norm
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.partial_rope
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.causal_gqa
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.attention_output_gate
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: mtp_full_attention_moe_block.output_projection
   set:
     execution:
       placement: replicated weights on each of ranks 0..3
@@ -738,6 +796,20 @@ transforms:
       parallelism: attention_dp4
       sharding: request dimension B/4; state tensor otherwise unsharded
 - op: annotate_node
+  target: mtp_full_attention_moe_block.kv_state_read
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: mtp_full_attention_moe_block.kv_state_write
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
   target: state_tensors.attention_keys
   set:
     execution:
@@ -746,6 +818,20 @@ transforms:
       sharding: request dimension B/4; state tensor otherwise unsharded
 - op: annotate_node
   target: state_tensors.attention_values
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.mtp_draft_keys
+  set:
+    execution:
+      placement: request-owning attention-DP rank
+      parallelism: attention_dp4
+      sharding: request dimension B/4; state tensor otherwise unsharded
+- op: annotate_node
+  target: state_tensors.mtp_draft_values
   set:
     execution:
       placement: request-owning attention-DP rank
@@ -793,37 +879,6 @@ transforms:
       placement: request-owning attention-DP rank
       parallelism: attention_dp4
       sharding: request dimension B/4; state tensor otherwise unsharded
-- op: annotate_node
-  target: moe_block.router
-  set:
-    execution:
-      placement: one DEP group spanning ranks 0..3
-      parallelism: moe_ep4
-      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
-      role: local routing over B_local tokens
-- op: annotate_node
-  target: moe_block.routed_experts
-  set:
-    execution:
-      placement: one DEP group spanning ranks 0..3
-      parallelism: moe_ep4
-      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
-      role: expert-local compute
-- op: annotate_node
-  target: moe_block.shared_expert
-  set:
-    execution:
-      placement: replicated on every DEP rank
-      parallelism: attention_dp4
-      sharding: B_local tokens; shared-expert weights replicated
-- op: annotate_node
-  target: moe_block.weighted_combine
-  set:
-    execution:
-      placement: one DEP group spanning ranks 0..3
-      parallelism: moe_ep4
-      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
-      role: origin-rank combine
 - op: insert_after
   after: top.embedding
   node:
@@ -836,6 +891,7 @@ transforms:
     execution:
       placement: request ingress for ranks 0..3
       collective: local_select
+      group: attention-DP ranks [0,1,2,3]
       parallelism: attention_dp4
       payload: global logical hidden rows [B,T,H], bf16, row-major
       result: rank-local hidden rows [B_local,T,H], bf16, row-major
@@ -845,44 +901,277 @@ transforms:
     shape: '[B,T,H]'
     dtype: bf16
 - op: insert_after
+  after: generation_loop.commit_tokens
+  node:
+    id: dp4_output_commit
+    label: Attention-DP4 owner-local output commit
+    shape: elem
+    semantic_op: execution.layout.dp4_output_commit
+    node_kind: layout_transform
+    boundary_role: module_boundary
+    execution:
+      placement: request-owning rank
+      collective: none (owner-local commit)
+      group: attention-DP ranks [0,1,2,3]
+      parallelism: attention_dp4
+      payload: accepted token IDs and committed length for B_local requests
+      result: owner-local [B_local,accepted] int32 rows for frontend response routing
+      dtype: int32
+      tensor_layout: request-major; request identity retained for frontend merge
+  edge:
+    shape: '[B_local,accepted]'
+    dtype: int32
+- op: annotate_node
+  target: moe_block.router
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: target model local routing
+- op: annotate_node
+  target: moe_block.routed_experts
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: target model expert-local compute
+- op: annotate_node
+  target: moe_block.shared_expert
+  set:
+    execution:
+      placement: replicated on every DEP rank
+      parallelism: attention_dp4
+      sharding: B_local tokens; shared-expert weights replicated
+      scope: target
+- op: annotate_node
+  target: moe_block.weighted_combine
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: target model origin-rank sum
+- op: insert_after
   after: moe_block.router
   node:
-    id: ep4_dispatch
-    label: EP4 variable-size expert dispatch
+    id: target_ep4_pack
+    label: target model EP4 dispatch pack
+    shape: elem
+    semantic_op: execution.layout.moe_dispatch_pack
+    node_kind: layout_transform
+    boundary_role: module_internal
+    execution:
+      scope: target
+      placement: each origin rank
+      collective: none (local stable pack)
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row
+        [N_local] int32
+      result: four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot,
+        expert_id, weight, hidden[H])
+      dtype: logical bf16 + int32 + fp32
+      tensor_layout: destination-rank-major, then expert-id-major, stable origin-row order
+  edge:
+    shape: '[N_local,10] route records'
+    dtype: structured
+- op: insert_after
+  after: moe_block.target_ep4_pack
+  node:
+    id: target_ep4_dispatch
+    label: target model EP4 variable-size dispatch
     shape: moe
     semantic_op: execution.collective.moe_dispatch
     node_kind: communication
     boundary_role: module_internal
     execution:
+      scope: target
       placement: all four ranks in the DEP/EP group
       collective: all_to_all_v
+      group: DEP/EP ranks [0,1,2,3]
       parallelism: moe_ep4
-      payload: top-10 routed records [token_id:int32, expert_id:int32, route_weight:fp32, hidden[H]:bf16] in token-major
-        send buckets
-      result: expert-owner buckets [N_recv,H] bf16 plus origin-token and routing metadata; 128 logical experts per
-        rank
-      dtype: structured int32/fp32/bf16
-      tensor_layout: destination-rank-major, then local-expert-major
+      payload: per-destination packed logical route records from the local pack adapter
+      result: expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata;
+        128 logical experts per rank
+      dtype: logical structured bf16/int32/fp32; physical wire dtype is binding-owned
+      tensor_layout: receive-source-major, then local-expert-major
+      wire_encoding_contract: target binding must record its own hidden encoding and metadata ABI; it must not inherit
+        these choices from the other scope
   edge:
-    shape: '[N_local,topk,H]'
-    dtype: bf16
+    shape: '[N_recv,H] + route metadata'
+    dtype: structured
 - op: insert_after
   after: moe_block.routed_experts
   node:
-    id: ep4_combine
-    label: EP4 routed-output return
+    id: target_ep4_combine
+    label: target model EP4 routed-output return
     shape: moe
     semantic_op: execution.collective.moe_combine
     node_kind: communication
     boundary_role: module_internal
     execution:
+      scope: target
       placement: all four ranks in the DEP/EP group
       collective: all_to_all_v
+      group: DEP/EP ranks [0,1,2,3]
       parallelism: moe_ep4
-      payload: expert outputs [N_recv,H] bf16 with origin-token:int32 and route_weight:fp32, expert-major
-      result: origin-rank routed rows [N_local,topk,H] bf16, token-major
-      dtype: structured int32/fp32/bf16
-      tensor_layout: origin-rank-major on wire; token-major after receive
+      payload: expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata
+      result: origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights
+      dtype: logical structured bf16/int32/fp32; physical wire dtype is binding-owned
+      tensor_layout: origin-rank-major on wire; receive-source-major before restore
+      wire_encoding_contract: target binding must record its own hidden encoding and metadata ABI; it must not inherit
+        these choices from the other scope
   edge:
-    shape: '[N_recv,H]'
+    shape: '[N_recv,H] + route metadata'
+    dtype: structured
+- op: insert_after
+  after: moe_block.target_ep4_combine
+  node:
+    id: target_ep4_restore
+    label: target model routed-output restore
+    shape: elem
+    semantic_op: execution.layout.moe_combine_restore
+    node_kind: layout_transform
+    boundary_role: module_internal
+    execution:
+      scope: target
+      placement: each origin rank
+      collective: none (local inverse permutation)
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: returned route records in receive-source-major order
+      result: '[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights'
+      dtype: logical bf16 + fp32
+      tensor_layout: token-major, route-slot-major, H contiguous
+  edge:
+    shape: '[N_local,10,H]'
+    dtype: bf16
+- op: annotate_node
+  target: mtp_moe_block.router
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: MTP draft model local routing
+- op: annotate_node
+  target: mtp_moe_block.routed_experts
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: MTP draft model expert-local compute
+- op: annotate_node
+  target: mtp_moe_block.shared_expert
+  set:
+    execution:
+      placement: replicated on every DEP rank
+      parallelism: attention_dp4
+      sharding: B_local tokens; shared-expert weights replicated
+      scope: draft
+- op: annotate_node
+  target: mtp_moe_block.weighted_combine
+  set:
+    execution:
+      placement: one DEP group spanning ranks 0..3
+      parallelism: moe_ep4
+      expert_ownership: expert_id mod 4; 128 of 512 routed experts per rank
+      role: MTP draft model origin-rank sum
+- op: insert_after
+  after: mtp_moe_block.router
+  node:
+    id: draft_ep4_pack
+    label: MTP draft model EP4 dispatch pack
+    shape: elem
+    semantic_op: execution.layout.moe_dispatch_pack
+    node_kind: layout_transform
+    boundary_role: module_internal
+    execution:
+      scope: draft
+      placement: each origin rank
+      collective: none (local stable pack)
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row
+        [N_local] int32
+      result: four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot,
+        expert_id, weight, hidden[H])
+      dtype: logical bf16 + int32 + fp32
+      tensor_layout: destination-rank-major, then expert-id-major, stable origin-row order
+  edge:
+    shape: '[N_local,10] route records'
+    dtype: structured
+- op: insert_after
+  after: mtp_moe_block.draft_ep4_pack
+  node:
+    id: draft_ep4_dispatch
+    label: MTP draft model EP4 variable-size dispatch
+    shape: moe
+    semantic_op: execution.collective.moe_dispatch
+    node_kind: communication
+    boundary_role: module_internal
+    execution:
+      scope: draft
+      placement: all four ranks in the DEP/EP group
+      collective: all_to_all_v
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: per-destination packed logical route records from the local pack adapter
+      result: expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata;
+        128 logical experts per rank
+      dtype: logical structured bf16/int32/fp32; physical wire dtype is binding-owned
+      tensor_layout: receive-source-major, then local-expert-major
+      wire_encoding_contract: draft binding must record its own hidden encoding and metadata ABI; it must not inherit
+        these choices from the other scope
+  edge:
+    shape: '[N_recv,H] + route metadata'
+    dtype: structured
+- op: insert_after
+  after: mtp_moe_block.routed_experts
+  node:
+    id: draft_ep4_combine
+    label: MTP draft model EP4 routed-output return
+    shape: moe
+    semantic_op: execution.collective.moe_combine
+    node_kind: communication
+    boundary_role: module_internal
+    execution:
+      scope: draft
+      placement: all four ranks in the DEP/EP group
+      collective: all_to_all_v
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata
+      result: origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights
+      dtype: logical structured bf16/int32/fp32; physical wire dtype is binding-owned
+      tensor_layout: origin-rank-major on wire; receive-source-major before restore
+      wire_encoding_contract: draft binding must record its own hidden encoding and metadata ABI; it must not inherit
+        these choices from the other scope
+  edge:
+    shape: '[N_recv,H] + route metadata'
+    dtype: structured
+- op: insert_after
+  after: mtp_moe_block.draft_ep4_combine
+  node:
+    id: draft_ep4_restore
+    label: MTP draft model routed-output restore
+    shape: elem
+    semantic_op: execution.layout.moe_combine_restore
+    node_kind: layout_transform
+    boundary_role: module_internal
+    execution:
+      scope: draft
+      placement: each origin rank
+      collective: none (local inverse permutation)
+      group: DEP/EP ranks [0,1,2,3]
+      parallelism: moe_ep4
+      payload: returned route records in receive-source-major order
+      result: '[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights'
+      dtype: logical bf16 + fp32
+      tensor_layout: token-major, route-slot-major, H contiguous
+  edge:
+    shape: '[N_local,10,H]'
     dtype: bf16

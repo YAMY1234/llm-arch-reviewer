@@ -1,24 +1,24 @@
 {
   "schema_version": "2.0",
   "default_view": "top",
-  "default_execution_variant": "exec_39c9eb0afa864479",
+  "default_execution_variant": "exec_25a414805d12fed3",
   "default_implementation": "",
   "default_profile": "",
   "meta": {
     "model_id": "qwen35_397b_a17b",
     "model_label": "Qwen3.5 397B-A17B NVFP4 (text backbone)",
     "subtitle": "IR-first \u00b7 execution-path variants \u00b7 versioned profile overlays",
-    "model_ir_version": 1,
+    "model_ir_version": 2,
     "catalog": "catalog/qwen35",
     "execution_variant_count": 1,
     "implementation_count": 0,
     "profile_count": 0,
-    "view_count": 8
+    "view_count": 10
   },
   "model_ir": {
     "model_id": "qwen35_397b_a17b",
     "model_label": "Qwen3.5 397B-A17B NVFP4 (text backbone)",
-    "ir_version": 1,
+    "ir_version": 2,
     "dimensions": {
       "B": "request batch",
       "B_local": "requests assigned to one attention-DP rank",
@@ -1700,7 +1700,7 @@
         ]
       },
       "moe_block": {
-        "title": "Qwen3.5 logical routed + shared expert computation",
+        "title": "Qwen3.5 target logical routed + shared expert computation",
         "nodes": [
           {
             "id": "input_hidden",
@@ -1790,6 +1790,320 @@
           }
         ]
       },
+      "mtp_full_attention_moe_block": {
+        "title": "Qwen3.5 MTP draft gated GQA + MoE decoder layer",
+        "nodes": [
+          {
+            "id": "input_hidden",
+            "label": "Layer input",
+            "shape": "io",
+            "semantic_op": "generation.mtp.layer_input",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "input_norm",
+            "label": "Pre-attention RMSNorm",
+            "shape": "norm",
+            "semantic_op": "generation.mtp.input_rms_norm",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "qkv_projection",
+            "label": "Q/K/V projection",
+            "shape": "gemm",
+            "semantic_op": "generation.mtp.attention.project_qkv",
+            "output": "[N,9216]",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "qk_norm",
+            "label": "Per-head Q/K RMSNorm",
+            "shape": "norm",
+            "semantic_op": "generation.mtp.attention.qk_norm",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "partial_rope",
+            "label": "Partial RoPE (25% of head channels)",
+            "shape": "elem",
+            "semantic_op": "generation.mtp.attention.partial_rope",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "kv_state_read",
+            "label": "Read draft KV state",
+            "shape": "cache",
+            "semantic_op": "generation.mtp.attention.kv_cache.read",
+            "tensor": "K,V [B,2,T,256]",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "causal_gqa",
+            "label": "Causal grouped-query attention",
+            "shape": "attn",
+            "semantic_op": "generation.mtp.attention.gqa",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "kv_state_write",
+            "label": "Append draft K/V state",
+            "shape": "cache",
+            "semantic_op": "generation.mtp.attention.kv_cache.write",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "attention_output_gate",
+            "label": "Attention output gate",
+            "shape": "elem",
+            "semantic_op": "generation.mtp.attention.output_gate",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "output_projection",
+            "label": "Attention output projection",
+            "shape": "gemm",
+            "semantic_op": "generation.mtp.attention.o_proj",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "attention_residual",
+            "label": "Attention residual add",
+            "shape": "elem",
+            "semantic_op": "generation.mtp.residual_add",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "post_attention_norm",
+            "label": "Pre-MoE RMSNorm",
+            "shape": "norm",
+            "semantic_op": "generation.mtp.post_attention_rms_norm",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "moe",
+            "label": "Sparse MoE + shared expert",
+            "shape": "moe",
+            "semantic_op": "generation.mtp.moe",
+            "drill": "mtp_moe_block",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "layer_residual",
+            "label": "MoE residual add",
+            "shape": "elem",
+            "semantic_op": "generation.mtp.residual_add",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "output_hidden",
+            "label": "Layer output",
+            "shape": "io",
+            "semantic_op": "generation.mtp.layer_output",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          }
+        ],
+        "edges": [
+          {
+            "from": "input_hidden",
+            "to": "input_norm",
+            "dtype": "bf16"
+          },
+          {
+            "from": "input_norm",
+            "to": "qkv_projection",
+            "dtype": "bf16"
+          },
+          {
+            "from": "qkv_projection",
+            "to": "qk_norm",
+            "label": "Q/K"
+          },
+          {
+            "from": "qk_norm",
+            "to": "partial_rope"
+          },
+          {
+            "from": "partial_rope",
+            "to": "causal_gqa",
+            "label": "Q/K"
+          },
+          {
+            "from": "qkv_projection",
+            "to": "causal_gqa",
+            "label": "V + gate"
+          },
+          {
+            "from": "kv_state_read",
+            "to": "causal_gqa",
+            "kind": "state_read"
+          },
+          {
+            "from": "partial_rope",
+            "to": "kv_state_write",
+            "kind": "state_write",
+            "label": "K"
+          },
+          {
+            "from": "qkv_projection",
+            "to": "kv_state_write",
+            "kind": "state_write",
+            "label": "V"
+          },
+          {
+            "from": "causal_gqa",
+            "to": "attention_output_gate"
+          },
+          {
+            "from": "qkv_projection",
+            "to": "attention_output_gate",
+            "label": "gate"
+          },
+          {
+            "from": "attention_output_gate",
+            "to": "output_projection",
+            "dtype": "bf16"
+          },
+          {
+            "from": "input_hidden",
+            "to": "attention_residual",
+            "label": "residual"
+          },
+          {
+            "from": "output_projection",
+            "to": "attention_residual"
+          },
+          {
+            "from": "attention_residual",
+            "to": "post_attention_norm",
+            "dtype": "bf16"
+          },
+          {
+            "from": "post_attention_norm",
+            "to": "moe",
+            "dtype": "bf16"
+          },
+          {
+            "from": "attention_residual",
+            "to": "layer_residual",
+            "label": "residual"
+          },
+          {
+            "from": "moe",
+            "to": "layer_residual"
+          },
+          {
+            "from": "layer_residual",
+            "to": "output_hidden",
+            "dtype": "bf16"
+          }
+        ]
+      },
+      "mtp_moe_block": {
+        "title": "Qwen3.5 MTP draft logical routed + shared expert computation",
+        "nodes": [
+          {
+            "id": "input_hidden",
+            "label": "MoE input",
+            "shape": "io",
+            "semantic_op": "generation.mtp.moe.input",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "router",
+            "label": "Router and top-10 selection",
+            "shape": "gemm",
+            "semantic_op": "generation.mtp.moe.router_topk",
+            "routed_experts": 512,
+            "experts_per_token": 10,
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "routed_experts",
+            "label": "512 routed SwiGLU experts",
+            "shape": "moe",
+            "semantic_op": "generation.mtp.moe.routed_experts",
+            "expert_intermediate_size": 1024,
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "shared_expert",
+            "label": "Always-on shared SwiGLU expert",
+            "shape": "moe",
+            "semantic_op": "generation.mtp.moe.shared_expert",
+            "intermediate_size": 1024,
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "weighted_combine",
+            "label": "Weighted routed sum + shared expert",
+            "shape": "elem",
+            "semantic_op": "generation.mtp.moe.combine",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "output_hidden",
+            "label": "MoE output",
+            "shape": "io",
+            "semantic_op": "generation.mtp.moe.output",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          }
+        ],
+        "edges": [
+          {
+            "from": "input_hidden",
+            "to": "router",
+            "shape": "[N,H]",
+            "dtype": "bf16"
+          },
+          {
+            "from": "router",
+            "to": "routed_experts",
+            "label": "top-10 expert assignments"
+          },
+          {
+            "from": "input_hidden",
+            "to": "shared_expert",
+            "dtype": "bf16"
+          },
+          {
+            "from": "routed_experts",
+            "to": "weighted_combine",
+            "dtype": "bf16"
+          },
+          {
+            "from": "shared_expert",
+            "to": "weighted_combine",
+            "dtype": "bf16"
+          },
+          {
+            "from": "weighted_combine",
+            "to": "output_hidden",
+            "shape": "[N,H]",
+            "dtype": "bf16"
+          }
+        ]
+      },
       "state_tensors": {
         "title": "Canonical per-request decode state (unsharded model semantics)",
         "nodes": [
@@ -1812,6 +2126,28 @@
             "tensor": "[B,15,2,T,256]",
             "dtype": "bf16",
             "note": "Runtime profiles may overlay FP8 storage.",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "mtp_draft_keys",
+            "label": "One-layer MTP draft key cache",
+            "shape": "cache",
+            "semantic_op": "generation.mtp.state.attention_keys",
+            "tensor": "[B,1,2,T,256]",
+            "dtype": "bf16",
+            "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic"
+          },
+          {
+            "id": "mtp_draft_values",
+            "label": "One-layer MTP draft value cache",
+            "shape": "cache",
+            "semantic_op": "generation.mtp.state.attention_values",
+            "tensor": "[B,1,2,T,256]",
+            "dtype": "bf16",
+            "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
             "ir_origin": "model_ir",
             "node_kind": "semantic"
           },
@@ -1866,6 +2202,16 @@
             "from": "attention_values",
             "to": "verify_journal",
             "kind": "snapshot"
+          },
+          {
+            "from": "mtp_draft_keys",
+            "to": "verify_journal",
+            "kind": "draft_boundary"
+          },
+          {
+            "from": "mtp_draft_values",
+            "to": "verify_journal",
+            "kind": "draft_boundary"
           },
           {
             "from": "gdn_conv_windows",
@@ -1949,7 +2295,7 @@
             "label": "One full-attention + MoE draft layer",
             "shape": "block",
             "semantic_op": "generation.mtp.decoder_layer",
-            "drill": "full_attention_moe_block",
+            "drill": "mtp_full_attention_moe_block",
             "ir_origin": "model_ir",
             "node_kind": "semantic"
           },
@@ -2224,16 +2570,18 @@
       "gdn_moe_block": "layer_schedule",
       "full_attention_moe_block": "layer_schedule",
       "moe_block": "gdn_moe_block",
+      "mtp_moe_block": "mtp_full_attention_moe_block",
+      "mtp_full_attention_moe_block": "mtp_draft_head",
       "mtp_draft_head": "generation_loop"
     }
   },
   "execution_variants": {
-    "exec_39c9eb0afa864479": {
+    "exec_25a414805d12fed3": {
       "execution_path_id": "attention_dp4_moe_ep4",
       "label": "Framework-independent Attention DP4 + MoE EP4 (DEP4)",
-      "fingerprint": "exec_39c9eb0afa864479",
-      "model_ir_version": 1,
-      "execution_plan_version": 2,
+      "fingerprint": "exec_25a414805d12fed3",
+      "model_ir_version": 2,
+      "execution_plan_version": 3,
       "parallelism_axes": {
         "tp_size": 1,
         "dp_size": 4,
@@ -2288,6 +2636,7 @@
               "execution": {
                 "placement": "request ingress for ranks 0..3",
                 "collective": "local_select",
+                "group": "attention-DP ranks [0,1,2,3]",
                 "parallelism": "attention_dp4",
                 "payload": "global logical hidden rows [B,T,H], bf16, row-major",
                 "result": "rank-local hidden rows [B_local,T,H], bf16, row-major",
@@ -4386,7 +4735,7 @@
           ]
         },
         "moe_block": {
-          "title": "Qwen3.5 logical routed + shared expert computation",
+          "title": "Qwen3.5 target logical routed + shared expert computation",
           "nodes": [
             {
               "id": "input_hidden",
@@ -4409,24 +4758,47 @@
                 "placement": "one DEP group spanning ranks 0..3",
                 "parallelism": "moe_ep4",
                 "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-                "role": "local routing over B_local tokens"
+                "role": "target model local routing"
               }
             },
             {
-              "id": "ep4_dispatch",
-              "label": "EP4 variable-size expert dispatch",
+              "id": "target_ep4_pack",
+              "label": "target model EP4 dispatch pack",
+              "shape": "elem",
+              "semantic_op": "execution.layout.moe_dispatch_pack",
+              "node_kind": "layout_transform",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "target",
+                "placement": "each origin rank",
+                "collective": "none (local stable pack)",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row [N_local] int32",
+                "result": "four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot, expert_id, weight, hidden[H])",
+                "dtype": "logical bf16 + int32 + fp32",
+                "tensor_layout": "destination-rank-major, then expert-id-major, stable origin-row order"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "target_ep4_dispatch",
+              "label": "target model EP4 variable-size dispatch",
               "shape": "moe",
               "semantic_op": "execution.collective.moe_dispatch",
               "node_kind": "communication",
               "boundary_role": "module_internal",
               "execution": {
+                "scope": "target",
                 "placement": "all four ranks in the DEP/EP group",
                 "collective": "all_to_all_v",
+                "group": "DEP/EP ranks [0,1,2,3]",
                 "parallelism": "moe_ep4",
-                "payload": "top-10 routed records [token_id:int32, expert_id:int32, route_weight:fp32, hidden[H]:bf16] in token-major send buckets",
-                "result": "expert-owner buckets [N_recv,H] bf16 plus origin-token and routing metadata; 128 logical experts per rank",
-                "dtype": "structured int32/fp32/bf16",
-                "tensor_layout": "destination-rank-major, then local-expert-major"
+                "payload": "per-destination packed logical route records from the local pack adapter",
+                "result": "expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata; 128 logical experts per rank",
+                "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                "tensor_layout": "receive-source-major, then local-expert-major",
+                "wire_encoding_contract": "target binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
               },
               "ir_origin": "execution_plan"
             },
@@ -4442,24 +4814,47 @@
                 "placement": "one DEP group spanning ranks 0..3",
                 "parallelism": "moe_ep4",
                 "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-                "role": "expert-local compute"
+                "role": "target model expert-local compute"
               }
             },
             {
-              "id": "ep4_combine",
-              "label": "EP4 routed-output return",
+              "id": "target_ep4_combine",
+              "label": "target model EP4 routed-output return",
               "shape": "moe",
               "semantic_op": "execution.collective.moe_combine",
               "node_kind": "communication",
               "boundary_role": "module_internal",
               "execution": {
+                "scope": "target",
                 "placement": "all four ranks in the DEP/EP group",
                 "collective": "all_to_all_v",
+                "group": "DEP/EP ranks [0,1,2,3]",
                 "parallelism": "moe_ep4",
-                "payload": "expert outputs [N_recv,H] bf16 with origin-token:int32 and route_weight:fp32, expert-major",
-                "result": "origin-rank routed rows [N_local,topk,H] bf16, token-major",
-                "dtype": "structured int32/fp32/bf16",
-                "tensor_layout": "origin-rank-major on wire; token-major after receive"
+                "payload": "expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata",
+                "result": "origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights",
+                "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                "tensor_layout": "origin-rank-major on wire; receive-source-major before restore",
+                "wire_encoding_contract": "target binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "target_ep4_restore",
+              "label": "target model routed-output restore",
+              "shape": "elem",
+              "semantic_op": "execution.layout.moe_combine_restore",
+              "node_kind": "layout_transform",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "target",
+                "placement": "each origin rank",
+                "collective": "none (local inverse permutation)",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "returned route records in receive-source-major order",
+                "result": "[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights",
+                "dtype": "logical bf16 + fp32",
+                "tensor_layout": "token-major, route-slot-major, H contiguous"
               },
               "ir_origin": "execution_plan"
             },
@@ -4474,7 +4869,8 @@
               "execution": {
                 "placement": "replicated on every DEP rank",
                 "parallelism": "attention_dp4",
-                "sharding": "B_local tokens; shared-expert weights replicated"
+                "sharding": "B_local tokens; shared-expert weights replicated",
+                "scope": "target"
               }
             },
             {
@@ -4488,7 +4884,7 @@
                 "placement": "one DEP group spanning ranks 0..3",
                 "parallelism": "moe_ep4",
                 "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-                "role": "origin-rank combine"
+                "role": "target model origin-rank sum"
               }
             },
             {
@@ -4508,7 +4904,7 @@
               "dtype": "bf16"
             },
             {
-              "from": "ep4_dispatch",
+              "from": "target_ep4_dispatch",
               "to": "routed_experts",
               "label": "top-10 expert assignments"
             },
@@ -4518,7 +4914,7 @@
               "dtype": "bf16"
             },
             {
-              "from": "ep4_combine",
+              "from": "target_ep4_restore",
               "to": "weighted_combine",
               "dtype": "bf16"
             },
@@ -4535,14 +4931,522 @@
             },
             {
               "from": "router",
-              "to": "ep4_dispatch",
-              "shape": "[N_local,topk,H]",
-              "dtype": "bf16"
+              "to": "target_ep4_pack",
+              "shape": "[N_local,10] route records",
+              "dtype": "structured"
+            },
+            {
+              "from": "target_ep4_pack",
+              "to": "target_ep4_dispatch",
+              "shape": "[N_recv,H] + route metadata",
+              "dtype": "structured"
             },
             {
               "from": "routed_experts",
-              "to": "ep4_combine",
-              "shape": "[N_recv,H]",
+              "to": "target_ep4_combine",
+              "shape": "[N_recv,H] + route metadata",
+              "dtype": "structured"
+            },
+            {
+              "from": "target_ep4_combine",
+              "to": "target_ep4_restore",
+              "shape": "[N_local,10,H]",
+              "dtype": "bf16"
+            }
+          ]
+        },
+        "mtp_full_attention_moe_block": {
+          "title": "Qwen3.5 MTP draft gated GQA + MoE decoder layer",
+          "nodes": [
+            {
+              "id": "input_hidden",
+              "label": "Layer input",
+              "shape": "io",
+              "semantic_op": "generation.mtp.layer_input",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "input_norm",
+              "label": "Pre-attention RMSNorm",
+              "shape": "norm",
+              "semantic_op": "generation.mtp.input_rms_norm",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "qkv_projection",
+              "label": "Q/K/V projection",
+              "shape": "gemm",
+              "semantic_op": "generation.mtp.attention.project_qkv",
+              "output": "[N,9216]",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "qk_norm",
+              "label": "Per-head Q/K RMSNorm",
+              "shape": "norm",
+              "semantic_op": "generation.mtp.attention.qk_norm",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "partial_rope",
+              "label": "Partial RoPE (25% of head channels)",
+              "shape": "elem",
+              "semantic_op": "generation.mtp.attention.partial_rope",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "kv_state_read",
+              "label": "Read draft KV state",
+              "shape": "cache",
+              "semantic_op": "generation.mtp.attention.kv_cache.read",
+              "tensor": "K,V [B,2,T,256]",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "request-owning attention-DP rank",
+                "parallelism": "attention_dp4",
+                "sharding": "request dimension B/4; state tensor otherwise unsharded"
+              }
+            },
+            {
+              "id": "causal_gqa",
+              "label": "Causal grouped-query attention",
+              "shape": "attn",
+              "semantic_op": "generation.mtp.attention.gqa",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "kv_state_write",
+              "label": "Append draft K/V state",
+              "shape": "cache",
+              "semantic_op": "generation.mtp.attention.kv_cache.write",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "request-owning attention-DP rank",
+                "parallelism": "attention_dp4",
+                "sharding": "request dimension B/4; state tensor otherwise unsharded"
+              }
+            },
+            {
+              "id": "attention_output_gate",
+              "label": "Attention output gate",
+              "shape": "elem",
+              "semantic_op": "generation.mtp.attention.output_gate",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "output_projection",
+              "label": "Attention output projection",
+              "shape": "gemm",
+              "semantic_op": "generation.mtp.attention.o_proj",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated weights on each of ranks 0..3",
+                "parallelism": "attention_dp4",
+                "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+                "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+              }
+            },
+            {
+              "id": "attention_residual",
+              "label": "Attention residual add",
+              "shape": "elem",
+              "semantic_op": "generation.mtp.residual_add",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "post_attention_norm",
+              "label": "Pre-MoE RMSNorm",
+              "shape": "norm",
+              "semantic_op": "generation.mtp.post_attention_rms_norm",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "moe",
+              "label": "Sparse MoE + shared expert",
+              "shape": "moe",
+              "semantic_op": "generation.mtp.moe",
+              "drill": "mtp_moe_block",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "layer_residual",
+              "label": "MoE residual add",
+              "shape": "elem",
+              "semantic_op": "generation.mtp.residual_add",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "output_hidden",
+              "label": "Layer output",
+              "shape": "io",
+              "semantic_op": "generation.mtp.layer_output",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            }
+          ],
+          "edges": [
+            {
+              "from": "input_hidden",
+              "to": "input_norm",
+              "dtype": "bf16"
+            },
+            {
+              "from": "input_norm",
+              "to": "qkv_projection",
+              "dtype": "bf16"
+            },
+            {
+              "from": "qkv_projection",
+              "to": "qk_norm",
+              "label": "Q/K"
+            },
+            {
+              "from": "qk_norm",
+              "to": "partial_rope"
+            },
+            {
+              "from": "partial_rope",
+              "to": "causal_gqa",
+              "label": "Q/K"
+            },
+            {
+              "from": "qkv_projection",
+              "to": "causal_gqa",
+              "label": "V + gate"
+            },
+            {
+              "from": "kv_state_read",
+              "to": "causal_gqa",
+              "kind": "state_read"
+            },
+            {
+              "from": "partial_rope",
+              "to": "kv_state_write",
+              "kind": "state_write",
+              "label": "K"
+            },
+            {
+              "from": "qkv_projection",
+              "to": "kv_state_write",
+              "kind": "state_write",
+              "label": "V"
+            },
+            {
+              "from": "causal_gqa",
+              "to": "attention_output_gate"
+            },
+            {
+              "from": "qkv_projection",
+              "to": "attention_output_gate",
+              "label": "gate"
+            },
+            {
+              "from": "attention_output_gate",
+              "to": "output_projection",
+              "dtype": "bf16"
+            },
+            {
+              "from": "input_hidden",
+              "to": "attention_residual",
+              "label": "residual"
+            },
+            {
+              "from": "output_projection",
+              "to": "attention_residual"
+            },
+            {
+              "from": "attention_residual",
+              "to": "post_attention_norm",
+              "dtype": "bf16"
+            },
+            {
+              "from": "post_attention_norm",
+              "to": "moe",
+              "dtype": "bf16"
+            },
+            {
+              "from": "attention_residual",
+              "to": "layer_residual",
+              "label": "residual"
+            },
+            {
+              "from": "moe",
+              "to": "layer_residual"
+            },
+            {
+              "from": "layer_residual",
+              "to": "output_hidden",
+              "dtype": "bf16"
+            }
+          ]
+        },
+        "mtp_moe_block": {
+          "title": "Qwen3.5 MTP draft logical routed + shared expert computation",
+          "nodes": [
+            {
+              "id": "input_hidden",
+              "label": "MoE input",
+              "shape": "io",
+              "semantic_op": "generation.mtp.moe.input",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            },
+            {
+              "id": "router",
+              "label": "Router and top-10 selection",
+              "shape": "gemm",
+              "semantic_op": "generation.mtp.moe.router_topk",
+              "routed_experts": 512,
+              "experts_per_token": 10,
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "one DEP group spanning ranks 0..3",
+                "parallelism": "moe_ep4",
+                "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+                "role": "MTP draft model local routing"
+              }
+            },
+            {
+              "id": "draft_ep4_pack",
+              "label": "MTP draft model EP4 dispatch pack",
+              "shape": "elem",
+              "semantic_op": "execution.layout.moe_dispatch_pack",
+              "node_kind": "layout_transform",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "draft",
+                "placement": "each origin rank",
+                "collective": "none (local stable pack)",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row [N_local] int32",
+                "result": "four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot, expert_id, weight, hidden[H])",
+                "dtype": "logical bf16 + int32 + fp32",
+                "tensor_layout": "destination-rank-major, then expert-id-major, stable origin-row order"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "draft_ep4_dispatch",
+              "label": "MTP draft model EP4 variable-size dispatch",
+              "shape": "moe",
+              "semantic_op": "execution.collective.moe_dispatch",
+              "node_kind": "communication",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "draft",
+                "placement": "all four ranks in the DEP/EP group",
+                "collective": "all_to_all_v",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "per-destination packed logical route records from the local pack adapter",
+                "result": "expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata; 128 logical experts per rank",
+                "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                "tensor_layout": "receive-source-major, then local-expert-major",
+                "wire_encoding_contract": "draft binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "routed_experts",
+              "label": "512 routed SwiGLU experts",
+              "shape": "moe",
+              "semantic_op": "generation.mtp.moe.routed_experts",
+              "expert_intermediate_size": 1024,
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "one DEP group spanning ranks 0..3",
+                "parallelism": "moe_ep4",
+                "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+                "role": "MTP draft model expert-local compute"
+              }
+            },
+            {
+              "id": "draft_ep4_combine",
+              "label": "MTP draft model EP4 routed-output return",
+              "shape": "moe",
+              "semantic_op": "execution.collective.moe_combine",
+              "node_kind": "communication",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "draft",
+                "placement": "all four ranks in the DEP/EP group",
+                "collective": "all_to_all_v",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata",
+                "result": "origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights",
+                "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+                "tensor_layout": "origin-rank-major on wire; receive-source-major before restore",
+                "wire_encoding_contract": "draft binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "draft_ep4_restore",
+              "label": "MTP draft model routed-output restore",
+              "shape": "elem",
+              "semantic_op": "execution.layout.moe_combine_restore",
+              "node_kind": "layout_transform",
+              "boundary_role": "module_internal",
+              "execution": {
+                "scope": "draft",
+                "placement": "each origin rank",
+                "collective": "none (local inverse permutation)",
+                "group": "DEP/EP ranks [0,1,2,3]",
+                "parallelism": "moe_ep4",
+                "payload": "returned route records in receive-source-major order",
+                "result": "[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights",
+                "dtype": "logical bf16 + fp32",
+                "tensor_layout": "token-major, route-slot-major, H contiguous"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
+              "id": "shared_expert",
+              "label": "Always-on shared SwiGLU expert",
+              "shape": "moe",
+              "semantic_op": "generation.mtp.moe.shared_expert",
+              "intermediate_size": 1024,
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "replicated on every DEP rank",
+                "parallelism": "attention_dp4",
+                "sharding": "B_local tokens; shared-expert weights replicated",
+                "scope": "draft"
+              }
+            },
+            {
+              "id": "weighted_combine",
+              "label": "Weighted routed sum + shared expert",
+              "shape": "elem",
+              "semantic_op": "generation.mtp.moe.combine",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "one DEP group spanning ranks 0..3",
+                "parallelism": "moe_ep4",
+                "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+                "role": "MTP draft model origin-rank sum"
+              }
+            },
+            {
+              "id": "output_hidden",
+              "label": "MoE output",
+              "shape": "io",
+              "semantic_op": "generation.mtp.moe.output",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic"
+            }
+          ],
+          "edges": [
+            {
+              "from": "input_hidden",
+              "to": "router",
+              "shape": "[N,H]",
+              "dtype": "bf16"
+            },
+            {
+              "from": "draft_ep4_dispatch",
+              "to": "routed_experts",
+              "label": "top-10 expert assignments"
+            },
+            {
+              "from": "input_hidden",
+              "to": "shared_expert",
+              "dtype": "bf16"
+            },
+            {
+              "from": "draft_ep4_restore",
+              "to": "weighted_combine",
+              "dtype": "bf16"
+            },
+            {
+              "from": "shared_expert",
+              "to": "weighted_combine",
+              "dtype": "bf16"
+            },
+            {
+              "from": "weighted_combine",
+              "to": "output_hidden",
+              "shape": "[N,H]",
+              "dtype": "bf16"
+            },
+            {
+              "from": "router",
+              "to": "draft_ep4_pack",
+              "shape": "[N_local,10] route records",
+              "dtype": "structured"
+            },
+            {
+              "from": "draft_ep4_pack",
+              "to": "draft_ep4_dispatch",
+              "shape": "[N_recv,H] + route metadata",
+              "dtype": "structured"
+            },
+            {
+              "from": "routed_experts",
+              "to": "draft_ep4_combine",
+              "shape": "[N_recv,H] + route metadata",
+              "dtype": "structured"
+            },
+            {
+              "from": "draft_ep4_combine",
+              "to": "draft_ep4_restore",
+              "shape": "[N_local,10,H]",
               "dtype": "bf16"
             }
           ]
@@ -4574,6 +5478,38 @@
               "tensor": "[B,15,2,T,256]",
               "dtype": "bf16",
               "note": "Runtime profiles may overlay FP8 storage.",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "request-owning attention-DP rank",
+                "parallelism": "attention_dp4",
+                "sharding": "request dimension B/4; state tensor otherwise unsharded"
+              }
+            },
+            {
+              "id": "mtp_draft_keys",
+              "label": "One-layer MTP draft key cache",
+              "shape": "cache",
+              "semantic_op": "generation.mtp.state.attention_keys",
+              "tensor": "[B,1,2,T,256]",
+              "dtype": "bf16",
+              "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "execution": {
+                "placement": "request-owning attention-DP rank",
+                "parallelism": "attention_dp4",
+                "sharding": "request dimension B/4; state tensor otherwise unsharded"
+              }
+            },
+            {
+              "id": "mtp_draft_values",
+              "label": "One-layer MTP draft value cache",
+              "shape": "cache",
+              "semantic_op": "generation.mtp.state.attention_values",
+              "tensor": "[B,1,2,T,256]",
+              "dtype": "bf16",
+              "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -4648,6 +5584,16 @@
               "from": "attention_values",
               "to": "verify_journal",
               "kind": "snapshot"
+            },
+            {
+              "from": "mtp_draft_keys",
+              "to": "verify_journal",
+              "kind": "draft_boundary"
+            },
+            {
+              "from": "mtp_draft_values",
+              "to": "verify_journal",
+              "kind": "draft_boundary"
             },
             {
               "from": "gdn_conv_windows",
@@ -4737,7 +5683,7 @@
               "label": "One full-attention + MoE draft layer",
               "shape": "block",
               "semantic_op": "generation.mtp.decoder_layer",
-              "drill": "full_attention_moe_block",
+              "drill": "mtp_full_attention_moe_block",
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -4959,6 +5905,25 @@
               "node_kind": "semantic"
             },
             {
+              "id": "dp4_output_commit",
+              "label": "Attention-DP4 owner-local output commit",
+              "shape": "elem",
+              "semantic_op": "execution.layout.dp4_output_commit",
+              "node_kind": "layout_transform",
+              "boundary_role": "module_boundary",
+              "execution": {
+                "placement": "request-owning rank",
+                "collective": "none (owner-local commit)",
+                "group": "attention-DP ranks [0,1,2,3]",
+                "parallelism": "attention_dp4",
+                "payload": "accepted token IDs and committed length for B_local requests",
+                "result": "owner-local [B_local,accepted] int32 rows for frontend response routing",
+                "dtype": "int32",
+                "tensor_layout": "request-major; request identity retained for frontend merge"
+              },
+              "ir_origin": "execution_plan"
+            },
+            {
               "id": "next_iteration",
               "label": "Advance generation loop",
               "shape": "block",
@@ -5045,13 +6010,19 @@
               "label": "accepted tokens + bonus"
             },
             {
-              "from": "commit_tokens",
+              "from": "dp4_output_commit",
               "to": "next_iteration"
             },
             {
               "from": "next_iteration",
               "to": "committed_context",
               "kind": "loop_back"
+            },
+            {
+              "from": "commit_tokens",
+              "to": "dp4_output_commit",
+              "shape": "[B_local,accepted]",
+              "dtype": "int32"
             }
           ]
         }
@@ -5063,6 +6034,8 @@
         "gdn_moe_block": "layer_schedule",
         "full_attention_moe_block": "layer_schedule",
         "moe_block": "gdn_moe_block",
+        "mtp_moe_block": "mtp_full_attention_moe_block",
+        "mtp_full_attention_moe_block": "mtp_draft_head",
         "mtp_draft_head": "generation_loop"
       },
       "enriched": {
@@ -5083,7 +6056,15 @@
           "nodes_profile": {}
         },
         "moe_block": {
-          "title": "Qwen3.5 logical routed + shared expert computation",
+          "title": "Qwen3.5 target logical routed + shared expert computation",
+          "nodes_profile": {}
+        },
+        "mtp_full_attention_moe_block": {
+          "title": "Qwen3.5 MTP draft gated GQA + MoE decoder layer",
+          "nodes_profile": {}
+        },
+        "mtp_moe_block": {
+          "title": "Qwen3.5 MTP draft logical routed + shared expert computation",
           "nodes_profile": {}
         },
         "state_tensors": {
@@ -5142,6 +6123,7 @@
           "execution": {
             "placement": "request ingress for ranks 0..3",
             "collective": "local_select",
+            "group": "attention-DP ranks [0,1,2,3]",
             "parallelism": "attention_dp4",
             "payload": "global logical hidden rows [B,T,H], bf16, row-major",
             "result": "rank-local hidden rows [B_local,T,H], bf16, row-major",
@@ -7240,7 +8222,7 @@
       ]
     },
     "moe_block": {
-      "title": "Qwen3.5 logical routed + shared expert computation",
+      "title": "Qwen3.5 target logical routed + shared expert computation",
       "nodes": [
         {
           "id": "input_hidden",
@@ -7263,24 +8245,47 @@
             "placement": "one DEP group spanning ranks 0..3",
             "parallelism": "moe_ep4",
             "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-            "role": "local routing over B_local tokens"
+            "role": "target model local routing"
           }
         },
         {
-          "id": "ep4_dispatch",
-          "label": "EP4 variable-size expert dispatch",
+          "id": "target_ep4_pack",
+          "label": "target model EP4 dispatch pack",
+          "shape": "elem",
+          "semantic_op": "execution.layout.moe_dispatch_pack",
+          "node_kind": "layout_transform",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "target",
+            "placement": "each origin rank",
+            "collective": "none (local stable pack)",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row [N_local] int32",
+            "result": "four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot, expert_id, weight, hidden[H])",
+            "dtype": "logical bf16 + int32 + fp32",
+            "tensor_layout": "destination-rank-major, then expert-id-major, stable origin-row order"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "target_ep4_dispatch",
+          "label": "target model EP4 variable-size dispatch",
           "shape": "moe",
           "semantic_op": "execution.collective.moe_dispatch",
           "node_kind": "communication",
           "boundary_role": "module_internal",
           "execution": {
+            "scope": "target",
             "placement": "all four ranks in the DEP/EP group",
             "collective": "all_to_all_v",
+            "group": "DEP/EP ranks [0,1,2,3]",
             "parallelism": "moe_ep4",
-            "payload": "top-10 routed records [token_id:int32, expert_id:int32, route_weight:fp32, hidden[H]:bf16] in token-major send buckets",
-            "result": "expert-owner buckets [N_recv,H] bf16 plus origin-token and routing metadata; 128 logical experts per rank",
-            "dtype": "structured int32/fp32/bf16",
-            "tensor_layout": "destination-rank-major, then local-expert-major"
+            "payload": "per-destination packed logical route records from the local pack adapter",
+            "result": "expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata; 128 logical experts per rank",
+            "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+            "tensor_layout": "receive-source-major, then local-expert-major",
+            "wire_encoding_contract": "target binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
           },
           "ir_origin": "execution_plan"
         },
@@ -7296,24 +8301,47 @@
             "placement": "one DEP group spanning ranks 0..3",
             "parallelism": "moe_ep4",
             "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-            "role": "expert-local compute"
+            "role": "target model expert-local compute"
           }
         },
         {
-          "id": "ep4_combine",
-          "label": "EP4 routed-output return",
+          "id": "target_ep4_combine",
+          "label": "target model EP4 routed-output return",
           "shape": "moe",
           "semantic_op": "execution.collective.moe_combine",
           "node_kind": "communication",
           "boundary_role": "module_internal",
           "execution": {
+            "scope": "target",
             "placement": "all four ranks in the DEP/EP group",
             "collective": "all_to_all_v",
+            "group": "DEP/EP ranks [0,1,2,3]",
             "parallelism": "moe_ep4",
-            "payload": "expert outputs [N_recv,H] bf16 with origin-token:int32 and route_weight:fp32, expert-major",
-            "result": "origin-rank routed rows [N_local,topk,H] bf16, token-major",
-            "dtype": "structured int32/fp32/bf16",
-            "tensor_layout": "origin-rank-major on wire; token-major after receive"
+            "payload": "expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata",
+            "result": "origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights",
+            "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+            "tensor_layout": "origin-rank-major on wire; receive-source-major before restore",
+            "wire_encoding_contract": "target binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "target_ep4_restore",
+          "label": "target model routed-output restore",
+          "shape": "elem",
+          "semantic_op": "execution.layout.moe_combine_restore",
+          "node_kind": "layout_transform",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "target",
+            "placement": "each origin rank",
+            "collective": "none (local inverse permutation)",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "returned route records in receive-source-major order",
+            "result": "[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights",
+            "dtype": "logical bf16 + fp32",
+            "tensor_layout": "token-major, route-slot-major, H contiguous"
           },
           "ir_origin": "execution_plan"
         },
@@ -7328,7 +8356,8 @@
           "execution": {
             "placement": "replicated on every DEP rank",
             "parallelism": "attention_dp4",
-            "sharding": "B_local tokens; shared-expert weights replicated"
+            "sharding": "B_local tokens; shared-expert weights replicated",
+            "scope": "target"
           }
         },
         {
@@ -7342,7 +8371,7 @@
             "placement": "one DEP group spanning ranks 0..3",
             "parallelism": "moe_ep4",
             "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
-            "role": "origin-rank combine"
+            "role": "target model origin-rank sum"
           }
         },
         {
@@ -7362,7 +8391,7 @@
           "dtype": "bf16"
         },
         {
-          "from": "ep4_dispatch",
+          "from": "target_ep4_dispatch",
           "to": "routed_experts",
           "label": "top-10 expert assignments"
         },
@@ -7372,7 +8401,7 @@
           "dtype": "bf16"
         },
         {
-          "from": "ep4_combine",
+          "from": "target_ep4_restore",
           "to": "weighted_combine",
           "dtype": "bf16"
         },
@@ -7389,14 +8418,522 @@
         },
         {
           "from": "router",
-          "to": "ep4_dispatch",
-          "shape": "[N_local,topk,H]",
-          "dtype": "bf16"
+          "to": "target_ep4_pack",
+          "shape": "[N_local,10] route records",
+          "dtype": "structured"
+        },
+        {
+          "from": "target_ep4_pack",
+          "to": "target_ep4_dispatch",
+          "shape": "[N_recv,H] + route metadata",
+          "dtype": "structured"
         },
         {
           "from": "routed_experts",
-          "to": "ep4_combine",
-          "shape": "[N_recv,H]",
+          "to": "target_ep4_combine",
+          "shape": "[N_recv,H] + route metadata",
+          "dtype": "structured"
+        },
+        {
+          "from": "target_ep4_combine",
+          "to": "target_ep4_restore",
+          "shape": "[N_local,10,H]",
+          "dtype": "bf16"
+        }
+      ]
+    },
+    "mtp_full_attention_moe_block": {
+      "title": "Qwen3.5 MTP draft gated GQA + MoE decoder layer",
+      "nodes": [
+        {
+          "id": "input_hidden",
+          "label": "Layer input",
+          "shape": "io",
+          "semantic_op": "generation.mtp.layer_input",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "input_norm",
+          "label": "Pre-attention RMSNorm",
+          "shape": "norm",
+          "semantic_op": "generation.mtp.input_rms_norm",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "qkv_projection",
+          "label": "Q/K/V projection",
+          "shape": "gemm",
+          "semantic_op": "generation.mtp.attention.project_qkv",
+          "output": "[N,9216]",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "qk_norm",
+          "label": "Per-head Q/K RMSNorm",
+          "shape": "norm",
+          "semantic_op": "generation.mtp.attention.qk_norm",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "partial_rope",
+          "label": "Partial RoPE (25% of head channels)",
+          "shape": "elem",
+          "semantic_op": "generation.mtp.attention.partial_rope",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "kv_state_read",
+          "label": "Read draft KV state",
+          "shape": "cache",
+          "semantic_op": "generation.mtp.attention.kv_cache.read",
+          "tensor": "K,V [B,2,T,256]",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "request-owning attention-DP rank",
+            "parallelism": "attention_dp4",
+            "sharding": "request dimension B/4; state tensor otherwise unsharded"
+          }
+        },
+        {
+          "id": "causal_gqa",
+          "label": "Causal grouped-query attention",
+          "shape": "attn",
+          "semantic_op": "generation.mtp.attention.gqa",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "kv_state_write",
+          "label": "Append draft K/V state",
+          "shape": "cache",
+          "semantic_op": "generation.mtp.attention.kv_cache.write",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "request-owning attention-DP rank",
+            "parallelism": "attention_dp4",
+            "sharding": "request dimension B/4; state tensor otherwise unsharded"
+          }
+        },
+        {
+          "id": "attention_output_gate",
+          "label": "Attention output gate",
+          "shape": "elem",
+          "semantic_op": "generation.mtp.attention.output_gate",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "output_projection",
+          "label": "Attention output projection",
+          "shape": "gemm",
+          "semantic_op": "generation.mtp.attention.o_proj",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated weights on each of ranks 0..3",
+            "parallelism": "attention_dp4",
+            "request_sharding": "B -> B_local by request; hidden/head dimensions unsharded",
+            "state_ownership": "KV and GDN state stay with the request-owning DP rank"
+          }
+        },
+        {
+          "id": "attention_residual",
+          "label": "Attention residual add",
+          "shape": "elem",
+          "semantic_op": "generation.mtp.residual_add",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "post_attention_norm",
+          "label": "Pre-MoE RMSNorm",
+          "shape": "norm",
+          "semantic_op": "generation.mtp.post_attention_rms_norm",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "moe",
+          "label": "Sparse MoE + shared expert",
+          "shape": "moe",
+          "semantic_op": "generation.mtp.moe",
+          "drill": "mtp_moe_block",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "layer_residual",
+          "label": "MoE residual add",
+          "shape": "elem",
+          "semantic_op": "generation.mtp.residual_add",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "output_hidden",
+          "label": "Layer output",
+          "shape": "io",
+          "semantic_op": "generation.mtp.layer_output",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        }
+      ],
+      "edges": [
+        {
+          "from": "input_hidden",
+          "to": "input_norm",
+          "dtype": "bf16"
+        },
+        {
+          "from": "input_norm",
+          "to": "qkv_projection",
+          "dtype": "bf16"
+        },
+        {
+          "from": "qkv_projection",
+          "to": "qk_norm",
+          "label": "Q/K"
+        },
+        {
+          "from": "qk_norm",
+          "to": "partial_rope"
+        },
+        {
+          "from": "partial_rope",
+          "to": "causal_gqa",
+          "label": "Q/K"
+        },
+        {
+          "from": "qkv_projection",
+          "to": "causal_gqa",
+          "label": "V + gate"
+        },
+        {
+          "from": "kv_state_read",
+          "to": "causal_gqa",
+          "kind": "state_read"
+        },
+        {
+          "from": "partial_rope",
+          "to": "kv_state_write",
+          "kind": "state_write",
+          "label": "K"
+        },
+        {
+          "from": "qkv_projection",
+          "to": "kv_state_write",
+          "kind": "state_write",
+          "label": "V"
+        },
+        {
+          "from": "causal_gqa",
+          "to": "attention_output_gate"
+        },
+        {
+          "from": "qkv_projection",
+          "to": "attention_output_gate",
+          "label": "gate"
+        },
+        {
+          "from": "attention_output_gate",
+          "to": "output_projection",
+          "dtype": "bf16"
+        },
+        {
+          "from": "input_hidden",
+          "to": "attention_residual",
+          "label": "residual"
+        },
+        {
+          "from": "output_projection",
+          "to": "attention_residual"
+        },
+        {
+          "from": "attention_residual",
+          "to": "post_attention_norm",
+          "dtype": "bf16"
+        },
+        {
+          "from": "post_attention_norm",
+          "to": "moe",
+          "dtype": "bf16"
+        },
+        {
+          "from": "attention_residual",
+          "to": "layer_residual",
+          "label": "residual"
+        },
+        {
+          "from": "moe",
+          "to": "layer_residual"
+        },
+        {
+          "from": "layer_residual",
+          "to": "output_hidden",
+          "dtype": "bf16"
+        }
+      ]
+    },
+    "mtp_moe_block": {
+      "title": "Qwen3.5 MTP draft logical routed + shared expert computation",
+      "nodes": [
+        {
+          "id": "input_hidden",
+          "label": "MoE input",
+          "shape": "io",
+          "semantic_op": "generation.mtp.moe.input",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        },
+        {
+          "id": "router",
+          "label": "Router and top-10 selection",
+          "shape": "gemm",
+          "semantic_op": "generation.mtp.moe.router_topk",
+          "routed_experts": 512,
+          "experts_per_token": 10,
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "one DEP group spanning ranks 0..3",
+            "parallelism": "moe_ep4",
+            "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+            "role": "MTP draft model local routing"
+          }
+        },
+        {
+          "id": "draft_ep4_pack",
+          "label": "MTP draft model EP4 dispatch pack",
+          "shape": "elem",
+          "semantic_op": "execution.layout.moe_dispatch_pack",
+          "node_kind": "layout_transform",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "draft",
+            "placement": "each origin rank",
+            "collective": "none (local stable pack)",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "hidden [N_local,H] bf16, expert_ids [N_local,10] int32, route_weights [N_local,10] fp32, origin_row [N_local] int32",
+            "result": "four destination buckets of logical route records; each record is (origin_rank, origin_row, route_slot, expert_id, weight, hidden[H])",
+            "dtype": "logical bf16 + int32 + fp32",
+            "tensor_layout": "destination-rank-major, then expert-id-major, stable origin-row order"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "draft_ep4_dispatch",
+          "label": "MTP draft model EP4 variable-size dispatch",
+          "shape": "moe",
+          "semantic_op": "execution.collective.moe_dispatch",
+          "node_kind": "communication",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "draft",
+            "placement": "all four ranks in the DEP/EP group",
+            "collective": "all_to_all_v",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "per-destination packed logical route records from the local pack adapter",
+            "result": "expert-owner records [N_recv,H] logical bf16 plus int32 origin/expert/slot and fp32 route-weight metadata; 128 logical experts per rank",
+            "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+            "tensor_layout": "receive-source-major, then local-expert-major",
+            "wire_encoding_contract": "draft binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "routed_experts",
+          "label": "512 routed SwiGLU experts",
+          "shape": "moe",
+          "semantic_op": "generation.mtp.moe.routed_experts",
+          "expert_intermediate_size": 1024,
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "one DEP group spanning ranks 0..3",
+            "parallelism": "moe_ep4",
+            "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+            "role": "MTP draft model expert-local compute"
+          }
+        },
+        {
+          "id": "draft_ep4_combine",
+          "label": "MTP draft model EP4 routed-output return",
+          "shape": "moe",
+          "semantic_op": "execution.collective.moe_combine",
+          "node_kind": "communication",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "draft",
+            "placement": "all four ranks in the DEP/EP group",
+            "collective": "all_to_all_v",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "expert outputs [N_recv,H] logical bf16 with int32 origin-row/route-slot and fp32 route-weight metadata",
+            "result": "origin-rank routed records [N_local,10,H] logical bf16 plus fp32 weights",
+            "dtype": "logical structured bf16/int32/fp32; physical wire dtype is binding-owned",
+            "tensor_layout": "origin-rank-major on wire; receive-source-major before restore",
+            "wire_encoding_contract": "draft binding must record its own hidden encoding and metadata ABI; it must not inherit these choices from the other scope"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "draft_ep4_restore",
+          "label": "MTP draft model routed-output restore",
+          "shape": "elem",
+          "semantic_op": "execution.layout.moe_combine_restore",
+          "node_kind": "layout_transform",
+          "boundary_role": "module_internal",
+          "execution": {
+            "scope": "draft",
+            "placement": "each origin rank",
+            "collective": "none (local inverse permutation)",
+            "group": "DEP/EP ranks [0,1,2,3]",
+            "parallelism": "moe_ep4",
+            "payload": "returned route records in receive-source-major order",
+            "result": "[N_local,10,H] bf16 in origin-token/route-slot order with [N_local,10] fp32 weights",
+            "dtype": "logical bf16 + fp32",
+            "tensor_layout": "token-major, route-slot-major, H contiguous"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
+          "id": "shared_expert",
+          "label": "Always-on shared SwiGLU expert",
+          "shape": "moe",
+          "semantic_op": "generation.mtp.moe.shared_expert",
+          "intermediate_size": 1024,
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "replicated on every DEP rank",
+            "parallelism": "attention_dp4",
+            "sharding": "B_local tokens; shared-expert weights replicated",
+            "scope": "draft"
+          }
+        },
+        {
+          "id": "weighted_combine",
+          "label": "Weighted routed sum + shared expert",
+          "shape": "elem",
+          "semantic_op": "generation.mtp.moe.combine",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "one DEP group spanning ranks 0..3",
+            "parallelism": "moe_ep4",
+            "expert_ownership": "expert_id mod 4; 128 of 512 routed experts per rank",
+            "role": "MTP draft model origin-rank sum"
+          }
+        },
+        {
+          "id": "output_hidden",
+          "label": "MoE output",
+          "shape": "io",
+          "semantic_op": "generation.mtp.moe.output",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic"
+        }
+      ],
+      "edges": [
+        {
+          "from": "input_hidden",
+          "to": "router",
+          "shape": "[N,H]",
+          "dtype": "bf16"
+        },
+        {
+          "from": "draft_ep4_dispatch",
+          "to": "routed_experts",
+          "label": "top-10 expert assignments"
+        },
+        {
+          "from": "input_hidden",
+          "to": "shared_expert",
+          "dtype": "bf16"
+        },
+        {
+          "from": "draft_ep4_restore",
+          "to": "weighted_combine",
+          "dtype": "bf16"
+        },
+        {
+          "from": "shared_expert",
+          "to": "weighted_combine",
+          "dtype": "bf16"
+        },
+        {
+          "from": "weighted_combine",
+          "to": "output_hidden",
+          "shape": "[N,H]",
+          "dtype": "bf16"
+        },
+        {
+          "from": "router",
+          "to": "draft_ep4_pack",
+          "shape": "[N_local,10] route records",
+          "dtype": "structured"
+        },
+        {
+          "from": "draft_ep4_pack",
+          "to": "draft_ep4_dispatch",
+          "shape": "[N_recv,H] + route metadata",
+          "dtype": "structured"
+        },
+        {
+          "from": "routed_experts",
+          "to": "draft_ep4_combine",
+          "shape": "[N_recv,H] + route metadata",
+          "dtype": "structured"
+        },
+        {
+          "from": "draft_ep4_combine",
+          "to": "draft_ep4_restore",
+          "shape": "[N_local,10,H]",
           "dtype": "bf16"
         }
       ]
@@ -7428,6 +8965,38 @@
           "tensor": "[B,15,2,T,256]",
           "dtype": "bf16",
           "note": "Runtime profiles may overlay FP8 storage.",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "request-owning attention-DP rank",
+            "parallelism": "attention_dp4",
+            "sharding": "request dimension B/4; state tensor otherwise unsharded"
+          }
+        },
+        {
+          "id": "mtp_draft_keys",
+          "label": "One-layer MTP draft key cache",
+          "shape": "cache",
+          "semantic_op": "generation.mtp.state.attention_keys",
+          "tensor": "[B,1,2,T,256]",
+          "dtype": "bf16",
+          "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "execution": {
+            "placement": "request-owning attention-DP rank",
+            "parallelism": "attention_dp4",
+            "sharding": "request dimension B/4; state tensor otherwise unsharded"
+          }
+        },
+        {
+          "id": "mtp_draft_values",
+          "label": "One-layer MTP draft value cache",
+          "shape": "cache",
+          "semantic_op": "generation.mtp.state.attention_values",
+          "tensor": "[B,1,2,T,256]",
+          "dtype": "bf16",
+          "lifecycle": "advance along the candidate chain; trim/reset at the accepted boundary",
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -7502,6 +9071,16 @@
           "from": "attention_values",
           "to": "verify_journal",
           "kind": "snapshot"
+        },
+        {
+          "from": "mtp_draft_keys",
+          "to": "verify_journal",
+          "kind": "draft_boundary"
+        },
+        {
+          "from": "mtp_draft_values",
+          "to": "verify_journal",
+          "kind": "draft_boundary"
         },
         {
           "from": "gdn_conv_windows",
@@ -7591,7 +9170,7 @@
           "label": "One full-attention + MoE draft layer",
           "shape": "block",
           "semantic_op": "generation.mtp.decoder_layer",
-          "drill": "full_attention_moe_block",
+          "drill": "mtp_full_attention_moe_block",
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -7813,6 +9392,25 @@
           "node_kind": "semantic"
         },
         {
+          "id": "dp4_output_commit",
+          "label": "Attention-DP4 owner-local output commit",
+          "shape": "elem",
+          "semantic_op": "execution.layout.dp4_output_commit",
+          "node_kind": "layout_transform",
+          "boundary_role": "module_boundary",
+          "execution": {
+            "placement": "request-owning rank",
+            "collective": "none (owner-local commit)",
+            "group": "attention-DP ranks [0,1,2,3]",
+            "parallelism": "attention_dp4",
+            "payload": "accepted token IDs and committed length for B_local requests",
+            "result": "owner-local [B_local,accepted] int32 rows for frontend response routing",
+            "dtype": "int32",
+            "tensor_layout": "request-major; request identity retained for frontend merge"
+          },
+          "ir_origin": "execution_plan"
+        },
+        {
           "id": "next_iteration",
           "label": "Advance generation loop",
           "shape": "block",
@@ -7899,13 +9497,19 @@
           "label": "accepted tokens + bonus"
         },
         {
-          "from": "commit_tokens",
+          "from": "dp4_output_commit",
           "to": "next_iteration"
         },
         {
           "from": "next_iteration",
           "to": "committed_context",
           "kind": "loop_back"
+        },
+        {
+          "from": "commit_tokens",
+          "to": "dp4_output_commit",
+          "shape": "[B_local,accepted]",
+          "dtype": "int32"
         }
       ]
     }
@@ -7917,6 +9521,8 @@
     "gdn_moe_block": "layer_schedule",
     "full_attention_moe_block": "layer_schedule",
     "moe_block": "gdn_moe_block",
+    "mtp_moe_block": "mtp_full_attention_moe_block",
+    "mtp_full_attention_moe_block": "mtp_draft_head",
     "mtp_draft_head": "generation_loop"
   },
   "enriched": {
@@ -7937,7 +9543,15 @@
       "nodes_profile": {}
     },
     "moe_block": {
-      "title": "Qwen3.5 logical routed + shared expert computation",
+      "title": "Qwen3.5 target logical routed + shared expert computation",
+      "nodes_profile": {}
+    },
+    "mtp_full_attention_moe_block": {
+      "title": "Qwen3.5 MTP draft gated GQA + MoE decoder layer",
+      "nodes_profile": {}
+    },
+    "mtp_moe_block": {
+      "title": "Qwen3.5 MTP draft logical routed + shared expert computation",
       "nodes_profile": {}
     },
     "state_tensors": {

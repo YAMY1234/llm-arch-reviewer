@@ -83,10 +83,19 @@ def test_kv_gdn_state_and_mtp_transaction_are_explicit() -> None:
     assert states["gdn_conv_windows"]["tensor"] == "[B,45,12288,3]"
     assert states["gdn_recurrent_states"]["tensor"] == "[B,45,64,128,128]"
     assert states["gdn_recurrent_states"]["dtype"] == "float32"
+    assert states["mtp_draft_keys"]["tensor"] == "[B,1,2,T,256]"
+    assert states["mtp_draft_values"]["tensor"] == "[B,1,2,T,256]"
 
     mtp_nodes = _nodes(model_ir, "mtp_draft_head")
-    assert mtp_nodes["draft_decoder_layer"]["drill"] == "full_attention_moe_block"
+    assert mtp_nodes["draft_decoder_layer"]["drill"] == "mtp_full_attention_moe_block"
     assert "not dedicated" in mtp_nodes["shared_embedding"]["label"].lower()
+    assert _nodes(model_ir, "full_attention_moe_block")["moe"]["drill"] == "moe_block"
+    assert _nodes(model_ir, "mtp_full_attention_moe_block")["moe"]["drill"] == "mtp_moe_block"
+    assert _nodes(model_ir, "moe_block")["router"]["semantic_op"] == "qwen3_5.moe.router_topk"
+    assert (
+        _nodes(model_ir, "mtp_moe_block")["router"]["semantic_op"]
+        == "generation.mtp.moe.router_topk"
+    )
 
     generation = _nodes(model_ir, "generation_loop")
     for node_id in (
@@ -131,8 +140,15 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
     ]
     assert {node["id"] for node in inserted} == {
         "dp4_request_partition",
-        "ep4_dispatch",
-        "ep4_combine",
+        "dp4_output_commit",
+        "target_ep4_pack",
+        "target_ep4_dispatch",
+        "target_ep4_combine",
+        "target_ep4_restore",
+        "draft_ep4_pack",
+        "draft_ep4_dispatch",
+        "draft_ep4_combine",
+        "draft_ep4_restore",
     }
     for node in inserted:
         execution = node["execution"]
@@ -140,6 +156,7 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
         assert execution["result"]
         assert execution["dtype"]
         assert execution["tensor_layout"]
+        assert execution["group"]
 
     bundle = compile_catalog(CATALOG_ROOT)
     assert bundle["meta"]["model_id"] == "qwen35_397b_a17b"
@@ -147,9 +164,16 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
     assert bundle["meta"]["implementation_count"] == 0
     assert bundle["meta"]["profile_count"] == 0
     compiled_nodes = _nodes(bundle, "moe_block")
-    assert compiled_nodes["ep4_dispatch"]["ir_origin"] == "execution_plan"
-    assert compiled_nodes["ep4_dispatch"]["boundary_role"] == "module_internal"
-    assert compiled_nodes["ep4_combine"]["execution"]["collective"] == "all_to_all_v"
+    assert compiled_nodes["target_ep4_dispatch"]["ir_origin"] == "execution_plan"
+    assert compiled_nodes["target_ep4_dispatch"]["boundary_role"] == "module_internal"
+    assert compiled_nodes["target_ep4_combine"]["execution"]["collective"] == "all_to_all_v"
+    draft_nodes = _nodes(bundle, "mtp_moe_block")
+    assert draft_nodes["draft_ep4_dispatch"]["execution"]["scope"] == "draft"
+    assert draft_nodes["draft_ep4_combine"]["execution"]["collective"] == "all_to_all_v"
+    assert (
+        compiled_nodes["target_ep4_dispatch"]["execution"]["wire_encoding_contract"]
+        != draft_nodes["draft_ep4_dispatch"]["execution"]["wire_encoding_contract"]
+    )
 
 
 def test_model_ir_does_not_contain_runtime_profile_choices() -> None:

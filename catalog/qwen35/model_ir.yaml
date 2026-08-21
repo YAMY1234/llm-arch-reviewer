@@ -1,7 +1,7 @@
 schema_version: model-ir.v2
 model_id: qwen35_397b_a17b
 model_label: Qwen3.5 397B-A17B NVFP4 (text backbone)
-ir_version: 1
+ir_version: 2
 default_view: top
 default_execution_path: attention_dp4_moe_ep4
 dimensions:
@@ -1054,7 +1054,7 @@ views:
       to: output_hidden
       dtype: bf16
   moe_block:
-    title: Qwen3.5 logical routed + shared expert computation
+    title: Qwen3.5 target logical routed + shared expert computation
     nodes:
     - id: input_hidden
       label: MoE input
@@ -1105,6 +1105,180 @@ views:
       to: output_hidden
       shape: '[N,H]'
       dtype: bf16
+  mtp_full_attention_moe_block:
+    title: Qwen3.5 MTP draft gated GQA + MoE decoder layer
+    nodes:
+    - id: input_hidden
+      label: Layer input
+      shape: io
+      semantic_op: generation.mtp.layer_input
+    - id: input_norm
+      label: Pre-attention RMSNorm
+      shape: norm
+      semantic_op: generation.mtp.input_rms_norm
+    - id: qkv_projection
+      label: Q/K/V projection
+      shape: gemm
+      semantic_op: generation.mtp.attention.project_qkv
+      output: '[N,9216]'
+    - id: qk_norm
+      label: Per-head Q/K RMSNorm
+      shape: norm
+      semantic_op: generation.mtp.attention.qk_norm
+    - id: partial_rope
+      label: Partial RoPE (25% of head channels)
+      shape: elem
+      semantic_op: generation.mtp.attention.partial_rope
+    - id: kv_state_read
+      label: Read draft KV state
+      shape: cache
+      semantic_op: generation.mtp.attention.kv_cache.read
+      tensor: K,V [B,2,T,256]
+    - id: causal_gqa
+      label: Causal grouped-query attention
+      shape: attn
+      semantic_op: generation.mtp.attention.gqa
+    - id: kv_state_write
+      label: Append draft K/V state
+      shape: cache
+      semantic_op: generation.mtp.attention.kv_cache.write
+    - id: attention_output_gate
+      label: Attention output gate
+      shape: elem
+      semantic_op: generation.mtp.attention.output_gate
+    - id: output_projection
+      label: Attention output projection
+      shape: gemm
+      semantic_op: generation.mtp.attention.o_proj
+    - id: attention_residual
+      label: Attention residual add
+      shape: elem
+      semantic_op: generation.mtp.residual_add
+    - id: post_attention_norm
+      label: Pre-MoE RMSNorm
+      shape: norm
+      semantic_op: generation.mtp.post_attention_rms_norm
+    - id: moe
+      label: Sparse MoE + shared expert
+      shape: moe
+      semantic_op: generation.mtp.moe
+      drill: mtp_moe_block
+    - id: layer_residual
+      label: MoE residual add
+      shape: elem
+      semantic_op: generation.mtp.residual_add
+    - id: output_hidden
+      label: Layer output
+      shape: io
+      semantic_op: generation.mtp.layer_output
+    edges:
+    - from: input_hidden
+      to: input_norm
+      dtype: bf16
+    - from: input_norm
+      to: qkv_projection
+      dtype: bf16
+    - from: qkv_projection
+      to: qk_norm
+      label: Q/K
+    - from: qk_norm
+      to: partial_rope
+    - from: partial_rope
+      to: causal_gqa
+      label: Q/K
+    - from: qkv_projection
+      to: causal_gqa
+      label: V + gate
+    - from: kv_state_read
+      to: causal_gqa
+      kind: state_read
+    - from: partial_rope
+      to: kv_state_write
+      kind: state_write
+      label: K
+    - from: qkv_projection
+      to: kv_state_write
+      kind: state_write
+      label: V
+    - from: causal_gqa
+      to: attention_output_gate
+    - from: qkv_projection
+      to: attention_output_gate
+      label: gate
+    - from: attention_output_gate
+      to: output_projection
+      dtype: bf16
+    - from: input_hidden
+      to: attention_residual
+      label: residual
+    - from: output_projection
+      to: attention_residual
+    - from: attention_residual
+      to: post_attention_norm
+      dtype: bf16
+    - from: post_attention_norm
+      to: moe
+      dtype: bf16
+    - from: attention_residual
+      to: layer_residual
+      label: residual
+    - from: moe
+      to: layer_residual
+    - from: layer_residual
+      to: output_hidden
+      dtype: bf16
+  mtp_moe_block:
+    title: Qwen3.5 MTP draft logical routed + shared expert computation
+    nodes:
+    - id: input_hidden
+      label: MoE input
+      shape: io
+      semantic_op: generation.mtp.moe.input
+    - id: router
+      label: Router and top-10 selection
+      shape: gemm
+      semantic_op: generation.mtp.moe.router_topk
+      routed_experts: 512
+      experts_per_token: 10
+    - id: routed_experts
+      label: 512 routed SwiGLU experts
+      shape: moe
+      semantic_op: generation.mtp.moe.routed_experts
+      expert_intermediate_size: 1024
+    - id: shared_expert
+      label: Always-on shared SwiGLU expert
+      shape: moe
+      semantic_op: generation.mtp.moe.shared_expert
+      intermediate_size: 1024
+    - id: weighted_combine
+      label: Weighted routed sum + shared expert
+      shape: elem
+      semantic_op: generation.mtp.moe.combine
+    - id: output_hidden
+      label: MoE output
+      shape: io
+      semantic_op: generation.mtp.moe.output
+    edges:
+    - from: input_hidden
+      to: router
+      shape: '[N,H]'
+      dtype: bf16
+    - from: router
+      to: routed_experts
+      label: top-10 expert assignments
+    - from: input_hidden
+      to: shared_expert
+      dtype: bf16
+    - from: routed_experts
+      to: weighted_combine
+      dtype: bf16
+    - from: shared_expert
+      to: weighted_combine
+      dtype: bf16
+    - from: weighted_combine
+      to: output_hidden
+      shape: '[N,H]'
+      dtype: bf16
   state_tensors:
     title: Canonical per-request decode state (unsharded model semantics)
     nodes:
@@ -1122,6 +1296,20 @@ views:
       tensor: '[B,15,2,T,256]'
       dtype: bf16
       note: Runtime profiles may overlay FP8 storage.
+    - id: mtp_draft_keys
+      label: One-layer MTP draft key cache
+      shape: cache
+      semantic_op: generation.mtp.state.attention_keys
+      tensor: '[B,1,2,T,256]'
+      dtype: bf16
+      lifecycle: advance along the candidate chain; trim/reset at the accepted boundary
+    - id: mtp_draft_values
+      label: One-layer MTP draft value cache
+      shape: cache
+      semantic_op: generation.mtp.state.attention_values
+      tensor: '[B,1,2,T,256]'
+      dtype: bf16
+      lifecycle: advance along the candidate chain; trim/reset at the accepted boundary
     - id: gdn_conv_windows
       label: 45-layer GDN convolution windows
       shape: cache
@@ -1153,6 +1341,12 @@ views:
     - from: attention_values
       to: verify_journal
       kind: snapshot
+    - from: mtp_draft_keys
+      to: verify_journal
+      kind: draft_boundary
+    - from: mtp_draft_values
+      to: verify_journal
+      kind: draft_boundary
     - from: gdn_conv_windows
       to: verify_journal
       kind: snapshot
@@ -1198,7 +1392,7 @@ views:
       label: One full-attention + MoE draft layer
       shape: block
       semantic_op: generation.mtp.decoder_layer
-      drill: full_attention_moe_block
+      drill: mtp_full_attention_moe_block
     - id: draft_final_norm
       label: Draft final RMSNorm
       shape: norm

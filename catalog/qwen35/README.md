@@ -29,7 +29,8 @@ The Model IR contains:
   decoder layer;
 - unsharded semantic state layouts for 15-layer K/V cache, 45-layer GDN convolution
   windows, and 45-layer GDN recurrent matrices;
-- a one-layer full-attention + MoE MTP draft head with shared target embedding/head;
+- a one-layer full-attention + MoE MTP draft head with shared target embedding/head,
+  its own semantic attention/MoE scope, and an explicit one-layer draft K/V cache;
 - explicit draft → target verify → accept → accepted-prefix GDN replay → KV/GDN commit
   control flow, including a tentative state journal and rejected-suffix discard.
 
@@ -45,11 +46,20 @@ not mutate this Model IR.
 - attention/GDN weights are replicated and requests plus their KV/GDN state are sharded
   over Attention DP4;
 - the 512 routed experts are partitioned over EP4 (128 logical experts per rank);
-- routed activations use explicit variable-size dispatch and return collectives with
-  logical payload, dtype, and layout contracts;
+- target and MTP-draft routed activations use separate pack → variable-size dispatch →
+  return → restore boundaries, each with explicit group, payload, result, dtype, and
+  layout contracts;
 - the shared expert remains replicated and request-local;
-- engine-specific wire compression, kernel fusion, CUDA Graphs, and collective backends
-  are deferred to implementation bindings and measured profiles.
+- target and draft wire encodings are deliberately not inherited from one another;
+  engine-specific wire compression, kernel fusion, CUDA Graphs, padding, and collective
+  backends must be bound independently in implementation profiles.
+
+For the pinned SGLang baseline, source inspection proves that Attention DP4 leaves each
+rank's tokens local and the selected A2A dispatcher performs the cross-rank expert
+routing; there is no separate DP all-gather/reduce-scatter boundary in this normalized
+path. The target uses FlashInfer A2A while the MTP draft uses DeepEP, which is why the two
+logical scopes remain distinct even when both normalize to EP4 variable-size dispatch
+and return.
 
 The required profile parameters are therefore `tp_size=1`, `dp_size=4`, `cp_size=1`, and
 `ep_size=4`. Framework flags that reuse a four-rank tensor-parallel process group while
