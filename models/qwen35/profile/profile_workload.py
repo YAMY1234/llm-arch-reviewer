@@ -184,8 +184,10 @@ def wait_for_decode_batch(
     raise RuntimeError(f"timed out waiting for exact decode batch; recent={recent}")
 
 
-def wait_for_traces(output_dir: Path, expected_ranks: int) -> list[Path]:
-    deadline = time.monotonic() + 900
+def wait_for_traces(
+    output_dir: Path, expected_ranks: int, *, timeout_seconds: int = 900
+) -> list[Path]:
+    deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         traces = sorted(output_dir.glob("*.trace.json.gz"))
         if len(traces) == expected_ranks:
@@ -193,7 +195,10 @@ def wait_for_traces(output_dir: Path, expected_ranks: int) -> list[Path]:
         if len(traces) > expected_ranks:
             raise RuntimeError(f"expected {expected_ranks} traces, found {len(traces)}")
         time.sleep(2)
-    raise RuntimeError(f"expected {expected_ranks} traces in {output_dir}")
+    raise RuntimeError(
+        f"expected {expected_ranks} traces in {output_dir} within "
+        f"{timeout_seconds} seconds"
+    )
 
 
 def sha256(path: Path) -> str:
@@ -312,7 +317,16 @@ def main() -> int:
         formal_results
     )
 
-    traces = wait_for_traces(trace_dir, args.expected_ranks)
+    # with_stack=True serializes large Python call trees after the GPU window.
+    # Four Qwen3.5 ranks can legitimately need much longer than 15 minutes to
+    # export; killing the server during PythonTracer.stop loses every trace.
+    trace_export_timeout_seconds = 5400 if args.kind == "attribution" else 900
+    protocol["trace_export_timeout_seconds"] = trace_export_timeout_seconds
+    traces = wait_for_traces(
+        trace_dir,
+        args.expected_ranks,
+        timeout_seconds=trace_export_timeout_seconds,
+    )
     protocol["start_profile_response"] = response
     protocol["trace_files"] = [str(path) for path in traces]
     write_json(args.output_dir / "protocol.json", protocol)
