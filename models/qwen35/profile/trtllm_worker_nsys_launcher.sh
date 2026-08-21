@@ -43,7 +43,11 @@ profile_worker() {
     fi
     mkdir -p "${TLLM_WORKER_NSYS_OUTPUT_DIR}"
     local mode=${PROFILING_MODE:-worker}
-    local output=${TLLM_WORKER_NSYS_OUTPUT_DIR}/${HOSTNAME}-${mode}-rank${mpi_rank}
+    # SRT's container environment can inherit the orchestrator's HOSTNAME on
+    # every node. SLURMD_NODENAME is rank-local; hostname(1) is the fallback.
+    # This prevents concurrent workers from overwriting the same .nsys-rep.
+    local worker_host=${SLURMD_NODENAME:-$(hostname -s)}
+    local output=${TLLM_WORKER_NSYS_OUTPUT_DIR}/${worker_host}-${mode}-rank${mpi_rank}
     log_stderr "Rank${mpi_rank} worker-local Nsight output: ${output}.nsys-rep"
     nsys profile \
         -t cuda,nvtx,ucx \
