@@ -103,10 +103,15 @@ srun \
 
     graph_args=(--disable-cuda-graph)
     draft_args=(--speculative-moe-runner-backend deep_gemm --speculative-moe-a2a-backend deepep)
+    chunk_args=(--chunked-prefill-size 8192 --max-prefill-tokens 8192)
     if [[ "$PROFILE_KIND" == decode-bs32 ]]; then
       graph_args=(--cuda-graph-max-bs 32)
     elif [[ "$PROFILE_KIND" == prefill8k ]]; then
       draft_args=(--speculative-moe-runner-backend triton --speculative-moe-a2a-backend none)
+      # SGLang interprets these budgets globally under Attention DP and divides
+      # them by dp_size. 32768 / DP4 therefore preserves one full 8192-token
+      # owner-rank chunk instead of silently resolving this capture to 2048.
+      chunk_args=(--chunked-prefill-size 32768 --max-prefill-tokens 32768)
     fi
 
     python3 -m sglang.launch_server \
@@ -127,8 +132,7 @@ srun \
       --watchdog-timeout 1800 \
       --mem-fraction-static 0.70 \
       --max-running-requests 128 \
-      --chunked-prefill-size 8192 \
-      --max-prefill-tokens 8192 \
+      "${chunk_args[@]}" \
       --disable-radix-cache \
       --page-size 64 \
       --attention-backend trtllm_mha \

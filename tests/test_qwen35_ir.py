@@ -161,7 +161,15 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
     bundle = compile_catalog(CATALOG_ROOT)
     assert bundle["meta"]["model_id"] == "qwen35_397b_a17b"
     assert bundle["meta"]["execution_variant_count"] == 1
-    assert bundle["meta"]["implementation_count"] == 0
+    assert bundle["meta"]["implementation_count"] == 2
+    implementations = bundle["implementations"]
+    assert set(implementations) == {
+        "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
+        "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
+    }
+    assert len(
+        {implementation["execution_variant"] for implementation in implementations.values()}
+    ) == 1
     assert bundle["meta"]["profile_count"] == 0
     compiled_nodes = _nodes(bundle, "moe_block")
     assert compiled_nodes["target_ep4_dispatch"]["ir_origin"] == "execution_plan"

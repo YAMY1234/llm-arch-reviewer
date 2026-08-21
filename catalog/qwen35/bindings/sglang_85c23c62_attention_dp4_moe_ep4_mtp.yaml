@@ -1,0 +1,220 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+label: SGLang 85c23c62 · AgentX Attention-DP4 + MoE-EP4 + MTP6
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+source_repo: https://github.com/YAMY1234/sglang
+source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
+container: lmsysorg/sglang:nightly-dev-cu13-20260809-cea16bf2
+backend: sglang
+node_bindings:
+  top.embedding:
+    symbols: [Qwen3_5ForCausalLM.get_input_embeddings]
+    links:
+    - file: python/sglang/srt/models/qwen3_5_text.py
+      symbol: Qwen3_5ForCausalLM.get_input_embeddings
+  gdn_moe_block.qkvz_projection:
+    symbols: [Qwen3_5GatedDeltaNet._forward_input_proj]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet._forward_input_proj
+  gdn_moe_block.ba_projection:
+    symbols: [Qwen3_5GatedDeltaNet._forward_input_proj]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet._forward_input_proj
+  gdn_moe_block.causal_conv:
+    symbols: [Qwen3_5GatedDeltaNet.forward]
+    kernel_signatures: [causal_conv1d_update]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet.forward
+  gdn_moe_block.gated_delta_recurrence:
+    symbols: [Qwen3_5GatedDeltaNet.forward]
+    kernel_signatures: [gdn_wide_vec_kernel, cutedsl_gdn_mtp_ring]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet.forward
+    - file: python/sglang/kernels/ops/attention/cutedsl_gdn_mtp_ring.py
+      symbol: gdn MTP replay ring
+  gdn_moe_block.output_projection:
+    symbols: [Qwen3_5GatedDeltaNet.forward]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet.forward
+  full_attention_moe_block.qkv_projection:
+    symbols: [Qwen3_5AttentionDecoderLayer.forward_prepare_cuda_fused]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer.forward_prepare_cuda_fused
+  full_attention_moe_block.causal_gqa:
+    symbols: [Qwen3_5AttentionDecoderLayer.self_attention]
+    kernel_signatures: [trtllm_mha, fmha]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer.self_attention
+    - file: python/sglang/srt/layers/attention/trtllm_mha_backend.py
+      symbol: TRTLLMHAAttnBackend
+  full_attention_moe_block.output_projection:
+    symbols: [Qwen3_5AttentionDecoderLayer.self_attention]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer.self_attention
+  moe_block.router:
+    symbols: [Qwen2MoeSparseMoeBlock._forward_router_experts]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock._forward_router_experts
+  moe_block.target_ep4_pack:
+    symbols: [FlashinferDispatcher.dispatch]
+    kernel_signatures: [moe_a2a_dispatch_prepare]
+    wire_contract:
+      backend: FlashInfer MoeAlltoAll
+      hidden: NVFP4 uint8 [N,H/2] plus FP8 uint8 block scales [N,H/16]
+      metadata: expert IDs int32 and route weights float32
+      padding: rank-invariant max(dp_global_num_tokens) geometry
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/flashinfer.py
+      symbol: FlashinferDispatcher.dispatch
+  moe_block.target_ep4_dispatch:
+    symbols: [FlashinferDispatcher.dispatch, MoeAlltoAll.dispatch]
+    kernel_signatures: [moe_a2a_dispatch]
+    wire_contract:
+      backend: FlashInfer MoeAlltoAll over the four-rank DEP/EP group
+      hidden: NVFP4 plus FP8 block scales
+      metadata: expert IDs int32 and route weights float32
+      result: expert-owner fixed-geometry receive workspace with sentinel-padded expert IDs
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/flashinfer.py
+      symbol: FlashinferDispatcher.dispatch
+  moe_block.routed_experts:
+    symbols: [Qwen2MoeSparseMoeBlock.forward, FlashInferCuTeDSLMoeRunner]
+    kernel_signatures: [flashinfer_cutedsl, cutedsl_moe]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock.forward
+    - file: python/sglang/srt/layers/moe/moe_runner/flashinfer_cutedsl.py
+      symbol: FlashInferCuTeDSLMoeRunner
+  moe_block.target_ep4_combine:
+    symbols: [FlashinferDispatcher.combine, MoeAlltoAll.combine]
+    kernel_signatures: [moe_a2a_combine]
+    wire_contract:
+      backend: FlashInfer MoeAlltoAll over the four-rank DEP/EP group
+      hidden: BF16 expert output [N_recv,H]
+      result: origin-rank BF16 output in the dispatcher workspace
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/flashinfer.py
+      symbol: FlashinferDispatcher.combine
+  moe_block.target_ep4_restore:
+    symbols: [FlashinferDispatcher.combine]
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/flashinfer.py
+      symbol: FlashinferDispatcher.combine
+  moe_block.shared_expert:
+    symbols: [Qwen2MoeSparseMoeBlock._forward_shared_experts]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock._forward_shared_experts
+  mtp_draft_head.fc_projection:
+    symbols: [Qwen3_5ForCausalLMMTP.forward]
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP.forward
+  mtp_draft_head.draft_decoder_layer:
+    symbols: [Qwen3_5ForCausalLMMTP.forward]
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP.forward
+  mtp_full_attention_moe_block.causal_gqa:
+    symbols: [Qwen3_5AttentionDecoderLayer.self_attention]
+    kernel_signatures: [trtllm_mha, fmha]
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer.self_attention
+  mtp_moe_block.router:
+    symbols: [Qwen2MoeSparseMoeBlock._forward_router_experts]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock._forward_router_experts
+  mtp_moe_block.draft_ep4_pack:
+    symbols: [DeepEPDispatcher.dispatch, _DeepEPDispatcherImplLowLatency.dispatch_a]
+    wire_contract:
+      backend: DeepEP low-latency
+      hidden: FP8 per-token/group-quantized draft activation with scale metadata
+      metadata: expert IDs int64 and route weights float32
+      padding: num_max_dispatch_tokens_per_rank=1024
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/deepep.py
+      symbol: _DeepEPDispatcherImplLowLatency.dispatch_a
+  mtp_moe_block.draft_ep4_dispatch:
+    symbols: [DeepEPDispatcher.dispatch, _DeepEPDispatcherImplLowLatency._dispatch_core]
+    kernel_signatures: [deep_ep::internode_ll::dispatch]
+    wire_contract:
+      backend: DeepEP low-latency over the four-rank DEP/EP group
+      hidden: FP8 draft activation with scale metadata
+      metadata: expert IDs int64 and route weights float32
+      result: packed expert-owner activation and receive-count handle
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/deepep.py
+      symbol: _DeepEPDispatcherImplLowLatency._dispatch_core
+  mtp_moe_block.routed_experts:
+    symbols: [Qwen2MoeSparseMoeBlock.forward, DeepGemmRunnerCore.run]
+    kernel_signatures: [deep_gemm]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock.forward
+    - file: python/sglang/srt/layers/moe/moe_runner/deep_gemm.py
+      symbol: DeepGemmRunnerCore.run
+  mtp_moe_block.draft_ep4_combine:
+    symbols: [DeepEPDispatcher.combine, _DeepEPDispatcherImplLowLatency._combine_core]
+    kernel_signatures: [deep_ep::internode_ll::combine]
+    wire_contract:
+      backend: DeepEP low-latency over the four-rank DEP/EP group
+      hidden: BF16 expert output
+      result: BF16 origin-rank draft output
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/deepep.py
+      symbol: _DeepEPDispatcherImplLowLatency._combine_core
+  mtp_moe_block.draft_ep4_restore:
+    symbols: [DeepEPDispatcher.combine]
+    links:
+    - file: python/sglang/srt/layers/moe/token_dispatcher/deepep.py
+      symbol: DeepEPDispatcher.combine
+  mtp_moe_block.shared_expert:
+    symbols: [Qwen2MoeSparseMoeBlock._forward_shared_experts]
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock._forward_shared_experts
+  generation_loop.draft_propose:
+    symbols: [FrozenKVMTPDraftWorker.draft, FrozenKVMTPDraftWorker.draft_forward]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPDraftWorker.draft_forward
+  generation_loop.target_verify:
+    symbols: [FrozenKVMTPWorkerV2.forward_batch_generation]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPWorkerV2.forward_batch_generation
+  generation_loop.accept_prefix:
+    symbols: [FrozenKVMTPWorkerV2.forward_batch_generation]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPWorkerV2.forward_batch_generation
+  generation_loop.replay_gdn:
+    symbols: [FrozenKVMTPDraftWorker.draft_extend]
+    kernel_signatures: [cutedsl_gdn_mtp_ring, gdn_replayssm_spec_fold]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPDraftWorker.draft_extend
+    - file: python/sglang/kernels/ops/attention/fla/gdn_replayssm_spec_fold.py
+      symbol: GDN accepted-prefix replay
+  generation_loop.commit_kv:
+    symbols: [FrozenKVMTPWorkerV2.forward_batch_generation]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPWorkerV2.forward_batch_generation
+  generation_loop.commit_gdn:
+    symbols: [FrozenKVMTPDraftWorker.draft_extend]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPDraftWorker.draft_extend
