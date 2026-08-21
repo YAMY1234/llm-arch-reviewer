@@ -13,6 +13,17 @@
     "implementation_id": {"type": "string"},
     "variant_id": {"type": "string"},
     "phase": {"type": "string"},
+    "generation_mode": {
+      "description": "Orthogonal generation/control-flow mode. It does not change the target model or parallel execution topology.",
+      "type": "string",
+      "pattern": "^[a-z0-9_-]+$",
+      "default": "autoregressive"
+    },
+    "entry_view": {
+      "description": "Stable semantic view to open when this profile is selected.",
+      "type": "string",
+      "minLength": 1
+    },
     "execution_parameters": {
       "type": "object",
       "required": ["tp_size", "dp_size", "cp_size", "ep_size"],
@@ -27,6 +38,48 @@
     "workload": {"type": "object"},
     "profiler": {"type": "object"},
     "evidence": {"type": "object"},
+    "timeline": {
+      "type": "object",
+      "required": ["schema_version", "artifact", "sha256", "reference_rank", "step_count", "event_count"],
+      "properties": {
+        "schema_version": {"const": "timeline.v1"},
+        "artifact": {"type": "string", "pattern": "^[^/\\\\]+\\.timeline\\.json\\.gz$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "reference_rank": {"type": "integer", "minimum": 0},
+        "step_count": {"type": "integer", "minimum": 1},
+        "event_count": {"type": "integer", "minimum": 0},
+        "raw_trace_file": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "node_states": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {"type": "string"},
+          "label": {"type": "string"},
+          "included_in": {"type": "string"},
+          "fusion_group_id": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "fusion_groups": {
+      "description": "Compiled or authored implementation-specific fused-kernel coverage. Shared intervals must not be summed once per covered IR node.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["owner", "ir_nodes", "timing_semantics"],
+        "properties": {
+          "owner": {"type": "string"},
+          "ir_nodes": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string"}},
+          "timing_semantics": {"const": "shared_interval"},
+          "provenance": {"type": "string"}
+        }
+      }
+    },
     "node_metrics": {
       "type": "object",
       "additionalProperties": {

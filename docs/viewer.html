@@ -46,7 +46,7 @@
   body {
     display: grid;
     grid-template-columns: 1fr 380px;
-    grid-template-rows: 44px 36px 1fr;
+    grid-template-rows: 52px 36px 1fr;
     grid-template-areas:
       "header header"
       "crumbs crumbs"
@@ -63,16 +63,25 @@
     background: var(--panel);
     border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
-  header .controls { display: flex; gap: 10px; align-items: center; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+  header .controls { display: flex; gap: 8px; align-items: center; min-width: 0; overflow-x: auto; }
   header label { color: var(--muted); }
   header select, header button {
     background: var(--panel); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
     padding: 4px 8px; font-size: 12px;
   }
+  #execution-select { max-width: 220px; }
+  #implementation-select { max-width: 250px; }
+  #profile-select { max-width: 330px; }
+  #variant-select { max-width: 190px; }
+  #model-subtitle { display: none; }
   header button { cursor: pointer; }
   header button:hover { border-color: var(--link); }
+  .view-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+  .view-switch button { border: 0; border-radius: 0; border-right: 1px solid var(--border); }
+  .view-switch button:last-child { border-right: 0; }
+  .view-switch button.active { color: white; background: var(--link); }
 
   nav.crumbs {
     grid-area: crumbs;
@@ -89,17 +98,85 @@
   nav.crumbs .crumb.current { color: var(--text); font-weight: 600; cursor: default; }
   nav.crumbs .sep { color: var(--muted); }
   nav.crumbs .title { color: var(--muted); margin-left: auto; padding-right: 8px; }
+  #profile-summary {
+    color: var(--muted); font-family: ui-monospace, monospace; font-size: 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
 
   main {
     grid-area: main; overflow: hidden;
     background: var(--bg);
     position: relative;
   }
+  #architecture-pane, #timeline-pane { min-width: 0; min-height: 0; width: 100%; height: 100%; }
+  #architecture-pane { position: relative; }
+  main.mode-timeline #architecture-pane { display: none; }
+  main.mode-architecture #timeline-pane { display: none; }
+  main.mode-split {
+    display: grid;
+    grid-template-columns: minmax(320px, var(--split-left, 44%)) 7px minmax(480px, 1fr);
+  }
+  #split-resizer { display: none; }
+  main.mode-split #split-resizer {
+    display: block; position: relative; z-index: 12; cursor: col-resize;
+    background: var(--panel2); border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border); touch-action: none;
+  }
+  main.mode-split #split-resizer::after {
+    content: ""; position: absolute; left: 2px; top: 50%; width: 1px; height: 42px;
+    transform: translateY(-50%); background: var(--border2); border-radius: 1px;
+  }
+  main.mode-split #split-resizer:hover,
+  main.mode-split #split-resizer.dragging,
+  main.mode-split #split-resizer:focus-visible {
+    background: #ddebff; outline: none;
+  }
+  body.split-resizing { cursor: col-resize; user-select: none; }
   #svg-host {
     width: 100%; height: 100%;
     cursor: grab;
   }
   #svg-host:active { cursor: grabbing; }
+
+  #timeline-pane { display: flex; flex-direction: column; background: var(--panel); }
+  .timeline-toolbar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel2);
+    font-size: 11px;
+  }
+  .timeline-toolbar label { color: var(--muted); }
+  .timeline-toolbar select, .timeline-toolbar input, .timeline-toolbar button {
+    border: 1px solid var(--border); border-radius: 4px; background: var(--panel);
+    color: var(--text); padding: 4px 7px; font: inherit;
+  }
+  .timeline-toolbar input { width: 170px; }
+  .timeline-toolbar button { cursor: pointer; }
+  .timeline-toolbar button:hover { border-color: var(--link); }
+  #timeline-summary {
+    flex: 0 0 auto; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    color: var(--muted); font: 10px ui-monospace, monospace; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  #timeline-viewport { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; background: #fbfcfe; }
+  #timeline-canvas { display: block; width: 100%; cursor: crosshair; }
+  #timeline-empty { padding: 40px 20px; color: var(--muted); text-align: center; }
+  #timeline-tooltip {
+    position: fixed; z-index: 30; display: none; pointer-events: none;
+    max-width: 440px; padding: 6px 8px; border: 1px solid var(--border2);
+    border-radius: 4px; background: rgba(31,35,40,.94); color: white;
+    box-shadow: 0 3px 12px rgba(0,0,0,.2); font: 10px ui-monospace, monospace;
+  }
+  .timeline-legend { display: inline-flex; gap: 7px; align-items: center; margin-left: auto; }
+  .timeline-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 2px; }
+  .timeline-status { color: var(--muted); }
+  .detail-action {
+    display: inline-block; margin: 4px 4px 4px 0; padding: 5px 9px; cursor: pointer;
+    border: 1px solid var(--link); border-radius: 4px; background: white; color: var(--link);
+    font-size: 11px; text-decoration: none;
+  }
+  .detail-action.primary { color: white; background: var(--link); }
+  .stack-frames { margin: 5px 0 0; padding-left: 20px; font: 10px ui-monospace, monospace; }
+  .stack-frames li { margin-bottom: 4px; word-break: break-all; }
 
   aside.right {
     grid-area: right;
@@ -262,17 +339,43 @@
     <span style="color: var(--muted); font-weight: 400; font-size: 13px;" id="model-subtitle"></span>
   </h1>
   <div class="controls">
+    <span class="view-switch" id="view-switch" style="display:none">
+      <button data-view-mode="architecture">Architecture</button>
+      <button data-view-mode="timeline">Timeline</button>
+      <button data-view-mode="split">Split</button>
+    </span>
+    <label id="ir-layer-control" style="display:none" title="Model IR is the framework-independent semantic graph; Execution IR adds topology-specific placement and communication.">IR:
+      <select id="ir-layer-select">
+        <option value="model">Model semantics</option>
+        <option value="execution">Executed topology</option>
+      </select>
+    </label>
     <label id="execution-control" style="display:none">execution:
       <select id="execution-select"></select>
     </label>
     <label id="implementation-control" style="display:none">implementation:
       <select id="implementation-select"></select>
     </label>
+    <label id="generation-control" style="display:none" title="Generation/control flow is orthogonal to the model and TP/DP/EP execution topology.">generation:
+      <select id="generation-select"></select>
+    </label>
+    <label id="phase-control" style="display:none">phase:
+      <select id="phase-select"></select>
+    </label>
     <label>profile:
       <select id="profile-select"></select>
     </label>
     <label>variant:
       <select id="variant-select"></select>
+    </label>
+    <label>heat:
+      <select id="metric-select">
+        <option value="active">active GPU</option>
+        <option value="elapsed">elapsed</option>
+        <option value="gap">module gap</option>
+        <option value="idle">device idle</option>
+        <option value="residency">residency</option>
+      </select>
     </label>
     <button id="btn-fit">fit</button>
     <button id="btn-up">⬆ up</button>
@@ -281,11 +384,13 @@
 
 <nav class="crumbs">
   <span id="crumbs-list" style="display: flex; gap: 4px; align-items: center;"></span>
+  <span id="profile-summary"></span>
   <span class="title" id="view-title"></span>
 </nav>
 
-<main>
-  <svg id="svg-host" xmlns="http://www.w3.org/2000/svg"
+<main id="workspace" class="mode-architecture">
+  <section id="architecture-pane">
+    <svg id="svg-host" xmlns="http://www.w3.org/2000/svg"
        viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
     <defs>
       <marker id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
@@ -301,8 +406,35 @@
         <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--warn)"/>
       </marker>
     </defs>
-    <g id="svg-root"></g>
-  </svg>
+      <g id="svg-root"></g>
+    </svg>
+  </section>
+  <div id="split-resizer" role="separator" aria-label="Resize architecture and timeline panes"
+       aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" tabindex="0"></div>
+  <section id="timeline-pane" aria-label="GPU kernel timeline">
+    <div class="timeline-toolbar">
+      <label>step <select id="timeline-step"></select></label>
+      <label>layer <select id="timeline-layer"><option value="">all layers</option></select></label>
+      <label>find <input id="timeline-search" type="search" placeholder="kernel or IR node" /></label>
+      <button id="timeline-reset">reset range</button>
+      <button id="timeline-perfetto">Open range in Perfetto ↗</button>
+      <input id="timeline-trace-file" type="file" accept=".json,.gz,.trace" hidden />
+      <span class="timeline-status" id="timeline-status"></span>
+      <span class="timeline-legend">
+        <span><i style="background:#8250df"></i>attention</span>
+        <span><i style="background:#cf222e"></i>MoE</span>
+        <span><i style="background:#0969da"></i>collective</span>
+        <span><i style="background:#9a6700"></i>HC/PLE</span>
+        <span><i style="background:#d0d7de"></i>idle</span>
+      </span>
+    </div>
+    <div id="timeline-summary"></div>
+    <div id="timeline-viewport">
+      <canvas id="timeline-canvas"></canvas>
+      <div id="timeline-empty">Select a profile with a timeline artifact.</div>
+    </div>
+    <div id="timeline-tooltip"></div>
+  </section>
 </main>
 
 <aside class="right">
@@ -324,6 +456,27 @@ let CURRENT_PROFILE = "sglang_v4_pro_prefill";
 let CURRENT_VARIANT = "";
 let CURRENT_EXECUTION = "";
 let CURRENT_IMPLEMENTATION = "";
+let CURRENT_GENERATION = "";
+let CURRENT_PHASE = "";
+let CURRENT_METRIC = "active";
+let CURRENT_VIEW_MODE = "architecture";
+let CURRENT_IR_LAYER = "execution";
+let SPLIT_RATIO = 0.44;
+let SPLIT_RENDER_FRAME = 0;
+
+let TIMELINE_DATA = null;
+let TIMELINE_PROFILE_ID = "";
+let TIMELINE_STEP_INDEX = 0;
+let TIMELINE_LAYER = "";
+let TIMELINE_SEARCH = "";
+let TIMELINE_IR_TARGET = "";
+let TIMELINE_SELECTED_EVENT = null;
+let TIMELINE_CURSOR_US = null;
+let TIMELINE_RANGE = {startUs: 0, endUs: 1};
+let TIMELINE_HIT_RECTS = [];
+let TIMELINE_LOAD_TOKEN = 0;
+let PERFETTO_TRACE_BUFFER = null;
+let PERFETTO_TRACE_FILE = "";
 
 // VIEW_STACK 现在是"打开的多张图", 从左到右水平排列.
 // drill_from[i] = 第 i 张图是从第 i-1 张图哪个 node 钻进来的 (用于画跨图虚线)
@@ -339,6 +492,8 @@ let PARENT = {};
 // load — model-aware
 // ============================================================
 function getModelId() {
+  const embedded = window.__LLM_ARCH_EMBEDDED_MODEL_ID__;
+  if (embedded && /^[a-zA-Z0-9_-]+$/.test(embedded)) return embedded;
   const qs = new URLSearchParams(location.search);
   const m = qs.get("model");
   if (m && /^[a-zA-Z0-9_-]+$/.test(m)) return m;
@@ -355,6 +510,7 @@ fetch(DATA_URL, {cache: "no-store"}).then(r => {
   DATA = d;
   if (isV2Bundle()) {
     const qs = new URLSearchParams(location.search);
+    CURRENT_IR_LAYER = qs.get("irLayer") === "model" ? "model" : "execution";
     activateV2Selection(
       qs.get("execution") || d.default_execution_variant,
       qs.get("implementation") || d.default_implementation,
@@ -405,9 +561,26 @@ function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function profiledExecutionIds() {
+  const all = Object.keys(RAW_DATA?.execution_variants || {});
+  const profiled = new Set(
+    Object.values(RAW_DATA?.profiles || {}).map(profile => profile.execution_variant)
+  );
+  const visible = all.filter(executionId => profiled.has(executionId));
+  return visible.length ? visible : all;
+}
+
 function implementationIdsForExecution(executionId) {
+  const profiled = new Set(
+    Object.values(RAW_DATA?.profiles || {})
+      .filter(profile => profile.execution_variant === executionId)
+      .map(profile => profile.implementation_id)
+  );
   return Object.entries(RAW_DATA?.implementations || {})
-    .filter(([, impl]) => impl.execution_variant === executionId)
+    .filter(([implementationId, impl]) =>
+      impl.execution_variant === executionId
+      && (!profiled.size || profiled.has(implementationId))
+    )
     .map(([implementationId]) => implementationId);
 }
 
@@ -431,7 +604,7 @@ function applyImplementationBinding(views, implementation) {
 
 function activateV2Selection(executionId, implementationId = "") {
   if (!isV2Bundle()) return;
-  const executionIds = Object.keys(RAW_DATA.execution_variants);
+  const executionIds = profiledExecutionIds();
   if (!executionIds.includes(executionId)) {
     executionId = RAW_DATA.default_execution_variant || executionIds[0];
   }
@@ -442,7 +615,8 @@ function activateV2Selection(executionId, implementationId = "") {
   }
 
   const execution = RAW_DATA.execution_variants[executionId];
-  const views = cloneJson(execution.views || {});
+  const graph = CURRENT_IR_LAYER === "model" ? RAW_DATA.model_ir : execution;
+  const views = cloneJson(graph?.views || execution.views || {});
   const implementation = RAW_DATA.implementations[implementationId];
   applyImplementationBinding(views, implementation);
 
@@ -451,9 +625,9 @@ function activateV2Selection(executionId, implementationId = "") {
   DATA = {
     ...RAW_DATA,
     views,
-    parent: cloneJson(execution.parent || derivePARENT(views)),
+    parent: cloneJson(graph?.parent || derivePARENT(views)),
     enriched: cloneJson(execution.enriched || {}),
-    default_view: execution.default_view || RAW_DATA.default_view,
+    default_view: graph?.default_view || execution.default_view || RAW_DATA.default_view,
   };
   PARENT = DATA.parent;
 }
@@ -543,14 +717,106 @@ function refreshVariantOptions(keepCurrent = false) {
   vsel.value = CURRENT_VARIANT;
 }
 
-function profileIdsForSelection() {
+function profileGenerationMode(profile) {
+  return profile?.meta?.generation_mode || "autoregressive";
+}
+
+function profileIdsForSelection(ignorePhase = false, ignoreGeneration = false) {
   const ids = Object.keys(DATA?.profiles || {});
   if (!isV2Bundle()) return ids;
   return ids.filter(profileId => {
     const profile = DATA.profiles[profileId];
     return profile.execution_variant === CURRENT_EXECUTION
-      && (!CURRENT_IMPLEMENTATION || profile.implementation_id === CURRENT_IMPLEMENTATION);
+      && (!CURRENT_IMPLEMENTATION || profile.implementation_id === CURRENT_IMPLEMENTATION)
+      && (ignoreGeneration || !CURRENT_GENERATION || profileGenerationMode(profile) === CURRENT_GENERATION)
+      && (ignorePhase || !CURRENT_PHASE || profile.meta?.phase === CURRENT_PHASE);
   });
+}
+
+function refreshGenerationOptions(preferred = "") {
+  const control = document.getElementById("generation-control");
+  const select = document.getElementById("generation-select");
+  if (!isV2Bundle()) { control.style.display = "none"; return; }
+  const modes = Array.from(new Set(
+    profileIdsForSelection(true, true).map(pid => profileGenerationMode(DATA.profiles[pid]))
+  ));
+  modes.sort((a, b) => ["autoregressive", "eagle_mtp"].indexOf(a) - ["autoregressive", "eagle_mtp"].indexOf(b));
+  select.innerHTML = "";
+  const labels = {
+    autoregressive: "MTP off · autoregressive",
+    eagle_mtp: "MTP on · EAGLE",
+  };
+  for (const mode of modes) {
+    const opt = document.createElement("option");
+    opt.value = mode;
+    opt.textContent = labels[mode] || mode;
+    select.appendChild(opt);
+  }
+  CURRENT_GENERATION = modes.includes(preferred)
+    ? preferred
+    : (modes.includes(CURRENT_GENERATION) ? CURRENT_GENERATION : (modes[0] || ""));
+  select.value = CURRENT_GENERATION;
+  select.disabled = modes.length <= 1;
+  control.style.display = modes.length ? "" : "none";
+}
+
+function currentFusionGroups() {
+  return DATA?.profiles?.[CURRENT_PROFILE]?.fusion_groups || {};
+}
+
+function fusionGroupForTarget(target) {
+  return Object.entries(currentFusionGroups()).find(([, group]) =>
+    (group.ir_nodes || []).includes(target)
+  ) || null;
+}
+
+function refreshPhaseOptions(preferred = "") {
+  const control = document.getElementById("phase-control");
+  const select = document.getElementById("phase-select");
+  if (!isV2Bundle()) { control.style.display = "none"; return; }
+  const phases = Array.from(new Set(
+    profileIdsForSelection(true).map(pid => DATA.profiles[pid]?.meta?.phase).filter(Boolean)
+  ));
+  phases.sort((a, b) => ["decode", "prefill"].indexOf(a) - ["decode", "prefill"].indexOf(b));
+  select.innerHTML = "";
+  for (const phase of phases) {
+    const opt = document.createElement("option");
+    opt.value = phase; opt.textContent = phase;
+    select.appendChild(opt);
+  }
+  CURRENT_PHASE = phases.includes(preferred)
+    ? preferred
+    : (phases.includes(CURRENT_PHASE) ? CURRENT_PHASE : (phases.includes("decode") ? "decode" : (phases[0] || "")));
+  select.value = CURRENT_PHASE;
+  select.disabled = phases.length <= 1;
+  control.style.display = phases.length ? "" : "none";
+}
+
+function updateProfileSummary() {
+  const profile = DATA?.profiles?.[CURRENT_PROFILE];
+  const meta = profile?.meta || {};
+  const summary = meta.profile_summary || {};
+  const accounting = meta.evidence?.accounting || {};
+  const timing = summary.timing || {};
+  const timingBits = timing.elapsed_ms != null ? [
+    `elapsed ${formatMs(timing.elapsed_ms)} ms`,
+    `active ${formatMs(timing.active_gpu_ms)} ms`,
+    `device gap ${formatMs(timing.device_gap_ms)} ms`,
+    `GPU busy ${Number(timing.gpu_busy_pct).toFixed(1)}%`,
+    `residency ${formatMs(timing.gpu_residency_ms)} ms`,
+  ] : [];
+  const bits = [
+    isV2Bundle() ? (CURRENT_IR_LAYER === "model" ? "Model IR" : "Execution IR") : "",
+    profileGenerationMode(profile),
+    meta.phase,
+    summary.request_shape,
+    summary.timing_coverage || (accounting.attributed_gpu_residency_pct != null
+      ? `${accounting.attributed_gpu_residency_pct}% attributed` : ""),
+    summary.reference_rank != null ? `rank ${summary.reference_rank}` : "",
+    ...timingBits,
+    timingBits.length ? "" : summary.node_time,
+  ].filter(Boolean);
+  document.getElementById("profile-summary").textContent = bits.join(" · ");
 }
 
 function refreshProfileOptions(preferred = "") {
@@ -564,6 +830,7 @@ function refreshProfileOptions(preferred = "") {
     psel.disabled = true;
     CURRENT_PROFILE = "";
     refreshVariantOptions(false);
+    updateProfileSummary();
     return;
   }
 
@@ -579,7 +846,10 @@ function refreshProfileOptions(preferred = "") {
     : (profileIds.find(p => p.includes("prefill")) || profileIds[0]);
   psel.value = pref;
   CURRENT_PROFILE = pref;
+  const entryView = DATA.profiles[pref]?.meta?.entry_view;
+  if (entryView && entryView in (DATA.views || {})) DATA.default_view = entryView;
   refreshVariantOptions(false);
+  updateProfileSummary();
 }
 
 function refreshImplementationOptions(preferred = "") {
@@ -611,7 +881,12 @@ function syncV2SelectionQuery() {
   const url = new URL(location.href);
   if (CURRENT_EXECUTION) url.searchParams.set("execution", CURRENT_EXECUTION);
   if (CURRENT_IMPLEMENTATION) url.searchParams.set("implementation", CURRENT_IMPLEMENTATION);
+  if (CURRENT_GENERATION) url.searchParams.set("generation", CURRENT_GENERATION);
+  if (CURRENT_PHASE) url.searchParams.set("phase", CURRENT_PHASE);
   if (CURRENT_PROFILE) url.searchParams.set("profile", CURRENT_PROFILE);
+  if (CURRENT_METRIC) url.searchParams.set("metric", CURRENT_METRIC);
+  if (CURRENT_VIEW_MODE) url.searchParams.set("viewMode", CURRENT_VIEW_MODE);
+  if (CURRENT_IR_LAYER) url.searchParams.set("irLayer", CURRENT_IR_LAYER);
   history.replaceState(null, "", url);
 }
 
@@ -624,11 +899,25 @@ function resetNavigationForExecution() {
 
 function initUI() {
   if (isV2Bundle()) {
+    const irLayerControl = document.getElementById("ir-layer-control");
+    const irLayerSelect = document.getElementById("ir-layer-select");
+    irLayerControl.style.display = "";
+    irLayerSelect.value = CURRENT_IR_LAYER;
+    irLayerSelect.onchange = () => {
+      CURRENT_IR_LAYER = irLayerSelect.value;
+      activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+      updateProfileSummary();
+      syncV2SelectionQuery();
+      resetNavigationForExecution();
+      renderView();
+    };
+
     const executionControl = document.getElementById("execution-control");
     const executionSelect = document.getElementById("execution-select");
     executionControl.style.display = "";
     executionSelect.innerHTML = "";
-    for (const [executionId, execution] of Object.entries(RAW_DATA.execution_variants)) {
+    for (const executionId of profiledExecutionIds()) {
+      const execution = RAW_DATA.execution_variants[executionId];
       const opt = document.createElement("option");
       opt.value = executionId;
       opt.textContent = execution.label || execution.execution_path_id || executionId;
@@ -640,19 +929,49 @@ function initUI() {
     executionSelect.onchange = () => {
       activateV2Selection(executionSelect.value, "");
       refreshImplementationOptions(CURRENT_IMPLEMENTATION);
+      refreshGenerationOptions("autoregressive");
+      refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
+      loadTimelineForCurrentProfile();
     };
 
     const implementationSelect = document.getElementById("implementation-select");
     implementationSelect.onchange = () => {
       activateV2Selection(CURRENT_EXECUTION, implementationSelect.value);
+      refreshGenerationOptions(CURRENT_GENERATION);
+      refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
+      loadTimelineForCurrentProfile();
+    };
+  }
+
+  if (isV2Bundle()) {
+    const generationSelect = document.getElementById("generation-select");
+    refreshGenerationOptions(new URLSearchParams(location.search).get("generation") || "autoregressive");
+    generationSelect.onchange = () => {
+      CURRENT_GENERATION = generationSelect.value;
+      refreshPhaseOptions("decode");
+      refreshProfileOptions("");
+      syncV2SelectionQuery();
+      resetNavigationForExecution();
+      renderView();
+      loadTimelineForCurrentProfile();
+    };
+
+    const phaseSelect = document.getElementById("phase-select");
+    refreshPhaseOptions(new URLSearchParams(location.search).get("phase") || "decode");
+    phaseSelect.onchange = () => {
+      CURRENT_PHASE = phaseSelect.value;
+      refreshProfileOptions("");
+      syncV2SelectionQuery();
+      renderView();
+      loadTimelineForCurrentProfile();
     };
   }
 
@@ -664,23 +983,44 @@ function initUI() {
   psel.onchange = () => {
     CURRENT_PROFILE = psel.value;
     refreshVariantOptions(true);
+    updateProfileSummary();
     syncV2SelectionQuery();
     renderView();
+    loadTimelineForCurrentProfile();
   };
 
   const vsel = document.getElementById("variant-select");
   vsel.onchange = () => { CURRENT_VARIANT = vsel.value; renderView(); };
 
+  const metricSelect = document.getElementById("metric-select");
+  const requestedMetric = new URLSearchParams(location.search).get("metric") || "active";
+  CURRENT_METRIC = Array.from(metricSelect.options).some(option => option.value === requestedMetric)
+    ? requestedMetric : "active";
+  metricSelect.value = CURRENT_METRIC;
+  metricSelect.onchange = () => {
+    CURRENT_METRIC = metricSelect.value;
+    syncV2SelectionQuery();
+    renderView();
+  };
+
   document.getElementById("btn-fit").onclick = () => fitToSvg();
   document.getElementById("btn-up").onclick = () => goUp();
   window.addEventListener("hashchange", parseHash);
+
+  initTimelineUI();
+  initSplitResizer();
+  const requestedViewMode = new URLSearchParams(location.search).get("viewMode");
+  setViewMode(["architecture", "timeline", "split"].includes(requestedViewMode)
+    ? requestedViewMode : "architecture", false);
+  loadTimelineForCurrentProfile();
 
   // 滚轮缩放 + 拖拽
   enablePanZoom();
 }
 
 function parseHash() {
-  // 支持 #views=top,stack,hca_layer (栈) 或老式 #view=foo (单 view)
+  // 支持 #views=top,stack,hca_layer&from=,decoder_stack,linear_layer (栈)
+  // from 记录每一层是从父 view 的哪个 node 进入，防止共享 view 刷新后丢失上下文。
   const h = location.hash || "";
   let stack = [defaultViewName()];
   let from = [null];
@@ -696,9 +1036,15 @@ function parseHash() {
     while (cur) { trail.unshift(cur); cur = PARENT[cur]; }
     stack = trail;
   }
-  // 重建 from: 用 PARENT + 寻找父 view 里 drill 到这个 view 的 node id
+  // 新 hash 优先使用显式 drill origin；老 hash 仍可用第一个匹配 node 回放。
+  const encodedFrom = h.match(/(?:^|[&#])from=([\w,]*)/);
+  const requestedFrom = encodedFrom ? encodedFrom[1].split(",") : [];
   from = stack.map((v, i) => {
     if (i === 0) return null;
+    const requested = requestedFrom[i] || null;
+    const parent = DATA.views[stack[i - 1]];
+    const requestedNode = (parent?.nodes || []).find(n => n.id === requested);
+    if (requestedNode?.drill === v) return requested;
     return findDrillNodeId(stack[i-1], v);
   });
   VIEW_STACK = stack;
@@ -716,8 +1062,14 @@ function findDrillNodeId(parentView, childView) {
   return null;
 }
 
-function syncHash() {
-  location.hash = "views=" + VIEW_STACK.join(",");
+function syncHash(replace = false) {
+  const from = DRILL_FROM.map(nodeId => nodeId || "").join(",");
+  const hash = "views=" + VIEW_STACK.join(",") + "&from=" + from;
+  if (replace) {
+    history.replaceState(null, "", `${location.pathname}${location.search}#${hash}`);
+  } else {
+    location.hash = hash;
+  }
 }
 
 function goUp() {
@@ -786,7 +1138,7 @@ function renderCrumbs() {
       el.appendChild(sep);
     }
   });
-  const titles = VIEW_STACK.map(v => DATA.views[v]?.title || v).join("  ›  ");
+  const titles = VIEW_STACK.map(v => viewDisplayTitle(v)).join("  ›  ");
   document.getElementById("view-title").textContent = titles;
 }
 
@@ -818,8 +1170,8 @@ async function renderView() {
         "elk.padding": "[top=20,left=20,bottom=20,right=20]",
       },
       children: (view.nodes || []).map(n => ({
-        id: n.id, width: nodeWidth(n), height: nodeHeight(n),
-        labels: [{text: n.label || n.id}],
+        id: n.id, width: nodeWidth(n, vName), height: nodeHeight(n, vName),
+        labels: [{text: profileNodeLabel(n, vName)}],
       })),
       edges: (view.edges || []).map((e, i) => ({
         id: `e${i}`, sources: [e.from], targets: [e.to],
@@ -847,23 +1199,25 @@ async function renderView() {
   drawAllViews(layouts, xOff - VIEW_GAP, maxH);
 }
 
-function nodeWidth(n) {
+function nodeWidth(n, viewName) {
   // 估宽: 看 label 行长 / shape 类型
-  const lbl = (n.label || n.id);
+  const lbl = profileNodeLabel(n, viewName);
   const lines = lbl.split("\n");
   const longest = Math.max(...lines.map(l => l.length));
   let w = Math.min(260, Math.max(120, longest * 7.2));
   if (n.shape === "io") w = Math.max(100, longest * 6.5);
   if (n.shape === "block" || n.shape === "moe") w = Math.max(180, longest * 7.5);
+  if (nodeCell(n, viewName)?.gpu_elapsed_ms != null) w = Math.max(w, 250);
   return w;
 }
-function nodeHeight(n) {
-  const lbl = n.label || "";
+function nodeHeight(n, viewName) {
+  const lbl = profileNodeLabel(n, viewName);
   const lineCount = lbl.split("\n").length;
   let h = 36 + (lineCount - 1) * 14;
   if (n.note) h += 12;
   // 给 ms / heat 留点空间
   if (n.stage_keys && n.stage_keys.length) h += 10;
+  if (nodeCell(n, viewName)?.gpu_elapsed_ms != null) h += 13;
   if (n.shape === "io") h = Math.max(28, 18 + lineCount * 12);
   return h;
 }
@@ -912,7 +1266,7 @@ function drawAllViews(layouts, totalW, totalH) {
     const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
     title.setAttribute("class", "view-title-svg");
     title.setAttribute("x", 0); title.setAttribute("y", -10);
-    title.textContent = view.title || viewName;
+    title.textContent = viewDisplayTitle(viewName);
     grp.appendChild(title);
 
     // dim 非 active view 的内容透明度
@@ -1071,6 +1425,7 @@ function drawNode(root, n, c, viewName) {
 
   // heatmap
   const ms = nodeMs(n, viewName);
+  const cell = nodeCell(n, viewName);
   const heat = heatLevel(ms, viewName);
   if (heat) cls += " " + heat;
 
@@ -1083,7 +1438,7 @@ function drawNode(root, n, c, viewName) {
   drawShape(g, kind, c.width, c.height);
 
   // label (multi-line)
-  const lbl = n.label || n.id;
+  const lbl = profileNodeLabel(n, viewName);
   const lines = lbl.split("\n");
   const titleY = 16;
   let cy = titleY;
@@ -1098,14 +1453,42 @@ function drawNode(root, n, c, viewName) {
     cy += i === 0 ? 14 : 13;
   }
 
-  // ms / iter
-  if (ms != null && ms > 0) {
+  // Timing: elapsed is an invocation envelope. Its non-module portion is
+  // split into other GPU work and true device idle instead of calling all of
+  // it idle.
+  if (cell?.gpu_elapsed_ms != null) {
+    const first = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    first.setAttribute("class", "node-ms");
+    first.setAttribute("x", c.width / 2);
+    first.setAttribute("y", c.height - 17);
+    first.setAttribute("text-anchor", "middle");
+    const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
+    first.textContent = `${provenance}elapsed ${formatMs(cell.gpu_elapsed_ms)} · active ${formatMs(cell.active_gpu_ms)} ms`;
+    g.appendChild(first);
+
+    const second = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    second.setAttribute("class", "node-ms");
+    second.setAttribute("x", c.width / 2);
+    second.setAttribute("y", c.height - 6);
+    second.setAttribute("text-anchor", "middle");
+    second.textContent = `idle ${formatMs(cell.device_idle_ms)} · other GPU ${formatMs(cell.other_gpu_work_ms)} ms`;
+    g.appendChild(second);
+  } else if (ms != null) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
     t.setAttribute("class", "node-ms");
     t.setAttribute("x", c.width / 2);
     t.setAttribute("y", c.height - 6);
     t.setAttribute("text-anchor", "middle");
-    t.textContent = `${ms.toFixed(2)} ms / iter`;
+    const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
+    t.textContent = `${provenance}${metricLabel(CURRENT_METRIC)} ${formatMs(ms)} ms`;
+    g.appendChild(t);
+  } else if (cell?.status) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("class", "node-note");
+    t.setAttribute("x", c.width / 2);
+    t.setAttribute("y", c.height - 6);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = nodeStateSummary(cell);
     g.appendChild(t);
   } else if (n.note) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1194,6 +1577,822 @@ function drawShape(g, kind, w, h) {
 }
 
 // ============================================================
+// measured multi-stream timeline
+// ============================================================
+function currentTimelineMeta() {
+  return DATA?.profiles?.[CURRENT_PROFILE]?.meta?.timeline || null;
+}
+
+function setViewMode(mode, sync = true, shouldRender = true) {
+  const hasTimeline = !!currentTimelineMeta();
+  if (!hasTimeline && mode !== "architecture") mode = "architecture";
+  CURRENT_VIEW_MODE = mode;
+  const workspace = document.getElementById("workspace");
+  workspace.className = `mode-${mode}`;
+  const switcher = document.getElementById("view-switch");
+  switcher.style.display = hasTimeline ? "inline-flex" : "none";
+  for (const button of switcher.querySelectorAll("button")) {
+    button.classList.toggle("active", button.dataset.viewMode === mode);
+  }
+  document.getElementById("btn-fit").style.display = mode === "timeline" ? "none" : "";
+  document.getElementById("btn-up").style.display = mode === "timeline" ? "none" : "";
+  if (mode === "split") requestAnimationFrame(() => applySplitRatio(SPLIT_RATIO));
+  if (sync) syncV2SelectionQuery();
+  if (shouldRender) {
+    requestAnimationFrame(() => {
+      if (mode !== "timeline") renderView();
+      if (mode !== "architecture") renderTimeline();
+    });
+  }
+}
+
+function scheduleSplitRender() {
+  if (SPLIT_RENDER_FRAME) return;
+  SPLIT_RENDER_FRAME = requestAnimationFrame(() => {
+    SPLIT_RENDER_FRAME = 0;
+    if (CURRENT_VIEW_MODE !== "architecture") renderTimeline();
+  });
+}
+
+function applySplitRatio(ratio, persist = false) {
+  const workspace = document.getElementById("workspace");
+  const resizer = document.getElementById("split-resizer");
+  if (!workspace || !resizer) return;
+  const width = workspace.getBoundingClientRect().width;
+  const available = Math.max(1, width - 7);
+  const minLeft = Math.min(320, available);
+  const maxLeft = Math.max(minLeft, available - 480);
+  const requested = Number.isFinite(Number(ratio)) ? Number(ratio) * available : 0.44 * available;
+  const left = Math.max(minLeft, Math.min(maxLeft, requested));
+  SPLIT_RATIO = left / available;
+  workspace.style.setProperty("--split-left", `${left}px`);
+  resizer.setAttribute("aria-valuenow", String(Math.round(SPLIT_RATIO * 100)));
+  if (persist) {
+    try { localStorage.setItem("llm-arch-reviewer.split-ratio", String(SPLIT_RATIO)); } catch (_) {}
+  }
+  scheduleSplitRender();
+}
+
+function initSplitResizer() {
+  const workspace = document.getElementById("workspace");
+  const resizer = document.getElementById("split-resizer");
+  try {
+    const stored = Number(localStorage.getItem("llm-arch-reviewer.split-ratio"));
+    if (Number.isFinite(stored) && stored > 0 && stored < 1) SPLIT_RATIO = stored;
+  } catch (_) {}
+
+  const ratioFromPointer = event => {
+    const rect = workspace.getBoundingClientRect();
+    return (event.clientX - rect.left) / Math.max(1, rect.width - 7);
+  };
+  resizer.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId);
+    resizer.classList.add("dragging");
+    document.body.classList.add("split-resizing");
+    applySplitRatio(ratioFromPointer(event));
+  });
+  resizer.addEventListener("pointermove", event => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    applySplitRatio(ratioFromPointer(event));
+  });
+  const finish = event => {
+    if (resizer.hasPointerCapture(event.pointerId)) resizer.releasePointerCapture(event.pointerId);
+    resizer.classList.remove("dragging");
+    document.body.classList.remove("split-resizing");
+    applySplitRatio(SPLIT_RATIO, true);
+  };
+  resizer.addEventListener("pointerup", finish);
+  resizer.addEventListener("pointercancel", finish);
+  resizer.addEventListener("dblclick", () => applySplitRatio(0.44, true));
+  resizer.addEventListener("keydown", event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home'
+      ? 0.44
+      : SPLIT_RATIO + (event.key === 'ArrowLeft' ? -0.02 : 0.02);
+    applySplitRatio(next, true);
+  });
+  window.addEventListener("resize", () => applySplitRatio(SPLIT_RATIO));
+  applySplitRatio(SPLIT_RATIO);
+}
+
+function timelineString(index) {
+  return index == null ? "" : (TIMELINE_DATA?.strings?.[index] || "");
+}
+
+function decodeTimelineArtifact(artifact) {
+  for (const stack of (artifact.stacks || [])) {
+    stack._frames = (stack.frames || []).map(frame => ({
+      raw: timelineStringFrom(artifact, frame.raw),
+      file: timelineStringFrom(artifact, frame.file),
+      line: frame.line,
+      function: timelineStringFrom(artifact, frame.function),
+      module: timelineStringFrom(artifact, frame.module),
+    }));
+    stack._evidence = Object.fromEntries(
+      Object.entries(stack.evidence || {}).map(([key, value]) => [
+        key, value == null ? null : timelineStringFrom(artifact, value),
+      ])
+    );
+  }
+  for (const step of (artifact.steps || [])) {
+    for (const event of (step.events || [])) {
+      event._kernelName = timelineStringFrom(artifact, event.kernel_name);
+      event._kernelLabel = timelineStringFrom(artifact, event.kernel_label);
+      event._irNode = timelineStringFrom(artifact, event.ir_node);
+      event._irTargets = (event.ir_targets || []).map(index => timelineStringFrom(artifact, index));
+      event._fusionGroupIds = [];
+      for (const [groupId, group] of Object.entries(currentFusionGroups())) {
+        const covered = group.ir_nodes || [];
+        if (covered.some(target => event._irTargets.includes(target))) {
+          event._fusionGroupIds.push(groupId);
+          event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+        }
+      }
+      event._layerKind = timelineStringFrom(artifact, event.layer_kind);
+      event._substage = timelineStringFrom(artifact, event.substage);
+      event._kernelKind = timelineStringFrom(artifact, event.kernel_kind);
+      event._attributionMethod = timelineStringFrom(artifact, event.attribution_method);
+      event._confidence = timelineStringFrom(artifact, event.confidence);
+      event._cpuOpName = timelineStringFrom(artifact, event.cpu_op_name);
+      event._stack = event.stack_id == null ? null : artifact.stacks?.[event.stack_id];
+    }
+  }
+  return artifact;
+}
+
+function timelineStringFrom(artifact, index) {
+  return index == null ? "" : (artifact.strings?.[index] || "");
+}
+
+async function fetchTimelineArtifact(url) {
+  const response = await fetch(url, {cache: "no-store"});
+  if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let text;
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("this browser does not support gzip DecompressionStream");
+    }
+    const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream("gzip"));
+    text = await new Response(stream).text();
+  } else {
+    text = new TextDecoder().decode(bytes);
+  }
+  return JSON.parse(text);
+}
+
+async function loadTimelineForCurrentProfile() {
+  const token = ++TIMELINE_LOAD_TOKEN;
+  const meta = currentTimelineMeta();
+  const switcher = document.getElementById("view-switch");
+  switcher.style.display = meta ? "inline-flex" : "none";
+  TIMELINE_SELECTED_EVENT = null;
+  TIMELINE_IR_TARGET = "";
+  TIMELINE_CURSOR_US = null;
+  PERFETTO_TRACE_BUFFER = null;
+  PERFETTO_TRACE_FILE = "";
+  if (!meta) {
+    TIMELINE_DATA = null;
+    TIMELINE_PROFILE_ID = "";
+    document.getElementById("timeline-empty").style.display = "block";
+    document.getElementById("timeline-canvas").style.display = "none";
+    document.getElementById("timeline-status").textContent = "no timeline for this profile";
+    if (CURRENT_VIEW_MODE !== "architecture") setViewMode("architecture");
+    return;
+  }
+  document.getElementById("timeline-status").textContent = "loading measured kernels…";
+  try {
+    const artifact = await fetchTimelineArtifact(`${MODEL_ID}/${meta.url}?t=${Date.now()}`);
+    if (token !== TIMELINE_LOAD_TOKEN) return;
+    if (artifact.schema_version !== "timeline.v1" || artifact.profile_id !== CURRENT_PROFILE) {
+      throw new Error("timeline identity does not match selected profile");
+    }
+    TIMELINE_DATA = decodeTimelineArtifact(artifact);
+    TIMELINE_PROFILE_ID = CURRENT_PROFILE;
+    TIMELINE_STEP_INDEX = 0;
+    refreshTimelineControls();
+    resetTimelineRange();
+    document.getElementById("timeline-status").textContent = `${artifact.phase} · rank ${artifact.reference_rank}`;
+    document.getElementById("timeline-empty").style.display = "none";
+    document.getElementById("timeline-canvas").style.display = "block";
+    setViewMode(CURRENT_VIEW_MODE, false);
+    renderTimeline();
+  } catch (error) {
+    if (token !== TIMELINE_LOAD_TOKEN) return;
+    TIMELINE_DATA = null;
+    document.getElementById("timeline-status").textContent = `timeline unavailable: ${error.message}`;
+    document.getElementById("timeline-empty").textContent = error.message;
+    document.getElementById("timeline-empty").style.display = "block";
+    document.getElementById("timeline-canvas").style.display = "none";
+  }
+}
+
+function currentTimelineStep() {
+  return TIMELINE_DATA?.steps?.[TIMELINE_STEP_INDEX] || null;
+}
+
+function refreshTimelineControls() {
+  const stepSelect = document.getElementById("timeline-step");
+  stepSelect.innerHTML = "";
+  for (const [index, step] of (TIMELINE_DATA?.steps || []).entries()) {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = step.label || `step ${step.step_index}`;
+    stepSelect.appendChild(option);
+  }
+  stepSelect.value = String(TIMELINE_STEP_INDEX);
+
+  const layers = new Set();
+  for (const step of (TIMELINE_DATA?.steps || [])) {
+    for (const event of (step.events || [])) {
+      if (event.layer_id != null) layers.add(Number(event.layer_id));
+    }
+  }
+  const layerSelect = document.getElementById("timeline-layer");
+  layerSelect.innerHTML = '<option value="">all layers</option>';
+  for (const layer of Array.from(layers).sort((a, b) => a - b)) {
+    const option = document.createElement("option");
+    option.value = String(layer);
+    option.textContent = `layer ${layer}`;
+    layerSelect.appendChild(option);
+  }
+  TIMELINE_LAYER = "";
+  layerSelect.value = "";
+}
+
+function resetTimelineRange() {
+  const step = currentTimelineStep();
+  if (!step) return;
+  TIMELINE_CURSOR_US = null;
+  TIMELINE_RANGE = {startUs: 0, endUs: Number(step.duration_us)};
+  renderTimeline();
+}
+
+function timelineTimeAtCanvasX(offsetX) {
+  const canvas = document.getElementById("timeline-canvas");
+  const rect = canvas.getBoundingClientRect();
+  const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+  const plotWidth = Math.max(100, rect.width - labelWidth - 14);
+  const ratio = (offsetX - labelWidth) / plotWidth;
+  if (ratio < 0 || ratio > 1) return null;
+  return TIMELINE_RANGE.startUs
+    + ratio * (TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs);
+}
+
+function focusNearestTimelineEvent() {
+  const step = currentTimelineStep();
+  if (!step) return null;
+  let matches = (step.events || []).filter(timelineEventMatches);
+  if (!matches.length && TIMELINE_LAYER) {
+    TIMELINE_LAYER = "";
+    document.getElementById("timeline-layer").value = "";
+    matches = (step.events || []).filter(timelineEventMatches);
+  }
+  if (!matches.length) return null;
+
+  const anchor = TIMELINE_CURSOR_US == null
+    ? (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2
+    : TIMELINE_CURSOR_US;
+  const midpoint = event => Number(event.start_us) + Number(event.duration_us) / 2;
+  const nearest = matches.reduce((best, event) =>
+    Math.abs(midpoint(event) - anchor) < Math.abs(midpoint(best) - anchor)
+      ? event : best
+  );
+
+  const duration = Number(step.duration_us);
+  let span = TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs;
+  if (span >= duration * 0.8) {
+    span = Math.min(
+      duration,
+      Math.max(duration * 0.12, Number(nearest.duration_us) * 80, 80),
+    );
+  }
+  span = Math.min(duration, Math.max(span, Number(nearest.duration_us) * 4));
+  const center = midpoint(nearest);
+  const start = Math.max(0, Math.min(duration - span, center - span / 2));
+  TIMELINE_RANGE = {startUs: start, endUs: start + span};
+  TIMELINE_SELECTED_EVENT = nearest;
+  return nearest;
+}
+
+function timelineEventMatches(event) {
+  if (TIMELINE_LAYER && String(event.layer_id) !== TIMELINE_LAYER) return false;
+  if (TIMELINE_IR_TARGET && !event._irTargets.includes(TIMELINE_IR_TARGET)) return false;
+  if (TIMELINE_SEARCH) {
+    const haystack = `${event._kernelName} ${event._kernelLabel} ${event._irNode} ${event._cpuOpName}`.toLowerCase();
+    if (!haystack.includes(TIMELINE_SEARCH.toLowerCase())) return false;
+  }
+  return true;
+}
+
+function timelineColor(kind) {
+  return ({
+    attention: "#8250df",
+    moe: "#cf222e",
+    communication: "#0969da",
+    hyperconnection: "#9a6700",
+    ple: "#bc4c00",
+    memory: "#57606a",
+    compute: "#1a7f37",
+  })[kind] || "#57606a";
+}
+
+function fitTimelineText(ctx, value, maxWidth) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || maxWidth < ctx.measureText("…").width) return "";
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let low = 0, high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (ctx.measureText(text.slice(0, mid) + "…").width <= maxWidth) low = mid;
+    else high = mid - 1;
+  }
+  return low ? text.slice(0, low) + "…" : "";
+}
+
+function renderTimeline() {
+  if (!TIMELINE_DATA || CURRENT_VIEW_MODE === "architecture") return;
+  const step = currentTimelineStep();
+  const viewport = document.getElementById("timeline-viewport");
+  const canvas = document.getElementById("timeline-canvas");
+  if (!step || viewport.clientWidth < 10) return;
+  const tracks = step.tracks || [];
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = Math.max(600, viewport.clientWidth);
+  const top = 36;
+  const rowHeight = 38;
+  const cssHeight = Math.max(viewport.clientHeight, top + (tracks.length + 1) * rowHeight + 24);
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const labelWidth = Math.min(190, Math.max(125, cssWidth * 0.2));
+  const plotLeft = labelWidth;
+  const plotWidth = Math.max(100, cssWidth - plotLeft - 14);
+  const span = Math.max(0.001, TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs);
+  const toX = value => plotLeft + (value - TIMELINE_RANGE.startUs) / span * plotWidth;
+  ctx.font = "10px ui-monospace, monospace";
+  ctx.textBaseline = "middle";
+
+  ctx.fillStyle = "#f4f6f8";
+  ctx.fillRect(0, 0, labelWidth, cssHeight);
+  for (let tick = 0; tick <= 8; tick++) {
+    const timestamp = TIMELINE_RANGE.startUs + span * tick / 8;
+    const x = toX(timestamp);
+    ctx.strokeStyle = tick === 0 ? "#b8bfc8" : "#e4e7eb";
+    ctx.beginPath(); ctx.moveTo(x, top - 8); ctx.lineTo(x, cssHeight); ctx.stroke();
+    ctx.fillStyle = "#656d76";
+    ctx.textAlign = tick === 8 ? "right" : (tick === 0 ? "left" : "center");
+    ctx.fillText(`${(timestamp / 1000).toFixed(span < 100 ? 3 : 2)} ms`, x, 15);
+  }
+
+  const trackIndex = new Map();
+  for (const [index, track] of tracks.entries()) {
+    trackIndex.set(String(track.stream_id), index);
+    const y = top + index * rowHeight;
+    ctx.fillStyle = index % 2 ? "#ffffff" : "#f8fafc";
+    ctx.fillRect(labelWidth, y, plotWidth, rowHeight);
+    ctx.strokeStyle = "#e4e7eb";
+    ctx.beginPath(); ctx.moveTo(0, y + rowHeight); ctx.lineTo(cssWidth, y + rowHeight); ctx.stroke();
+    ctx.fillStyle = "#1f2328"; ctx.textAlign = "left";
+    ctx.fillText(shorten(track.role || "CUDA stream", Math.max(16, Math.floor(labelWidth / 6.5))), 8, y + 15);
+    ctx.fillStyle = "#656d76";
+    ctx.fillText(`stream ${track.stream_id} · ${(track.gpu_residency_us / 1000).toFixed(3)} ms`, 8, y + 28);
+  }
+
+  TIMELINE_HIT_RECTS = [];
+  for (const event of step.events || []) {
+    const eventStart = Number(event.start_us);
+    const eventEnd = eventStart + Number(event.duration_us);
+    if (eventEnd < TIMELINE_RANGE.startUs || eventStart > TIMELINE_RANGE.endUs) continue;
+    const index = trackIndex.get(String(event.stream_id));
+    if (index == null) continue;
+    const x1 = Math.max(plotLeft, toX(eventStart));
+    const x2 = Math.min(plotLeft + plotWidth, toX(eventEnd));
+    const width = Math.max(0.8, x2 - x1);
+    const y = top + index * rowHeight + 5;
+    const matches = timelineEventMatches(event);
+    ctx.globalAlpha = matches ? 0.9 : 0.09;
+    ctx.fillStyle = timelineColor(event._kernelKind);
+    ctx.fillRect(x1, y, width, rowHeight - 10);
+    if (matches && width >= 28) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x1, y, width, rowHeight - 10);
+      ctx.clip();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.textAlign = "left";
+      const label = fitTimelineText(
+        ctx,
+        event._kernelLabel || event._irNode || event._kernelName,
+        width - 7,
+      );
+      if (label) ctx.fillText(label, x1 + 4, y + (rowHeight - 10) / 2);
+      ctx.restore();
+    }
+    if (event === TIMELINE_SELECTED_EVENT) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+      ctx.strokeRect(x1 - 1, y - 1, width + 2, rowHeight - 8);
+    }
+    ctx.globalAlpha = 1;
+    TIMELINE_HIT_RECTS.push({x: x1, y, width, height: rowHeight - 10, event});
+  }
+
+  const idleY = top + tracks.length * rowHeight;
+  ctx.fillStyle = "#eef1f4"; ctx.fillRect(labelWidth, idleY, plotWidth, rowHeight);
+  ctx.fillStyle = "#1f2328"; ctx.textAlign = "left";
+  ctx.fillText("device idle · all streams", 8, idleY + 15);
+  ctx.fillStyle = "#656d76";
+  ctx.fillText(`${(step.device_gap_us / 1000).toFixed(3)} ms`, 8, idleY + 28);
+  for (const idle of step.idle_intervals || []) {
+    const start = Number(idle.start_us), end = start + Number(idle.duration_us);
+    if (end < TIMELINE_RANGE.startUs || start > TIMELINE_RANGE.endUs) continue;
+    ctx.fillStyle = "#b8bfc8";
+    ctx.fillRect(Math.max(plotLeft, toX(start)), idleY + 7,
+      Math.max(1, Math.min(plotLeft + plotWidth, toX(end)) - Math.max(plotLeft, toX(start))), rowHeight - 14);
+  }
+
+  const matching = (step.events || []).filter(timelineEventMatches).length;
+  document.getElementById("timeline-summary").textContent =
+    `elapsed ${(step.duration_us / 1000).toFixed(3)} ms · active ${(step.active_gpu_us / 1000).toFixed(3)} ms · ` +
+    `device idle/gap ${(step.device_gap_us / 1000).toFixed(3)} ms · residency ${(step.gpu_residency_us / 1000).toFixed(3)} ms · ` +
+    `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${matching}/${step.events.length} kernels visible`;
+}
+
+function timelineEventAt(x, y) {
+  for (let index = TIMELINE_HIT_RECTS.length - 1; index >= 0; index--) {
+    const hit = TIMELINE_HIT_RECTS[index];
+    if (x >= hit.x && x <= hit.x + hit.width && y >= hit.y && y <= hit.y + hit.height) return hit.event;
+  }
+  return null;
+}
+
+function timelineTrackForEvent(event) {
+  return (currentTimelineStep()?.tracks || []).find(track => String(track.stream_id) === String(event.stream_id));
+}
+
+function implementationSourceUrl(file, line) {
+  if (!file || !CURRENT_IMPLEMENTATION) return "";
+  const implementation = RAW_DATA?.implementations?.[CURRENT_IMPLEMENTATION];
+  if (!implementation?.source_repo || !implementation?.source_commit) return "";
+  let relative = String(file).replace(/^.*?(?=python\/)/, "");
+  if (!relative.startsWith("python/")) return "";
+  return `${implementation.source_repo.replace(/\/$/, "")}/blob/${implementation.source_commit}/${relative}${line ? `#L${line}` : ""}`;
+}
+
+function showTimelineEventDetail(event) {
+  TIMELINE_SELECTED_EVENT = event;
+  renderTimeline();
+  const step = currentTimelineStep();
+  const traceTsUs = Number(step.trace_start_us) + Number(event.start_us);
+  const track = timelineTrackForEvent(event);
+  const stack = event._stack;
+  const evidence = stack?._evidence || {};
+  const frames = (stack?._frames || []).map(frame => {
+    const label = frame.raw || `${frame.function || "?"} (${frame.file || "?"}:${frame.line || "?"})`;
+    const url = implementationSourceUrl(frame.file, frame.line);
+    return `<li>${url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>` : escapeHtml(label)}</li>`;
+  }).join("");
+  const stackNote = stack
+    ? `${evidence.source || "unknown"} · ${evidence.match || "unknown match"} · ${evidence.kind || "stack"}`
+    : "not available for this timing-only/support kernel";
+  document.getElementById("detail").innerHTML = `
+    <h2>${escapeHtml(event._kernelLabel || event._irNode || "kernel")}</h2>
+    <div>
+      <button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>
+      <button class="detail-action" onclick="openSelectedRangeInPerfetto()">Open exact slice in Perfetto ↗</button>
+    </div>
+    <div class="kv">
+      <div class="k">IR node</div><div>${escapeHtml(event._irNode)}</div>
+      <div class="k">IR targets</div><div>${escapeHtml(event._irTargets.join(", "))}</div>
+      ${event._fusionGroupIds?.length ? `<div class="k">fusion</div><div>${escapeHtml(event._fusionGroupIds.join(", "))} · one shared kernel interval</div>` : ""}
+      <div class="k">kernel</div><div style="word-break:break-all">${escapeHtml(event._kernelName)}</div>
+      <div class="k">residency</div><div>${Number(event.duration_us).toFixed(3)} µs (one kernel interval)</div>
+      <div class="k">trace time</div><div>${traceTsUs.toFixed(3)} µs</div>
+      <div class="k">stream</div><div>${escapeHtml(track?.label || event.stream_id)}</div>
+      <div class="k">layer</div><div>${event.layer_id == null ? "—" : event.layer_id} · ${escapeHtml(event._layerKind || "")}</div>
+      <div class="k">substage</div><div>${escapeHtml(event._substage || "—")}</div>
+      <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
+      <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
+      <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>
+    </div>
+    ${frames ? `<h3>mapped Python stack</h3><ol class="stack-frames">${frames}</ol>` : ""}
+    <h3>timing semantics</h3>
+    <div style="color:var(--muted)">This value is kernel residency. The timeline's active GPU time is the union across streams; idle/gap is the uncovered part of the measured step elapsed interval.</div>`;
+}
+
+function architectureRouteForEvent(event) {
+  const direct = event._irNode || "";
+  const [view, nodeId] = direct.split(".", 2);
+  const mtpOrigin = String(event._substage || "").includes("prefill")
+    ? "mtp_prefill" : "mtp_draft_extend";
+  if (view === "mtp_generation") {
+    return {views: ["mtp_generation"], from: [null], view, nodeId};
+  }
+  if (view === "mtp_head") {
+    return {views: ["mtp_generation", "mtp_head"], from: [null, mtpOrigin], view, nodeId};
+  }
+  if (view === "mtp_layer") {
+    return {views: ["mtp_generation", "mtp_head", "mtp_layer"], from: [null, mtpOrigin, "decoder_layer"], view, nodeId};
+  }
+  if (view === "mtp_qsa_attention" || view === "mtp_moe") {
+    const origin = view === "mtp_qsa_attention" ? "qsa_attention" : "moe";
+    return {
+      views: ["mtp_generation", "mtp_head", "mtp_layer", view],
+      from: [null, mtpOrigin, "decoder_layer", origin],
+      view,
+      nodeId,
+    };
+  }
+  if (view === "top") return {views: ["top"], from: [null], view, nodeId};
+  if (view === "stack") return {views: ["top", "stack"], from: [null, "decoder_stack"], view, nodeId};
+  if (view === "ple") return {views: ["top", "stack", "ple"], from: [null, "decoder_stack", "ple_injection"], view, nodeId};
+  const layerView = event._layerKind === "full" ? "full_layer" : "linear_layer";
+  const baseViews = ["top", "stack", layerView];
+  const baseFrom = [null, "decoder_stack", layerView];
+  if (view === "linear_attention" || view === "qsa_attention" || view === "moe") {
+    return {views: [...baseViews, view], from: [...baseFrom, view], view, nodeId};
+  }
+  if (view === "hyperconnection") {
+    const isCombine = String(event._substage).includes("combine");
+    const childView = isCombine ? "hyperconnection_combine" : "hyperconnection_mix";
+    const mtpEvent = event._layerKind === "mtp";
+    const normalizedSubstage = String(event._substage || "")
+      .replace(/^mtp_(?:prefill|draft_extend)_/, "");
+    const normalizedIsMoe = normalizedSubstage.startsWith("mlp_");
+    const origin = `${normalizedIsMoe ? "mlp" : "attn"}_hc_${isCombine ? "combine" : "mix"}`;
+    if (mtpEvent) {
+      return {
+        views: ["mtp_generation", "mtp_head", "mtp_layer", childView],
+        from: [null, mtpOrigin, "decoder_layer", origin],
+        view: childView,
+        nodeId,
+      };
+    }
+    return {views: [...baseViews, childView], from: [...baseFrom, origin], view: childView, nodeId};
+  }
+  if (view === "linear_layer" || view === "full_layer") {
+    return {views: baseViews, from: baseFrom, view, nodeId};
+  }
+  return {views: [view], from: [null], view, nodeId};
+}
+
+async function showTimelineEventInArchitecture() {
+  const event = TIMELINE_SELECTED_EVENT;
+  if (!event) return;
+  const [directView, directNodeId] = String(event._irNode || "").split(".", 2);
+  const directVisible = (DATA.views?.[directView]?.nodes || []).some(
+    candidate => candidate.id === directNodeId
+  );
+  // A topology-only communication node does not exist in canonical Model IR.
+  // Switch layers explicitly instead of routing the user to a missing leaf.
+  if (!directVisible && CURRENT_IR_LAYER === "model" && isV2Bundle()) {
+    CURRENT_IR_LAYER = "execution";
+    document.getElementById("ir-layer-select").value = CURRENT_IR_LAYER;
+    activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+    syncV2SelectionQuery();
+  }
+  const route = architectureRouteForEvent(event);
+  VIEW_STACK = route.views.filter(view => DATA.views[view]);
+  DRILL_FROM = route.from.slice(0, VIEW_STACK.length);
+  SELECTED = {view: route.view, nodeId: route.nodeId};
+  // This is an explicit context switch: use the full Architecture pane and
+  // discard any pan/zoom transform retained from an earlier top-level view.
+  // Replacing the hash avoids a competing hashchange render that can briefly
+  // restore only the root view.
+  setViewMode("architecture", true, false);
+  syncHash(true);
+  PAN = {x: 0, y: 0, scale: 1};
+  applyPan();
+  await renderView();
+  fitToSvg();
+  const node = (DATA.views[route.view]?.nodes || []).find(candidate => candidate.id === route.nodeId);
+  if (node) showDetail(node, route.view);
+}
+
+function openNodeOnTimeline(viewName, nodeId) {
+  if (!TIMELINE_DATA) return;
+  TIMELINE_IR_TARGET = `${viewName}.${nodeId}`;
+  document.getElementById("timeline-search").value = "";
+  TIMELINE_SEARCH = "";
+  const nearest = focusNearestTimelineEvent();
+  setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE);
+  if (nearest) showTimelineEventDetail(nearest);
+  else renderTimeline();
+}
+
+async function chooseRawTraceFile(expectedName) {
+  return new Promise((resolve, reject) => {
+    const input = document.getElementById("timeline-trace-file");
+    input.value = "";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) { reject(new Error("trace file selection cancelled")); return; }
+      PERFETTO_TRACE_FILE = file.name;
+      resolve(await file.arrayBuffer());
+    };
+    document.getElementById("timeline-status").textContent = `select local ${expectedName}`;
+    input.click();
+  });
+}
+
+async function loadRawTraceForPerfetto() {
+  const raw = TIMELINE_DATA?.raw_trace;
+  if (!raw) throw new Error("timeline has no raw trace descriptor");
+  if (PERFETTO_TRACE_BUFFER && PERFETTO_TRACE_FILE === raw.file) return PERFETTO_TRACE_BUFFER;
+  if (window.__LLM_ARCH_STANDALONE__) {
+    return chooseRawTraceFile(raw.file);
+  }
+  try {
+    const url = `/__trace__?file=${encodeURIComponent(raw.file)}&sha256=${encodeURIComponent(raw.sha256)}`;
+    const response = await fetch(url, {cache: "no-store"});
+    if (!response.ok) throw new Error(`local trace endpoint returned HTTP ${response.status}`);
+    PERFETTO_TRACE_BUFFER = await response.arrayBuffer();
+    PERFETTO_TRACE_FILE = raw.file;
+  } catch (error) {
+    PERFETTO_TRACE_BUFFER = await chooseRawTraceFile(raw.file);
+  }
+  return PERFETTO_TRACE_BUFFER;
+}
+
+function waitForPerfetto(handle) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + 20000;
+    const onMessage = event => {
+      if (event.source === handle && event.data === "PONG") {
+        window.removeEventListener("message", onMessage);
+        clearInterval(timer);
+        resolve();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    const timer = setInterval(() => {
+      if (handle.closed || Date.now() > deadline) {
+        clearInterval(timer); window.removeEventListener("message", onMessage);
+        reject(new Error("Perfetto did not answer PING")); return;
+      }
+      handle.postMessage("PING", "https://ui.perfetto.dev");
+    }, 250);
+  });
+}
+
+async function openSelectedRangeInPerfetto() {
+  const step = currentTimelineStep();
+  if (!step || !TIMELINE_DATA) return;
+  const event = TIMELINE_SELECTED_EVENT;
+  const relativeStart = event ? Number(event.start_us) : TIMELINE_RANGE.startUs;
+  const duration = event ? Number(event.duration_us) : (TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs);
+  const absoluteStartUs = Number(step.trace_start_us) + relativeStart;
+  const padUs = Math.max(20, duration * 8);
+  const params = new URLSearchParams({
+    visStart: String(Math.round((absoluteStartUs - padUs) * 1000)),
+    visEnd: String(Math.round((absoluteStartUs + duration + padUs) * 1000)),
+  });
+  if (event) {
+    params.set("ts", String(Math.round(absoluteStartUs * 1000)));
+    params.set("dur", String(Math.round(duration * 1000)));
+    if (event.pid != null) params.set("pid", String(event.pid));
+    if (event.tid != null) params.set("tid", String(event.tid));
+  }
+  const handle = window.open(`https://ui.perfetto.dev/#!/?${params}`, "_blank");
+  if (!handle) { alert("Allow popups to open Perfetto."); return; }
+  try {
+    const [buffer] = await Promise.all([loadRawTraceForPerfetto(), waitForPerfetto(handle)]);
+    handle.postMessage({perfetto: {
+      buffer,
+      title: `${TIMELINE_PROFILE_ID} · ${event?._irNode || "selected range"}`,
+      fileName: TIMELINE_DATA.raw_trace.file,
+    }}, "https://ui.perfetto.dev");
+    document.getElementById("timeline-status").textContent = "trace opened in Perfetto (browser-local)";
+  } catch (error) {
+    if (!handle.closed) handle.close();
+    document.getElementById("timeline-status").textContent = error.message;
+  }
+}
+
+function initTimelineUI() {
+  for (const button of document.querySelectorAll("#view-switch button")) {
+    button.onclick = () => setViewMode(button.dataset.viewMode);
+  }
+  document.getElementById("timeline-step").onchange = event => {
+    TIMELINE_STEP_INDEX = Number(event.target.value);
+    TIMELINE_SELECTED_EVENT = null;
+    resetTimelineRange();
+  };
+  document.getElementById("timeline-layer").onchange = event => {
+    TIMELINE_LAYER = event.target.value;
+    renderTimeline();
+  };
+  document.getElementById("timeline-search").oninput = event => {
+    TIMELINE_SEARCH = event.target.value.trim();
+    TIMELINE_IR_TARGET = "";
+    renderTimeline();
+  };
+  document.getElementById("timeline-reset").onclick = () => {
+    TIMELINE_IR_TARGET = "";
+    TIMELINE_SEARCH = "";
+    TIMELINE_LAYER = "";
+    document.getElementById("timeline-search").value = "";
+    document.getElementById("timeline-layer").value = "";
+    resetTimelineRange();
+  };
+  document.getElementById("timeline-perfetto").onclick = openSelectedRangeInPerfetto;
+
+  const canvas = document.getElementById("timeline-canvas");
+  const tooltip = document.getElementById("timeline-tooltip");
+  let drag = null;
+  canvas.addEventListener("mousedown", event => {
+    drag = {x: event.offsetX, range: {...TIMELINE_RANGE}, moved: false};
+  });
+  window.addEventListener("mousemove", event => {
+    if (!drag || !TIMELINE_DATA) return;
+    const rect = canvas.getBoundingClientRect();
+    const dx = event.clientX - rect.left - drag.x;
+    if (Math.abs(dx) > 3) drag.moved = true;
+    const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+    const plotWidth = Math.max(100, rect.width - labelWidth - 14);
+    const span = drag.range.endUs - drag.range.startUs;
+    const shift = -dx / plotWidth * span;
+    const duration = Number(currentTimelineStep()?.duration_us || 0);
+    let start = drag.range.startUs + shift;
+    start = Math.max(0, Math.min(duration - span, start));
+    TIMELINE_RANGE = {startUs: start, endUs: start + span};
+    renderTimeline();
+  });
+  window.addEventListener("mouseup", event => {
+    if (!drag) return;
+    const wasMoved = drag.moved;
+    drag = null;
+    if (wasMoved) return;
+    const rect = canvas.getBoundingClientRect();
+    const selected = timelineEventAt(event.clientX - rect.left, event.clientY - rect.top);
+    if (selected) showTimelineEventDetail(selected);
+  });
+  canvas.addEventListener("mousemove", event => {
+    const cursorTime = timelineTimeAtCanvasX(event.offsetX);
+    if (cursorTime != null) TIMELINE_CURSOR_US = cursorTime;
+    if (drag) { tooltip.style.display = "none"; return; }
+    const hit = timelineEventAt(event.offsetX, event.offsetY);
+    if (!hit) { tooltip.style.display = "none"; return; }
+    tooltip.style.display = "block";
+    tooltip.style.left = `${Math.min(window.innerWidth - 455, event.clientX + 14)}px`;
+    tooltip.style.top = `${Math.min(window.innerHeight - 80, event.clientY + 14)}px`;
+    tooltip.textContent = `${hit._irNode} · ${hit.duration_us.toFixed(3)} µs · stream ${hit.stream_id}\n${shorten(hit._kernelName, 100)}`;
+  });
+  canvas.addEventListener("mouseleave", () => tooltip.style.display = "none");
+  canvas.addEventListener("dblclick", event => {
+    const hit = timelineEventAt(event.offsetX, event.offsetY);
+    if (hit) { TIMELINE_SELECTED_EVENT = hit; showTimelineEventInArchitecture(); }
+  });
+  canvas.addEventListener("wheel", event => {
+    if (!TIMELINE_DATA) return;
+    const step = currentTimelineStep();
+    const duration = Number(step.duration_us);
+    const span = TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs;
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      event.preventDefault();
+      // Anchor zoom at the mouse / trackpad gesture position and preserve the
+      // original profiler-like fixed zoom step.
+      const rect = canvas.getBoundingClientRect();
+      const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+      const plotWidth = Math.max(100, rect.width - labelWidth - 14);
+      const ratio = Math.max(0, Math.min(1, (event.offsetX - labelWidth) / plotWidth));
+      const anchor = TIMELINE_RANGE.startUs + ratio * span;
+      if (!event.deltaY) return;
+      const zoomFactor = event.deltaY < 0 ? 0.85 : 1.18;
+      const nextSpan = Math.max(2, Math.min(duration, span * zoomFactor));
+      let start = anchor - ratio * nextSpan;
+      start = Math.max(0, Math.min(duration - nextSpan, start));
+      TIMELINE_RANGE = {startUs: start, endUs: start + nextSpan};
+      renderTimeline();
+    } else if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      event.preventDefault();
+      const shift = (event.deltaX || event.deltaY) / 600 * span;
+      let start = Math.max(0, Math.min(duration - span, TIMELINE_RANGE.startUs + shift));
+      TIMELINE_RANGE = {startUs: start, endUs: start + span};
+      renderTimeline();
+    }
+  }, {passive: false});
+  window.addEventListener("resize", () => {
+    if (CURRENT_VIEW_MODE !== "architecture") renderTimeline();
+  });
+}
+
+window.openNodeOnTimeline = openNodeOnTimeline;
+window.showTimelineEventInArchitecture = showTimelineEventInArchitecture;
+window.openSelectedRangeInPerfetto = openSelectedRangeInPerfetto;
+
+// ============================================================
 // profile lookup
 // ============================================================
 function currentVariantCell(prof) {
@@ -1201,30 +2400,136 @@ function currentVariantCell(prof) {
   return prof[CURRENT_VARIANT] || prof.ALL || Object.values(prof)[0] || null;
 }
 
-function nodeMs(n, viewName) {
+function rawNodeCell(viewName, nodeId) {
   const e = DATA.enriched[viewName];
   if (!e) return null;
-  const np = (e.nodes_profile || {})[n.id];
-  if (!np) return null;
-  const prof = np[CURRENT_PROFILE];
-  if (!prof) return null;
-  if (CURRENT_VARIANT in prof) return prof[CURRENT_VARIANT].ms_per_iter;
-  if ("ALL" in prof) return prof["ALL"].ms_per_iter;
-  const vals = Object.values(prof).map(x => x.ms_per_iter).filter(v => v != null);
-  return vals.length ? Math.max(...vals) : null;
+  const prof = (e.nodes_profile || {})[nodeId]?.[CURRENT_PROFILE];
+  return currentVariantCell(prof);
+}
+
+function drillContext(viewName) {
+  const index = VIEW_STACK.lastIndexOf(viewName);
+  if (index <= 0) return null;
+  const parentView = VIEW_STACK[index - 1];
+  const parentNodeId = DRILL_FROM[index];
+  if (!parentNodeId) return null;
+  const parentCell = rawNodeCell(parentView, parentNodeId);
+  if (parentCell?.drill_view !== viewName || !parentCell.drill_metrics) return null;
+  return {
+    parentView,
+    parentNodeId,
+    parentCell,
+    scoped: parentCell.drill_metrics,
+  };
+}
+
+function drillScopeLabel(viewName) {
+  const context = drillContext(viewName);
+  if (!context) return "";
+  const parent = DATA.views[context.parentView];
+  const node = (parent?.nodes || []).find(item => item.id === context.parentNodeId);
+  const layer = context.parentView === "linear_layer"
+    ? "linear layer"
+    : context.parentView === "full_layer"
+      ? "full-attention layer"
+      : (parent?.title || context.parentView);
+  const stage = String(node?.label || context.parentNodeId).split("\n")[0];
+  if (viewName === "hyperconnection_mix" || viewName === "hyperconnection_combine") {
+    const moduleName = context.parentNodeId.startsWith("attn_") ? "attention" : "MoE";
+    return `${layer} / ${moduleName}`;
+  }
+  return `${layer} / ${stage}`;
+}
+
+function viewDisplayTitle(viewName) {
+  const title = DATA.views[viewName]?.title || viewName;
+  const scope = drillScopeLabel(viewName);
+  if (!scope) return title;
+  const operation = viewName === "hyperconnection_mix"
+    ? "Hyper-connection mix"
+    : viewName === "hyperconnection_combine"
+      ? "Hyper-connection combine"
+      : "Hyper-connection";
+  return `${operation} · ${scope}`;
+}
+
+function nodeCell(n, viewName) {
+  const context = drillContext(viewName);
+  if (context && Object.prototype.hasOwnProperty.call(context.scoped, n.id)) {
+    return context.scoped[n.id];
+  }
+  return rawNodeCell(viewName, n.id);
+}
+
+function profileNodeLabel(n, viewName) {
+  const cell = nodeCell(n, viewName);
+  const base = cell?.display_label || n.label || n.id;
+  const communication = cell?.communication;
+  const kinds = [...new Set((communication?.observed_collectives || []).map(item =>
+    String(item.kind || "").replaceAll("_", "-")
+  ).filter(kind => kind && !base.toLowerCase().includes(kind.toLowerCase())))];
+  if (!kinds.length) return base;
+  return `${base}\nobserved: ${kinds.join(" + ")}`;
+}
+
+function nodeStateSummary(cell) {
+  if (!cell?.status) return "";
+  if (cell.status === "out_of_scope") return "not in selected stage";
+  if (cell.status === "structural") return "structural boundary";
+  if (cell.status === "fused" && cell.included_in === "hyperconnection.mix") {
+    return "fused into mix";
+  }
+  return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
+}
+
+function formatMs(ms) {
+  if (ms == null || Number.isNaN(Number(ms))) return "—";
+  const value = Number(ms);
+  if (value >= 10) return value.toFixed(2);
+  if (value >= 0.1) return value.toFixed(3);
+  return value.toFixed(4);
+}
+
+function metricLabel(metric) {
+  return ({
+    active: "active",
+    elapsed: "elapsed",
+    gap: "module gap",
+    idle: "device idle",
+    residency: "residency",
+  })[metric] || "active";
+}
+
+function cellMetricValue(cell, metric = CURRENT_METRIC) {
+  if (!cell) return null;
+  const field = ({
+    active: "active_gpu_ms",
+    elapsed: "gpu_elapsed_ms",
+    gap: "module_gap_ms",
+    idle: "device_idle_ms",
+    residency: "gpu_residency_ms",
+  })[metric] || "active_gpu_ms";
+  const value = cell[field] ?? (metric === "active" ? cell.ms_per_iter : null);
+  return value == null ? null : Number(value);
+}
+
+function nodeMs(n, viewName) {
+  return cellMetricValue(nodeCell(n, viewName));
 }
 
 function heatLevel(ms, viewName) {
   if (ms == null) return null;
-  const e = DATA.enriched[viewName];
-  if (!e) return null;
+  const view = DATA.views[viewName];
+  if (!view) return null;
   let mx = 0;
-  for (const np of Object.values(e.nodes_profile || {})) {
-    const prof = np[CURRENT_PROFILE]; if (!prof) continue;
-    const v = currentVariantCell(prof)?.ms_per_iter;
+  for (const node of (view.nodes || [])) {
+    const v = cellMetricValue(nodeCell(node, viewName));
     if (v && v > mx) mx = v;
   }
   if (mx <= 0) return null;
+  if ((CURRENT_METRIC === "gap" || CURRENT_METRIC === "idle") && mx < 0.005) {
+    return null;
+  }
   const r = ms / mx;
   if (r >= 0.6) return "heat-hot";
   if (r >= 0.25) return "heat-warm";
@@ -1239,6 +2544,12 @@ function showDetail(n, viewName) {
   const e = DATA.enriched[viewName];
   const np = (e?.nodes_profile || {})[n.id] || {};
   const profCur = np[CURRENT_PROFILE] || {};
+  const context = drillContext(viewName);
+  const scopedCell = nodeCell(n, viewName);
+  const target = `${viewName}.${n.id}`;
+  const fusionEntry = fusionGroupForTarget(target);
+  const fusionGroupId = fusionEntry?.[0] || "";
+  const fusionGroup = fusionEntry?.[1] || null;
   const executionRows = Object.entries(n.execution || {}).map(([key, value]) =>
     `<tr><td class="name">${escapeHtml(key)}</td><td class="name" style="color:var(--muted)">${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</td></tr>`
   ).join("");
@@ -1250,7 +2561,16 @@ function showDetail(n, viewName) {
     `<span class="codelink">${escapeHtml(signature)}</span>`
   ).join("");
 
-  const variants = Object.keys(profCur).map(k => `<span class="badge ${k.toLowerCase()}">${k}: ${profCur[k].ms_per_iter.toFixed(2)} ms</span>`).join(" ");
+  const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;
+  const variants = Object.keys(visibleVariants).map(k => {
+    const value = visibleVariants[k] || {};
+    const display = value.active_gpu_ms != null || value.ms_per_iter != null
+      ? (value.gpu_elapsed_ms != null
+        ? `${formatMs(value.gpu_elapsed_ms)} ms elapsed · ${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · ${formatMs(value.device_idle_ms)} ms idle`
+        : `${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · elapsed unavailable`)
+      : `${value.status || "not timed"}: ${value.label || "no standalone kernel"}`;
+    return `<span class="badge ${k.toLowerCase()}">${escapeHtml(k)}: ${escapeHtml(display)}</span>`;
+  }).join(" ");
 
   const codeLinks = (n.code_links || []).map(c => {
     // 兼容旧格式 (字符串) + 新格式 (对象 {raw,file,line,url,display})
@@ -1271,26 +2591,70 @@ function showDetail(n, viewName) {
   }).join("");
 
   // 当前 variant cell; DSV4 通常是 HCA/CSA/ALL, Qwen3.5 decode 是 MTP/noMTP variants.
-  const cell = currentVariantCell(profCur);
+  const cell = scopedCell;
   const isAggregate = !!(cell && cell.from_aggregate);
 
   // 整个 block aggregate ms (用作"% of block"分母)
-  const blockMs = cell && cell.ms_per_iter ? cell.ms_per_iter : (ms || 0);
+  const blockResidencyMs = cell?.gpu_residency_ms != null
+    ? Number(cell.gpu_residency_ms)
+    : (cell?.ms_per_iter != null ? Number(cell.ms_per_iter) : (ms || 0));
+  const blockActiveMs = cell?.active_gpu_ms != null
+    ? Number(cell.active_gpu_ms)
+    : (cell?.ms_per_iter != null ? Number(cell.ms_per_iter) : (ms || 0));
+
+  let provenanceHtml = "";
+  if (cell) {
+    const methodRows = Object.entries(cell.attribution?.methods || {}).map(([method, value]) =>
+      `<tr><td class="name">${escapeHtml(method)}</td><td>${value.kernel_count ?? ""}</td><td>${formatMs(value.gpu_residency_ms_per_iter)}</td></tr>`
+    ).join("");
+    const communication = cell.communication;
+    const collectiveText = (communication?.observed_collectives || []).map(item =>
+      `${item.kind} × ${item.kernel_count_per_iter ?? item.kernel_count} / iter`
+    ).join(", ");
+    provenanceHtml = `<h3>timing & provenance</h3>
+      <div class="kv">
+        <div class="k">state</div><div>${escapeHtml(cell.status || cell.attribution_status || "measured")}</div>
+        ${cell.metric_kind ? `<div class="k">metric</div><div>${escapeHtml(cell.metric_kind)}</div>` : ""}
+        ${cell.gpu_elapsed_ms != null ? `<div class="k">elapsed</div><div>${formatMs(cell.gpu_elapsed_ms)} ms (${escapeHtml(cell.elapsed_scope || "invocation envelope")})</div>` : ""}
+        ${cell.active_gpu_ms != null ? `<div class="k">active GPU</div><div>${formatMs(cell.active_gpu_ms)} ms (overlap once)</div>` : ""}
+        ${cell.module_gap_ms != null ? `<div class="k">module gap</div><div>${formatMs(cell.module_gap_ms)} ms = other GPU work + device idle</div>` : ""}
+        ${cell.other_gpu_work_ms != null ? `<div class="k">other GPU work</div><div>${formatMs(cell.other_gpu_work_ms)} ms inside this module's envelope</div>` : ""}
+        ${cell.device_idle_ms != null ? `<div class="k">device idle</div><div>${formatMs(cell.device_idle_ms)} ms inside this module's envelope · cause unclassified</div>` : ""}
+        ${cell.module_active_pct != null ? `<div class="k">active share</div><div>${Number(cell.module_active_pct).toFixed(1)}% of this module's elapsed envelope</div>` : ""}
+        ${cell.device_busy_pct != null ? `<div class="k">device busy</div><div>${Number(cell.device_busy_pct).toFixed(1)}% including other GPU work</div>` : ""}
+        ${cell.gpu_residency_ms != null ? `<div class="k">residency</div><div>${formatMs(cell.gpu_residency_ms)} ms (kernel sum)</div>` : ""}
+        ${cell.gpu_overlap_ms != null ? `<div class="k">overlap repeated</div><div>${formatMs(cell.gpu_overlap_ms)} ms = residency − active</div>` : ""}
+        ${cell.active_gpu_ms != null && cell.gpu_elapsed_ms == null ? `<div class="k">elapsed / gap</div><div>unavailable: no validated invocation boundary for this node</div>` : ""}
+        ${cell.source_rank != null ? `<div class="k">source rank</div><div>${escapeHtml(cell.source_rank)}</div>` : ""}
+        ${cell.scope_target ? `<div class="k">drill scope</div><div>${escapeHtml(cell.scope_target)}</div>` : ""}
+        ${cell.label && cell.ms_per_iter == null ? `<div class="k">meaning</div><div>${escapeHtml(cell.label)}</div>` : ""}
+      ${cell.included_in ? `<div class="k">included in</div><div>${escapeHtml(cell.included_in)}</div>` : ""}
+        ${fusionGroup ? `<div class="k">fusion group</div><div>${escapeHtml(fusionGroupId)}</div>
+        <div class="k">fused coverage</div><div>${escapeHtml((fusionGroup.ir_nodes || []).join(", "))}</div>
+        <div class="k">fusion timing</div><div>one shared kernel interval; never sum once per covered node</div>` : ""}
+        ${collectiveText ? `<div class="k">observed op</div><div>${escapeHtml(collectiveText)}</div>` : ""}
+        ${communication?.payload ? `<div class="k">payload</div><div>${escapeHtml(communication.payload)}</div>` : ""}
+      </div>
+      ${methodRows ? `<table class="kernels"><thead><tr><th class="name">attribution</th><th>kernels</th><th>residency ms</th></tr></thead><tbody>${methodRows}</tbody></table>` : ""}`;
+  }
 
   // kernels (top kernels for this node / aggregate)
-  // 加 "% of block" 列 = kernel.total_us / blockMs / 10
+  // Kernel shares use residency as the denominator; using active GPU time
+  // would exceed 100% whenever streams overlap.
   let kernelsHtml = "";
   if (cell && cell.kernels && cell.kernels.length) {
     const rows = cell.kernels.map(k => {
       const inStage = k.share_in_stage_pct;
-      const inBlock = blockMs > 0 ? (k.total_us / 1000 / blockMs * 100) : 0;
+      const totalUs = k.total_us_per_iter ?? k.total_us ?? 0;
+      const inNode = k.share_in_node_pct;
+      const inBlock = blockResidencyMs > 0 ? (totalUs / 1000 / blockResidencyMs * 100) : 0;
       return `<tr>
         <td class="name" title="${escapeHtml(k.name)}">${escapeHtml(shorten(k.name, 50))}</td>
         <td>${k.count}</td>
         <td>${k.avg_us.toFixed(1)}</td>
-        <td>${(k.total_us/1000).toFixed(2)}</td>
-        <td title="this kernel's share within its parent stage">${inStage != null ? inStage.toFixed(0) : ""}%</td>
-        <td title="this kernel's share of the whole block ms">${inBlock.toFixed(1)}%</td>
+        <td>${formatMs(totalUs/1000)}</td>
+        <td title="this kernel's share within its node">${inNode != null ? inNode.toFixed(0) : (inStage != null ? inStage.toFixed(0) : "")}%</td>
+        <td title="this kernel's share of the node residency">${inBlock.toFixed(1)}%</td>
       </tr>`;
     }).join("");
     const ttl = isAggregate
@@ -1298,13 +2662,12 @@ function showDetail(n, viewName) {
       : `kernels (${CURRENT_VARIANT})`;
     kernelsHtml = `<h3>${ttl}</h3>
       <div style="font-size:11px; color:var(--muted); margin-bottom:4px">
-        <b>%-stage</b>: kernel ms / parent stage ms &nbsp;·&nbsp;
-        <b>%-block</b>: kernel ms / block total ms (${blockMs.toFixed(1)} ms)
+        kernel shares use node residency (${blockResidencyMs.toFixed(1)} ms), not active time
       </div>
       <table class="kernels"><thead><tr>
         <th>name</th><th>cnt</th><th>avg µs</th><th>total ms</th>
-        <th title="kernel's share within its parent stage">%-stage</th>
-        <th title="kernel's share of whole block ms">%-block</th>
+        <th title="kernel's share within its node residency">%-node</th>
+        <th title="kernel's share of node residency">%-node residency</th>
       </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
@@ -1313,7 +2676,7 @@ function showDetail(n, viewName) {
   if (cell && cell.children && cell.children.length) {
     // 检查 children 是否覆盖 block ms; 若不全 (e.g. 某些 leaf 没 stage_keys), 提示用户
     const childSum = cell.children.reduce((a, c) => a + c.ms, 0);
-    const coverPct = blockMs > 0 ? (childSum / blockMs * 100) : 0;
+    const coverPct = blockActiveMs > 0 ? (childSum / blockActiveMs * 100) : 0;
     const coverWarn = coverPct < 90
       ? ` <span style="color:var(--muted)">(only ${coverPct.toFixed(0)}% covered — some sub-nodes lack stage_keys)</span>`
       : "";
@@ -1331,7 +2694,7 @@ function showDetail(n, viewName) {
     }).join("");
     childrenHtml = `<h3>internal breakdown (${CURRENT_VARIANT})</h3>
       <div style="font-size:11px; color:var(--muted); margin-bottom:4px">
-        share = sub-block ms / block total (${blockMs.toFixed(1)} ms)${coverWarn}<br/>
+        share = sub-block active ms / block active (${blockActiveMs.toFixed(1)} ms)${coverWarn}<br/>
         <span style="opacity:0.85">L = leaf op (kernel-level), M = module (drillable, ms = sum of its children)</span>
       </div>
       <table class="kernels"><thead><tr>
@@ -1347,24 +2710,36 @@ function showDetail(n, viewName) {
          </a>
        </div>`
     : "";
+  const timelineBtn = currentTimelineMeta()
+    ? `<div style="margin: 6px 0 10px;">
+         <button class="detail-action primary" onclick="openNodeOnTimeline('${viewName}', '${n.id}')">
+           Show measured kernels on timeline →
+         </button>
+       </div>`
+    : "";
 
   // ms badge (含 aggregate 标记)
   const msBadge = ms != null
-    ? `${ms.toFixed(2)} ms${isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : ''}`
-    : "—";
+    ? `${formatMs(ms)} ms ${escapeHtml(metricLabel(CURRENT_METRIC))}${isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : ''}`
+    : escapeHtml(cell?.label || cell?.status || "—");
 
   document.getElementById("detail").innerHTML = `
     <h2>${escapeHtml(n.label || n.id)}</h2>
     ${variants ? `<div style="margin-bottom:8px">${variants}</div>` : ""}
+    ${timelineBtn}
     <div class="kv">
       <div class="k">id</div><div>${escapeHtml(n.id)}</div>
       <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
+      <div class="k">IR layer</div><div>${escapeHtml(n.ir_origin || (isV2Bundle() ? "model_ir" : "legacy"))}</div>
+      <div class="k">node kind</div><div>${escapeHtml(n.node_kind || "semantic")}</div>
+      ${n.boundary_role ? `<div class="k">boundary role</div><div>${escapeHtml(n.boundary_role)}</div>` : ""}
       ${n.drill ? `<div class="k">drill →</div><div><a href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">${n.drill}</a></div>` : ""}
       <div class="k">profile</div><div>${escapeHtml(CURRENT_PROFILE)}</div>
       ${CURRENT_EXECUTION ? `<div class="k">execution</div><div>${escapeHtml(DATA.execution_variants?.[CURRENT_EXECUTION]?.execution_path_id || CURRENT_EXECUTION)}</div>` : ""}
       ${CURRENT_IMPLEMENTATION ? `<div class="k">implementation</div><div>${escapeHtml(CURRENT_IMPLEMENTATION)}</div>` : ""}
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
+    ${provenanceHtml}
     ${drillBtn}
     ${n.short_doc ? `<h3>about</h3><div style="color:var(--muted); white-space: pre-wrap">${escapeHtml(n.short_doc)}</div>` : ""}
     ${n.note ? `<h3>note</h3><div style="color:var(--muted)">${escapeHtml(n.note)}</div>` : ""}

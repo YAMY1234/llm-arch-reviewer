@@ -114,6 +114,23 @@ def _find_node(views: dict[str, Any], target: str, *, source: Path) -> dict[str,
     raise CatalogError(f"{source}: target {target!r} references unknown node")
 
 
+def _model_views_with_provenance(views: dict[str, Any]) -> dict[str, Any]:
+    """Return the stable semantic graph with explicit compiled provenance.
+
+    Persisted Model IR stays implementation-independent.  The compiled bundle
+    adds provenance so the viewer can distinguish canonical semantic nodes from
+    nodes introduced by an execution plan without requiring authors to repeat
+    that fact on every node.
+    """
+
+    compiled = copy.deepcopy(views)
+    for view in compiled.values():
+        for node in view.get("nodes", []) or []:
+            node["ir_origin"] = "model_ir"
+            node.setdefault("node_kind", "semantic")
+    return compiled
+
+
 def _deep_merge(target: dict[str, Any], overlay: dict[str, Any]) -> None:
     for key, value in overlay.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):
@@ -123,7 +140,11 @@ def _deep_merge(target: dict[str, Any], overlay: dict[str, Any]) -> None:
 
 
 def _insert_after(
-    views: dict[str, Any], transform: dict[str, Any], *, source: Path
+    views: dict[str, Any],
+    transform: dict[str, Any],
+    *,
+    source: Path,
+    require_payload_result: bool,
 ) -> None:
     view_id, after_id = _split_target(transform.get("after", ""), source=source)
     view = views.get(view_id)
@@ -136,6 +157,49 @@ def _insert_after(
     new_node = copy.deepcopy(transform.get("node"))
     if not isinstance(new_node, dict) or not new_node.get("id"):
         raise CatalogError(f"{source}: insert_after requires node.id")
+    semantic_op = str(new_node.get("semantic_op") or "")
+    if not semantic_op.startswith("execution."):
+        raise CatalogError(
+            f"{source}: inserted node {view_id}.{new_node['id']} must use an "
+            "execution.* semantic_op"
+        )
+    execution = new_node.get("execution")
+    if not isinstance(execution, dict):
+        raise CatalogError(
+            f"{source}: inserted node {view_id}.{new_node['id']} requires execution metadata"
+        )
+    for field in ("placement", "collective", "parallelism"):
+        if not execution.get(field):
+            raise CatalogError(
+                f"{source}: inserted node {view_id}.{new_node['id']} requires "
+                f"execution.{field}"
+            )
+    if require_payload_result:
+        for field in ("payload", "result"):
+            if not execution.get(field):
+                raise CatalogError(
+                    f"{source}: inserted execution node {view_id}.{new_node['id']} "
+                    f"requires execution.{field}"
+                )
+    collective = str(execution["collective"])
+    inferred_kind = (
+        "layout_transform"
+        if collective in {"local_slice", "local_index", "local_select"}
+        else "communication"
+    )
+    new_node["ir_origin"] = "execution_plan"
+    new_node.setdefault("node_kind", inferred_kind)
+    new_node.setdefault("boundary_role", "module_boundary")
+    if new_node["node_kind"] not in {"communication", "layout_transform"}:
+        raise CatalogError(
+            f"{source}: inserted node {view_id}.{new_node['id']} has invalid "
+            f"node_kind {new_node['node_kind']!r}"
+        )
+    if new_node["boundary_role"] not in {"module_boundary", "module_internal"}:
+        raise CatalogError(
+            f"{source}: inserted node {view_id}.{new_node['id']} has invalid "
+            f"boundary_role {new_node['boundary_role']!r}"
+        )
     if any(node.get("id") == new_node["id"] for node in nodes):
         raise CatalogError(
             f"{source}: insert_after creates duplicate node {view_id}.{new_node['id']}"
@@ -164,7 +228,7 @@ def _insert_after(
 def apply_execution_plan(
     model_ir: dict[str, Any], plan: dict[str, Any], *, source: Path
 ) -> dict[str, Any]:
-    views = copy.deepcopy(model_ir["views"])
+    views = _model_views_with_provenance(model_ir["views"])
     for transform in plan.get("transforms", []) or []:
         op = transform.get("op")
         if op == "annotate_node":
@@ -174,7 +238,12 @@ def apply_execution_plan(
                 raise CatalogError(f"{source}: annotate_node requires a 'set' mapping")
             _deep_merge(node, overlay)
         elif op == "insert_after":
-            _insert_after(views, transform, source=source)
+            _insert_after(
+                views,
+                transform,
+                source=source,
+                require_payload_result=int(plan.get("plan_version", 1)) >= 2,
+            )
         else:
             raise CatalogError(f"{source}: unsupported execution transform {op!r}")
     _node_index(views, source=source)
@@ -285,6 +354,7 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
             "container",
             "backend",
             "extends",
+            "binding_compatible_base_commit",
         )
         if key in binding
     }
@@ -345,6 +415,7 @@ def compile_profile(
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
+    effective_states = copy.deepcopy(profile.get("node_states") or {})
     unknown = sorted(set(profile.get("node_metrics") or {}) - node_targets)
     if unknown:
         raise CatalogError(f"{source}: profile references unknown nodes: {unknown}")
@@ -354,30 +425,146 @@ def compile_profile(
         if float(metric["ms_per_iter"]) < 0:
             raise CatalogError(f"{source}: metric {target!r} has negative ms_per_iter")
 
-    variant = profile["variant_id"]
-    data = {
-        target: {variant: copy.deepcopy(metric)}
-        for target, metric in (profile.get("node_metrics") or {}).items()
+    unknown_states = sorted(set(effective_states) - node_targets)
+    if unknown_states:
+        raise CatalogError(
+            f"{source}: profile states reference unknown nodes: {unknown_states}"
+        )
+    for target, state in effective_states.items():
+        if not isinstance(state, dict) or not state.get("status"):
+            raise CatalogError(f"{source}: state {target!r} requires status")
+        if state.get("status") == "fused":
+            owner = state.get("included_in")
+            if not owner:
+                raise CatalogError(
+                    f"{source}: fused state {target!r} requires included_in"
+                )
+            if owner not in node_targets:
+                raise CatalogError(
+                    f"{source}: fused state {target!r} references unknown owner {owner!r}"
+                )
+            if owner == target:
+                raise CatalogError(
+                    f"{source}: fused state {target!r} cannot include itself"
+                )
+
+    # Fusion is an implementation/profile property, not architecture.  Promote
+    # the existing fused/included_in states into explicit many-to-many groups
+    # with shared-interval timing semantics so consumers never add the same
+    # kernel residency once per covered semantic node.
+    fusion_members: dict[str, list[str]] = {}
+    for target, state in effective_states.items():
+        if state.get("status") != "fused":
+            continue
+        owner = str(state["included_in"])
+        fusion_members.setdefault(owner, []).append(target)
+    derived_fusion_groups = {
+        f"fusion:{owner}": {
+            "owner": owner,
+            "ir_nodes": [owner, *sorted(members)],
+            "timing_semantics": "shared_interval",
+            "provenance": "profile.node_states",
+        }
+        for owner, members in sorted(fusion_members.items())
     }
-    return {
-        "meta": {
+    fusion_groups: dict[str, dict[str, Any]] = {}
+    covered_by_authored: set[str] = set()
+    for group_id, raw_group in (profile.get("fusion_groups") or {}).items():
+        if not isinstance(raw_group, dict):
+            raise CatalogError(f"{source}: fusion group {group_id!r} must be a mapping")
+        owner = str(raw_group.get("owner") or "")
+        ir_nodes = list(dict.fromkeys(raw_group.get("ir_nodes") or []))
+        if len(ir_nodes) < 2 or owner not in ir_nodes:
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} requires an owner contained "
+                "in at least two ir_nodes"
+            )
+        unknown_fusion_nodes = sorted(set(ir_nodes) - node_targets)
+        if unknown_fusion_nodes:
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} references unknown nodes: "
+                f"{unknown_fusion_nodes}"
+            )
+        if raw_group.get("timing_semantics") != "shared_interval":
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} requires "
+                "timing_semantics='shared_interval'"
+            )
+        overlap = covered_by_authored.intersection(ir_nodes)
+        if overlap:
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} overlaps another authored "
+                f"group at {sorted(overlap)}"
+            )
+        covered_by_authored.update(ir_nodes)
+        fusion_groups[str(group_id)] = copy.deepcopy(raw_group)
+    for group_id, group in derived_fusion_groups.items():
+        if covered_by_authored.intersection(group["ir_nodes"]):
+            continue
+        fusion_groups[group_id] = group
+    fusion_group_for_target = {
+        target: group_id
+        for group_id, group in fusion_groups.items()
+        for target in group["ir_nodes"]
+    }
+
+    variant = profile["variant_id"]
+    data = {}
+    targets = set(effective_states) | set(
+        profile.get("node_metrics") or {}
+    )
+    for target in targets:
+        cell = copy.deepcopy(effective_states.get(target, {}))
+        cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
+        group_id = fusion_group_for_target.get(target)
+        if group_id:
+            cell["fusion_group_id"] = group_id
+            cell["fusion_timing_semantics"] = "shared_interval"
+        data[target] = {variant: cell}
+    meta = {
             key: copy.deepcopy(profile[key])
             for key in (
                 "profile_id",
                 "label",
                 "phase",
+                "generation_mode",
+                "entry_view",
                 "variant_id",
                 "execution_parameters",
                 "hardware",
                 "workload",
                 "profiler",
                 "evidence",
+                "profile_summary",
             )
             if key in profile
-        },
+        }
+    meta.setdefault("generation_mode", "autoregressive")
+    meta.setdefault("entry_view", "top")
+    if profile.get("timeline") is not None:
+        timeline = copy.deepcopy(profile["timeline"])
+        if not isinstance(timeline, dict):
+            raise CatalogError(f"{source}: timeline must be a mapping")
+        if timeline.get("schema_version") != "timeline.v1":
+            raise CatalogError(
+                f"{source}: timeline requires schema_version='timeline.v1'"
+            )
+        artifact = Path(str(timeline.get("artifact") or ""))
+        if not artifact.name or artifact.name != str(artifact):
+            raise CatalogError(
+                f"{source}: timeline artifact must be a sibling file name"
+            )
+        sha256 = str(timeline.get("sha256") or "")
+        if len(sha256) != 64 or any(char not in "0123456789abcdef" for char in sha256):
+            raise CatalogError(f"{source}: timeline requires a lowercase SHA256")
+        timeline["url"] = f"timelines/{profile['profile_id']}.timeline.json.gz"
+        meta["timeline"] = timeline
+    return {
+        "meta": meta,
         "execution_variant": fingerprint,
         "execution_path_id": profile["execution_path_id"],
         "implementation_id": profile["implementation_id"],
+        "fusion_groups": fusion_groups,
         "data": data,
     }
 
@@ -492,10 +679,18 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         if base_id not in bindings_by_id:
             raise CatalogError(f"{path}: unknown base implementation {base_id!r}")
         base_path, base = bindings_by_id[base_id]
-        for identity_key in ("model_id", "source_repo", "source_commit"):
+        for identity_key in ("model_id", "source_repo"):
             if str(binding.get(identity_key)) != str(base.get(identity_key)):
                 raise CatalogError(
                     f"{path}: inherited {identity_key} must match {base_path}"
+                )
+        if str(binding.get("source_commit")) != str(base.get("source_commit")):
+            compatible_base = binding.get("binding_compatible_base_commit")
+            if str(compatible_base) != str(base.get("source_commit")):
+                raise CatalogError(
+                    f"{path}: inherited source_commit differs from {base_path}; "
+                    "binding_compatible_base_commit must explicitly name the "
+                    "base source commit"
                 )
         return binding_lineage(base_id, (*trail, implementation_id)) + [
             (path, binding)
@@ -665,9 +860,20 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             "view_count": len(default_variant["views"]),
         },
         "model_ir": {
-            key: copy.deepcopy(model_ir[key])
-            for key in ("model_id", "model_label", "ir_version", "dimensions", "facts")
-            if key in model_ir
+            **{
+                key: copy.deepcopy(model_ir[key])
+                for key in (
+                    "model_id",
+                    "model_label",
+                    "ir_version",
+                    "dimensions",
+                    "facts",
+                    "default_view",
+                )
+                if key in model_ir
+            },
+            "views": _model_views_with_provenance(model_ir["views"]),
+            "parent": derive_parent_map(model_ir["views"]),
         },
         "execution_variants": execution_variants,
         "implementations": implementations,

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "timeline.schema.json",
+  "title": "llm-arch-reviewer measured kernel timeline",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "phase", "time_unit", "reference_rank", "timing_summary", "raw_trace", "stack_source", "strings", "stacks", "steps"],
+  "properties": {
+    "schema_version": {"const": "timeline.v1"},
+    "profile_id": {"type": "string"},
+    "phase": {"enum": ["prefill", "decode"]},
+    "time_unit": {"const": "microseconds"},
+    "reference_rank": {"type": "integer", "minimum": 0},
+    "timing_summary": {"type": "object"},
+    "raw_trace": {
+      "type": "object",
+      "required": ["file", "sha256", "format", "rank"]
+    },
+    "stack_source": {"type": "object"},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "stacks": {"type": "array", "items": {"type": "object"}},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["step_index", "trace_start_us", "duration_us", "active_gpu_us", "gpu_residency_us", "device_gap_us", "gpu_overlap_us", "tracks", "idle_intervals", "events"]
+      }
+    }
+  },
+  "additionalProperties": false
+}
