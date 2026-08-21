@@ -124,6 +124,10 @@ srun \
       # them by dp_size. 32768 / DP4 therefore preserves one full 8192-token
       # owner-rank chunk instead of silently resolving this capture to 2048.
       chunk_args=(--chunked-prefill-size 32768 --max-prefill-tokens 32768)
+      # First-use Triton compilation can take longer than the fixed 10-second
+      # one-sided metadata barrier on one DP rank. The NCCL scheduler gather
+      # waits for all ranks and is outside the measured target-forward range.
+      export SGLANG_USE_SYMM_MEM_DP_SYNC=false
     fi
 
     python3 -m sglang.launch_server \

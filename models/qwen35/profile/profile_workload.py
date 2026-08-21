@@ -246,8 +246,10 @@ def main() -> int:
     elif args.kind == "prefill8k":
         # Attention DP4 requires a non-empty local batch on every rank in this
         # frozen TRTLLM-MHA backend (a zero-request rank divides by batch_size).
-        # Four concurrent requests are round-robin owned one per DP rank, so
-        # every validated rank executes one complete 8192-token chunk.
+        # Four concurrent requests are round-robin owned one per DP rank. The
+        # scheduler may admit their owner-rank attention work in two global
+        # forwards while every EP rank participates in both collectives, so a
+        # four-step window covers the whole admission plus its one-token tail.
         protocol["warmup"].append(
             {"global_batch": 4, "per_rank_batch": 1, "isl": 512, "osl": 1}
         )
@@ -256,7 +258,7 @@ def main() -> int:
             args.base_url,
             trace_dir,
             profile_id="qwen35-dep4-prefill8k-cgoff",
-            num_steps=1,
+            num_steps=4,
             with_stack=False,
         )
         protocol["formal"] = {
@@ -264,7 +266,7 @@ def main() -> int:
             "per_rank_batch": 1,
             "isl": 8192,
             "osl": 1,
-            "profile_steps": 1,
+            "profile_steps": 4,
             "dp_size": 4,
             "generation_mode": "target_prefill_isolation",
             "speculative_generation": False,
