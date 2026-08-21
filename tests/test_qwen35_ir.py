@@ -170,7 +170,21 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
     assert len(
         {implementation["execution_variant"] for implementation in implementations.values()}
     ) == 1
-    assert bundle["meta"]["profile_count"] == 0
+    assert bundle["meta"]["profile_count"] == 7
+    assert {
+        profile["meta"]["generation_mode"]
+        for profile in bundle["profiles"].values()
+    } == {"mtp"}
+    assert {
+        tuple(sorted(profile["meta"]["execution_parameters"].items()))
+        for profile in bundle["profiles"].values()
+    } == {
+        tuple(
+            sorted(
+                {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4}.items()
+            )
+        )
+    }
     compiled_nodes = _nodes(bundle, "moe_block")
     assert compiled_nodes["target_ep4_dispatch"]["ir_origin"] == "execution_plan"
     assert compiled_nodes["target_ep4_dispatch"]["boundary_role"] == "module_internal"

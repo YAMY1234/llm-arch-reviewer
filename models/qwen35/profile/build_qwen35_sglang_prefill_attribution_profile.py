@@ -24,6 +24,8 @@ from models.common.trace_mapping import (
     load_trace,
 )
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
+    CONTAINER_SHA256,
+    MODEL_CONFIG_SHA256,
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
     SGLANG_NODE_STATES,
@@ -232,7 +234,7 @@ def build(args: argparse.Namespace):
         "phase": "prefill",
         "generation_mode": "mtp",
         "entry_view": "top",
-        "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
         "workload": {
             "isl": 256,
@@ -250,12 +252,20 @@ def build(args: argparse.Namespace):
             "with_stack": True,
             "record_shapes": True,
             "gpu_metric_semantics": "maximum per-rank kernel residency; parallel ranks are not summed",
+            "runtime_launch_parallelism": {
+                "framework_tp_size": 4,
+                "attention_dp_size": 4,
+                "moe_ep_size": 4,
+                "normalization": "the framework TP process group carries replicated attention DP and sharded MoE EP; it is not semantic TP4",
+            },
         },
         "evidence": {
             "job_id": args.job_id,
             "source_commit": SOURCE_COMMIT,
             "runtime_source_commit": RUNTIME_SOURCE_COMMIT,
             "model_revision": MODEL_REVISION,
+            "model_config_sha256": MODEL_CONFIG_SHA256,
+            "container_sha256": CONTAINER_SHA256,
             "protocol_file": args.protocol.name,
             "protocol_sha256": sha256_file(args.protocol),
             "trace_files": [

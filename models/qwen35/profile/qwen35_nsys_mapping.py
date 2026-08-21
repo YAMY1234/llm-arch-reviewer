@@ -472,6 +472,8 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
         ir_targets = []
         if layer_id is not None:
             ir_targets.append(f"layer_schedule.layer_{layer_id:02d}")
+        if section == "target" and not node.startswith("generation_loop."):
+            ir_targets.append("generation_loop.target_verify")
         if section == "draft":
             ir_targets.append("generation_loop.draft_propose")
         mapped.append(

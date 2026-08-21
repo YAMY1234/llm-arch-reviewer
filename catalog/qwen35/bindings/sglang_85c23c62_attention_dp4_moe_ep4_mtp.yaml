@@ -6,6 +6,9 @@ execution_path_id: attention_dp4_moe_ep4
 source_repo: https://github.com/YAMY1234/sglang
 source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
 container: lmsysorg/sglang:nightly-dev-cu13-20260809-cea16bf2
+container_sha256: 87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a
+model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
 backend: sglang
 node_bindings:
   top.embedding:
@@ -218,3 +221,14 @@ node_bindings:
     links:
     - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
       symbol: FrozenKVMTPDraftWorker.draft_extend
+  generation_loop.commit_tokens:
+    symbols: [FrozenKVMTPWorkerV2.forward_batch_generation]
+    kernel_signatures: [fill_bonus_tokens]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPWorkerV2.forward_batch_generation
+  generation_loop.next_iteration:
+    symbols: [FrozenKVMTPWorkerV2.forward_batch_generation]
+    links:
+    - file: python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py
+      symbol: FrozenKVMTPWorkerV2.forward_batch_generation

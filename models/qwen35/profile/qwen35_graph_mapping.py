@@ -39,6 +39,8 @@ EAGER_SCOPE_FALLBACKS = {
     "top.decoder_stack": "gdn_moe_block.qkvz_projection",
     "mtp_draft_head.draft_decoder_layer": "mtp_full_attention_moe_block.causal_gqa",
     "generation_loop.accept_prefix": "generation_loop.draft_propose",
+    "generation_loop.commit_gdn": "generation_loop.draft_propose",
+    "generation_loop.commit_tokens": "generation_loop.draft_propose",
 }
 
 
@@ -137,6 +139,28 @@ def direct_graph_mapping(
             "mapped",
             "high",
         )
+    if "_fused_conv_window_scatter_with_mask_kernel" in lowered:
+        return GraphMapping(
+            "generation_loop.commit_gdn",
+            "accepted convolution-state commit",
+            "mapped",
+            "high",
+        )
+    if "verifytreegreedy" in lowered:
+        return GraphMapping(
+            "generation_loop.accept_prefix",
+            "verify tree and select accepted prefix",
+            "mapped",
+            "high",
+        )
+    if "fill_bonus_tokens" in lowered:
+        return GraphMapping(
+            "generation_loop.commit_tokens",
+            "publish accepted target bonus tokens",
+            "mapped",
+            "high",
+            ("generation_loop.accept_prefix",),
+        )
     if _contains(lowered, "draft_topk1", "build_tree_efficient"):
         return GraphMapping(
             "generation_loop.draft_propose",
@@ -233,6 +257,65 @@ def target_verify_batch_size(
     if match is None:
         raise ValueError(f"invalid target verify annotation: {annotation['name']!r}")
     return int(match.group(1))
+
+
+def complete_eager_decode_window(
+    events: list[dict[str, Any]], window: ForwardWindow, *, rank: int
+) -> ForwardWindow:
+    """Include a preceding draft range when one-step eager stop cuts the tail.
+
+    CUDA-Graph captures keep running through the post-verify ``draft`` range.
+    With a one-step eager profiler, automatic stop can instead retain the four
+    draft rounds immediately preceding TARGET_VERIFY plus the following
+    DRAFT_EXTEND round. Both layouts are one complete five-round MTP cycle.
+    """
+
+    stages, _track = _primary_gpu_annotations(events, name_prefix="draft")
+    kernels = [event for event in events if event.get("cat") == "kernel"]
+
+    def draft_anchor_count(start_us: float) -> int:
+        ranges = [
+            (
+                float(event.get("ts", 0.0)),
+                float(event.get("ts", 0.0)) + float(event.get("dur", 0.0)),
+            )
+            for event in stages
+            if str(event.get("name")) in {"draft", "draft_extend"}
+            and start_us <= float(event.get("ts", 0.0)) < window.end_us
+        ]
+        return sum(
+            "_fused_qk_rmsnorm_rope_gate_kernel"
+            in str(kernel.get("name", "")).lower()
+            and any(
+                start <= float(kernel.get("ts", 0.0)) < end
+                for start, end in ranges
+            )
+            for kernel in kernels
+        )
+
+    if draft_anchor_count(window.start_us) == 5:
+        return window
+    preceding = sorted(
+        (
+            event
+            for event in stages
+            if event.get("name") == "draft"
+            and float(event.get("ts", 0.0)) + float(event.get("dur", 0.0))
+            <= window.start_us
+        ),
+        key=lambda event: float(event.get("ts", 0.0)),
+        reverse=True,
+    )
+    for event in preceding:
+        start_us = float(event["ts"])
+        if draft_anchor_count(start_us) == 5:
+            return ForwardWindow(
+                start_us=start_us,
+                end_us=window.end_us,
+                iter_bounds_us=[(start_us, window.end_us)],
+                anchor_kernel_count=window.anchor_kernel_count,
+            )
+    raise ValueError(f"rank {rank}: eager window does not contain five MTP draft rounds")
 
 
 def _phase_ranges(
@@ -379,6 +462,12 @@ def map_graph_window(
         ir_targets = list(direct.ir_targets)
         if layer_id is not None:
             ir_targets.append(f"layer_schedule.layer_{layer_id:02d}")
+        if substage == "target_verify" and not str(direct.node).startswith(
+            "generation_loop."
+        ):
+            ir_targets.append("generation_loop.target_verify")
+        if substage in {"draft_extend", "draft"}:
+            ir_targets.append("generation_loop.draft_propose")
         mapped.append(
             {
                 "event_id": f"r{rank}-s{step_index}-k{event_index}",

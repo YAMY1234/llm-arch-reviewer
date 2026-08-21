@@ -1,0 +1,644 @@
+schema_version: profile.v2
+profile_id: qwen35_sglang_attention_dp4_moe_ep4_mtp6_cg_decode_gbs32
+label: Qwen3.5 397B · SGLang · AgentX DEP4 + MTP6 · CUDA Graph decode · global BS32
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+variant_id: sglang_agentx_dep4_mtp6_cg_decode_gbs32_128x64
+phase: decode
+generation_mode: mtp
+entry_view: generation_loop
+execution_parameters:
+  tp_size: 1
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+workload:
+  isl: 128
+  osl: 64
+  batch_size: 32
+  batch_size_scope: global_request_count
+  per_rank_batch_size:
+  - 8
+  - 8
+  - 8
+  - 8
+  waiting_requests: 0
+  waiting_uncached_tokens: 0
+  selected_stable_iterations:
+  - 2
+  - 3
+  - 4
+  - 5
+profiler:
+  type: torch
+  rank: all four DEP ranks
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: true
+  with_stack: false
+  record_shapes: false
+  gpu_metric_semantics: maximum per-rank kernel residency; parallel ranks are not
+    summed
+  runtime_launch_parallelism:
+    framework_tp_size: 4
+    attention_dp_size: 4
+    moe_ep_size: 4
+    normalization: the framework TP process group carries replicated attention DP
+      and sharded MoE EP; it is not semantic TP4
+evidence:
+  job_id: 3204736
+  source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
+  runtime_source_commit: a31c1e52e947bcbdd0d551c5e2323e96a9bf303b
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container_sha256: 87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a
+  protocol_file: protocol.json
+  protocol_sha256: 6ada7b813f50c200a40860c7bca630e219ea4d8ffd896fc49bd3a07133075ae2
+  trace_files:
+  - rank: 0
+    file: qwen35-dep4-decode-cgon-gbs32-qwen35-dep4-decode-cgon-gbs32-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: c05e62656a7b74a42b689f191c8b5a6eab4d91d96c26d5bf966f99c7c5ab2839
+  - rank: 1
+    file: qwen35-dep4-decode-cgon-gbs32-qwen35-dep4-decode-cgon-gbs32-TP-1-DP-1-EP-1.trace.json.gz
+    sha256: 630222cd253144932c9b87bb640e252c57c7b172515ca7212ba40c692db154da
+  - rank: 2
+    file: qwen35-dep4-decode-cgon-gbs32-qwen35-dep4-decode-cgon-gbs32-TP-2-DP-2-EP-2.trace.json.gz
+    sha256: cabebecc858472d6a0857e67d2c388f6232700096676c621bceea6b4fea365ee
+  - rank: 3
+    file: qwen35-dep4-decode-cgon-gbs32-qwen35-dep4-decode-cgon-gbs32-TP-3-DP-3-EP-3.trace.json.gz
+    sha256: 533be82da342cf6af876fafba308d30a7ce4724c7c3ec42502ed9130ab6d5efa
+  eager_mapping_file: kernel_mapping.tp0.jsonl
+  eager_mapping_sha256: 3daf28d16f353b404f72f4b45447df614f42eabeb480ce4e754d3a637f99562c
+  mapping_policy: unique signatures plus exact GGGA layer order and eager-stack transfer
+  mapped_or_fusion_duration_ratio: 1.0
+  strict_signature_duration_ratio: 0.555742
+  eager_stack_transfer_duration_ratio: 0.990652
+  critical_decode_step_ms:
+    samples:
+    - 18.439541
+    - 18.44751
+    - 18.540663
+    - 18.613336
+    mean: 18.510263
+    median: 18.494086
+    min: 18.439541
+    max: 18.613336
+timeline:
+  schema_version: timeline.v1
+  artifact: decode_bs32.timeline.json.gz
+  sha256: 7d1a37d9af4b2702c296c0681a8c8752029674a5095de5bfb8ee81414a39b7b3
+  reference_rank: 0
+  step_count: 4
+  event_count: 9821
+  raw_trace_file: qwen35-dep4-decode-cgon-gbs32-qwen35-dep4-decode-cgon-gbs32-TP-0-DP-0-EP-0.trace.json.gz
+node_states:
+  gdn_moe_block.ba_projection:
+    status: fused
+    included_in: gdn_moe_block.qkvz_projection
+  gdn_moe_block.state_write:
+    status: fused
+    included_in: gdn_moe_block.gated_delta_recurrence
+  full_attention_moe_block.partial_rope:
+    status: fused
+    included_in: full_attention_moe_block.qk_norm
+  full_attention_moe_block.attention_output_gate:
+    status: fused
+    included_in: full_attention_moe_block.qk_norm
+  full_attention_moe_block.kv_state_write:
+    status: fused
+    included_in: full_attention_moe_block.qkv_projection
+  mtp_full_attention_moe_block.partial_rope:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qk_norm
+  mtp_full_attention_moe_block.attention_output_gate:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qk_norm
+  mtp_full_attention_moe_block.kv_state_write:
+    status: fused
+    included_in: mtp_full_attention_moe_block.qkv_projection
+  generation_loop.candidate_tokens:
+    status: fused
+    included_in: generation_loop.draft_propose
+  generation_loop.target_verify:
+    status: fused
+    included_in: top.decoder_stack
+  generation_loop.tentative_state:
+    status: fused
+    included_in: generation_loop.target_verify
+  generation_loop.commit_kv:
+    status: unobserved
+    reason: SGLang publishes accepted KV length/index metadata without a uniquely
+      attributable standalone CUDA kernel in the measured traces
+  generation_loop.next_iteration:
+    status: unobserved
+    reason: host-side loop control has no standalone GPU interval
+node_metrics:
+  full_attention_moe_block.causal_gqa:
+    ms_per_iter: 0.950238
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 240
+      count_per_iter: 60.0
+      avg_us: 15.837
+      total_us_per_iter: 950.238
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.925823
+    - 0.950238
+  full_attention_moe_block.output_hidden:
+    ms_per_iter: 1.816268
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: target layer fused/auxiliary kernel
+      count: 1498
+      count_per_iter: 374.5
+      avg_us: 4.85
+      total_us_per_iter: 1816.268
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 1.74866
+    - 1.816268
+  full_attention_moe_block.qk_norm:
+    ms_per_iter: 0.057665
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 60
+      count_per_iter: 15.0
+      avg_us: 3.844
+      total_us_per_iter: 57.665
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.056896
+    - 0.057665
+  full_attention_moe_block.qkv_projection:
+    ms_per_iter: 0.076553
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 60
+      count_per_iter: 15.0
+      avg_us: 5.104
+      total_us_per_iter: 76.553
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.074096
+    - 0.076553
+  gdn_moe_block.causal_conv:
+    ms_per_iter: 0.414835
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN causal convolution
+      count: 180
+      count_per_iter: 45.0
+      avg_us: 9.219
+      total_us_per_iter: 414.835
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.411275
+    - 0.414835
+  gdn_moe_block.gated_delta_recurrence:
+    ms_per_iter: 1.012927
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: GDN recurrent update
+      count: 180
+      count_per_iter: 45.0
+      avg_us: 22.509
+      total_us_per_iter: 1012.927
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 1.007023
+    - 1.012927
+  gdn_moe_block.output_gate_norm:
+    ms_per_iter: 0.124105
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output gate norm
+      count: 180
+      count_per_iter: 45.0
+      avg_us: 2.758
+      total_us_per_iter: 124.105
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.122801
+    - 0.124105
+  gdn_moe_block.output_hidden:
+    ms_per_iter: 3.389486
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: target layer fused/auxiliary kernel
+      count: 3308
+      count_per_iter: 827.0
+      avg_us: 4.099
+      total_us_per_iter: 3389.486
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 3.21629
+    - 3.389486
+  gdn_moe_block.qkvz_projection:
+    ms_per_iter: 0.145857
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: GDN QKVZBA split/reshape
+      count: 180
+      count_per_iter: 45.0
+      avg_us: 3.241
+      total_us_per_iter: 145.857
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.140729
+    - 0.145857
+  generation_loop.accept_prefix:
+    ms_per_iter: 0.110577
+    mapping_status_duration_pct:
+      fusion: 96.5201
+      mapped: 3.4799
+    kernels:
+    - name: speculative lifecycle fused/auxiliary kernel
+      count: 168
+      count_per_iter: 42.0
+      avg_us: 2.541
+      total_us_per_iter: 106.729
+      share_in_node_pct: 96.52
+    - name: verify tree and select accepted prefix
+      count: 4
+      count_per_iter: 1.0
+      avg_us: 3.848
+      total_us_per_iter: 3.848
+      share_in_node_pct: 3.48
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.099745
+    - 0.110577
+  generation_loop.commit_gdn:
+    ms_per_iter: 0.022296
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted convolution-state commit
+      count: 4
+      count_per_iter: 1.0
+      avg_us: 22.296
+      total_us_per_iter: 22.296
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.021928
+    - 0.022296
+  generation_loop.commit_tokens:
+    ms_per_iter: 0.00176
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: publish accepted target bonus tokens
+      count: 4
+      count_per_iter: 1.0
+      avg_us: 1.76
+      total_us_per_iter: 1.76
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.001648
+    - 0.00176
+  generation_loop.draft_propose:
+    ms_per_iter: 0.028712
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: draft candidate construction
+      count: 36
+      count_per_iter: 9.0
+      avg_us: 3.19
+      total_us_per_iter: 28.712
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.027912
+    - 0.028712
+  generation_loop.replay_gdn:
+    ms_per_iter: 0.450771
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted-prefix GDN state replay
+      count: 4
+      count_per_iter: 1.0
+      avg_us: 450.771
+      total_us_per_iter: 450.771
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.448907
+    - 0.450771
+  moe_block.routed_experts:
+    ms_per_iter: 4.555709
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 480
+      count_per_iter: 120.0
+      avg_us: 37.964
+      total_us_per_iter: 4555.709
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 3.848121
+    - 4.555709
+  moe_block.router:
+    ms_per_iter: 0.770798
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 480
+      count_per_iter: 120.0
+      avg_us: 6.423
+      total_us_per_iter: 770.798
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.724205
+    - 0.770798
+  moe_block.shared_expert:
+    ms_per_iter: 0.262322
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared expert activation
+      count: 240
+      count_per_iter: 60.0
+      avg_us: 4.372
+      total_us_per_iter: 262.322
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.213593
+    - 0.262322
+  moe_block.target_ep4_combine:
+    ms_per_iter: 2.026084
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 combine
+      count: 480
+      count_per_iter: 120.0
+      avg_us: 16.884
+      total_us_per_iter: 2026.084
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 1.129751
+    - 2.026084
+  moe_block.target_ep4_dispatch:
+    ms_per_iter: 0.974336
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch
+      count: 480
+      count_per_iter: 120.0
+      avg_us: 8.119
+      total_us_per_iter: 974.336
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.781396
+    - 0.974336
+  moe_block.target_ep4_pack:
+    ms_per_iter: 0.097329
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch pack
+      count: 240
+      count_per_iter: 60.0
+      avg_us: 1.622
+      total_us_per_iter: 97.329
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.086057
+    - 0.097329
+  moe_block.weighted_combine:
+    ms_per_iter: 0.140313
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE weighted combine
+      count: 240
+      count_per_iter: 60.0
+      avg_us: 2.339
+      total_us_per_iter: 140.313
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.136001
+    - 0.140313
+  mtp_draft_head.draft_decoder_layer:
+    ms_per_iter: 2.448249
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MTP draft fused/auxiliary kernel
+      count: 965
+      count_per_iter: 241.25
+      avg_us: 10.148
+      total_us_per_iter: 2448.249
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 2.41428
+    - 2.448249
+  mtp_full_attention_moe_block.causal_gqa:
+    ms_per_iter: 0.194913
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 80
+      count_per_iter: 20.0
+      avg_us: 9.746
+      total_us_per_iter: 194.913
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.191673
+    - 0.194913
+  mtp_full_attention_moe_block.qk_norm:
+    ms_per_iter: 0.01508
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 20
+      count_per_iter: 5.0
+      avg_us: 3.016
+      total_us_per_iter: 15.08
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.014592
+    - 0.01508
+  mtp_full_attention_moe_block.qkv_projection:
+    ms_per_iter: 0.021944
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 20
+      count_per_iter: 5.0
+      avg_us: 4.389
+      total_us_per_iter: 21.944
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.021352
+    - 0.021944
+  mtp_moe_block.draft_ep4_combine:
+    ms_per_iter: 0.271561
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft combine
+      count: 40
+      count_per_iter: 10.0
+      avg_us: 27.156
+      total_us_per_iter: 271.561
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.136561
+    - 0.271561
+  mtp_moe_block.draft_ep4_dispatch:
+    ms_per_iter: 0.146785
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft dispatch
+      count: 40
+      count_per_iter: 10.0
+      avg_us: 14.679
+      total_us_per_iter: 146.785
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.125081
+    - 0.146785
+  mtp_moe_block.routed_experts:
+    ms_per_iter: 0.730405
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 40
+      count_per_iter: 10.0
+      avg_us: 73.04
+      total_us_per_iter: 730.405
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.583404
+    - 0.730405
+  mtp_moe_block.router:
+    ms_per_iter: 0.023553
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 20
+      count_per_iter: 5.0
+      avg_us: 4.711
+      total_us_per_iter: 23.553
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.02172
+    - 0.023553
+  mtp_moe_block.shared_expert:
+    ms_per_iter: 0.105201
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared expert activation
+      count: 40
+      count_per_iter: 10.0
+      avg_us: 10.52
+      total_us_per_iter: 105.201
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.104793
+    - 0.105201
+  top.decoder_stack:
+    ms_per_iter: 0.05028
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: target layer fused/auxiliary kernel
+      count: 52
+      count_per_iter: 13.0
+      avg_us: 3.868
+      total_us_per_iter: 50.28
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 0.04708
+    - 0.05028

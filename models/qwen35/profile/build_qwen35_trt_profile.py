@@ -37,6 +37,8 @@ REPORT_RE = re.compile(
 )
 TRT_COMMIT = "1cef02e901be43081b1ba6d4981e94ed3bd9c1e8"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
+MODEL_CONFIG_SHA256 = "9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63"
+CONTAINER_SHA256 = "1cb820b92bd7ab56ab69457500adf3b7f2928bfefe7f2920951fe7286552dcf7"
 
 
 def parse_args() -> argparse.Namespace:
@@ -235,6 +237,16 @@ def build(args: argparse.Namespace):
             row for row in exact_8k if row["source"] == reference_source
         ]
         reference_steps = [row["timeline_step"] for row in reference_observations]
+        exact_events_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        exact_step_counts: Counter[str] = Counter()
+        for row in exact_8k:
+            source = str(row["source"])
+            exact_events_by_source[source].extend(row["timeline_step"]["events"])
+            exact_step_counts[source] += 1
+        source_metrics = {
+            source: _metrics_for_rank(events, exact_step_counts[source])
+            for source, events in sorted(exact_events_by_source.items())
+        }
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
         for row in exact_8k:
             exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
@@ -356,6 +368,39 @@ def build(args: argparse.Namespace):
             ),
         }
 
+    node_states = {}
+    if args.phase == "decode":
+        node_states = {
+            "generation_loop.candidate_tokens": {
+                "status": "fused",
+                "included_in": "generation_loop.draft_propose",
+            },
+            "generation_loop.target_verify": {
+                "status": "fused",
+                "included_in": "top.decoder_stack",
+            },
+            "generation_loop.tentative_state": {
+                "status": "fused",
+                "included_in": "generation_loop.target_verify",
+            },
+            "generation_loop.accept_prefix": {
+                "status": "unobserved",
+                "reason": "accept/sample is outside the worker-local _forward_step NVTX interval and has no uniquely attributable kernel in this capture",
+            },
+            "generation_loop.replay_gdn": {
+                "status": "unobserved",
+                "reason": "the captured TRT path exposes state promotion/commit kernels but no separate accepted-prefix replay interval",
+            },
+            "generation_loop.commit_tokens": {
+                "status": "unobserved",
+                "reason": "token publication is outside the worker-local _forward_step NVTX interval",
+            },
+            "generation_loop.next_iteration": {
+                "status": "unobserved",
+                "reason": "host-side loop control is outside the worker-local _forward_step NVTX interval",
+            },
+        }
+
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
@@ -367,7 +412,7 @@ def build(args: argparse.Namespace):
         "phase": args.phase,
         "generation_mode": "mtp",
         "entry_view": "generation_loop" if args.phase == "decode" else "top",
-        "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {
             "gpu": "GB300",
             "gpus_per_node": 4,
@@ -390,12 +435,20 @@ def build(args: argparse.Namespace):
             "trace": ["cuda", "nvtx"],
             "cuda_graph_enabled": args.phase == "decode",
             "gpu_metric_semantics": "maximum worker/rank residency; parallel ranks and workers are not summed",
+            "runtime_launch_parallelism": {
+                "framework_world_size": 4,
+                "attention_dp_size": 4,
+                "moe_ep_size": 4,
+                "normalization": "the runtime process group carries replicated attention DP and sharded MoE EP; it is not semantic TP4",
+            },
         },
         "evidence": {
             "job_id": args.job_id,
             "baseline_job_id": 501238,
             "tensorrt_llm_commit": TRT_COMMIT,
             "model_revision": MODEL_REVISION,
+            "model_config_sha256": MODEL_CONFIG_SHA256,
+            "container_sha256": CONTAINER_SHA256,
             "report_files": [
                 {
                     "worker": worker,
@@ -416,6 +469,7 @@ def build(args: argparse.Namespace):
             "worker_count": expected_workers,
         },
         "timeline": {},
+        "node_states": node_states,
         "node_metrics": _aggregate_metrics(source_metrics),
     }
     analysis = {

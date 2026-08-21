@@ -12,7 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from models.common.trace_mapping import build_trace_mapping, write_build_result
+from models.common.trace_mapping import (
+    build_trace_mapping,
+    find_eagle_mtp_decode_windows,
+    load_trace,
+    write_build_result,
+)
+from models.qwen35.profile.qwen35_graph_mapping import complete_eager_decode_window
 from models.qwen35.profile.qwen35_trace_rules import QWEN35_TRACE_RULES
 
 
@@ -44,6 +50,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    window_override = None
+    if args.phase == "eagle_mtp_decode":
+        trace_events = load_trace(args.trace.resolve()).get("traceEvents") or []
+        windows = find_eagle_mtp_decode_windows(
+            trace_events, signature=QWEN35_TRACE_RULES.signature_kernel
+        )
+        if len(windows) == 1:
+            window_override = complete_eager_decode_window(
+                trace_events, windows[0], rank=args.rank
+            )
     result = build_trace_mapping(
         trace_path=args.trace.resolve(),
         source_root=args.source_root.resolve(),
@@ -56,6 +72,7 @@ def main() -> int:
         expect_ms=args.expect_ms,
         n_iters=args.n_iters,
         skip_first=args.skip_first,
+        window_override=window_override,
     )
     write_build_result(args.out_dir.resolve(), result, rank=args.rank)
     print(f"wrote {args.out_dir.resolve()}")

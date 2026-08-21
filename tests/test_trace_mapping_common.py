@@ -12,6 +12,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.trace_mapping import (  # noqa: E402
     FrameRef,
+    ForwardWindow,
     StackFrameRules,
     TraceMappingRules,
     build_trace_mapping,
@@ -61,6 +62,64 @@ TOY_RULES = TraceMappingRules(
 
 
 class CommonTraceMappingTest(unittest.TestCase):
+    def test_explicit_window_override_is_model_neutral(self):
+        with TemporaryDirectory() as td:
+            tmp = Path(td)
+            source_root = tmp / "src"
+            source_file = source_root / "toy/model.py"
+            source_file.parent.mkdir(parents=True)
+            source_file.write_text("def semantic_call():\n    pass\n")
+            trace_path = tmp / "trace.json"
+            trace_path.write_text(
+                json.dumps(
+                    {
+                        "record_shapes": 1,
+                        "with_stack": 1,
+                        "traceEvents": [
+                            {
+                                "ph": "X",
+                                "cat": "kernel",
+                                "name": "outside_kernel",
+                                "pid": 0,
+                                "tid": 0,
+                                "ts": 100,
+                                "dur": 1,
+                                "args": {"stream": 1, "device": 0},
+                            },
+                            {
+                                "ph": "X",
+                                "cat": "kernel",
+                                "name": "toy_kernel_main",
+                                "pid": 0,
+                                "tid": 0,
+                                "ts": 205,
+                                "dur": 2,
+                                "args": {"stream": 1, "device": 0},
+                            },
+                        ],
+                    }
+                )
+            )
+
+            result = build_trace_mapping(
+                trace_path=trace_path,
+                source_root=source_root,
+                source_repo="https://example.test/toy",
+                source_commit="abc123",
+                config_path=None,
+                rank=0,
+                phase="toy_phase",
+                rules=TOY_RULES,
+                window_override=ForwardWindow(200, 220, [(200, 220)], 0),
+            )
+
+            self.assertEqual(
+                result.manifest["window_selector"]["method"],
+                "explicit_validated_override",
+            )
+            self.assertEqual(result.validation["kernel_count"], 1)
+            self.assertEqual(result.mappings[0].kernel_name, "toy_kernel_main")
+
     def test_eagle_mtp_prefill_pairs_target_and_auxiliary_extend(self):
         events = [
             {

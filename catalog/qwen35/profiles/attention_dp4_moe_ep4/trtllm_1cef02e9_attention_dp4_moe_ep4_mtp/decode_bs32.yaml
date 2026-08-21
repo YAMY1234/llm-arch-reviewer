@@ -9,7 +9,7 @@ phase: decode
 generation_mode: mtp
 entry_view: generation_loop
 execution_parameters:
-  tp_size: 4
+  tp_size: 1
   dp_size: 4
   cp_size: 1
   ep_size: 4
@@ -201,11 +201,19 @@ profiler:
   cuda_graph_enabled: true
   gpu_metric_semantics: maximum worker/rank residency; parallel ranks and workers
     are not summed
+  runtime_launch_parallelism:
+    framework_world_size: 4
+    attention_dp_size: 4
+    moe_ep_size: 4
+    normalization: the runtime process group carries replicated attention DP and sharded
+      MoE EP; it is not semantic TP4
 evidence:
   job_id: 532540
   baseline_job_id: 501238
   tensorrt_llm_commit: 1cef02e901be43081b1ba6d4981e94ed3bd9c1e8
   model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container_sha256: 1cb820b92bd7ab56ab69457500adf3b7f2928bfefe7f2920951fe7286552dcf7
   report_files:
   - worker: nvl72d150-T05
     rank: 0
@@ -300,11 +308,36 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: decode_bs32.timeline.json.gz
-  sha256: b053b35d118fbb40ea516b711f55db51e584886fce532abd680589d17b7bc364
+  sha256: 296ead25f81b9f394437f795512b23356bf42473779931cdc35ded6a398d03d1
   reference_rank: 0
   step_count: 20
   event_count: 47020
   raw_trace_file: nvl72d150-T05-decode-rank0.1.sqlite
+node_states:
+  generation_loop.candidate_tokens:
+    status: fused
+    included_in: generation_loop.draft_propose
+  generation_loop.target_verify:
+    status: fused
+    included_in: top.decoder_stack
+  generation_loop.tentative_state:
+    status: fused
+    included_in: generation_loop.target_verify
+  generation_loop.accept_prefix:
+    status: unobserved
+    reason: accept/sample is outside the worker-local _forward_step NVTX interval
+      and has no uniquely attributable kernel in this capture
+  generation_loop.replay_gdn:
+    status: unobserved
+    reason: the captured TRT path exposes state promotion/commit kernels but no separate
+      accepted-prefix replay interval
+  generation_loop.commit_tokens:
+    status: unobserved
+    reason: token publication is outside the worker-local _forward_step NVTX interval
+  generation_loop.next_iteration:
+    status: unobserved
+    reason: host-side loop control is outside the worker-local _forward_step NVTX
+      interval
 node_metrics:
   full_attention_moe_block.causal_gqa:
     ms_per_iter: 13.933053

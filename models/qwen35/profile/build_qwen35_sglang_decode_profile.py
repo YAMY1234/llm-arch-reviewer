@@ -32,6 +32,8 @@ PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_mtp6_cg_decode_gbs32"
 SOURCE_COMMIT = "85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf"
 RUNTIME_SOURCE_COMMIT = "a31c1e52e947bcbdd0d551c5e2323e96a9bf303b"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
+MODEL_CONFIG_SHA256 = "9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63"
+CONTAINER_SHA256 = "87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a"
 TRACE_RANK = re.compile(r"-TP-(\d+)-DP-(\d+)-EP-(\d+)\.trace\.json\.gz$")
 SELECTED_WINDOW_INDICES = (2, 3, 4, 5)
 SGLANG_NODE_STATES = {
@@ -66,6 +68,29 @@ SGLANG_NODE_STATES = {
     "mtp_full_attention_moe_block.kv_state_write": {
         "status": "fused",
         "included_in": "mtp_full_attention_moe_block.qkv_projection",
+    },
+}
+SGLANG_DECODE_NODE_STATES = {
+    **SGLANG_NODE_STATES,
+    "generation_loop.candidate_tokens": {
+        "status": "fused",
+        "included_in": "generation_loop.draft_propose",
+    },
+    "generation_loop.target_verify": {
+        "status": "fused",
+        "included_in": "top.decoder_stack",
+    },
+    "generation_loop.tentative_state": {
+        "status": "fused",
+        "included_in": "generation_loop.target_verify",
+    },
+    "generation_loop.commit_kv": {
+        "status": "unobserved",
+        "reason": "SGLang publishes accepted KV length/index metadata without a uniquely attributable standalone CUDA kernel in the measured traces",
+    },
+    "generation_loop.next_iteration": {
+        "status": "unobserved",
+        "reason": "host-side loop control has no standalone GPU interval",
     },
 }
 
@@ -367,7 +392,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "phase": "decode",
         "generation_mode": "mtp",
         "entry_view": "generation_loop",
-        "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
         "workload": {
             "isl": 128,
@@ -387,12 +412,20 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "with_stack": False,
             "record_shapes": False,
             "gpu_metric_semantics": "maximum per-rank kernel residency; parallel ranks are not summed",
+            "runtime_launch_parallelism": {
+                "framework_tp_size": 4,
+                "attention_dp_size": 4,
+                "moe_ep_size": 4,
+                "normalization": "the framework TP process group carries replicated attention DP and sharded MoE EP; it is not semantic TP4",
+            },
         },
         "evidence": {
             "job_id": 3204736,
             "source_commit": SOURCE_COMMIT,
             "runtime_source_commit": RUNTIME_SOURCE_COMMIT,
             "model_revision": MODEL_REVISION,
+            "model_config_sha256": MODEL_CONFIG_SHA256,
+            "container_sha256": CONTAINER_SHA256,
             "protocol_file": args.protocol.name,
             "protocol_sha256": sha256_file(args.protocol),
             "trace_files": [
@@ -408,7 +441,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "critical_decode_step_ms": timing_summary["critical_wall_ms"],
         },
         "timeline": {},
-        "node_states": SGLANG_NODE_STATES,
+        "node_states": SGLANG_DECODE_NODE_STATES,
         "node_metrics": _aggregate_rank_metrics(rank_metrics),
     }
     analysis = {

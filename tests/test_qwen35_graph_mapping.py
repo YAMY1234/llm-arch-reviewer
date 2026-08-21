@@ -9,6 +9,7 @@ if str(REPO_ROOT) not in sys.path:
 from models.common.trace_mapping import ForwardWindow
 from models.qwen35.profile.qwen35_graph_mapping import (
     TARGET_PATTERN,
+    complete_eager_decode_window,
     direct_graph_mapping,
     map_graph_window,
     map_prefill_window,
@@ -56,6 +57,26 @@ def test_target_and_draft_collectives_remain_separate():
     assert target.status == draft.status == "mapped"
 
 
+def test_generation_lifecycle_signatures_are_not_left_in_a_generic_scope():
+    assert direct_graph_mapping(
+        "void VerifyTreeGreedy<int, long>()",
+        substage="generation_lifecycle",
+        layer_kind=None,
+    ).node == "generation_loop.accept_prefix"
+    assert direct_graph_mapping(
+        "_fused_conv_window_scatter_with_mask_kernel",
+        substage="generation_lifecycle",
+        layer_kind=None,
+    ).node == "generation_loop.commit_gdn"
+    bonus = direct_graph_mapping(
+        "fill_bonus_tokens",
+        substage="generation_lifecycle",
+        layer_kind=None,
+    )
+    assert bonus.node == "generation_loop.commit_tokens"
+    assert bonus.ir_targets == ("generation_loop.accept_prefix",)
+
+
 def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_kernel():
     events = [
         _annotation("step[TARGET_VERIFY bs=8]", 100.0, 700.0),
@@ -98,6 +119,16 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
     assert all(event["node"] for event in mapped)
     assert any(event["layer_id"] == 59 for event in mapped)
     assert any(event["node"] == "generation_loop.replay_gdn" for event in mapped)
+    assert all(
+        "generation_loop.target_verify" in event["ir_targets"]
+        for event in mapped
+        if event["substage"] == "target_verify"
+    )
+    assert all(
+        "generation_loop.draft_propose" in event["ir_targets"]
+        for event in mapped
+        if event["substage"] in {"draft", "draft_extend"}
+    )
 
 
 def test_prefill_window_separates_target_layers_from_mtp_seed():
@@ -137,6 +168,25 @@ def test_prefill_window_separates_target_layers_from_mtp_seed():
     assert validation["signature_counts"]["mtp_seed_attention_layers"] == 1
     assert validation["signature_counts"]["mtp_seed_ep4_dispatch"] == 2
     assert all(event["layer_id"] is None for event in mapped if event["substage"] == "mtp_seed_prefill")
+
+
+def test_eager_window_uses_preceding_draft_when_one_step_stop_cuts_tail():
+    events = [
+        _annotation("draft", 20.0, 70.0),
+        _annotation("step[TARGET_VERIFY bs=1]", 100.0, 100.0),
+        _annotation("draft_extend", 220.0, 50.0),
+    ]
+    events.extend(
+        _kernel("_fused_qk_rmsnorm_rope_gate_kernel", ts)
+        for ts in (30.0, 45.0, 60.0, 75.0, 230.0)
+    )
+    window = complete_eager_decode_window(
+        events,
+        ForwardWindow(100.0, 270.0, [(100.0, 270.0)], 45),
+        rank=0,
+    )
+    assert window.start_us == 20.0
+    assert window.end_us == 270.0
 
 
 def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):

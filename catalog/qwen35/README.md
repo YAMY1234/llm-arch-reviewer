@@ -66,12 +66,81 @@ The required profile parameters are therefore `tp_size=1`, `dp_size=4`, `cp_size
 enabling DP attention are recorded later as binding evidence, not mislabeled as TP4 model
 execution.
 
+## Implementation bindings and immutable profiles
+
+Both bindings compile against the same normalized execution fingerprint,
+`exec_25a414805d12fed3`:
+
+- SGLang source commit `85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf`, with the
+  measured runtime overlay identified separately as `a31c1e52e947bcbdd0d551c5e2323e96a9bf303b`;
+- TensorRT-LLM source commit `1cef02e901be43081b1ba6d4981e94ed3bd9c1e8`.
+
+The binding files keep target and draft MoE contracts separate. In the measured SGLang
+path the target uses FlashInfer A2A plus CuTeDSL NVFP4 expert compute, while the draft uses
+DeepEP low-latency plus DeepGEMM. The TRT-LLM target uses CUTEDSL MoE EP4, while the
+quantization-excluded MTP experts use a CUTLASS BF16 fallback. These are implementation
+facts, not architecture mutations.
+
+Seven official profiles are published under `profiles/attention_dp4_moe_ep4/`, and every
+one has `generation_mode: mtp`:
+
+| Engine | Profile | Capture identity | Critical GPU wall |
+|---|---|---:|---:|
+| SGLang | eager prefill attribution | job `3207730` | 1030.853 ms (attribution only) |
+| SGLang | eager decode attribution | job `3208209` | 654.552 ms (attribution only) |
+| SGLang | one-chunk 8K target prefill | job `3207938` | 367.889 ms |
+| SGLang | CUDA-Graph global-BS32 decode | job `3204736` | mean 18.510 ms |
+| SGLang | real A-Z97/C704 steady decode | job `3205969` | mean 55.478 ms |
+| TRT-LLM | exact one-request/8K prefill | job `532540` | mean 374.482 ms |
+| TRT-LLM | worker-local decode, 30–32 generation requests | job `532540` | mean 37.612 ms |
+
+All selected kernel intervals are retained and attributed. The SGLang and TRT-LLM
+mapped-plus-fusion residency ratios are 1.0, above their respective 95% and 90% gates.
+Each profile references a deterministic compressed timeline with wall, active GPU union,
+residency, overlap, idle/gap, per-node elapsed/active/module-gap/other-work, streams,
+fusion groups, layer identifiers, and MTP rounds. One reference rank is displayed; all
+four ranks are validated and parallel rank residency is never summed.
+
+The exact 8K prefill profiles are shape-matched and give a descriptive TRT/SGL wall ratio
+of 1.0179x. Decode profiles are deliberately not subtracted: SGLang global-BS32 means
+eight requests per DP rank, whereas the TRT capture observes 30–32 generation requests
+per worker/rank, and the real AgentX batch distributions and accept-length settings also
+differ.
+
+## Evidence boundaries
+
+- TRT outer-wrapper Nsys job `502606` is excluded because MPI/UCX failed before serving.
+  Worker-local smoke `531997` proved Python worker, NVTX, CUDA-kernel, step, and rank
+  visibility before formal job `532540`.
+- The TRT worker-local `_forward_step` range exposes target/draft execution and KV/GDN
+  commit kernels, but not accept/sample or token publication. Those lifecycle nodes are
+  explicitly `unobserved`; no generic kernel is guessed.
+- The SGLang traces expose accept, accepted-prefix GDN replay, GDN commit, and token commit.
+  KV commit has no uniquely attributable standalone CUDA interval and is explicitly
+  `unobserved`.
+- The eager profiles establish Python-stack attribution. CUDA-Graph profiles transfer
+  evidence only through exact kernel+IR or declared containing-scope relationships.
+- Container SHA256 values in the bindings and profiles were computed from the actual
+  runtime `.sqsh` contents, not from image tags.
+
 ## Rebuild
 
 ```bash
 python3 models/qwen35/build/build_qwen35_ir.py
 python3 scripts/build_v2.py --model qwen35
-python3 -m pytest -q tests/test_qwen35_ir.py
+python3 scripts/export_standalone.py \
+  --model qwen35_v2 \
+  --output docs/qwen35_v2/standalone.html
+python3 -m pytest -q \
+  tests/test_qwen35_ir.py \
+  tests/test_qwen35_profiles.py \
+  tests/test_qwen35_trace_rules.py \
+  tests/test_qwen35_graph_mapping.py \
+  tests/test_qwen35_nsys_mapping.py \
+  tests/test_trace_mapping_common.py \
+  tests/test_timeline_artifact.py \
+  tests/test_v2_compiler.py \
+  tests/test_v2_handoff_common.py
 ```
 
 The generator rejects any config whose hash or mandatory Qwen3.5 invariants differ from

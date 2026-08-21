@@ -23,9 +23,11 @@ if str(REPO_ROOT) not in sys.path:
 from models.common.timeline_artifact import build_timeline_artifact, write_timeline_artifact
 from models.common.trace_mapping import find_eagle_mtp_decode_windows, load_trace
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
+    CONTAINER_SHA256,
+    MODEL_CONFIG_SHA256,
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
-    SGLANG_NODE_STATES,
+    SGLANG_DECODE_NODE_STATES,
     SOURCE_COMMIT,
     _metrics_for_rank,
     _validate_step_signatures,
@@ -372,7 +374,7 @@ def build(args: argparse.Namespace):
         "phase": "decode",
         "generation_mode": "mtp",
         "entry_view": "generation_loop",
-        "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_worker": 4, "prefill_workers": 3, "decode_workers": 2},
         "workload": {
             "scenario": "inferencex-agentx-mvp",
@@ -409,12 +411,20 @@ def build(args: argparse.Namespace):
             "with_stack": False,
             "record_shapes": False,
             "gpu_metric_semantics": "maximum worker/rank kernel residency; concurrent workers/ranks are not summed",
+            "runtime_launch_parallelism": {
+                "framework_tp_size": 4,
+                "attention_dp_size": 4,
+                "moe_ep_size": 4,
+                "normalization": "the framework TP process group carries replicated attention DP and sharded MoE EP; it is not semantic TP4",
+            },
         },
         "evidence": {
             "job_id": JOB_ID,
             "source_commit": SOURCE_COMMIT,
             "runtime_source_commit": RUNTIME_SOURCE_COMMIT,
             "model_revision": MODEL_REVISION,
+            "model_config_sha256": MODEL_CONFIG_SHA256,
+            "container_sha256": CONTAINER_SHA256,
             "config_file": args.config.name,
             "config_sha256": sha256_file(args.config),
             "job_metadata_file": args.job_metadata.name,
@@ -443,7 +453,7 @@ def build(args: argparse.Namespace):
             "critical_decode_step_ms": timing_summary["critical_wall_ms"],
         },
         "timeline": {},
-        "node_states": SGLANG_NODE_STATES,
+        "node_states": SGLANG_DECODE_NODE_STATES,
         "node_metrics": node_metrics,
     }
     analysis = {

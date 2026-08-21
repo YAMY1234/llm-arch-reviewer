@@ -823,30 +823,35 @@ def build_trace_mapping(
     skip_first: bool = True,
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
+    window_override: ForwardWindow | None = None,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
     signature = signature_kernel or rules.signature_kernel
     signature_count = expected_signature_count or rules.signature_count_per_forward
-    windows = find_step_annotation_windows(
-        trace_events,
-        phase=phase,
-        signature=signature,
-    )
-    window_method = "gpu_step_annotation"
-    if not windows:
-        windows = find_forward_windows(
+    if window_override is not None:
+        window = window_override
+        window_method = "explicit_validated_override"
+    else:
+        windows = find_step_annotation_windows(
             trace_events,
+            phase=phase,
             signature=signature,
-            expected_per_forward=signature_count,
         )
-        window_method = "signature_kernel_count"
-    window = choose_forward_window(
-        windows,
-        expect_ms=expect_ms,
-        n_iters=n_iters,
-        skip_first=skip_first,
-    )
+        window_method = "gpu_step_annotation"
+        if not windows:
+            windows = find_forward_windows(
+                trace_events,
+                signature=signature,
+                expected_per_forward=signature_count,
+            )
+            window_method = "signature_kernel_count"
+        window = choose_forward_window(
+            windows,
+            expect_ms=expect_ms,
+            n_iters=n_iters,
+            skip_first=skip_first,
+        )
     events = normalize_kernel_events(
         trace_events,
         window=window,
