@@ -31,8 +31,8 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def get_json(base_url: str, path: str) -> dict[str, Any]:
-    response = requests.get(base_url + path, timeout=30)
+def get_json(base_url: str, path: str, *, timeout: float = 30) -> dict[str, Any]:
+    response = requests.get(base_url + path, timeout=timeout)
     response.raise_for_status()
     return response.json()
 
@@ -186,7 +186,10 @@ def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=False)
     trace_dir = args.output_dir / "traces"
-    server_info = get_json(args.base_url, "/server_info")
+    # The first scheduler-side endpoint can trigger lazy Triton compilation on
+    # a cold cache. Keep the liveness polling strict, but allow this provenance
+    # snapshot to span that one-time compile instead of aborting a valid run.
+    server_info = get_json(args.base_url, "/server_info", timeout=300)
     protocol: dict[str, Any] = {
         "schema_version": "qwen35-sglang-profile-protocol.v1",
         "kind": args.kind,
