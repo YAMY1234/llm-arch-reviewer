@@ -16,7 +16,11 @@ import requests
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--kind", choices=("attribution", "prefill8k", "decode-bs32"), required=True)
+    parser.add_argument(
+        "--kind",
+        choices=("attribution", "attribution-prefill", "prefill8k", "decode-bs32"),
+        required=True,
+    )
     parser.add_argument("--base-url", default="http://127.0.0.1:30000")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--expected-ranks", type=int, default=4)
@@ -259,7 +263,29 @@ def main() -> int:
         "formal": {},
     }
 
-    if args.kind == "attribution":
+    if args.kind == "attribution-prefill":
+        protocol["warmup"].append({"batch": 4, "isl": 64, "osl": 8})
+        run_batch(args.base_url, batch_size=4, input_len=64, output_len=8, token_seed=73)
+        response = start_profile(
+            args.base_url,
+            trace_dir,
+            profile_id="qwen35-dep4-attribution-prefill-cgoff",
+            num_steps=1,
+            with_stack=True,
+        )
+        formal_results = run_batch(
+            args.base_url, batch_size=4, input_len=256, output_len=8, token_seed=83
+        )
+        protocol["formal"] = {
+            "batch": 4,
+            "per_rank_batch": 1,
+            "isl": 256,
+            "osl": 8,
+            "profile_steps": 1,
+            "cuda_graph": False,
+            "capture_scope": "one complete eager target prefill iteration with MTP enabled",
+        }
+    elif args.kind == "attribution":
         protocol["warmup"].append({"batch": 4, "isl": 64, "osl": 16})
         run_batch(args.base_url, batch_size=4, input_len=64, output_len=16, token_seed=101)
         # A single eager MTP decode iteration contains the complete 60-layer
@@ -311,9 +337,9 @@ def main() -> int:
         # forwards while every EP rank participates in both collectives, so a
         # four-step window covers the whole admission plus its one-token tail.
         protocol["warmup"].append(
-            {"global_batch": 4, "per_rank_batch": 1, "isl": 512, "osl": 1}
+            {"global_batch": 4, "per_rank_batch": 1, "isl": 8192, "osl": 1}
         )
-        run_batch(args.base_url, batch_size=4, input_len=512, output_len=1, token_seed=307)
+        run_batch(args.base_url, batch_size=4, input_len=8192, output_len=1, token_seed=307)
         response = start_profile(
             args.base_url,
             trace_dir,
@@ -382,7 +408,7 @@ def main() -> int:
     # Explicitly close bounded eager/prefill windows.  Automatic num_steps
     # stopping is sufficient for the fixed decode batch, but is not a valid
     # completion condition for DP-rank-skewed eager or prefill requests.
-    if args.kind in {"attribution", "prefill8k"}:
+    if args.kind in {"attribution", "attribution-prefill", "prefill8k"}:
         completed_traces = sorted(trace_dir.glob("*.trace.json.gz"))
         if len(completed_traces) == args.expected_ranks:
             protocol["stop_profile_response"] = {
@@ -391,13 +417,19 @@ def main() -> int:
         else:
             protocol["stop_profile_response"] = stop_profile(
                 args.base_url,
-                timeout_seconds=5400 if args.kind == "attribution" else 1800,
+                timeout_seconds=(
+                    5400
+                    if args.kind in {"attribution", "attribution-prefill"}
+                    else 1800
+                ),
             )
 
     # with_stack=True serializes large Python call trees after the GPU window.
     # Four Qwen3.5 ranks can legitimately need much longer than 15 minutes to
     # export; killing the server during PythonTracer.stop loses every trace.
-    trace_export_timeout_seconds = 5400 if args.kind == "attribution" else 900
+    trace_export_timeout_seconds = (
+        5400 if args.kind in {"attribution", "attribution-prefill"} else 900
+    )
     protocol["trace_export_timeout_seconds"] = trace_export_timeout_seconds
     traces = wait_for_traces(
         trace_dir,

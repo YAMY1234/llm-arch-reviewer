@@ -400,6 +400,11 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
             section = "draft"
             layer_id = None
             layer_kind = "attention"
+        mtp_round = (
+            max(0, bisect_right(draft_anchors, event_index) - 1)
+            if section == "draft"
+            else None
+        )
 
         direct = _direct_node(kernel.name, section=section, layer_kind=layer_kind)
         if direct is None and section == "target":
@@ -422,13 +427,20 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
         mapped.append(
             {
                 "event_id": f"r{step.rank}-s{step.step_id}-k{event_index}",
+                "engine": "trtllm",
                 "rank": step.rank,
+                "device": step.rank,
                 "step_index": step.step_id,
                 "kernel_name": kernel.name,
                 "kernel_label": label,
                 "node": node,
                 "ir_targets": ir_targets,
                 "mapping_status": status,
+                "fusion_group": (
+                    f"r{step.rank}-s{step.step_id}-k{event_index}"
+                    if status == "fusion"
+                    else None
+                ),
                 "attribution_method": (
                     "unique_kernel_signature" if status == "mapped" else "validated_graph_scope"
                 ),
@@ -436,6 +448,7 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
                 "layer_id": layer_id,
                 "layer_kind": layer_kind,
                 "substage": section,
+                "mtp_round": mtp_round,
                 "ts_us": kernel.start_ns / 1000.0,
                 "dur_us": kernel.duration_us,
                 "stream": kernel.stream,
@@ -576,13 +589,20 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         mapped.append(
             {
                 "event_id": f"r{step.rank}-p{step.step_id}-k{event_index}",
+                "engine": "trtllm",
                 "rank": step.rank,
+                "device": step.rank,
                 "step_index": step.step_id,
                 "kernel_name": kernel.name,
                 "kernel_label": label,
                 "node": node,
                 "ir_targets": [f"layer_schedule.layer_{layer_id:02d}"],
                 "mapping_status": status,
+                "fusion_group": (
+                    f"r{step.rank}-p{step.step_id}-k{event_index}"
+                    if status == "fusion"
+                    else None
+                ),
                 "attribution_method": (
                     "unique_kernel_signature"
                     if status == "mapped"

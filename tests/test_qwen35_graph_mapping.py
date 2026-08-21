@@ -71,9 +71,14 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
         events.append(_kernel("nvjet_generic_projection", 115.0 + layer_id * 10.0))
     events.extend(
         [
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", 825.0),
             _kernel("deep_ep::internode_ll::dispatch", 830.0),
             _kernel("draft_auxiliary", 840.0),
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", 885.0),
             _kernel("deep_ep::internode_ll::combine", 900.0),
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", 905.0),
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", 925.0),
+            _kernel("_fused_qk_rmsnorm_rope_gate_kernel", 945.0),
             _kernel("gdn_replayssm_exact_fold_kernel", 975.0),
         ]
     )
@@ -87,6 +92,7 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
     assert validation["signature_counts"]["target_attention_layers"] == 15
     assert validation["attributed_duration_ratio"] == 1.0
     assert validation["target_verify_batch_size"] == 8
+    assert validation["signature_counts"]["mtp_draft_rounds"] == 5
     assert {event["mapping_status"] for event in mapped} == {"mapped", "fusion"}
     assert all(event["node"] for event in mapped)
     assert any(event["layer_id"] == 59 for event in mapped)

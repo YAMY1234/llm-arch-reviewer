@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit with: sbatch --export=ALL,PROFILE_KIND=<attribution|prefill8k|decode-bs32> run_sglang_profile.sbatch
+# Submit with: sbatch --export=ALL,PROFILE_KIND=<attribution|attribution-prefill|prefill8k|decode-bs32> run_sglang_profile.sbatch
 #SBATCH --job-name=qwen35-dep4-profile
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -14,9 +14,9 @@
 
 set -euo pipefail
 
-: "${PROFILE_KIND:?set PROFILE_KIND to attribution, prefill8k, or decode-bs32}"
+: "${PROFILE_KIND:?set PROFILE_KIND to attribution, attribution-prefill, prefill8k, or decode-bs32}"
 case "${PROFILE_KIND}" in
-  attribution|prefill8k|decode-bs32) ;;
+  attribution|attribution-prefill|prefill8k|decode-bs32) ;;
   *) echo "invalid PROFILE_KIND=${PROFILE_KIND}" >&2; exit 2 ;;
 esac
 

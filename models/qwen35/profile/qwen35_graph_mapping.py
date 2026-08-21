@@ -150,7 +150,7 @@ def direct_graph_mapping(
         return GraphMapping(
             f"{block}.qk_norm",
             "Q/K norm + partial RoPE + gate fusion",
-            "mapped",
+            "fusion",
             "high",
             (f"{block}.partial_rope", f"{block}.attention_output_gate"),
         )
@@ -168,7 +168,7 @@ def direct_graph_mapping(
             return GraphMapping(
                 "gdn_moe_block.qkvz_projection",
                 "GDN QKVZBA split/reshape",
-                "mapped",
+                "fusion",
                 "high",
                 ("gdn_moe_block.ba_projection",),
             )
@@ -180,7 +180,7 @@ def direct_graph_mapping(
             return GraphMapping(
                 "gdn_moe_block.gated_delta_recurrence",
                 "GDN recurrent update",
-                "mapped",
+                "fusion",
                 "high",
                 ("gdn_moe_block.state_write",),
             )
@@ -314,12 +314,25 @@ def map_graph_window(
     target_start, target_end, _ = next(item for item in ranges if item[2] == "target_verify")
     anchors = _target_anchors(kernels, target_start=target_start, target_end=target_end)
     anchor_times = [item[0] for item in anchors]
+    draft_anchor_times = sorted(
+        float(kernel.get("ts", 0.0))
+        for kernel in kernels
+        if _substage(float(kernel.get("ts", 0.0)), ranges)
+        in {"draft_extend", "draft"}
+        and "_fused_qk_rmsnorm_rope_gate_kernel"
+        in str(kernel.get("name", "")).lower()
+    )
+    if len(draft_anchor_times) != 5:
+        raise ValueError(f"expected five MTP draft rounds, got {len(draft_anchor_times)}")
 
     mapped: list[dict[str, Any]] = []
     for event_index, kernel in enumerate(kernels):
         ts_us = float(kernel.get("ts", 0.0))
         name = str(kernel.get("name", ""))
         substage = _substage(ts_us, ranges)
+        mtp_round = None
+        if substage in {"draft_extend", "draft"}:
+            mtp_round = max(0, bisect_right(draft_anchor_times, ts_us) - 1)
         layer_id = None
         layer_kind = None
         if substage == "target_verify":
@@ -363,6 +376,7 @@ def map_graph_window(
         mapped.append(
             {
                 "event_id": f"r{rank}-s{step_index}-k{event_index}",
+                "engine": "sglang",
                 "rank": rank,
                 "step_index": step_index,
                 "kernel_name": name,
@@ -370,6 +384,11 @@ def map_graph_window(
                 "node": direct.node,
                 "ir_targets": list(dict.fromkeys(ir_targets)),
                 "mapping_status": direct.status,
+                "fusion_group": (
+                    f"r{rank}-s{step_index}-k{event_index}"
+                    if direct.status == "fusion"
+                    else None
+                ),
                 "attribution_method": (
                     "unique_kernel_signature"
                     if direct.status == "mapped"
@@ -377,6 +396,7 @@ def map_graph_window(
                 ),
                 "confidence": direct.confidence,
                 "substage": substage,
+                "mtp_round": mtp_round,
                 "layer_id": layer_id,
                 "layer_kind": layer_kind,
                 "ts_us": ts_us,
@@ -410,6 +430,7 @@ def map_graph_window(
         "gdn_replay": sum(
             "replayssm" in event["kernel_name"].lower() for event in mapped
         ),
+        "mtp_draft_rounds": len(draft_anchor_times),
     }
     total_us = sum(event["dur_us"] for event in mapped)
     by_status = {
@@ -478,6 +499,7 @@ def map_prefill_window(
         mapped.append(
             {
                 "event_id": f"r{rank}-p{step_index}-k{event_index}",
+                "engine": "sglang",
                 "rank": rank,
                 "step_index": step_index,
                 "kernel_name": name,
@@ -485,6 +507,11 @@ def map_prefill_window(
                 "node": direct.node,
                 "ir_targets": list(dict.fromkeys(targets)),
                 "mapping_status": direct.status,
+                "fusion_group": (
+                    f"r{rank}-p{step_index}-k{event_index}"
+                    if direct.status == "fusion"
+                    else None
+                ),
                 "attribution_method": (
                     "unique_kernel_signature"
                     if direct.status == "mapped"

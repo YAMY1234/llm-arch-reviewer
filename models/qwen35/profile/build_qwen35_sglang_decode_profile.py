@@ -34,6 +34,40 @@ RUNTIME_SOURCE_COMMIT = "a31c1e52e947bcbdd0d551c5e2323e96a9bf303b"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 TRACE_RANK = re.compile(r"-TP-(\d+)-DP-(\d+)-EP-(\d+)\.trace\.json\.gz$")
 SELECTED_WINDOW_INDICES = (2, 3, 4, 5)
+SGLANG_NODE_STATES = {
+    "gdn_moe_block.ba_projection": {
+        "status": "fused",
+        "included_in": "gdn_moe_block.qkvz_projection",
+    },
+    "gdn_moe_block.state_write": {
+        "status": "fused",
+        "included_in": "gdn_moe_block.gated_delta_recurrence",
+    },
+    "full_attention_moe_block.partial_rope": {
+        "status": "fused",
+        "included_in": "full_attention_moe_block.qk_norm",
+    },
+    "full_attention_moe_block.attention_output_gate": {
+        "status": "fused",
+        "included_in": "full_attention_moe_block.qk_norm",
+    },
+    "full_attention_moe_block.kv_state_write": {
+        "status": "fused",
+        "included_in": "full_attention_moe_block.qkv_projection",
+    },
+    "mtp_full_attention_moe_block.partial_rope": {
+        "status": "fused",
+        "included_in": "mtp_full_attention_moe_block.qk_norm",
+    },
+    "mtp_full_attention_moe_block.attention_output_gate": {
+        "status": "fused",
+        "included_in": "mtp_full_attention_moe_block.qk_norm",
+    },
+    "mtp_full_attention_moe_block.kv_state_write": {
+        "status": "fused",
+        "included_in": "mtp_full_attention_moe_block.qkv_projection",
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -192,6 +226,7 @@ def _validate_step_signatures(validation: dict[str, Any], *, rank: int, step: in
         "draft_deepep_dispatch": 10,
         "draft_deepep_combine": 10,
         "gdn_replay": 1,
+        "mtp_draft_rounds": 5,
     }
     actual = validation["signature_counts"]
     mismatch = {
@@ -330,7 +365,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
         "variant_id": "sglang_agentx_dep4_mtp6_cg_decode_gbs32_128x64",
         "phase": "decode",
-        "generation_mode": "agentx_mtp6",
+        "generation_mode": "mtp",
         "entry_view": "generation_loop",
         "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
@@ -373,6 +408,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "critical_decode_step_ms": timing_summary["critical_wall_ms"],
         },
         "timeline": {},
+        "node_states": SGLANG_NODE_STATES,
         "node_metrics": _aggregate_rank_metrics(rank_metrics),
     }
     analysis = {

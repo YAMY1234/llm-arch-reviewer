@@ -25,6 +25,7 @@ from models.common.trace_mapping import find_eagle_mtp_decode_windows, load_trac
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
+    SGLANG_NODE_STATES,
     SOURCE_COMMIT,
     _metrics_for_rank,
     _validate_step_signatures,
@@ -369,7 +370,7 @@ def build(args: argparse.Namespace):
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
         "variant_id": "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_steady",
         "phase": "decode",
-        "generation_mode": "agentx_mtp6",
+        "generation_mode": "mtp",
         "entry_view": "generation_loop",
         "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_worker": 4, "prefill_workers": 3, "decode_workers": 2},
@@ -442,6 +443,7 @@ def build(args: argparse.Namespace):
             "critical_decode_step_ms": timing_summary["critical_wall_ms"],
         },
         "timeline": {},
+        "node_states": SGLANG_NODE_STATES,
         "node_metrics": node_metrics,
     }
     analysis = {

@@ -389,6 +389,7 @@ def build_timeline_artifact(
             encoded_events.append(
                 {
                     "event_id": f"r{reference_rank}-s{raw_step['step_index']}-k{index}",
+                    "engine": strings.add(event.get("engine")),
                     "start_us": round(float(event["ts_us"]) - start_us, 6),
                     "duration_us": round(float(event["dur_us"]), 6),
                     "stream_id": _stream_key(event),
@@ -402,11 +403,13 @@ def build_timeline_artifact(
                     "layer_id": event.get("layer_id"),
                     "layer_kind": strings.add(event.get("layer_kind")),
                     "substage": strings.add(event.get("substage")),
+                    "mtp_round": event.get("mtp_round"),
                     "kernel_kind": strings.add(kernel_kind_resolver(event)),
                     "attribution_method": strings.add(
                         event.get("attribution_method")
                     ),
                     "confidence": strings.add(event.get("confidence")),
+                    "fusion_group": strings.add(event.get("fusion_group")),
                     "cpu_op_name": strings.add(event.get("cpu_op_name")),
                     "stack_id": encode_stack(event),
                 }
@@ -423,10 +426,57 @@ def build_timeline_artifact(
         )
         active_us = sum(stop - start for start, stop in active_intervals)
         residency_us = sum(float(event["dur_us"]) for event in step_events)
-        node_residency: Counter[str] = Counter()
+        events_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for event in step_events:
             if event.get("node"):
-                node_residency[str(event["node"])] += float(event["dur_us"])
+                events_by_node[str(event["node"])].append(event)
+        node_timings = []
+        for node, node_events in events_by_node.items():
+            node_start = min(float(event["ts_us"]) for event in node_events)
+            node_stop = max(
+                float(event["ts_us"]) + float(event["dur_us"])
+                for event in node_events
+            )
+            node_active = sum(
+                stop - start
+                for start, stop in _interval_union(
+                    (
+                        float(event["ts_us"]),
+                        float(event["ts_us"]) + float(event["dur_us"]),
+                    )
+                    for event in node_events
+                )
+            )
+            node_residency = sum(float(event["dur_us"]) for event in node_events)
+            all_active_in_span = sum(
+                stop - start
+                for start, stop in _interval_union(
+                    (
+                        max(node_start, float(event["ts_us"])),
+                        min(
+                            node_stop,
+                            float(event["ts_us"]) + float(event["dur_us"]),
+                        ),
+                    )
+                    for event in step_events
+                )
+            )
+            node_elapsed = node_stop - node_start
+            node_timings.append(
+                {
+                    "ir_node": strings.add(node),
+                    "occurrence_count": len(node_events),
+                    "elapsed_us": round(node_elapsed, 6),
+                    "active_gpu_us": round(node_active, 6),
+                    "gpu_residency_us": round(node_residency, 6),
+                    "gpu_overlap_us": round(max(0.0, node_residency - node_active), 6),
+                    "module_gap_us": round(max(0.0, node_elapsed - node_active), 6),
+                    "other_gpu_work_us": round(
+                        max(0.0, all_active_in_span - node_active), 6
+                    ),
+                }
+            )
+        node_timings.sort(key=lambda item: -float(item["gpu_residency_us"]))
         encoded_steps.append(
             {
                 "step_index": raw_step["step_index"],
@@ -437,13 +487,7 @@ def build_timeline_artifact(
                 "gpu_residency_us": round(residency_us, 6),
                 "device_gap_us": round(max(0.0, duration_us - active_us), 6),
                 "gpu_overlap_us": round(max(0.0, residency_us - active_us), 6),
-                "node_timings": [
-                    {
-                        "ir_node": strings.add(node),
-                        "gpu_residency_us": round(node_us, 6),
-                    }
-                    for node, node_us in node_residency.most_common()
-                ],
+                "node_timings": node_timings,
                 "tracks": _stream_tracks(
                     step_events, kernel_kind_resolver=kernel_kind_resolver
                 ),

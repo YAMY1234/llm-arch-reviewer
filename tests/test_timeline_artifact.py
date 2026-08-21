@@ -177,6 +177,11 @@ def test_timeline_separates_elapsed_active_residency_idle_and_overlap() -> None:
     assert step["device_gap_us"] == 4.0
     assert step["gpu_overlap_us"] == 2.0
     assert sum(item["gpu_residency_us"] for item in step["node_timings"]) == 8.0
+    assert all(item["active_gpu_us"] <= item["elapsed_us"] for item in step["node_timings"])
+    assert all(
+        item["gpu_overlap_us"] == item["gpu_residency_us"] - item["active_gpu_us"]
+        for item in step["node_timings"]
+    )
     assert step["idle_intervals"] == [
         {"start_us": 0.0, "duration_us": 1.0},
         {"start_us": 7.0, "duration_us": 3.0},

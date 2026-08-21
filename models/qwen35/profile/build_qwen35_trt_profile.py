@@ -111,7 +111,13 @@ def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, A
 
 def build(args: argparse.Namespace):
     expected_workers = 3 if args.phase == "prefill" else 2
-    expected_steps = set(range(10000, 10003)) if args.phase == "prefill" else set(range(60000, 60021))
+    # The worker-local launcher treats stop_step as exclusive, matching the
+    # validated smoke range 10:12 -> steps 10 and 11.
+    expected_steps = (
+        set(range(10000, 10002))
+        if args.phase == "prefill"
+        else set(range(60000, 60020))
+    )
     paths: dict[tuple[str, int], Path] = {}
     for raw_path in args.sqlites:
         path = raw_path.resolve()
@@ -130,7 +136,7 @@ def build(args: argparse.Namespace):
     source_metrics: dict[str, dict[str, Any]] = {}
     validations: dict[str, list[dict[str, Any]]] = {}
     process_checks: dict[str, dict[str, Any]] = {}
-    timing_by_step: dict[int, list[dict[str, float]]] = {}
+    timing_by_step: dict[int, list[dict[str, Any]]] = {}
     all_mappings: list[dict[str, Any]] = []
     reference_source = f"{workers[0]}/rank0"
     reference_steps: list[dict[str, Any]] = []
@@ -174,6 +180,7 @@ def build(args: argparse.Namespace):
             )
             timing_by_step.setdefault(step.step_id, []).append(
                 {
+                    "source": source,
                     "cpu_wall_us": validation["cpu_wall_us"],
                     "gpu_span_us": validation["gpu_span_us"],
                     "gpu_busy_union_us": validation["gpu_busy_union_us"],
@@ -199,20 +206,40 @@ def build(args: argparse.Namespace):
             f"prefill reports do not validate owner compute on all rank positions: {owner_rank_positions}"
         )
 
-    critical_steps = {
-        str(step_id): {
-            "cpu_wall_us": max(item["cpu_wall_us"] for item in rows),
-            "gpu_span_us": max(item["gpu_span_us"] for item in rows),
-            "gpu_busy_union_us": max(item["gpu_busy_union_us"] for item in rows),
-            "gpu_residency_us": max(item["gpu_residency_us"] for item in rows),
+    critical_steps = {}
+    for step_id, rows in sorted(timing_by_step.items()):
+        selected = max(rows, key=lambda item: item["gpu_span_us"])
+        active_us = selected["gpu_busy_union_us"]
+        residency_us = selected["gpu_residency_us"]
+        elapsed_us = selected["gpu_span_us"]
+        if active_us > elapsed_us + 1e-6 or active_us > residency_us + 1e-6:
+            raise ValueError(f"TRT {args.phase} step {step_id}: impossible timing values")
+        critical_steps[str(step_id)] = {
+            "source_worker_rank": selected["source"],
+            "elapsed_wall_us": elapsed_us,
+            "active_gpu_us": active_us,
+            "gpu_residency_us": residency_us,
+            "gpu_overlap_us": residency_us - active_us,
+            "device_gap_idle_us": elapsed_us - active_us,
+            "cpu_launch_wall_us": selected["cpu_wall_us"],
         }
-        for step_id, rows in sorted(timing_by_step.items())
-    }
-    critical_cpu_ms = [row["cpu_wall_us"] / 1000.0 for row in critical_steps.values()]
+    critical_elapsed_ms = [
+        row["elapsed_wall_us"] / 1000.0 for row in critical_steps.values()
+    ]
+    critical_cpu_ms = [
+        row["cpu_launch_wall_us"] / 1000.0 for row in critical_steps.values()
+    ]
     timing_summary = {
-        "semantics": "each metric is the maximum worker/rank observation for that local step; rank residency is never summed",
+        "semantics": "step elapsed is first-to-last GPU kernel span from one critical worker/rank; CPU NVTX is asynchronous launch wall; rank residency is never summed",
         "critical_steps": critical_steps,
-        "critical_cpu_wall_ms": {
+        "critical_step_wall_ms": {
+            "samples": critical_elapsed_ms,
+            "mean": statistics.fmean(critical_elapsed_ms),
+            "median": statistics.median(critical_elapsed_ms),
+            "min": min(critical_elapsed_ms),
+            "max": max(critical_elapsed_ms),
+        },
+        "critical_cpu_launch_wall_ms": {
             "samples": critical_cpu_ms,
             "mean": statistics.fmean(critical_cpu_ms),
             "median": statistics.median(critical_cpu_ms),
@@ -283,7 +310,7 @@ def build(args: argparse.Namespace):
         "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
         "variant_id": f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97",
         "phase": args.phase,
-        "generation_mode": "agentx_mtp6",
+        "generation_mode": "mtp",
         "entry_view": "generation_loop" if args.phase == "decode" else "top",
         "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {
@@ -326,7 +353,10 @@ def build(args: argparse.Namespace):
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
             "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
-            "critical_cpu_wall_ms": timing_summary["critical_cpu_wall_ms"],
+            "critical_step_wall_ms": timing_summary["critical_step_wall_ms"],
+            "critical_cpu_launch_wall_ms": timing_summary[
+                "critical_cpu_launch_wall_ms"
+            ],
             "four_rank_validation": True,
             "worker_count": expected_workers,
         },

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the bounded eager SGLang Qwen3.5 attribution profile and timeline."""
+"""Build the bounded eager SGLang Qwen3.5 prefill-attribution profile."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
-import statistics
 import sys
 from typing import Any
 
@@ -19,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.timeline_artifact import build_timeline_artifact, write_timeline_artifact
-from models.common.trace_mapping import find_eagle_mtp_decode_windows, load_trace
+from models.common.trace_mapping import load_trace
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
@@ -27,17 +26,17 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     SOURCE_COMMIT,
     _aggregate_rank_metrics,
     _metrics_for_rank,
-    _validate_step_signatures,
     sha256_file,
     trace_rank,
 )
 from models.qwen35.profile.qwen35_graph_mapping import (
     attach_graph_stack_evidence,
-    map_graph_window,
+    map_prefill_window,
 )
 
 
-PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_mtp6_eager_attribution"
+PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_mtp_prefill_attribution"
+PREFILL_ANNOTATION = "step[EXTEND bs=1 toks=256]"
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,18 +56,18 @@ def validate_protocol(path: Path) -> dict[str, Any]:
     protocol = json.loads(path.read_text())
     formal = protocol.get("formal") or {}
     expected = {
-        "kind": "attribution",
+        "kind": "attribution-prefill",
         "expected_ranks": 4,
         "model_revision": MODEL_REVISION,
     }
     formal_expected = {
         "batch": 4,
-        "per_rank_running": [1, 1, 1, 1],
+        "per_rank_batch": 1,
         "isl": 256,
-        "osl": 128,
+        "osl": 8,
         "profile_steps": 1,
         "cuda_graph": False,
-        "capture_scope": "one complete eager target+MTP decode iteration",
+        "capture_scope": "one complete eager target prefill iteration with MTP enabled",
     }
     mismatch = {
         key: {"expected": value, "actual": protocol.get(key)}
@@ -93,31 +92,35 @@ def validate_protocol(path: Path) -> dict[str, Any]:
         "speculative_num_draft_tokens": 6,
     }.items():
         if server.get(key) != value:
-            mismatch[f"server_info.{key}"] = {
-                "expected": value,
-                "actual": server.get(key),
-            }
-    trigger = (formal.get("trigger") or {}).get("trigger") or {}
-    if trigger.get("global_running_reqs") != 4:
-        mismatch["formal.trigger.global_running_reqs"] = {
-            "expected": 4,
-            "actual": trigger.get("global_running_reqs"),
-        }
-    profile_request = (protocol.get("start_profile_response") or {}).get("request") or {}
+            mismatch[f"server_info.{key}"] = {"expected": value, "actual": server.get(key)}
+    request = (protocol.get("start_profile_response") or {}).get("request") or {}
     for key, value in {
         "num_steps": 1,
         "with_stack": True,
         "record_shapes": True,
         "merge_profiles": False,
     }.items():
-        if profile_request.get(key) != value:
+        if request.get(key) != value:
             mismatch[f"start_profile_response.request.{key}"] = {
                 "expected": value,
-                "actual": profile_request.get(key),
+                "actual": request.get(key),
             }
     if mismatch:
-        raise ValueError(f"attribution protocol mismatch: {mismatch}")
+        raise ValueError(f"prefill-attribution protocol mismatch: {mismatch}")
     return protocol
+
+
+def _annotation(events: list[dict[str, Any]], rank: int) -> dict[str, Any]:
+    candidates = [
+        event
+        for event in events
+        if event.get("cat") == "gpu_user_annotation"
+        and event.get("ph") == "X"
+        and event.get("name") == PREFILL_ANNOTATION
+    ]
+    if len(candidates) != 1:
+        raise ValueError(f"rank {rank}: expected one {PREFILL_ANNOTATION}, got {len(candidates)}")
+    return candidates[0]
 
 
 def build(args: argparse.Namespace):
@@ -129,44 +132,34 @@ def build(args: argparse.Namespace):
     rank_metrics = {}
     rank_validation = {}
     rank_wall_ms = {}
-    all_mapping_rows = []
     reference_events = []
     reference_start_us = 0.0
-    reference_duration_us = 0.0
-    reference_batch = 0
+    all_mappings = []
     for rank, path in sorted(paths_by_rank.items()):
-        trace = load_trace(path)
-        trace_events = trace.get("traceEvents") or []
-        windows = find_eagle_mtp_decode_windows(trace_events, signature="fused_qkvzba_split")
-        if len(windows) != 1:
-            raise ValueError(f"rank {rank}: expected exactly one bounded MTP window, got {len(windows)}")
-        window = windows[0]
-        mapped, validation = map_graph_window(
-            trace_events,
-            window=window,
-            rank=rank,
-            step_index=0,
+        events = load_trace(path).get("traceEvents") or []
+        annotation = _annotation(events, rank)
+        start_us = float(annotation["ts"])
+        end_us = start_us + float(annotation["dur"])
+        mapped, validation = map_prefill_window(
+            events, start_us=start_us, end_us=end_us, rank=rank, step_index=0
         )
-        _validate_step_signatures(validation, rank=rank, step=0)
         rank_metrics[rank] = _metrics_for_rank(mapped, 1)
         rank_validation[rank] = validation
-        rank_wall_ms[rank] = (window.end_us - window.start_us) / 1000.0
-        all_mapping_rows.extend(mapped)
+        rank_wall_ms[rank] = (end_us - start_us) / 1000.0
+        all_mappings.extend(mapped)
         if rank == 0:
-            reference_start_us = window.start_us
-            reference_duration_us = window.end_us - window.start_us
-            reference_batch = int(validation["target_verify_batch_size"])
+            reference_start_us = start_us
             reference_events = attach_graph_stack_evidence(
                 mapped, mapping_path=args.eager_mapping
             )
 
-    total_reference_us = sum(float(event["dur_us"]) for event in reference_events)
-    stack_reference_us = sum(
+    reference_total_us = sum(float(event["dur_us"]) for event in reference_events)
+    stack_us = sum(
         float(event["dur_us"]) for event in reference_events if event.get("python_stack")
     )
-    stack_ratio = stack_reference_us / total_reference_us if total_reference_us else 0.0
+    stack_ratio = stack_us / reference_total_us if reference_total_us else 0.0
     if stack_ratio < 0.95:
-        raise ValueError(f"direct eager stack coverage {stack_ratio:.4f} < 0.95")
+        raise ValueError(f"direct eager prefill stack coverage {stack_ratio:.4f} < 0.95")
 
     critical_wall_ms = max(rank_wall_ms.values())
     timing_summary = {
@@ -177,14 +170,14 @@ def build(args: argparse.Namespace):
     }
     timeline = build_timeline_artifact(
         profile_id=PROFILE_ID,
-        phase="decode",
+        phase="prefill",
         reference_rank=0,
         steps=[
             {
                 "step_index": 0,
-                "label": f"eager attribution target+MTP iteration · local BS{reference_batch}",
+                "label": "eager attribution · one complete 256-token target prefill",
                 "trace_start_us": reference_start_us,
-                "duration_us": reference_duration_us,
+                "duration_us": rank_wall_ms[0] * 1000.0,
                 "events": reference_events,
             }
         ],
@@ -203,31 +196,31 @@ def build(args: argparse.Namespace):
         },
     )
 
-    total_us = sum(float(event["dur_us"]) for event in all_mapping_rows)
+    total_us = sum(float(event["dur_us"]) for event in all_mappings)
     status_us: Counter[str] = Counter()
-    for event in all_mapping_rows:
+    for event in all_mappings:
         status_us[str(event["mapping_status"])] += float(event["dur_us"])
     attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
     node_metrics = _aggregate_rank_metrics(rank_metrics)
     profile = {
         "schema_version": "profile.v2",
         "profile_id": PROFILE_ID,
-        "label": "Qwen3.5 397B · SGLang · eager attribution · DEP4 + MTP6 · stacks + shapes",
+        "label": "Qwen3.5 397B · SGLang · eager prefill attribution · DEP4 · stacks + shapes",
         "model_id": "qwen35_397b_a17b",
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
-        "variant_id": "sglang_agentx_dep4_mtp6_eager_attribution_cgoff",
-        "phase": "decode",
+        "variant_id": "sglang_mtp_dep4_eager_prefill_attribution_cgoff",
+        "phase": "prefill",
         "generation_mode": "mtp",
-        "entry_view": "generation_loop",
+        "entry_view": "top",
         "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
         "workload": {
             "isl": 256,
-            "osl": 128,
+            "osl": 8,
             "global_batch_size": 4,
-            "per_rank_batch_size": [1, 1, 1, 1],
-            "selected_iterations": 1,
+            "per_rank_batch_size": 1,
+            "mtp_enabled": True,
             "purpose": "kernel-to-source attribution; not a performance baseline",
         },
         "profiler": {
@@ -273,7 +266,7 @@ def build(args: argparse.Namespace):
         "node_metrics": node_metrics,
         "protocol_formal": protocol["formal"],
     }
-    return profile, timeline, analysis, all_mapping_rows
+    return profile, timeline, analysis, all_mappings
 
 
 def main() -> int:
@@ -300,7 +293,6 @@ def main() -> int:
         for row in mappings:
             output.write(json.dumps(row, separators=(",", ":")) + "\n")
     print(f"wrote {args.output_profile.resolve()}")
-    print(f"wrote {args.output_timeline.resolve()}")
     return 0
 
 

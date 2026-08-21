@@ -22,6 +22,7 @@ from models.common.trace_mapping import load_trace
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     MODEL_REVISION,
     RUNTIME_SOURCE_COMMIT,
+    SGLANG_NODE_STATES,
     SOURCE_COMMIT,
     _aggregate_rank_metrics,
     _metrics_for_rank,
@@ -92,7 +93,7 @@ def _validate_protocol(path: Path) -> dict[str, Any]:
         "tp_size": 4,
         "ep_size": 4,
         "chunked_prefill_size": 8192,
-        "max_prefill_tokens": 8192,
+        "max_prefill_tokens": 32768,
     }.items():
         if server.get(key) != value:
             mismatch[f"server_info.{key}"] = {
@@ -223,7 +224,7 @@ def build(args: argparse.Namespace):
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
         "variant_id": "sglang_dep4_target_prefill_8192_cgoff",
         "phase": "prefill",
-        "generation_mode": "target_prefill_isolation",
+        "generation_mode": "mtp",
         "entry_view": "top",
         "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
@@ -261,6 +262,7 @@ def build(args: argparse.Namespace):
             "critical_prefill_wall_ms": round(critical_wall_ms, 6),
         },
         "timeline": {},
+        "node_states": SGLANG_NODE_STATES,
         "node_metrics": _aggregate_rank_metrics(rank_metrics),
     }
     analysis = {

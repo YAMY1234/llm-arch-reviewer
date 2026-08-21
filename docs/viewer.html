@@ -1700,9 +1700,12 @@ function decodeTimelineArtifact(artifact) {
     for (const event of (step.events || [])) {
       event._kernelName = timelineStringFrom(artifact, event.kernel_name);
       event._kernelLabel = timelineStringFrom(artifact, event.kernel_label);
+      event._engine = timelineStringFrom(artifact, event.engine);
       event._irNode = timelineStringFrom(artifact, event.ir_node);
       event._irTargets = (event.ir_targets || []).map(index => timelineStringFrom(artifact, index));
       event._fusionGroupIds = [];
+      const directFusionGroup = timelineStringFrom(artifact, event.fusion_group);
+      if (directFusionGroup) event._fusionGroupIds.push(directFusionGroup);
       for (const [groupId, group] of Object.entries(currentFusionGroups())) {
         const covered = group.ir_nodes || [];
         if (covered.some(target => event._irTargets.includes(target))) {
@@ -2074,6 +2077,7 @@ function showTimelineEventDetail(event) {
     </div>
     <div class="kv">
       <div class="k">IR node</div><div>${escapeHtml(event._irNode)}</div>
+      <div class="k">engine / rank / device</div><div>${escapeHtml(event._engine || "—")} / ${CURRENT_TIMELINE?.reference_rank ?? "—"} / ${event.device ?? "—"}</div>
       <div class="k">IR targets</div><div>${escapeHtml(event._irTargets.join(", "))}</div>
       ${event._fusionGroupIds?.length ? `<div class="k">fusion</div><div>${escapeHtml(event._fusionGroupIds.join(", "))} · one shared kernel interval</div>` : ""}
       <div class="k">kernel</div><div style="word-break:break-all">${escapeHtml(event._kernelName)}</div>
@@ -2082,6 +2086,7 @@ function showTimelineEventDetail(event) {
       <div class="k">stream</div><div>${escapeHtml(track?.label || event.stream_id)}</div>
       <div class="k">layer</div><div>${event.layer_id == null ? "—" : event.layer_id} · ${escapeHtml(event._layerKind || "")}</div>
       <div class="k">substage</div><div>${escapeHtml(event._substage || "—")}</div>
+      <div class="k">MTP round</div><div>${event.mtp_round == null ? "—" : event.mtp_round}</div>
       <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
       <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
       <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>

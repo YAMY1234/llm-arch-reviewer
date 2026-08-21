@@ -224,3 +224,5 @@ def test_viewer_contains_bidirectional_architecture_timeline_navigation() -> Non
     assert "function openNodeOnTimeline(viewName, nodeId)" in viewer
     assert "event._irTargets.includes(TIMELINE_IR_TARGET)" in viewer
     assert "Show measured kernels on timeline" in viewer
+    assert "event._engine" in viewer
+    assert "directFusionGroup" in viewer
