@@ -49,13 +49,17 @@ profile_worker() {
     local worker_host=${SLURMD_NODENAME:-$(hostname -s)}
     local output=${TLLM_WORKER_NSYS_OUTPUT_DIR}/${worker_host}-${mode}-rank${mpi_rank}
     log_stderr "Rank${mpi_rank} worker-local Nsight output: ${output}.nsys-rep"
+    # Nsight Systems 2026.2.1's async repeat mode materializes the report as
+    # soon as this single CUDA-profiler range closes while the worker keeps
+    # serving. Plain `stop` defers export until worker shutdown and lets Slurm
+    # teardown kill some per-rank exporters.
     nsys profile \
-        -t cuda,nvtx,ucx \
+        -t cuda,nvtx \
         --sample=none \
         --cuda-graph-trace=node \
         --trace-fork-before-exec=true \
         -c cudaProfilerApi \
-        --capture-range-end=stop \
+        --capture-range-end=repeat:1:async \
         --kill=none \
         --wait=all \
         --force-overwrite=true \
