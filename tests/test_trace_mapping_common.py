@@ -127,6 +127,33 @@ class CommonTraceMappingTest(unittest.TestCase):
             [(10, 60), (60, 102)],
         )
 
+    def test_eagle_mtp_decode_accepts_plain_draft_extend_marker(self):
+        def annotation(name, ts, dur):
+            return {
+                "ph": "X",
+                "cat": "gpu_user_annotation",
+                "name": name,
+                "pid": 0,
+                "tid": 23,
+                "ts": ts,
+                "dur": dur,
+            }
+
+        events = [
+            annotation("step[TARGET_VERIFY bs=8]", 10, 20),
+            annotation("draft_extend", 31, 4),
+            annotation("draft", 36, 3),
+            annotation("step[TARGET_VERIFY bs=8]", 40, 20),
+            annotation("draft_extend", 61, 4),
+        ]
+
+        windows = find_eagle_mtp_decode_windows(events)
+
+        self.assertEqual(
+            [(window.start_us, window.end_us) for window in windows],
+            [(10, 40), (40, 65)],
+        )
+
     def test_gpu_step_annotation_defines_complete_forward_without_anchor(self):
         with TemporaryDirectory() as td:
             tmp = Path(td)

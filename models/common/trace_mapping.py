@@ -324,6 +324,7 @@ def find_eagle_mtp_decode_windows(
         ]
         if not any(
             str(event.get("name", "")).startswith("step[DRAFT_EXTEND_V2")
+            or str(event.get("name", "")) == "draft_extend"
             for event in following
         ):
             continue
