@@ -226,8 +226,10 @@ def main() -> int:
             "isl": 8192,
             "osl": 1,
             "profile_steps": 1,
-            "chunked_prefill_size": 8192,
-            "max_prefill_tokens": 8192,
+            "dp_size": 4,
+            "chunked_prefill_size_requested_global": 32768,
+            "max_prefill_tokens_requested_global": 32768,
+            "chunked_prefill_size_effective_per_dp_rank": 8192,
         }
         run_batch(args.base_url, batch_size=1, input_len=8192, output_len=1, token_seed=401)
     else:
