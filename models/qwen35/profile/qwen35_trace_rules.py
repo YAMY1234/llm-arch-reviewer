@@ -59,9 +59,26 @@ def classify_qwen35_node(
             return "mtp_moe_block.draft_ep4_combine", "high"
         if "dispatch" in kernel:
             return "mtp_moe_block.draft_ep4_dispatch", "high"
-    if _contains_any(kernel, ("moe_a2a_combine", "flashinfer_moe_combine")):
+    if _contains_any(
+        kernel,
+        (
+            "moe_a2a_combine",
+            "flashinfer_moe_combine",
+            "moea2apreparecombine",
+            "moea2acombinekernel",
+        ),
+    ):
         return "moe_block.target_ep4_combine", "high"
-    if _contains_any(kernel, ("moe_a2a_dispatch", "flashinfer_moe_dispatch")):
+    if _contains_any(
+        kernel,
+        (
+            "moe_a2a_dispatch",
+            "flashinfer_moe_dispatch",
+            "moea2apreparedispatch",
+            "moea2adispatchkernel",
+            "moea2asanitizeexpertids",
+        ),
+    ):
         if _contains_any(kernel, ("prepare", "preprocess", "pack")):
             return "moe_block.target_ep4_pack", "high"
         return "moe_block.target_ep4_dispatch", "high"

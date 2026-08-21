@@ -40,6 +40,35 @@ def test_dispatch_backends_bind_independent_wire_scopes() -> None:
     ) == ("mtp_moe_block.draft_ep4_combine", "high")
 
 
+def test_trtllm_moe_a2a_kernel_spellings_map_to_target_wire_nodes() -> None:
+    target_stack = frames("FlashinferDispatcher.dispatch")
+    assert classify_qwen35_node(
+        "tensorrt_llm::kernels::moe_alltoall::moeA2APrepareDispatchKernel",
+        None,
+        target_stack,
+    ) == ("moe_block.target_ep4_pack", "high")
+    assert classify_qwen35_node(
+        "tensorrt_llm::kernels::moe_alltoall::moeA2ADispatchKernel<10>",
+        None,
+        target_stack,
+    ) == ("moe_block.target_ep4_dispatch", "high")
+    assert classify_qwen35_node(
+        "tensorrt_llm::kernels::moe_alltoall::moeA2ASanitizeExpertIdsKernel",
+        None,
+        target_stack,
+    ) == ("moe_block.target_ep4_dispatch", "high")
+    assert classify_qwen35_node(
+        "tensorrt_llm::kernels::moe_alltoall::moeA2APrepareCombineKernel",
+        None,
+        target_stack,
+    ) == ("moe_block.target_ep4_combine", "high")
+    assert classify_qwen35_node(
+        "tensorrt_llm::kernels::moe_alltoall::moeA2ACombineKernel<bf16>",
+        None,
+        target_stack,
+    ) == ("moe_block.target_ep4_combine", "high")
+
+
 def test_accepted_prefix_replay_wins_over_gdn_signature() -> None:
     assert classify_qwen35_node(
         "gdn_wide_vec_kernel",
