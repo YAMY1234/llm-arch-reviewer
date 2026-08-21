@@ -509,3 +509,145 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
     if validation["attributed_duration_ratio"] < 0.90:
         raise ValueError(f"step {step.step_id}: attributed residency is below 90%")
     return mapped, validation
+
+
+def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Attribute one TRT-LLM AgentX target-prefill scheduler step.
+
+    Attention-DP owner ranks execute the full target model; the other EP ranks
+    can contain only the same 60 dispatch/combine calls.  Both are first-class
+    observations and are labelled explicitly instead of pretending collective-
+    only ranks ran attention/GDN compute.
+    """
+
+    kernels = list(step.kernels)
+    prepare = [
+        index
+        for index, kernel in enumerate(kernels)
+        if "moea2apreparedispatch" in kernel.name.lower()
+    ]
+    if len(prepare) != 60:
+        raise ValueError(
+            f"prefill step {step.step_id}: expected 60 target MoE calls, got {len(prepare)}"
+        )
+    anchor_pairs = [
+        (index, _anchor_kind(kernel.name))
+        for index, kernel in enumerate(kernels)
+        if _anchor_kind(kernel.name) is not None
+    ]
+    owner_compute = bool(anchor_pairs)
+    if owner_compute and tuple(kind for _index, kind in anchor_pairs) != TARGET_PATTERN:
+        raise ValueError(
+            f"prefill step {step.step_id}: owner-rank layer order is not exact GGGA"
+        )
+    if owner_compute:
+        layer_anchors = [index for index, _kind in anchor_pairs]
+        layer_kinds = [str(kind) for _index, kind in anchor_pairs]
+    else:
+        layer_anchors = prepare
+        layer_kinds = list(TARGET_PATTERN)
+
+    mapped: list[dict[str, Any]] = []
+    status_ns: Counter[str] = Counter()
+    for event_index, kernel in enumerate(kernels):
+        layer_id = max(0, bisect_right(layer_anchors, event_index) - 1)
+        layer_kind = layer_kinds[layer_id]
+        direct = _direct_node(kernel.name, section="target", layer_kind=layer_kind)
+        if direct is None:
+            if owner_compute:
+                view = "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
+                direct = (
+                    f"{view}.output_hidden",
+                    "target prefill layer fused/auxiliary kernel",
+                    "fusion",
+                )
+            else:
+                direct = (
+                    "top.decoder_stack",
+                    "collective-only EP-rank auxiliary kernel",
+                    "fusion",
+                )
+        node, label, status = direct
+        duration_ns = kernel.end_ns - kernel.start_ns
+        status_ns[status] += duration_ns
+        mapped.append(
+            {
+                "event_id": f"r{step.rank}-p{step.step_id}-k{event_index}",
+                "rank": step.rank,
+                "step_index": step.step_id,
+                "kernel_name": kernel.name,
+                "kernel_label": label,
+                "node": node,
+                "ir_targets": [f"layer_schedule.layer_{layer_id:02d}"],
+                "mapping_status": status,
+                "attribution_method": (
+                    "unique_kernel_signature"
+                    if status == "mapped"
+                    else "validated_owner_layer_scope"
+                    if owner_compute
+                    else "validated_collective_only_rank_scope"
+                ),
+                "confidence": "high" if status == "mapped" else "structural",
+                "layer_id": layer_id,
+                "layer_kind": layer_kind,
+                "substage": "target_prefill",
+                "owner_compute": owner_compute,
+                "ts_us": kernel.start_ns / 1000.0,
+                "dur_us": kernel.duration_us,
+                "stream": kernel.stream,
+                "kernel_kind": (
+                    "communication"
+                    if _contains(kernel.name, "moea2adispatch", "moea2acombine")
+                    else "compute"
+                ),
+                "graph_id": kernel.graph_id,
+                "graph_node_id": kernel.graph_node_id,
+                "correlation_id": kernel.correlation_id,
+            }
+        )
+
+    total_ns = sum(kernel.end_ns - kernel.start_ns for kernel in kernels)
+    validation = {
+        "step_id": step.step_id,
+        "rank": step.rank,
+        "owner_compute": owner_compute,
+        "kernel_count": len(kernels),
+        "target_gdn_layers": sum(kind == "gdn" for _index, kind in anchor_pairs),
+        "target_attention_layers": sum(
+            kind == "attention" for _index, kind in anchor_pairs
+        ),
+        "target_ep4_dispatch": sum(
+            "moea2adispatchkernel" in kernel.name.lower() for kernel in kernels
+        ),
+        "target_ep4_combine": sum(
+            "moea2acombinekernel" in kernel.name.lower() for kernel in kernels
+        ),
+        "cpu_wall_us": step.cpu_wall_us,
+        "gpu_span_us": (step.gpu_end_ns - step.gpu_start_ns) / 1000.0,
+        "gpu_busy_union_us": _union_duration_ns(kernels) / 1000.0,
+        "gpu_residency_us": total_ns / 1000.0,
+        "timing_closure_us": (
+            sum(float(event["dur_us"]) for event in mapped) - total_ns / 1000.0
+        ),
+        "status_duration_us": {
+            status: duration / 1000.0 for status, duration in sorted(status_ns.items())
+        },
+        "attributed_duration_ratio": (
+            (status_ns["mapped"] + status_ns["fusion"]) / total_ns if total_ns else 0.0
+        ),
+        "strict_signature_duration_ratio": (
+            status_ns["mapped"] / total_ns if total_ns else 0.0
+        ),
+    }
+    if validation["target_ep4_dispatch"] != 60 or validation["target_ep4_combine"] != 60:
+        raise ValueError(f"prefill step {step.step_id}: incomplete EP4 collectives")
+    if owner_compute and (
+        validation["target_gdn_layers"] != 45
+        or validation["target_attention_layers"] != 15
+    ):
+        raise ValueError(f"prefill step {step.step_id}: incomplete target-model layers")
+    if abs(validation["timing_closure_us"]) > 1e-6:
+        raise ValueError(f"prefill step {step.step_id}: kernel timing does not close")
+    if validation["attributed_duration_ratio"] < 0.90:
+        raise ValueError(f"prefill step {step.step_id}: attributed residency is below 90%")
+    return mapped, validation

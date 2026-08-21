@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Build immutable TRT-LLM AgentX profiles from worker-local Nsys SQLite files."""
+
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import sqlite3
+import statistics
+import sys
+from typing import Any
+
+import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from models.common.timeline_artifact import build_timeline_artifact, write_timeline_artifact
+from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
+    _metrics_for_rank,
+    sha256_file,
+)
+from models.qwen35.profile.qwen35_nsys_mapping import (
+    load_nsys_steps,
+    map_decode_step,
+    map_prefill_step,
+)
+
+
+REPORT_RE = re.compile(
+    r"(?P<worker>.+)-(?P<phase>prefill|decode)-rank(?P<rank>[0-3])(?:\.\d+)?\.sqlite$"
+)
+TRT_COMMIT = "1cef02e901be43081b1ba6d4981e94ed3bd9c1e8"
+MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
+    parser.add_argument("--sqlites", type=Path, nargs="+", required=True)
+    parser.add_argument("--job-id", type=int, default=532540)
+    parser.add_argument("--output-profile", type=Path, required=True)
+    parser.add_argument("--output-timeline", type=Path, required=True)
+    parser.add_argument("--output-analysis", type=Path, required=True)
+    parser.add_argument("--output-mapping", type=Path, required=True)
+    return parser.parse_args()
+
+
+def _report_identity(path: Path, phase: str) -> tuple[str, int]:
+    match = REPORT_RE.fullmatch(path.name)
+    if match is None:
+        raise ValueError(f"unrecognized report filename {path.name}")
+    if match.group("phase") != phase:
+        raise ValueError(f"{path.name} is not a {phase} report")
+    return match.group("worker"), int(match.group("rank"))
+
+
+def _validate_process(path: Path) -> dict[str, Any]:
+    connection = sqlite3.connect(path)
+    try:
+        processes = [
+            {"pid": int(pid), "name": str(name)}
+            for pid, name in connection.execute(
+                "select distinct p.pid, p.name from CUPTI_ACTIVITY_KIND_KERNEL k "
+                "join PROCESSES p on p.globalPid=k.globalPid order by p.pid"
+            )
+        ]
+        nvtx_steps = connection.execute(
+            "select count(*) from NVTX_EVENTS n left join StringIds s on s.id=n.textId "
+            "where coalesce(n.text,s.value) like '[Executor] _forward_step %' and n.end is not null"
+        ).fetchone()[0]
+        kernels = connection.execute(
+            "select count(*) from CUPTI_ACTIVITY_KIND_KERNEL"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+    if not processes or not any("python" in item["name"].lower() for item in processes):
+        raise ValueError(f"{path.name}: kernels are not attached to a Python worker process")
+    if not nvtx_steps or not kernels:
+        raise ValueError(f"{path.name}: missing NVTX steps or CUDA kernels")
+    return {"processes": processes, "nvtx_step_count": nvtx_steps, "kernel_count": kernels}
+
+
+def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    nodes = sorted({node for metrics in source_metrics.values() for node in metrics})
+    output = {}
+    for node in nodes:
+        candidates = [
+            (source, metrics[node])
+            for source, metrics in sorted(source_metrics.items())
+            if node in metrics
+        ]
+        selected_source, selected = max(
+            candidates, key=lambda item: float(item[1]["ms_per_iter"])
+        )
+        values = [float(cell["ms_per_iter"]) for _source, cell in candidates]
+        output[node] = {
+            **selected,
+            "ms_per_iter": round(float(selected["ms_per_iter"]), 6),
+            "aggregation": "maximum per worker/rank kernel residency",
+            "source_worker_rank": selected_source,
+            "worker_rank_range_ms": [round(min(values), 6), round(max(values), 6)],
+        }
+    return output
+
+
+def build(args: argparse.Namespace):
+    expected_workers = 3 if args.phase == "prefill" else 2
+    expected_steps = set(range(10000, 10003)) if args.phase == "prefill" else set(range(60000, 60021))
+    paths: dict[tuple[str, int], Path] = {}
+    for raw_path in args.sqlites:
+        path = raw_path.resolve()
+        identity = _report_identity(path, args.phase)
+        if identity in paths:
+            raise ValueError(f"duplicate report for {identity}: {path}")
+        paths[identity] = path
+    workers = sorted({worker for worker, _rank in paths})
+    if len(workers) != expected_workers:
+        raise ValueError(f"expected {expected_workers} {args.phase} workers, got {workers}")
+    for worker in workers:
+        ranks = {rank for candidate, rank in paths if candidate == worker}
+        if ranks != {0, 1, 2, 3}:
+            raise ValueError(f"worker {worker} lacks four-rank coverage: {ranks}")
+
+    source_metrics: dict[str, dict[str, Any]] = {}
+    validations: dict[str, list[dict[str, Any]]] = {}
+    process_checks: dict[str, dict[str, Any]] = {}
+    timing_by_step: dict[int, list[dict[str, float]]] = {}
+    all_mappings: list[dict[str, Any]] = []
+    reference_source = f"{workers[0]}/rank0"
+    reference_steps: list[dict[str, Any]] = []
+    owner_rank_positions: set[int] = set()
+
+    for (worker, rank), path in sorted(paths.items()):
+        source = f"{worker}/rank{rank}"
+        process_checks[source] = _validate_process(path)
+        steps = load_nsys_steps(path, rank=rank)
+        actual_steps = {step.step_id for step in steps}
+        if actual_steps != expected_steps:
+            raise ValueError(
+                f"{source}: expected steps {min(expected_steps)}..{max(expected_steps)}, "
+                f"got {sorted(actual_steps)}"
+            )
+        source_mappings: list[dict[str, Any]] = []
+        source_validations = []
+        for step in steps:
+            if args.phase == "decode":
+                mappings, validation = map_decode_step(step)
+            else:
+                mappings, validation = map_prefill_step(step)
+                if validation["owner_compute"]:
+                    owner_rank_positions.add(rank)
+            for mapping in mappings:
+                mapping["event_id"] = f"{worker}-{mapping['event_id']}"
+                mapping["worker"] = worker
+            source_mappings.extend(mappings)
+            source_validations.append(validation)
+            timing_by_step.setdefault(step.step_id, []).append(
+                {
+                    "cpu_wall_us": validation["cpu_wall_us"],
+                    "gpu_span_us": validation["gpu_span_us"],
+                    "gpu_busy_union_us": validation["gpu_busy_union_us"],
+                    "gpu_residency_us": validation["gpu_residency_us"],
+                }
+            )
+            if source == reference_source:
+                reference_steps.append(
+                    {
+                        "step_index": step.step_id,
+                        "label": step.label,
+                        "trace_start_us": min(float(item["ts_us"]) for item in mappings),
+                        "duration_us": validation["gpu_span_us"],
+                        "events": mappings,
+                    }
+                )
+        source_metrics[source] = _metrics_for_rank(source_mappings, len(steps))
+        validations[source] = source_validations
+        all_mappings.extend(source_mappings)
+
+    if args.phase == "prefill" and owner_rank_positions != {0, 1, 2, 3}:
+        raise ValueError(
+            f"prefill reports do not validate owner compute on all rank positions: {owner_rank_positions}"
+        )
+
+    critical_steps = {
+        str(step_id): {
+            "cpu_wall_us": max(item["cpu_wall_us"] for item in rows),
+            "gpu_span_us": max(item["gpu_span_us"] for item in rows),
+            "gpu_busy_union_us": max(item["gpu_busy_union_us"] for item in rows),
+            "gpu_residency_us": max(item["gpu_residency_us"] for item in rows),
+        }
+        for step_id, rows in sorted(timing_by_step.items())
+    }
+    critical_cpu_ms = [row["cpu_wall_us"] / 1000.0 for row in critical_steps.values()]
+    timing_summary = {
+        "semantics": "each metric is the maximum worker/rank observation for that local step; rank residency is never summed",
+        "critical_steps": critical_steps,
+        "critical_cpu_wall_ms": {
+            "samples": critical_cpu_ms,
+            "mean": statistics.fmean(critical_cpu_ms),
+            "median": statistics.median(critical_cpu_ms),
+            "min": min(critical_cpu_ms),
+            "max": max(critical_cpu_ms),
+        },
+    }
+
+    reference_path = paths[(workers[0], 0)]
+    profile_id = f"qwen35_trtllm_attention_dp4_moe_ep4_agentx_{args.phase}"
+    timeline = build_timeline_artifact(
+        profile_id=profile_id,
+        phase=args.phase,
+        reference_rank=0,
+        steps=reference_steps,
+        timing_summary=timing_summary,
+        raw_trace={
+            "file": reference_path.name,
+            "sha256": sha256_file(reference_path),
+            "format": "Nsight Systems SQLite export",
+            "rank": 0,
+            "worker": workers[0],
+        },
+        stack_source={
+            "mode": "nsight_nvtx_and_cuda_graph_node_identity",
+            "file": reference_path.name,
+            "sha256": sha256_file(reference_path),
+            "mapped_residency_ratio": 1.0,
+            "policy": "NVTX forward-step identity, runtime correlation, and per-graph-node occurrence index",
+        },
+    )
+
+    total_us = sum(float(row["dur_us"]) for row in all_mappings)
+    status_us: Counter[str] = Counter()
+    for row in all_mappings:
+        status_us[str(row["mapping_status"])] += float(row["dur_us"])
+    attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
+    if attributed_ratio < 0.90:
+        raise ValueError(f"TRT {args.phase} mapped+fusion ratio {attributed_ratio:.4f} < 0.90")
+
+    profile = {
+        "schema_version": "profile.v2",
+        "profile_id": profile_id,
+        "label": f"Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · {args.phase}",
+        "model_id": "qwen35_397b_a17b",
+        "execution_path_id": "attention_dp4_moe_ep4",
+        "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
+        "variant_id": f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97",
+        "phase": args.phase,
+        "generation_mode": "agentx_mtp6",
+        "entry_view": "generation_loop" if args.phase == "decode" else "top",
+        "execution_parameters": {"tp_size": 4, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "hardware": {
+            "gpu": "GB300",
+            "gpus_per_node": 4,
+            "nodes": expected_workers,
+            "topology_scope": f"{expected_workers} disaggregated {args.phase} workers",
+        },
+        "workload": {
+            "suite": "AgentX A-Z97",
+            "concurrency": 704,
+            "duration_seconds": 3600,
+            "warmup_requests_per_lane": 10,
+            "warmup_grace_seconds": 1800,
+            "mtp_draft_tokens": 6,
+            "decode_cuda_graph_batch_cap": 32,
+        },
+        "profiler": {
+            "type": "nsight_systems_worker_local",
+            "rank": "all four DEP ranks on every worker",
+            "trace": ["cuda", "nvtx"],
+            "cuda_graph_enabled": args.phase == "decode",
+            "gpu_metric_semantics": "maximum worker/rank residency; parallel ranks and workers are not summed",
+        },
+        "evidence": {
+            "job_id": args.job_id,
+            "baseline_job_id": 501238,
+            "tensorrt_llm_commit": TRT_COMMIT,
+            "model_revision": MODEL_REVISION,
+            "report_files": [
+                {
+                    "worker": worker,
+                    "rank": rank,
+                    "file": path.name,
+                    "sha256": sha256_file(path),
+                }
+                for (worker, rank), path in sorted(paths.items())
+            ],
+            "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
+            "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
+            "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "critical_cpu_wall_ms": timing_summary["critical_cpu_wall_ms"],
+            "four_rank_validation": True,
+            "worker_count": expected_workers,
+        },
+        "timeline": {},
+        "node_metrics": _aggregate_metrics(source_metrics),
+    }
+    analysis = {
+        "profile_id": profile_id,
+        "phase": args.phase,
+        "workers": workers,
+        "process_checks": process_checks,
+        "validations": validations,
+        "owner_rank_positions": sorted(owner_rank_positions),
+        "timing_summary": timing_summary,
+        "status_duration_us": dict(status_us),
+        "mapped_or_fusion_duration_ratio": attributed_ratio,
+        "strict_signature_duration_ratio": status_us["mapped"] / total_us,
+        "node_metrics": profile["node_metrics"],
+    }
+    return profile, timeline, analysis, all_mappings
+
+
+def main() -> int:
+    args = parse_args()
+    profile, timeline, analysis, mappings = build(args)
+    timeline_sha = write_timeline_artifact(args.output_timeline, timeline)
+    profile["timeline"] = {
+        "schema_version": "timeline.v1",
+        "artifact": args.output_timeline.name,
+        "sha256": timeline_sha,
+        "reference_rank": 0,
+        "step_count": len(timeline["steps"]),
+        "event_count": sum(len(step["events"]) for step in timeline["steps"]),
+        "raw_trace_file": timeline["raw_trace"]["file"],
+    }
+    args.output_profile.parent.mkdir(parents=True, exist_ok=True)
+    args.output_profile.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    args.output_analysis.parent.mkdir(parents=True, exist_ok=True)
+    args.output_analysis.write_text(json.dumps(analysis, indent=2) + "\n")
+    args.output_mapping.parent.mkdir(parents=True, exist_ok=True)
+    with args.output_mapping.open("w") as output:
+        for row in mappings:
+            output.write(json.dumps(row, separators=(",", ":")) + "\n")
+    print(f"wrote {args.output_profile.resolve()}")
+    print(
+        f"phase={args.phase} attributed={profile['evidence']['mapped_or_fusion_duration_ratio']:.3f} "
+        f"strict={profile['evidence']['strict_signature_duration_ratio']:.3f}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
