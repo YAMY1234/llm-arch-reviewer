@@ -75,6 +75,24 @@ def test_exact_layer_order_and_moe_cardinality_are_preserved() -> None:
     assert moe["shared_expert"]["intermediate_size"] == 1024
 
 
+def test_primary_decoder_drill_uses_a_compact_stack_summary() -> None:
+    model_ir = _load(CATALOG_ROOT / "model_ir.yaml")
+    top = _nodes(model_ir, "top")
+    stack = _nodes(model_ir, "stack")
+
+    assert top["decoder_stack"]["drill"] == "stack"
+    assert len(stack) == 5
+    assert stack["schedule"]["exact_layer_types"] == [
+        node["layer_type"]
+        for node in model_ir["views"]["layer_schedule"]["nodes"]
+    ]
+    assert stack["gdn_layer"]["layer_count"] == 45
+    assert stack["gdn_layer"]["drill"] == "gdn_moe_block"
+    assert stack["full_attention_layer"]["layer_count"] == 15
+    assert stack["full_attention_layer"]["drill"] == "full_attention_moe_block"
+    assert _nodes(model_ir, "generation_loop")["target_verify"]["drill"] == "stack"
+
+
 def test_kv_gdn_state_and_mtp_transaction_are_explicit() -> None:
     model_ir = _load(CATALOG_ROOT / "model_ir.yaml")
     states = _nodes(model_ir, "state_tensors")

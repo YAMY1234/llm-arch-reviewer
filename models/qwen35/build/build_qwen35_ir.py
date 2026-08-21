@@ -80,10 +80,10 @@ def _top_view(hidden_size: int, vocab_size: int) -> dict[str, Any]:
             ),
             _node(
                 "decoder_stack",
-                "60-layer hybrid decoder",
+                "60-layer hybrid decoder\nrepeat 15×: GDN ×3 + full attention ×1",
                 "block",
                 "qwen3_5.hybrid_decoder",
-                drill="layer_schedule",
+                drill="stack",
             ),
             _node(
                 "state_store",
@@ -130,6 +130,72 @@ def _top_view(hidden_size: int, vocab_size: int) -> dict[str, Any]:
             _edge("lm_head", "target_logits", shape=f"[B,T,{vocab_size}]", dtype="bf16"),
             _edge("target_logits", "generation_controller", label="verification logits"),
             _edge("generation_controller", "accepted_tokens", dtype="int32"),
+        ],
+    }
+
+
+def _stack_view(layer_types: list[str]) -> dict[str, Any]:
+    linear_indices = [
+        index for index, layer_type in enumerate(layer_types)
+        if layer_type == "linear_attention"
+    ]
+    attention_indices = [
+        index for index, layer_type in enumerate(layer_types)
+        if layer_type == "full_attention"
+    ]
+    return {
+        "title": "Compact 60-layer hybrid decoder schedule",
+        "nodes": [
+            _node("stack_input", "Embedded tokens", "io", "qwen3_5.stack.input"),
+            _node(
+                "schedule",
+                "Repeat 15 times\nGDN + MoE ×3 → full attention + MoE ×1",
+                "elem",
+                "qwen3_5.stack.schedule",
+                exact_layer_types=list(layer_types),
+                full_attention_layer_indices=list(attention_indices),
+            ),
+            _node(
+                "gdn_layer",
+                "GDN + MoE decoder layer\n45 layers",
+                "block",
+                "qwen3_5.decoder.gdn_moe_layer",
+                drill="gdn_moe_block",
+                layer_count=len(linear_indices),
+                layer_indices=linear_indices,
+            ),
+            _node(
+                "full_attention_layer",
+                "Full-attention + MoE decoder layer\n15 layers",
+                "block",
+                "qwen3_5.decoder.full_attention_moe_layer",
+                drill="full_attention_moe_block",
+                layer_count=len(attention_indices),
+                layer_indices=list(attention_indices),
+            ),
+            _node("stack_output", "Decoder hidden states", "io", "qwen3_5.stack.output"),
+        ],
+        "edges": [
+            _edge("stack_input", "schedule", shape="[B,T,H]", dtype="bf16"),
+            _edge(
+                "schedule",
+                "gdn_layer",
+                kind="dashed",
+                label="layers 0–2, 4–6, …, 56–58",
+            ),
+            _edge(
+                "schedule",
+                "full_attention_layer",
+                kind="dashed",
+                label="layers 3, 7, …, 59",
+            ),
+            _edge("gdn_layer", "stack_output", shape="[B,T,H]", dtype="bf16"),
+            _edge(
+                "full_attention_layer",
+                "stack_output",
+                shape="[B,T,H]",
+                dtype="bf16",
+            ),
         ],
     }
 
@@ -560,7 +626,7 @@ def _generation_view() -> dict[str, Any]:
                 "Target-model batched verification",
                 "block",
                 "generation.mtp.target_verify",
-                drill="layer_schedule",
+                drill="stack",
             ),
             _node(
                 "tentative_state",
@@ -711,6 +777,7 @@ def build_model_ir(raw_config: dict[str, Any], config_sha256: str) -> dict[str, 
         },
         "views": {
             "top": _top_view(text["hidden_size"], text["vocab_size"]),
+            "stack": _stack_view(layer_types),
             "layer_schedule": _layer_schedule(layer_types),
             "gdn_moe_block": _gdn_view(text),
             "full_attention_moe_block": _full_attention_view(text),
@@ -883,6 +950,8 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
         "top.decoder_stack",
         "top.final_norm",
         "top.lm_head",
+        "stack.gdn_layer",
+        "stack.full_attention_layer",
         "gdn_moe_block.input_norm",
         "gdn_moe_block.qkvz_projection",
         "gdn_moe_block.ba_projection",

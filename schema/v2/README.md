@@ -18,6 +18,14 @@ execution plans continue to describe only placement, sharding, and
 communication. This avoids a TP × DP × EP × MTP cross product of duplicated
 architecture graphs.
 
+Viewer-facing Model IR should use an abstraction hierarchy rather than expand
+every repeated layer instance into the primary drill path. The intended path is
+`top -> stack summary -> representative layer type -> module -> leaf`. A stack
+summary records repeat counts and exact layer indices as node metadata, while an
+optional unlinked evidence view may preserve the full config-derived order for
+machine validation. This keeps the default graph legible without weakening the
+canonical architecture evidence.
+
 The compiled bundle preserves both the raw Model IR views and every derived
 Execution IR. Compiled nodes expose `ir_origin`; execution-plan insertions also
 expose `node_kind` and `boundary_role`. Boundary communication is the safe

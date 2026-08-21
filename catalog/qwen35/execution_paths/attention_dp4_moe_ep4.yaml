@@ -57,6 +57,22 @@ transforms:
       request_sharding: B -> B_local by request; hidden/head dimensions unsharded
       state_ownership: KV and GDN state stay with the request-owning DP rank
 - op: annotate_node
+  target: stack.gdn_layer
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
+  target: stack.full_attention_layer
+  set:
+    execution:
+      placement: replicated weights on each of ranks 0..3
+      parallelism: attention_dp4
+      request_sharding: B -> B_local by request; hidden/head dimensions unsharded
+      state_ownership: KV and GDN state stay with the request-owning DP rank
+- op: annotate_node
   target: gdn_moe_block.input_norm
   set:
     execution:

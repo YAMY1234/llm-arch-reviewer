@@ -74,10 +74,10 @@ views:
       weight: '[248320,4096]'
       output: '[B,T,4096]'
     - id: decoder_stack
-      label: 60-layer hybrid decoder
+      label: "60-layer hybrid decoder\nrepeat 15\xD7: GDN \xD73 + full attention \xD71"
       shape: block
       semantic_op: qwen3_5.hybrid_decoder
-      drill: layer_schedule
+      drill: stack
     - id: state_store
       label: Persistent KV and GDN state
       shape: cache
@@ -140,6 +140,197 @@ views:
     - from: generation_controller
       to: accepted_tokens
       dtype: int32
+  stack:
+    title: Compact 60-layer hybrid decoder schedule
+    nodes:
+    - id: stack_input
+      label: Embedded tokens
+      shape: io
+      semantic_op: qwen3_5.stack.input
+    - id: schedule
+      label: "Repeat 15 times\nGDN + MoE \xD73 \u2192 full attention + MoE \xD71"
+      shape: elem
+      semantic_op: qwen3_5.stack.schedule
+      exact_layer_types:
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      - linear_attention
+      - linear_attention
+      - linear_attention
+      - full_attention
+      full_attention_layer_indices:
+      - 3
+      - 7
+      - 11
+      - 15
+      - 19
+      - 23
+      - 27
+      - 31
+      - 35
+      - 39
+      - 43
+      - 47
+      - 51
+      - 55
+      - 59
+    - id: gdn_layer
+      label: 'GDN + MoE decoder layer
+
+        45 layers'
+      shape: block
+      semantic_op: qwen3_5.decoder.gdn_moe_layer
+      drill: gdn_moe_block
+      layer_count: 45
+      layer_indices:
+      - 0
+      - 1
+      - 2
+      - 4
+      - 5
+      - 6
+      - 8
+      - 9
+      - 10
+      - 12
+      - 13
+      - 14
+      - 16
+      - 17
+      - 18
+      - 20
+      - 21
+      - 22
+      - 24
+      - 25
+      - 26
+      - 28
+      - 29
+      - 30
+      - 32
+      - 33
+      - 34
+      - 36
+      - 37
+      - 38
+      - 40
+      - 41
+      - 42
+      - 44
+      - 45
+      - 46
+      - 48
+      - 49
+      - 50
+      - 52
+      - 53
+      - 54
+      - 56
+      - 57
+      - 58
+    - id: full_attention_layer
+      label: 'Full-attention + MoE decoder layer
+
+        15 layers'
+      shape: block
+      semantic_op: qwen3_5.decoder.full_attention_moe_layer
+      drill: full_attention_moe_block
+      layer_count: 15
+      layer_indices:
+      - 3
+      - 7
+      - 11
+      - 15
+      - 19
+      - 23
+      - 27
+      - 31
+      - 35
+      - 39
+      - 43
+      - 47
+      - 51
+      - 55
+      - 59
+    - id: stack_output
+      label: Decoder hidden states
+      shape: io
+      semantic_op: qwen3_5.stack.output
+    edges:
+    - from: stack_input
+      to: schedule
+      shape: '[B,T,H]'
+      dtype: bf16
+    - from: schedule
+      to: gdn_layer
+      kind: dashed
+      label: "layers 0\u20132, 4\u20136, \u2026, 56\u201358"
+    - from: schedule
+      to: full_attention_layer
+      kind: dashed
+      label: "layers 3, 7, \u2026, 59"
+    - from: gdn_layer
+      to: stack_output
+      shape: '[B,T,H]'
+      dtype: bf16
+    - from: full_attention_layer
+      to: stack_output
+      shape: '[B,T,H]'
+      dtype: bf16
   layer_schedule:
     title: Exact 60-layer order from text_config.layer_types
     nodes:
@@ -1458,7 +1649,7 @@ views:
       label: Target-model batched verification
       shape: block
       semantic_op: generation.mtp.target_verify
-      drill: layer_schedule
+      drill: stack
     - id: tentative_state
       label: Tentative per-step KV/GDN states
       shape: cache
