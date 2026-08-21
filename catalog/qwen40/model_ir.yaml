@@ -1,7 +1,7 @@
 schema_version: model-ir.v2
 model_id: qwen40
 model_label: Qwen 4.0 Air Example BF16
-ir_version: 1
+ir_version: 2
 default_view: top
 default_execution_path: tp_only
 
@@ -13,6 +13,7 @@ dimensions:
   V: 248320
   E: 512 routed experts
   K: 10 selected experts per token
+  D: MTP draft/verify positions per request
 
 facts:
   text_layers: 48
@@ -34,6 +35,10 @@ facts:
   shared_experts: 1
   ple_layer_ids_1_based: [2]
   ple_ngram_size: 3
+  mtp_auxiliary_layers: 1
+  mtp_auxiliary_layer_type: full_attention
+  mtp_ple_enabled: false
+  mtp_input_fusion: residual_linear_shared_across_4_hc_branches
 
 views:
   top:
@@ -43,6 +48,10 @@ views:
         label: "token ids\n[B,T]"
         shape: io
         semantic_op: model.input_ids
+      - id: runtime_support
+        label: "runtime metadata + cache/state prep"
+        shape: elem
+        semantic_op: runtime.model_step_support
       - id: embedding
         label: "token embedding\n[V,H]"
         shape: gemm
@@ -56,7 +65,6 @@ views:
         label: "final hyper-connection mix\n[HC] → [H]"
         shape: elem
         semantic_op: model.final_hyperconnection_mix
-        drill: hyperconnection
       - id: lm_head
         label: "language-model head\n[H,V]"
         shape: gemm
@@ -66,11 +74,219 @@ views:
         shape: io
         semantic_op: model.logits
     edges:
-      - {from: token_ids, to: embedding, shape: "[B,T]", dtype: int64}
+      - {from: token_ids, to: runtime_support, shape: "[B,T]", dtype: int64}
+      - {from: runtime_support, to: embedding, shape: "[B,T]", dtype: int64}
       - {from: embedding, to: decoder_stack, shape: "[B,T,H]", dtype: bf16}
       - {from: decoder_stack, to: final_hc_mix, shape: "[B,T,HC]", dtype: bf16}
       - {from: final_hc_mix, to: lm_head, shape: "[B,T,H]", dtype: bf16}
       - {from: lm_head, to: logits, shape: "[B,T,V]", dtype: bf16}
+
+  mtp_generation:
+    title: EAGLE MTP generation flow (steps 1, top-k 1, draft width 2)
+    nodes:
+      - id: prompt
+        label: "prompt token ids\n[B,8192]"
+        shape: io
+        semantic_op: generation.mtp.prompt
+      - id: target_prefill
+        label: "target-model prefill\n48-layer target + next-token logits"
+        shape: block
+        semantic_op: generation.mtp.target_prefill
+      - id: mtp_prefill
+        label: "MTP seed prefill (draft_extend)\nshifted prompt + target HC states"
+        shape: block
+        semantic_op: generation.mtp.seed_prefill
+        drill: mtp_head
+      - id: proposal_cache
+        label: "cached MTP proposal state\ntop-1 token + logits + HC hidden"
+        shape: cache
+        semantic_op: generation.mtp.proposal_cache
+      - id: draft_select
+        label: "select cached proposal\nsteps=1: no inner MTP forward"
+        shape: elem
+        semantic_op: generation.mtp.draft_select
+      - id: target_verify
+        label: "target-model tree verify\n[B,2 candidate tokens]"
+        shape: block
+        semantic_op: generation.mtp.target_verify
+      - id: accept_commit
+        label: "accept path + commit target state\nKV, GDN, PLE and sequence state"
+        shape: elem
+        semantic_op: generation.mtp.accept_commit
+      - id: mtp_draft_extend
+        label: "one-layer MTP draft-extend\naccepted target HC states → next proposal"
+        shape: block
+        semantic_op: generation.mtp.draft_extend
+        drill: mtp_head
+      - id: emitted_tokens
+        label: "accepted output tokens\n1–2 tokens/request/iteration"
+        shape: io
+        semantic_op: generation.mtp.output_tokens
+    edges:
+      - {from: prompt, to: target_prefill, shape: "[B,8192]", dtype: int64}
+      - {from: target_prefill, to: mtp_prefill, shape: "target HC [B,T,4,H] + next token", dtype: bf16}
+      - {from: mtp_prefill, to: proposal_cache, shape: "top-1 proposal + HC hidden"}
+      - {from: proposal_cache, to: draft_select, kind: residual, label: "next decode iteration"}
+      - {from: draft_select, to: target_verify, shape: "[B,2] candidate tree", dtype: int64}
+      - {from: target_verify, to: accept_commit, shape: "target logits + hidden/state updates", dtype: bf16}
+      - {from: accept_commit, to: emitted_tokens, shape: "accepted token ids", dtype: int64}
+      - {from: accept_commit, to: mtp_draft_extend, shape: "accepted ids + target HC [B,2,4,H]", dtype: bf16}
+      - {from: mtp_draft_extend, to: proposal_cache, kind: dashed, label: "update proposal state for next iteration"}
+
+  mtp_head:
+    title: Qwen 4.0 one-layer MTP auxiliary head
+    nodes:
+      - id: candidate_ids
+        label: "shifted/candidate token ids\n[B,D]"
+        shape: io
+        semantic_op: mtp.input_ids
+      - id: embedding
+        label: "MTP token embedding\n[V,H]"
+        shape: gemm
+        semantic_op: mtp.embedding
+      - id: target_hc_states
+        label: "target-model HC hidden states\n[B,D,4,H]"
+        shape: io
+        semantic_op: mtp.target_hc_states
+      - id: embedding_projection
+        label: "embedding RMSNorm + replicated linear\nH → H"
+        shape: gemm
+        semantic_op: mtp.input_fusion.embedding_projection
+      - id: hidden_projection
+        label: "HC RMSNorm + shared per-branch linear\n4 × (H → H)"
+        shape: gemm
+        semantic_op: mtp.input_fusion.hidden_projection
+      - id: residual_fusion
+        label: "add projected token embedding\nto each of 4 HC branches"
+        shape: elem
+        semantic_op: mtp.input_fusion.residual_add
+      - id: decoder_layer
+        label: "one QSA full-attention + MoE layer\nPLE disabled"
+        shape: block
+        semantic_op: mtp.decoder_layer
+        drill: mtp_layer
+      - id: final_hc_mix
+        label: "MTP final hyper-connection mix\n[4,H] → [H]"
+        shape: elem
+        semantic_op: mtp.final_hyperconnection_mix
+      - id: lm_head
+        label: "shared vocabulary LM head\n[H,V]"
+        shape: gemm
+        semantic_op: mtp.lm_head
+      - id: draft_logits
+        label: "draft logits + next HC state\n[B,D,V]"
+        shape: io
+        semantic_op: mtp.output
+    edges:
+      - {from: candidate_ids, to: embedding, shape: "[B,D]", dtype: int64}
+      - {from: embedding, to: embedding_projection, shape: "[B,D,H]", dtype: bf16}
+      - {from: target_hc_states, to: hidden_projection, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: embedding_projection, to: residual_fusion, shape: "[B,D,H]", dtype: bf16}
+      - {from: hidden_projection, to: residual_fusion, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: residual_fusion, to: decoder_layer, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: decoder_layer, to: final_hc_mix, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: final_hc_mix, to: lm_head, shape: "[B,D,H]", dtype: bf16}
+      - {from: lm_head, to: draft_logits, shape: "[B,D,V]", dtype: bf16}
+      - {from: decoder_layer, to: draft_logits, kind: dashed, label: "retain HC hidden for next EAGLE iteration"}
+
+  mtp_layer:
+    title: MTP auxiliary full-attention layer (separate module scope)
+    nodes:
+      - id: layer_in
+        label: "MTP branch states\n[B,D,4,H]"
+        shape: io
+        semantic_op: mtp.layer.input
+      - id: attn_hc_mix
+        label: MTP attention branch mix
+        shape: elem
+        semantic_op: mtp.layer.attention_hc_mix
+        drill: hyperconnection_mix
+      - id: qsa_attention
+        label: MTP gated QSA full attention
+        shape: attn
+        semantic_op: mtp.layer.qsa_attention
+        drill: mtp_qsa_attention
+      - id: attn_hc_combine
+        label: MTP attention branch combine
+        shape: elem
+        semantic_op: mtp.layer.attention_hc_combine
+        drill: hyperconnection_combine
+      - id: mlp_hc_mix
+        label: MTP MoE branch mix
+        shape: elem
+        semantic_op: mtp.layer.mlp_hc_mix
+        drill: hyperconnection_mix
+      - id: moe
+        label: MTP routed + shared MoE
+        shape: moe
+        semantic_op: mtp.layer.moe
+        drill: mtp_moe
+      - id: mlp_hc_combine
+        label: MTP MoE branch combine
+        shape: elem
+        semantic_op: mtp.layer.mlp_hc_combine
+        drill: hyperconnection_combine
+      - id: layer_out
+        label: "updated MTP branch states\n[B,D,4,H]"
+        shape: io
+        semantic_op: mtp.layer.output
+    edges:
+      - {from: layer_in, to: attn_hc_mix, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: attn_hc_mix, to: qsa_attention, shape: "[B,D,H]", dtype: bf16}
+      - {from: qsa_attention, to: attn_hc_combine, shape: "[B,D,H]", dtype: bf16}
+      - {from: layer_in, to: attn_hc_combine, kind: residual}
+      - {from: attn_hc_combine, to: mlp_hc_mix, shape: "[B,D,4,H]", dtype: bf16}
+      - {from: mlp_hc_mix, to: moe, shape: "[B,D,H]", dtype: bf16}
+      - {from: moe, to: mlp_hc_combine, shape: "[B,D,H]", dtype: bf16}
+      - {from: attn_hc_combine, to: mlp_hc_combine, kind: residual}
+      - {from: mlp_hc_combine, to: layer_out, shape: "[B,D,4,H]", dtype: bf16}
+
+  mtp_qsa_attention:
+    title: MTP QSA full-attention semantic data flow
+    nodes:
+      - {id: attn_in, label: "MTP hidden states\n[B,D,H]", shape: io, semantic_op: mtp.qsa.input}
+      - {id: qkv_gate_projection, label: Q/K/V + output-gate projection, shape: gemm, semantic_op: mtp.qsa.qkv_gate_projection}
+      - {id: qk_norm_rope, label: Q/K RMSNorm + MRoPE, shape: norm, semantic_op: mtp.qsa.qk_norm_rope}
+      - {id: indexer, label: "MTP QSA sparse indexer\n4 heads, budget 2048", shape: attn, semantic_op: mtp.qsa.indexer}
+      - {id: metadata, label: MTP QSA layout + valid counts, shape: elem, semantic_op: mtp.qsa.metadata}
+      - {id: kv_cache, label: MTP full-attention KV cache, shape: cache, semantic_op: mtp.qsa.kv_cache}
+      - {id: attention_core, label: MTP indexed sparse attention, shape: attn, semantic_op: mtp.qsa.core}
+      - {id: output_gate, label: sigmoid output gate, shape: elem, semantic_op: mtp.qsa.output_gate}
+      - {id: output_projection, label: output projection, shape: gemm, semantic_op: mtp.qsa.output_projection}
+      - {id: attn_out, label: "MTP attention output\n[B,D,H]", shape: io, semantic_op: mtp.qsa.output}
+    edges:
+      - {from: attn_in, to: qkv_gate_projection, dtype: bf16}
+      - {from: attn_in, to: indexer, dtype: bf16}
+      - {from: qkv_gate_projection, to: qk_norm_rope, dtype: bf16}
+      - {from: qk_norm_rope, to: metadata, dtype: bf16}
+      - {from: indexer, to: metadata, dtype: int32, label: top-k block indices}
+      - {from: metadata, to: attention_core, dtype: int32}
+      - {from: kv_cache, to: attention_core, kind: residual}
+      - {from: attention_core, to: kv_cache, kind: dashed, label: update}
+      - {from: attention_core, to: output_gate, dtype: bf16}
+      - {from: qkv_gate_projection, to: output_gate, kind: dashed, label: gate}
+      - {from: output_gate, to: output_projection, dtype: bf16}
+      - {from: output_projection, to: attn_out, dtype: bf16}
+
+  mtp_moe:
+    title: MTP layer 512-expert routed + shared MoE
+    nodes:
+      - {id: moe_in, label: "MTP MoE input\n[B,D,H]", shape: io, semantic_op: mtp.moe.input}
+      - {id: router, label: router logits, shape: gemm, semantic_op: mtp.moe.router}
+      - {id: topk, label: "Top-10 of 512 experts", shape: elem, semantic_op: mtp.moe.topk}
+      - {id: routed_experts, label: routed expert gate/up/down, shape: moe, semantic_op: mtp.moe.routed_experts}
+      - {id: shared_expert, label: shared expert gate/up/down, shape: gemm, semantic_op: mtp.moe.shared_expert}
+      - {id: combine, label: weighted routed + shared combine, shape: elem, semantic_op: mtp.moe.combine}
+      - {id: moe_out, label: "MTP MoE output\n[B,D,H]", shape: io, semantic_op: mtp.moe.output}
+    edges:
+      - {from: moe_in, to: router, dtype: bf16}
+      - {from: router, to: topk, dtype: fp32}
+      - {from: topk, to: routed_experts, dtype: int32}
+      - {from: moe_in, to: routed_experts, dtype: bf16}
+      - {from: moe_in, to: shared_expert, dtype: bf16}
+      - {from: routed_experts, to: combine, dtype: bf16}
+      - {from: shared_expert, to: combine, dtype: bf16}
+      - {from: combine, to: moe_out, dtype: bf16}
 
   stack:
     title: Stable 48-layer hybrid schedule
@@ -83,7 +299,6 @@ views:
         label: "initialize 4 hyper-connection branches\nH → HC"
         shape: elem
         semantic_op: stack.hyperconnection_expand
-        drill: hyperconnection
       - id: schedule
         label: "repeat 12 times\nlinear ×3, full-QSA ×1"
         shape: elem
@@ -128,7 +343,7 @@ views:
         label: attention branch mix
         shape: elem
         semantic_op: decoder.linear.attention_hc_mix
-        drill: hyperconnection
+        drill: hyperconnection_mix
       - id: linear_attention
         label: gated DeltaNet attention
         shape: attn
@@ -138,12 +353,12 @@ views:
         label: attention branch combine
         shape: elem
         semantic_op: decoder.linear.attention_hc_combine
-        drill: hyperconnection
+        drill: hyperconnection_combine
       - id: mlp_hc_mix
         label: MoE branch mix
         shape: elem
         semantic_op: decoder.linear.mlp_hc_mix
-        drill: hyperconnection
+        drill: hyperconnection_mix
       - id: moe
         label: routed + shared MoE
         shape: moe
@@ -153,7 +368,7 @@ views:
         label: MoE branch combine
         shape: elem
         semantic_op: decoder.linear.mlp_hc_combine
-        drill: hyperconnection
+        drill: hyperconnection_combine
       - id: layer_out
         label: "updated branch states\n[B,T,HC]"
         shape: io
@@ -180,7 +395,7 @@ views:
         label: attention branch mix
         shape: elem
         semantic_op: decoder.full.attention_hc_mix
-        drill: hyperconnection
+        drill: hyperconnection_mix
       - id: qsa_attention
         label: gated QSA full attention
         shape: attn
@@ -190,12 +405,12 @@ views:
         label: attention branch combine
         shape: elem
         semantic_op: decoder.full.attention_hc_combine
-        drill: hyperconnection
+        drill: hyperconnection_combine
       - id: mlp_hc_mix
         label: MoE branch mix
         shape: elem
         semantic_op: decoder.full.mlp_hc_mix
-        drill: hyperconnection
+        drill: hyperconnection_mix
       - id: moe
         label: routed + shared MoE
         shape: moe
@@ -205,7 +420,7 @@ views:
         label: MoE branch combine
         shape: elem
         semantic_op: decoder.full.mlp_hc_combine
-        drill: hyperconnection
+        drill: hyperconnection_combine
       - id: layer_out
         label: "updated branch states\n[B,T,HC]"
         shape: io
@@ -225,11 +440,11 @@ views:
     title: PLE N-gram side-state injection
     nodes:
       - id: token_history
-        label: "token ids + cached N-gram context"
+        label: "token ids + cached N-gram context\nprepared before decoder stack"
         shape: cache
         semantic_op: ple.token_history
       - id: ngram_hash
-        label: N-gram hashing
+        label: "N-gram hashing\nexecuted at configured PLE layer 2"
         shape: elem
         semantic_op: ple.ngram_hash
       - id: ngram_embedding
@@ -261,7 +476,7 @@ views:
         shape: cache
         semantic_op: ple.context_commit
     edges:
-      - {from: token_history, to: ngram_hash, dtype: int64}
+      - {from: token_history, to: ngram_hash, dtype: int64, label: "retained while the first decoder layer executes\nsemantic dependency, not time adjacency"}
       - {from: ngram_hash, to: ngram_embedding, dtype: int64}
       - {from: ngram_embedding, to: key_value_projection, dtype: bf16}
       - {from: key_value_projection, to: grouped_norm_gate, dtype: bf16}
@@ -272,8 +487,62 @@ views:
       - {from: token_history, to: context_commit, kind: dashed}
       - {from: context_commit, to: token_history, kind: dashed, label: update}
 
+  hyperconnection_mix:
+    title: Hyper-connection branch mix
+    nodes:
+      - id: branch_states
+        label: "current branch states\n[B,T,4,H]"
+        shape: io
+        semantic_op: hyperconnection.mix.branch_states
+      - id: branch_norm
+        label: per-branch RMSNorm
+        shape: norm
+        semantic_op: hyperconnection.branch_norm
+      - id: low_rank_gate
+        label: "low-rank dynamic gate\nrank 320"
+        shape: gemm
+        semantic_op: hyperconnection.low_rank_gate
+      - id: mix
+        label: "weighted branch mix\n4 branches → one H-wide path"
+        shape: elem
+        semantic_op: hyperconnection.mix
+      - id: module_input
+        label: "selected module input\n[B,T,H]"
+        shape: io
+        semantic_op: hyperconnection.mix.module_input
+    edges:
+      - {from: branch_states, to: branch_norm, shape: "[B,T,4,H]", dtype: bf16}
+      - {from: branch_norm, to: low_rank_gate, dtype: bf16}
+      - {from: low_rank_gate, to: mix, kind: dashed, label: "mix weights"}
+      - {from: branch_states, to: mix, kind: residual, label: "branch values"}
+      - {from: mix, to: module_input, shape: "[B,T,H]", dtype: bf16}
+
+  hyperconnection_combine:
+    title: Hyper-connection branch update
+    nodes:
+      - id: branch_states
+        label: "preserved branch states\n[B,T,4,H]"
+        shape: io
+        semantic_op: hyperconnection.combine.branch_states
+      - id: module_output
+        label: "processed module output\n[B,T,H]"
+        shape: io
+        semantic_op: hyperconnection.combine.module_output
+      - id: combine
+        label: "update four branches\nwith processed H-wide result"
+        shape: elem
+        semantic_op: hyperconnection.combine
+      - id: updated_branch_states
+        label: "updated branch states\n[B,T,4,H]"
+        shape: io
+        semantic_op: hyperconnection.combine.updated_branch_states
+    edges:
+      - {from: branch_states, to: combine, kind: residual, shape: "[B,T,4,H]", dtype: bf16, label: "preserved branches"}
+      - {from: module_output, to: combine, shape: "[B,T,H]", dtype: bf16, label: "processed H-wide result"}
+      - {from: combine, to: updated_branch_states, shape: "[B,T,4,H]", dtype: bf16}
+
   hyperconnection:
-    title: Four-branch gated residual hyper-connection
+    title: Global Hyper-Connection kernel aggregate (all layer calls)
     nodes:
       - id: hc_in
         label: "branch states\n[B,T,4,H]"
@@ -388,6 +657,10 @@ views:
         label: "QSA sparse indexer\n4 heads, budget 2048"
         shape: attn
         semantic_op: qsa_attention.indexer
+      - id: metadata
+        label: "QSA decode metadata\nlayout + valid counts"
+        shape: elem
+        semantic_op: qsa_attention.metadata
       - id: kv_cache
         label: full-attention KV cache
         shape: cache
@@ -412,8 +685,9 @@ views:
       - {from: attn_in, to: qkv_gate_projection, shape: "[B,T,H]", dtype: bf16}
       - {from: attn_in, to: indexer, shape: "[B,T,H]", dtype: bf16}
       - {from: qkv_gate_projection, to: qk_norm_rope, dtype: bf16}
-      - {from: qk_norm_rope, to: attention_core, dtype: bf16}
-      - {from: indexer, to: attention_core, dtype: int32, label: top-k indices}
+      - {from: qk_norm_rope, to: metadata, dtype: bf16}
+      - {from: indexer, to: metadata, dtype: int32, label: "top-k block indices"}
+      - {from: metadata, to: attention_core, dtype: int32, label: "block layout + valid counts"}
       - {from: kv_cache, to: attention_core, kind: residual}
       - {from: attention_core, to: kv_cache, kind: dashed, label: update}
       - {from: attention_core, to: output_gate, dtype: bf16}

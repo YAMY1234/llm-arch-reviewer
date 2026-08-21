@@ -180,6 +180,10 @@ def find_step_annotation_windows(
     """
 
     phase_lower = phase.lower()
+    if phase_lower in {"eagle_mtp_prefill", "mtp_prefill"}:
+        return find_eagle_mtp_prefill_windows(trace_events, signature=signature)
+    if phase_lower in {"eagle_mtp_decode", "mtp_decode"}:
+        return find_eagle_mtp_decode_windows(trace_events, signature=signature)
     if "decode" in phase_lower:
         step_kind = "DECODE"
     elif "extend" in phase_lower or "prefill" in phase_lower:
@@ -213,6 +217,130 @@ def find_step_annotation_windows(
             )
         )
     return sorted(windows, key=lambda window: window.start_us)
+
+
+def _primary_gpu_annotations(
+    trace_events: list[dict[str, Any]], *, name_prefix: str
+) -> tuple[list[dict[str, Any]], tuple[Any, Any] | None]:
+    """Return annotations from the GPU track carrying the full stage span."""
+
+    tracks: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for event in trace_events:
+        if event.get("cat") != "gpu_user_annotation" or event.get("ph") != "X":
+            continue
+        if not str(event.get("name", "")).startswith(name_prefix):
+            continue
+        tracks.setdefault((event.get("pid"), event.get("tid")), []).append(event)
+    if not tracks:
+        return [], None
+    track_key, annotations = max(
+        tracks.items(),
+        key=lambda item: sum(float(event.get("dur", 0.0)) for event in item[1]),
+    )
+    return sorted(annotations, key=lambda event: float(event.get("ts", 0.0))), track_key
+
+
+def _anchor_count(
+    kernels: list[dict[str, Any]], *, signature: str | None, start: float, end: float
+) -> int:
+    if not signature:
+        return 0
+    return sum(
+        1
+        for kernel in kernels
+        if signature in str(kernel.get("name", ""))
+        and start <= float(kernel.get("ts", 0.0)) <= end
+    )
+
+
+def find_eagle_mtp_prefill_windows(
+    trace_events: list[dict[str, Any]], *, signature: str | None = None
+) -> list[ForwardWindow]:
+    """Pair target prefill and auxiliary MTP seed prefill as one stage."""
+
+    annotations, _track = _primary_gpu_annotations(
+        trace_events, name_prefix="step[EXTEND"
+    )
+    kernels = [event for event in trace_events if event.get("cat") == "kernel"]
+    windows = []
+    for index in range(0, len(annotations) - 1, 2):
+        target = annotations[index]
+        auxiliary = annotations[index + 1]
+        start = float(target.get("ts", 0.0))
+        end = _event_end_us(auxiliary)
+        if float(auxiliary.get("ts", 0.0)) < _event_end_us(target):
+            continue
+        windows.append(
+            ForwardWindow(
+                start_us=start,
+                end_us=end,
+                iter_bounds_us=[(start, end)],
+                anchor_kernel_count=_anchor_count(
+                    kernels, signature=signature, start=start, end=end
+                ),
+            )
+        )
+    return windows
+
+
+def find_eagle_mtp_decode_windows(
+    trace_events: list[dict[str, Any]], *, signature: str | None = None
+) -> list[ForwardWindow]:
+    """Build complete EAGLE decode iterations from target verify to draft select."""
+
+    targets, track = _primary_gpu_annotations(
+        trace_events, name_prefix="step[TARGET_VERIFY"
+    )
+    if not targets or track is None:
+        return []
+    stage_events = sorted(
+        (
+            event
+            for event in trace_events
+            if event.get("cat") == "gpu_user_annotation"
+            and event.get("ph") == "X"
+            and (event.get("pid"), event.get("tid")) == track
+            and (
+                str(event.get("name", "")).startswith("step[DRAFT_EXTEND_V2")
+                or str(event.get("name", "")) in {"draft_extend", "draft"}
+            )
+        ),
+        key=lambda event: float(event.get("ts", 0.0)),
+    )
+    kernels = [event for event in trace_events if event.get("cat") == "kernel"]
+    windows = []
+    for index, target in enumerate(targets):
+        start = float(target.get("ts", 0.0))
+        next_start = (
+            float(targets[index + 1].get("ts", 0.0))
+            if index + 1 < len(targets)
+            else None
+        )
+        following = [
+            event
+            for event in stage_events
+            if float(event.get("ts", 0.0)) >= _event_end_us(target)
+            and (next_start is None or float(event.get("ts", 0.0)) < next_start)
+        ]
+        if not any(
+            str(event.get("name", "")).startswith("step[DRAFT_EXTEND_V2")
+            for event in following
+        ):
+            continue
+        end = next_start if next_start is not None else max(
+            _event_end_us(target), *(_event_end_us(event) for event in following)
+        )
+        windows.append(
+            ForwardWindow(
+                start_us=start,
+                end_us=end,
+                iter_bounds_us=[(start, end)],
+                anchor_kernel_count=_anchor_count(
+                    kernels, signature=signature, start=start, end=end
+                ),
+            )
+        )
+    return windows
 
 
 def choose_forward_window(

@@ -17,6 +17,109 @@ QWEN40_CONFIGS = {
 }
 
 
+def _classify_qwen40_mtp_node(
+    kernel_name: str,
+    cpu_op_name: str | None,
+    stack: list[FrameRef],
+) -> tuple[str | None, str]:
+    """Classify the auxiliary MTP module in its own semantic scope.
+
+    The MTP head reuses QSA, MoE and hyper-connection implementations from the
+    target model.  The enclosing ``Qwen4ExpForCausalLMMTP`` frame is therefore
+    what prevents their kernels from being silently aggregated into the
+    48-layer target graph.
+    """
+
+    names = "\n".join(frame.raw for frame in stack)
+    lowered = names.lower()
+    kernel = kernel_name.lower()
+    cpu = (cpu_op_name or "").lower()
+
+    if "allgather" in kernel or "all_gather" in kernel:
+        return "mtp_head.tp_logits_collective", "high"
+    if "allreduce" in kernel or "all_reduce" in kernel:
+        if "vocabparallelembedding" in lowered:
+            return "mtp_head.tp_embedding_collective", "high"
+        if "qwen2moe" in lowered or "fusedmoe" in lowered:
+            return "mtp_layer.tp_moe_output_collective", "high"
+        if "qwen4expattentiondecoderlayer" in lowered:
+            return "mtp_layer.tp_attention_collective", "high"
+
+    if "_fuse_residual_linear_shared" in lowered:
+        if "pre_fc_norm_embedding" in lowered or "fc_embedding" in lowered:
+            return "mtp_head.embedding_projection", "high"
+        if "pre_fc_norm_hidden" in lowered or "fc_hidden" in lowered:
+            return "mtp_head.hidden_projection", "high"
+        return "mtp_head.residual_fusion", "medium"
+
+    if "gatedresidualsimple" in lowered or "layers/hyperconnection.py" in lowered:
+        stage = None
+        if "_prepare_qwen4_exp_attn" in lowered:
+            stage = "attn_hc_mix"
+        elif "_prepare_qwen4_exp_mlp" in lowered:
+            if "combine" in lowered:
+                stage = "attn_hc_combine"
+            else:
+                stage = "mlp_hc_mix"
+        elif "_postprocess_qwen4_exp_layer" in lowered:
+            stage = "mlp_hc_combine"
+        if stage is None:
+            return "mtp_head.final_hc_mix", "high"
+        # HC leaf semantics are implementation-independent and reusable. The
+        # enclosing MTP module remains recorded as layer_kind/substage by the
+        # profile builder, so these leaves can drive a correctly scoped drill
+        # view without being aggregated into target-model HC metrics.
+        if "grouped_gemma_rmsnorm" in kernel:
+            return "hyperconnection.branch_norm", "high"
+        if stage.endswith("combine"):
+            return "hyperconnection.combine", "high"
+        return "hyperconnection.mix", "high"
+
+    if any(
+        signature in lowered
+        for signature in ("qsaindexer", "_compute_qsa_topk_indices", "qsa_indexer.py")
+    ):
+        return "mtp_qsa_attention.indexer", "high"
+    if "qwen4expattentiondecoderlayer" in lowered:
+        if "o_proj" in lowered:
+            return "mtp_qsa_attention.output_projection", "medium"
+        if "_prepare_qkv_gate" in lowered or "qkv" in lowered:
+            return "mtp_qsa_attention.qkv_gate_projection", "medium"
+        if "rotary" in lowered or "rmsnorm" in kernel:
+            return "mtp_qsa_attention.qk_norm_rope", "medium"
+        if (
+            "radixattention" in lowered
+            or "radix_attention.py" in lowered
+            or "attention" in cpu
+            or "attention" in kernel
+            or "fmha" in kernel
+        ):
+            return "mtp_qsa_attention.attention_core", "medium"
+        if "sigmoid" in cpu:
+            return "mtp_qsa_attention.output_gate", "medium"
+
+    if "qwen2moemlp" in lowered or "_forward_shared_experts" in lowered:
+        return "mtp_moe.shared_expert", "medium"
+    if "qwen2moesparsemoeblock" in lowered or "fusedmoe" in lowered:
+        if "moe::dev::routing" in kernel or "topk" in cpu:
+            return "mtp_moe.topk", "high"
+        if "moe::dev::finalize" in kernel:
+            return "mtp_moe.combine", "high"
+        if "moe::dev::activation" in kernel or "bmm_" in kernel or "grouped" in kernel:
+            return "mtp_moe.routed_experts", "high"
+        if "gate" in lowered and ("gemm" in kernel or "gemm" in cpu):
+            return "mtp_moe.router", "medium"
+        return "mtp_moe.routed_experts", "low"
+
+    if "logitsprocessor" in lowered or "lm_head" in lowered:
+        return "mtp_head.lm_head", "medium"
+    if "vocabparallelembedding" in lowered:
+        return "mtp_head.embedding", "medium"
+    if "qwen4expforcausallmmtp" in lowered:
+        return "mtp_head.decoder_layer", "low"
+    return None, "unmapped"
+
+
 def classify_qwen40_node(
     kernel_name: str,
     cpu_op_name: str | None,
@@ -25,6 +128,48 @@ def classify_qwen40_node(
     names = "\n".join(frame.raw for frame in stack)
     kernel = kernel_name.lower()
     cpu = (cpu_op_name or "").lower()
+    lowered_names = names.lower()
+
+    if "qwen4_exp_mtp.py" in lowered_names or "qwen4expforcausallmmtp" in lowered_names:
+        return _classify_qwen40_mtp_node(kernel_name, cpu_op_name, stack)
+
+    # EAGLE orchestration launches a small amount of GPU work outside both the
+    # target-model and auxiliary-model module scopes. Do not let those kernels
+    # fall into generic runtime support: they are stable generation stages.
+    in_model_scope = any(
+        marker in lowered_names
+        for marker in (
+            "qwen4expmodel",
+            "qwen4explineardecoderlayer",
+            "qwen4expattentiondecoderlayer",
+            "qwen4expforconditionalgeneration",
+            "qwen3vlforconditionalgeneration",
+        )
+    )
+    if not in_model_scope:
+        if "_draft_extend_for_prefill" in lowered_names:
+            return "mtp_generation.mtp_prefill", "high"
+        if "_draft_extend_for_decode" in lowered_names or "prepare_for_draft_extend" in lowered_names:
+            return "mtp_generation.mtp_draft_extend", "high"
+        if any(
+            marker in lowered_names
+            for marker in ("draft_forward", "build_eagle_verify_input", "select_top_k_tokens")
+        ):
+            return "mtp_generation.draft_select", "high"
+        if any(
+            marker in lowered_names
+            for marker in ("run_eagle_verify", "eagleverifyinput", "tree_speculative_sampling")
+        ):
+            return "mtp_generation.accept_commit", "high"
+
+    # PLE context preparation and commit run outside the decoder-layer module
+    # frames, so classify them from their exact source functions before the
+    # module fallbacks below.  The prepared context can live across an entire
+    # decoder layer before the configured PLE layer consumes it.
+    if "_prepare_ple_batch" in names:
+        return "ple.token_history", "high"
+    if "_commit_ple_batch" in names:
+        return "ple.context_commit", "high"
 
     # These model-specific signatures are semantically unique and must win
     # over an occasionally stale enclosing Python span in overlapped traces.
@@ -59,6 +204,12 @@ def classify_qwen40_node(
                 return "ple.tp_embedding_collective", "high"
             return "top.tp_embedding_collective", "high"
         if "Qwen2Moe" in names or "FusedMoE" in names:
+            if "Qwen4ExpAttentionDecoderLayer" in names:
+                return "full_layer.tp_moe_output_collective", "high"
+            if "Qwen4ExpLinearDecoderLayer" in names:
+                return "linear_layer.tp_moe_output_collective", "high"
+            # Production traces carry a decoder-layer frame. Keep the generic
+            # role only as a conservative fallback for reduced test stacks.
             return "moe.tp_output_collective", "high"
         if "Qwen4ExpAttentionDecoderLayer" in names:
             return "full_layer.tp_attention_collective", "high"
@@ -81,10 +232,10 @@ def classify_qwen40_node(
     if "GatedResidualSimple" in names or "layers/hyperconnection.py" in names:
         if "combine" in names:
             return "hyperconnection.combine", "high"
+        if "rmsnorm" in kernel or "layer_norm" in kernel:
+            return "hyperconnection.branch_norm", "high"
         if "mix" in names:
             return "hyperconnection.mix", "high"
-        if "rmsnorm" in kernel or "layer_norm" in kernel:
-            return "hyperconnection.branch_norm", "medium"
         return "hyperconnection.low_rank_gate", "medium"
 
     if "fused_gdn_gating" in kernel:
@@ -195,8 +346,14 @@ def classify_qwen40_node_for_config(
         return f"{layer_view}.dp_moe_input_gather", "high"
 
     node, confidence = classify_qwen40_node(kernel_name, cpu_op_name, stack)
-    if config_name == "ep4_a2a_none" and node == "moe.tp_output_collective":
-        return "moe.ep_output_collective", confidence
+    if config_name == "ep4_a2a_none":
+        ep_collective_targets = {
+            "linear_layer.tp_moe_output_collective": "linear_layer.ep_moe_output_collective",
+            "full_layer.tp_moe_output_collective": "full_layer.ep_moe_output_collective",
+            "moe.tp_output_collective": "moe.ep_output_collective",
+        }
+        if node in ep_collective_targets:
+            return ep_collective_targets[node], confidence
     return node, confidence
 
 
@@ -217,6 +374,7 @@ QWEN40_TRACE_RULES = TraceMappingRules(
             "topk.py",
         ),
         semantic_patterns=(
+            "models/qwen4_exp_mtp.py",
             "models/qwen4_exp.py",
             "models/qwen3_5.py",
             "models/qwen2_moe.py",
@@ -238,6 +396,7 @@ QWEN40_TRACE_RULES = TraceMappingRules(
             "LogitsProcessor",
         ),
         model_context_patterns=(
+            "Qwen4ExpForCausalLMMTP",
             "Qwen4ExpModel",
             "Qwen4ExpLinearDecoderLayer",
             "Qwen4ExpAttentionDecoderLayer",
@@ -246,6 +405,16 @@ QWEN40_TRACE_RULES = TraceMappingRules(
             "Qwen2MoeSparseMoeBlock",
             "Qwen4ExpForConditionalGeneration",
             "Qwen3VLForConditionalGeneration",
+        ),
+        phase_patterns=(
+            "forward_extend",
+            "forward_decode",
+            "draft_forward",
+            "_draft_extend_for_prefill",
+            "_draft_extend_for_decode",
+            "run_eagle_verify",
+            "cuda_graph_runner",
+            "replay",
         ),
     ),
     classify_node=classify_qwen40_node,

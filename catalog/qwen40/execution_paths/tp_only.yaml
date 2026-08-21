@@ -29,10 +29,10 @@ transforms:
     after: top.embedding
     node:
       id: tp_embedding_collective
-      label: "TP token-embedding collective\nall-reduce"
+      label: "TP token embeddings\nall-reduce · bf16 [B,T,H]"
       shape: elem
       semantic_op: execution.tp.token_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial token embeddings · bf16 [B,T,H]", result: "replicated full hidden states on every TP rank"}
     edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
@@ -44,11 +44,109 @@ transforms:
     after: top.lm_head
     node:
       id: tp_logits_collective
-      label: "TP logits collective\nall-gather"
+      label: "TP vocabulary logits\nall-gather · bf16 [B,T,V]"
       shape: elem
       semantic_op: execution.tp.logits_collective
-      execution: {placement: tp_group, collective: all_gather, parallelism: TP}
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "vocabulary-logit shards · bf16 [B,T,V/TP]", result: "full vocabulary logits"}
     edge: {shape: "[B,T,V]", dtype: bf16}
+
+  # MTP is an orthogonal generation mode, but its auxiliary head executes on
+  # the same TP group. Keep its communication boundaries explicit without
+  # creating a separate "MTP × TP" execution-plan copy.
+  - op: annotate_node
+    target: mtp_head.embedding
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocab_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: mtp_head.embedding
+    node:
+      id: tp_embedding_collective
+      label: "TP MTP token embeddings\nall-reduce · bf16 [B,D,H]"
+      shape: elem
+      semantic_op: execution.tp.mtp_embedding_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial MTP token embeddings · bf16 [B,D,H]", result: "replicated MTP token embeddings on every TP rank"}
+    edge: {shape: "[B,D,H]", dtype: bf16}
+
+  - op: annotate_node
+    target: mtp_head.embedding_projection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: none}
+
+  - op: annotate_node
+    target: mtp_head.hidden_projection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_shared_across_hc_branches, parallelism: none}
+
+  - op: annotate_node
+    target: mtp_head.lm_head
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocab_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: mtp_head.lm_head
+    node:
+      id: tp_logits_collective
+      label: "TP MTP vocabulary logits\nall-gather · bf16 [B,D,V]"
+      shape: elem
+      semantic_op: execution.tp.mtp_logits_collective
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "MTP vocabulary-logit shards · bf16 [B,D,V/TP]", result: "full MTP vocabulary logits"}
+    edge: {shape: "[B,D,V]", dtype: bf16}
+
+  - op: annotate_node
+    target: mtp_qsa_attention.qkv_gate_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: attention_heads_sharded, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: mtp_qsa_attention.indexer
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP}
+
+  - op: annotate_node
+    target: mtp_qsa_attention.metadata
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP, payload: "MTP QSA layout and valid-count metadata"}
+
+  - op: annotate_node
+    target: mtp_qsa_attention.output_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: attention_heads_sharded, parallelism: row_parallel}
+
+  - op: insert_after
+    after: mtp_layer.qsa_attention
+    node:
+      id: tp_attention_collective
+      label: "TP MTP QSA output\nall-reduce · bf16 [B,D,H]"
+      shape: elem
+      semantic_op: execution.tp.mtp_qsa_attention_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "row-parallel MTP QSA output partials · bf16 [B,D,H]", result: "replicated MTP attention output"}
+    edge: {shape: "[B,D,H]", dtype: bf16}
+
+  - op: annotate_node
+    target: mtp_moe.router
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP}
+
+  - op: annotate_node
+    target: mtp_moe.routed_experts
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: expert_hidden_sharded, parallelism: TP}
+
+  - op: annotate_node
+    target: mtp_moe.shared_expert
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: hidden_sharded, parallelism: TP}
+
+  - op: insert_after
+    after: mtp_layer.moe
+    node:
+      id: tp_moe_output_collective
+      label: "TP MTP MoE output\nall-reduce · bf16 [B,D,H]"
+      shape: elem
+      semantic_op: execution.tp.mtp_moe_output_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "MTP expert-hidden output partials · bf16 [B,D,H]", result: "replicated combined MTP MoE output"}
+    edge: {shape: "[B,D,H]", dtype: bf16}
 
   - op: annotate_node
     target: ple.ngram_embedding
@@ -59,11 +157,11 @@ transforms:
     after: ple.ngram_embedding
     node:
       id: tp_embedding_collective
-      label: "TP N-gram embedding collective\nall-reduce"
+      label: "TP N-gram embeddings\nall-reduce · bf16"
       shape: elem
       semantic_op: execution.tp.ple_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
-    edge: {dtype: bf16}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial N-gram embeddings · bf16 [B,T,H]", result: "replicated N-gram embeddings"}
+    edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
     target: linear_attention.qkvz_projection
@@ -84,10 +182,10 @@ transforms:
     after: linear_layer.linear_attention
     node:
       id: tp_attention_collective
-      label: "TP attention output\nall-reduce"
+      label: "TP linear-attention output\nall-reduce · bf16 [B,T,H]"
       shape: elem
       semantic_op: execution.tp.linear_attention_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "row-parallel linear-attention output partials · bf16 [B,T,H]", result: "replicated attention output"}
     edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
@@ -101,6 +199,11 @@ transforms:
       execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP}
 
   - op: annotate_node
+    target: qsa_attention.metadata
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated, parallelism: TP, payload: "QSA layout and valid-count metadata"}
+
+  - op: annotate_node
     target: qsa_attention.output_projection
     set:
       execution: {placement: all_tp_ranks, tensor_layout: attention_heads_sharded, parallelism: row_parallel}
@@ -109,10 +212,10 @@ transforms:
     after: full_layer.qsa_attention
     node:
       id: tp_attention_collective
-      label: "TP attention output\nall-reduce"
+      label: "TP QSA output\nall-reduce · bf16 [B,T,H]"
       shape: elem
       semantic_op: execution.tp.qsa_attention_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "row-parallel QSA output partials · bf16 [B,T,H]", result: "replicated attention output"}
     edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
@@ -130,12 +233,25 @@ transforms:
     set:
       execution: {placement: all_tp_ranks, tensor_layout: hidden_sharded, parallelism: TP}
 
+  # The implementation launches this collective from the FusedMoE call, but
+  # semantically it is the communication boundary between local MoE compute
+  # and hyper-connection combine. Keep it visible on each layer data path.
   - op: insert_after
-    after: moe.combine
+    after: linear_layer.moe
     node:
-      id: tp_output_collective
-      label: "TP MoE output collective\nall-reduce"
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce · bf16 [B,T,H]"
       shape: elem
       semantic_op: execution.tp.moe_output_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "expert-hidden output partials · bf16 [B,T,H]", result: "replicated combined MoE output"}
+    edge: {shape: "[B,T,H]", dtype: bf16}
+
+  - op: insert_after
+    after: full_layer.moe
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce · bf16 [B,T,H]"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "expert-hidden output partials · bf16 [B,T,H]", result: "replicated combined MoE output"}
     edge: {shape: "[B,T,H]", dtype: bf16}

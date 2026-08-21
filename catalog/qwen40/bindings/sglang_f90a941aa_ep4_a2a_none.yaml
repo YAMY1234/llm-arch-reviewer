@@ -16,7 +16,13 @@ node_bindings:
       - {file: python/sglang/srt/layers/moe/token_dispatcher/standard.py, symbol: StandardDispatcher.dispatch, display: standard.py — EP local-expert mapping}
       - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.experts, display: qwen2_moe.py — EP-sharded expert compute}
 
-  moe.ep_output_collective:
+  linear_layer.ep_moe_output_collective:
+    symbols: [FusedMoE, tensor_model_parallel_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/moe/fused_moe_triton/layer.py, symbol: FusedMoE.forward, display: fused_moe_triton/layer.py — EP output reduction}
+
+  full_layer.ep_moe_output_collective:
     symbols: [FusedMoE, tensor_model_parallel_all_reduce]
     kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
     links:

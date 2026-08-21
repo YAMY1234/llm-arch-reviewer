@@ -28,7 +28,7 @@ transforms:
       label: "TP token-embedding collective\nall-reduce"
       shape: elem
       semantic_op: execution.tp.token_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial token embeddings · bf16 [B,T,H]", result: "replicated full hidden states"}
     edge: {shape: "[B,T,H]", dtype: bf16}
   - op: annotate_node
     target: top.lm_head
@@ -42,7 +42,7 @@ transforms:
       label: "TP logits collective\nall-gather"
       shape: elem
       semantic_op: execution.tp.logits_collective
-      execution: {placement: tp_group, collective: all_gather, parallelism: TP}
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "vocabulary-logit shards · bf16 [B,T,V/TP]", result: "full vocabulary logits"}
     edge: {shape: "[B,T,V]", dtype: bf16}
 
   - op: annotate_node
@@ -57,7 +57,7 @@ transforms:
       label: "TP N-gram embedding collective\nall-reduce"
       shape: elem
       semantic_op: execution.tp.ple_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial N-gram embeddings · bf16 [B,T,H]", result: "replicated N-gram embeddings"}
     edge: {dtype: bf16}
 
   - op: annotate_node
@@ -82,7 +82,7 @@ transforms:
       label: "TP attention output\nall-reduce"
       shape: elem
       semantic_op: execution.tp.linear_attention_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "row-parallel linear-attention output partials · bf16 [B,T,H]", result: "replicated attention output"}
     edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
@@ -107,7 +107,7 @@ transforms:
       label: "TP attention output\nall-reduce"
       shape: elem
       semantic_op: execution.tp.qsa_attention_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "row-parallel QSA output partials · bf16 [B,T,H]", result: "replicated attention output"}
     edge: {shape: "[B,T,H]", dtype: bf16}
 
   - op: annotate_node
@@ -126,11 +126,21 @@ transforms:
       execution: {placement: all_ep_ranks, tensor_layout: hidden_sharded_and_ep_scaled, parallelism: TP_EP}
 
   - op: insert_after
-    after: moe.combine
+    after: linear_layer.moe
     node:
-      id: ep_output_collective
+      id: ep_moe_output_collective
       label: "EP MoE output collective\nall-reduce"
       shape: elem
       semantic_op: execution.ep.moe_output_collective
-      execution: {placement: ep_group, collective: all_reduce, parallelism: EP}
+      execution: {placement: ep_group, collective: all_reduce, parallelism: EP, payload: "owner-local routed/shared expert output partials · bf16 [B,T,H]", result: "replicated combined MoE output"}
+    edge: {shape: "[B,T,H]", dtype: bf16}
+
+  - op: insert_after
+    after: full_layer.moe
+    node:
+      id: ep_moe_output_collective
+      label: "EP MoE output collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.ep.moe_output_collective
+      execution: {placement: ep_group, collective: all_reduce, parallelism: EP, payload: "owner-local routed/shared expert output partials · bf16 [B,T,H]", result: "replicated combined MoE output"}
     edge: {shape: "[B,T,H]", dtype: bf16}

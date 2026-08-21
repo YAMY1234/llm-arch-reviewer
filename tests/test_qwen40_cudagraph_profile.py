@@ -35,16 +35,17 @@ class Qwen40CudaGraphProfileTest(unittest.TestCase):
         self.assertEqual(roles.count("ple.tp_embedding_collective"), 1)
         self.assertEqual(roles.count("linear_layer.tp_attention_collective"), 36)
         self.assertEqual(roles.count("full_layer.tp_attention_collective"), 12)
-        self.assertEqual(roles.count("moe.tp_output_collective"), 48)
+        self.assertEqual(roles.count("linear_layer.tp_moe_output_collective"), 36)
+        self.assertEqual(roles.count("full_layer.tp_moe_output_collective"), 12)
         self.assertEqual(
             roles[:6],
             [
                 "top.tp_embedding_collective",
                 "linear_layer.tp_attention_collective",
-                "moe.tp_output_collective",
+                "linear_layer.tp_moe_output_collective",
                 "ple.tp_embedding_collective",
                 "linear_layer.tp_attention_collective",
-                "moe.tp_output_collective",
+                "linear_layer.tp_moe_output_collective",
             ],
         )
 

@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+import pytest
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from models.qwen40.build.build_qwen40_mtp_eager_profile import (  # noqa: E402
+    BASE_SOURCE_COMMIT,
+    SOURCE_COMMIT,
+    SOURCE_PATCH_COMPONENTS,
+    SOURCE_PATCH_SHA256,
+    _append_source_reviewed_mtp_decode_runtime_tail,
+    _reconcile_hyperconnection_structure,
+    _reconcile_mtp_input_fusion,
+    _reconcile_mtp_moe_structure,
+    _resolve_mtp_generation_boundary_insert,
+    _restore_mtp_scope_for_timing_inserts,
+    build_metrics,
+    mtp_node_states,
+)
+
+
+def test_mtp_profile_source_is_qwen4_main_with_qsa_hardening() -> None:
+    assert BASE_SOURCE_COMMIT == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
+    assert SOURCE_COMMIT == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
+    assert SOURCE_PATCH_SHA256 == "07c22e094da7103011301ced5824134e0387b310a5a03df0579bdd7ed08f17b3"
+    assert SOURCE_PATCH_COMPONENTS == [
+        {"name": "qsa_hardening", "sha256": SOURCE_PATCH_SHA256}
+    ]
+
+
+def test_mtp_prefill_marks_decode_only_qsa_metadata_inactive() -> None:
+    assert mtp_node_states("prefill")["mtp_qsa_attention.metadata"] == {
+        "status": "not_in_selected_stage",
+        "label": "decode-only QSA layout / valid-count metadata",
+    }
+
+
+def test_generic_routed_expert_between_mtp_topk_and_combine_gets_mtp_scope() -> None:
+    events = [
+        {
+            "node": "mtp_moe.topk",
+            "layer_id": 0,
+            "layer_kind": "mtp",
+            "invocation_id": "mtp:0",
+            "attribution_method": "python_stack_ir_rule",
+        },
+        {
+            "node": "moe.routed_experts",
+            "layer_id": None,
+            "layer_kind": None,
+            "invocation_id": None,
+            "attribution_method": "python_stack_semantic_fallback",
+        },
+        {
+            "node": "mtp_moe.combine",
+            "layer_id": 0,
+            "layer_kind": "mtp",
+            "invocation_id": "mtp:0",
+            "attribution_method": "direct_signature_with_python_stack",
+        },
+    ]
+
+    _reconcile_mtp_moe_structure(events, phase="decode")
+
+    assert events[1] == {
+        "node": "mtp_moe.routed_experts",
+        "layer_id": 0,
+        "layer_kind": "mtp",
+        "invocation_id": "mtp:0",
+        "substage": "mtp_draft_extend_moe",
+        "attribution_method": "python_stack_semantic_fallback+mtp_moe_boundary_context",
+        "confidence": "high",
+    }
+
+
+def test_mtp_moe_reconciliation_fails_closed_across_unrelated_kernel() -> None:
+    events = [
+        {"node": "mtp_moe.topk", "attribution_method": "direct_signature"},
+        {"node": "moe.routed_experts", "attribution_method": "fallback"},
+        {"node": "top.runtime_support", "attribution_method": "boundary"},
+        {"node": "mtp_moe.combine", "attribution_method": "direct_signature"},
+    ]
+
+    _reconcile_mtp_moe_structure(events, phase="decode")
+
+    assert events[1]["node"] == "moe.routed_experts"
+
+
+def test_target_metadata_boundary_insert_stays_at_runtime_parent() -> None:
+    resolved = _resolve_mtp_generation_boundary_insert(
+        {"kernel_name": "generic index kernel"},
+        {"node": "qsa_attention.metadata"},
+        {"node": "linear_attention.recurrent_state"},
+        phase="eagle_mtp_decode",
+    )
+
+    assert resolved == {
+        "kernel_label": "target QSA/GDN metadata preparation",
+        "node": "top.runtime_support",
+        "layer_kind": None,
+        "substage": "target_verify_runtime",
+        "attribution_method": "generation_runtime_boundary_context",
+        "confidence": "high",
+    }
+
+
+def test_closed_decode_interval_adds_only_reviewed_draft_select_tail() -> None:
+    source = [
+        {
+            "kernel_name": "last draft-model kernel",
+            "node": "top.runtime_support",
+        }
+    ]
+    timing = source + [
+        {"kernel_name": "direct_copy_kernel_cuda", "cpu_op_name": "aten::copy_"},
+        {"kernel_name": "_gather_rows_kernel"},
+        {"kernel_name": "assign_draft_cache_locs_contiguous"},
+        {"kernel_name": "FillFunctor<long>"},
+        {"kernel_name": "build_tree_efficient"},
+        {"kernel_name": "assign_extend_cache_locs_uniform"},
+    ]
+
+    augmented = _append_source_reviewed_mtp_decode_runtime_tail(
+        source, timing, phase="eagle_mtp_decode"
+    )
+
+    assert len(augmented) == len(timing)
+    assert {event["node"] for event in augmented[1:]} == {
+        "mtp_generation.draft_select"
+    }
+    assert {
+        event["attribution_method"] for event in augmented[1:]
+    } == {"source_reviewed_speculative_runtime_tail"}
+
+
+def test_changed_decode_runtime_tail_stays_fail_closed() -> None:
+    source = [{"kernel_name": "last draft-model kernel"}]
+    timing = source + [
+        {"kernel_name": "_gather_rows_kernel"},
+        {"kernel_name": "unknown_new_kernel"},
+        {"kernel_name": "assign_draft_cache_locs_contiguous"},
+        {"kernel_name": "build_tree_efficient"},
+        {"kernel_name": "assign_extend_cache_locs_uniform"},
+    ]
+
+    assert _append_source_reviewed_mtp_decode_runtime_tail(
+        source, timing, phase="eagle_mtp_decode"
+    ) == source
+
+
+def test_prefill_hc_mix_groups_pair_to_combine_and_leave_two_final_mixes() -> None:
+    events = []
+
+    def add_stage(layer_kind: str, layer_id: int, stage: str, mtp: bool = False) -> None:
+        prefix = "mtp_prefill_" if mtp else ""
+        invocation = "mtp:0" if mtp else layer_id
+        events.extend(
+            [
+                {"kernel_name": "grouped_gemma_rmsnorm_kernel", "node": "hyperconnection.branch_norm"},
+                {
+                    "kernel_name": f"mix_gemm_{len(events)}",
+                    "node": "hyperconnection.mix",
+                    "semantic_function": "_mix_compute",
+                    "python_stack": [
+                        {
+                            "file": "sglang/srt/layers/hyperconnection.py",
+                            "function": "mix",
+                        }
+                    ],
+                },
+                {
+                    "kernel_name": "hc_combine_kernel",
+                    "node": "hyperconnection.combine",
+                    "layer_id": layer_id,
+                    "layer_kind": layer_kind,
+                    "invocation_id": invocation,
+                    "substage": f"{prefix}{stage}_hc_combine",
+                    "stack_evidence": {"event_id": f"combine-{len(events)}"},
+                },
+            ]
+        )
+
+    def add_final(node: str) -> None:
+        events.extend(
+            [
+                {"kernel_name": "grouped_gemma_rmsnorm_kernel", "node": node},
+                {
+                    "kernel_name": f"final_mix_{len(events)}",
+                    "node": node,
+                    "semantic_function": "_mix_compute",
+                    "python_stack": [
+                        {
+                            "file": "sglang/srt/layers/hyperconnection.py",
+                            "function": "mix",
+                        }
+                    ],
+                },
+                {"kernel_name": "lm_head_kernel", "node": "wrong.runtime.node"},
+                {"kernel_name": "_all_gather_kernel_inner", "node": "wrong.collective"},
+            ]
+        )
+
+    add_stage("linear", 0, "attn")
+    add_stage("linear", 0, "mlp")
+    add_final("top.final_hc_mix")
+    add_stage("mtp", 0, "attn", mtp=True)
+    add_stage("mtp", 0, "mlp", mtp=True)
+    add_final("mtp_head.final_hc_mix")
+
+    _reconcile_hyperconnection_structure(events, phase="prefill")
+
+    target_mixes = [
+        event
+        for event in events
+        if event.get("node") == "hyperconnection.mix"
+        and event.get("layer_kind") == "linear"
+    ]
+    assert [event["substage"] for event in target_mixes] == [
+        "attn_hc_mix",
+        "mlp_hc_mix",
+    ]
+    assert sum(event.get("node") == "top.final_hc_mix" for event in events) == 2
+    assert sum(event.get("node") == "mtp_head.final_hc_mix" for event in events) == 2
+    assert sum(event.get("node") == "top.tp_logits_collective" for event in events) == 1
+    assert sum(event.get("node") == "mtp_head.tp_logits_collective" for event in events) == 1
+
+
+def test_mtp_input_fusion_splits_two_projection_pairs_and_residual_add() -> None:
+    events = [
+        {
+            "kernel_name": "RMSNormKernel embedding",
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        },
+        {
+            "kernel_name": "embedding GEMM",
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        },
+        {
+            "kernel_name": "RMSNormKernel hidden",
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        },
+        {
+            "kernel_name": "hidden GEMM",
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        },
+        {
+            "kernel_name": "CUDAFunctor_add residual",
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        },
+    ]
+
+    _reconcile_mtp_input_fusion(events)
+
+    assert [event["node"] for event in events] == [
+        "mtp_head.embedding_projection",
+        "mtp_head.embedding_projection",
+        "mtp_head.hidden_projection",
+        "mtp_head.hidden_projection",
+        "mtp_head.residual_fusion",
+    ]
+
+
+def _exact(node: str, layer_kind: str) -> dict:
+    return {
+        "kernel_name": node,
+        "node": node,
+        "layer_kind": layer_kind,
+        "attribution_method": "python_stack_ir_rule+exact_sequence_timing_transfer",
+    }
+
+
+def test_timing_only_qsa_kernel_stays_in_mtp_scope() -> None:
+    events = [
+        _exact("mtp_qsa_attention.metadata", "mtp"),
+        {
+            "kernel_name": "_compact_kv",
+            "node": "qsa_attention.attention_core",
+            "layer_kind": "full",
+            "attribution_method": "direct_signature_timing_insert",
+        },
+        _exact("mtp_qsa_attention.output_gate", "mtp"),
+    ]
+
+    _restore_mtp_scope_for_timing_inserts(events, phase="forward_decode")
+
+    assert events[1]["node"] == "mtp_qsa_attention.attention_core"
+    assert events[1]["layer_kind"] == "mtp"
+    assert events[1]["substage"] == "mtp_draft_extend_attention"
+
+
+def test_timing_only_hc_mix_keeps_generic_leaf_and_mtp_stage() -> None:
+    left = _exact("hyperconnection.branch_norm", "mtp")
+    left["substage"] = "mtp_draft_extend_attn_hc_mix"
+    right = _exact("mtp_qsa_attention.qkv_gate_projection", "mtp")
+    right["substage"] = "mtp_draft_extend_attention"
+    events = [
+        left,
+        {
+            "kernel_name": "_hc_mix_persistent_kernel",
+            "node": "hyperconnection.mix",
+            "layer_kind": None,
+            "attribution_method": "direct_signature_timing_insert",
+        },
+        right,
+    ]
+
+    _restore_mtp_scope_for_timing_inserts(events, phase="forward_decode")
+
+    assert events[1]["node"] == "hyperconnection.mix"
+    assert events[1]["layer_kind"] == "mtp"
+    assert events[1]["substage"] == "mtp_draft_extend_attn_hc_mix"
+
+
+def test_timing_only_kernel_cannot_cross_target_mtp_boundary() -> None:
+    events = [
+        _exact("qsa_attention.output_projection", "full"),
+        {
+            "kernel_name": "_compact_kv",
+            "node": "qsa_attention.attention_core",
+            "layer_kind": "full",
+            "attribution_method": "direct_signature_timing_insert",
+        },
+        _exact("mtp_qsa_attention.qkv_gate_projection", "mtp"),
+    ]
+
+    with pytest.raises(ValueError, match="target/MTP scope boundary"):
+        _restore_mtp_scope_for_timing_inserts(events, phase="forward_decode")
+
+
+def test_target_decoder_rollup_excludes_auxiliary_mtp_model() -> None:
+    common = {
+        "rank": 0,
+        "step_index": 1,
+        "stream": 23,
+        "device": 0,
+        "pid": 1,
+        "tid": 23,
+        "attribution_method": "python_stack_ir_rule",
+        "confidence": "high",
+    }
+    target = {
+        **common,
+        "kernel_name": "target",
+        "kernel_label": "target",
+        "node": "linear_attention.delta_rule",
+        "ts_us": 0.0,
+        "dur_us": 1.0,
+        "layer_id": 0,
+        "layer_kind": "linear",
+        "invocation_id": 0,
+        "substage": "attention",
+    }
+    mtp = {
+        **common,
+        "kernel_name": "mtp",
+        "kernel_label": "mtp",
+        "node": "mtp_qsa_attention.attention_core",
+        "ts_us": 1.0,
+        "dur_us": 2.0,
+        "layer_id": 0,
+        "layer_kind": "mtp",
+        "invocation_id": "mtp:0",
+        "substage": "mtp_draft_extend_attention",
+    }
+    mtp_hc = {
+        **common,
+        "kernel_name": "mtp_hc",
+        "kernel_label": "mtp_hc",
+        "node": "hyperconnection.mix",
+        "ts_us": 3.0,
+        "dur_us": 3.0,
+        "layer_id": 0,
+        "layer_kind": "mtp",
+        "invocation_id": "mtp:0",
+        "substage": "mtp_draft_extend_runtime_hc",
+    }
+
+    metrics = build_metrics([target, mtp, mtp_hc], phase="decode", n_iters=1)
+
+    assert metrics["top.decoder_stack"]["active_gpu_ms"] == pytest.approx(0.001)
+    assert metrics["mtp_head.decoder_layer"]["active_gpu_ms"] == pytest.approx(0.005)
+    assert metrics["mtp_generation.target_verify"]["active_gpu_ms"] == pytest.approx(0.001)
+    assert metrics["mtp_generation.mtp_draft_extend"]["active_gpu_ms"] == pytest.approx(0.005)
+    assert "hyperconnection.mix" not in metrics
+
+
+def test_mtp_hc_stage_exposes_scoped_drill_metrics() -> None:
+    common = {
+        "rank": 0,
+        "step_index": 1,
+        "stream": 23,
+        "device": 0,
+        "pid": 1,
+        "tid": 23,
+        "layer_id": 0,
+        "layer_kind": "mtp",
+        "invocation_id": "mtp:0",
+        "substage": "mtp_draft_extend_attn_hc_mix",
+        "attribution_method": "python_stack_ir_rule",
+        "confidence": "high",
+    }
+    events = [
+        {
+            **common,
+            "kernel_name": "norm",
+            "kernel_label": "norm",
+            "node": "hyperconnection.branch_norm",
+            "ts_us": 0.0,
+            "dur_us": 1.0,
+        },
+        {
+            **common,
+            "kernel_name": "mix",
+            "kernel_label": "mix",
+            "node": "hyperconnection.mix",
+            "ts_us": 1.0,
+            "dur_us": 2.0,
+        },
+    ]
+
+    metrics = build_metrics(events, phase="decode", n_iters=1)
+    parent = metrics["mtp_layer.attn_hc_mix"]
+
+    assert parent["active_gpu_ms"] == pytest.approx(0.003)
+    assert parent["drill_view"] == "hyperconnection_mix"
+    assert parent["drill_metrics"]["branch_norm"]["active_gpu_ms"] == pytest.approx(0.001)
+    assert parent["drill_metrics"]["mix"]["active_gpu_ms"] == pytest.approx(0.002)

@@ -30,6 +30,8 @@ workload:
   cache_policy: radix-disabled; flush-before-each-case
   requested_chunked_prefill_size: 8192
   resolved_chunked_prefill_size: 2048
+  max_prefill_tokens: 8192
+  admission_control: stock
 profiler:
   type: torch
   rank: all
@@ -46,11 +48,18 @@ profiler:
     global_running_reqs: 1
     global_waiting_reqs: 0
     global_waiting_uncached_tokens: 0
-  gpu_metric_semantics: maximum per-rank kernel residency; parallel ranks are not
-    summed
+  admission_instrumentation:
+    mode: stock
+    local_target: null
+    active_during_profile: false
+  gpu_metric_semantics: overlap-aware active GPU interval union on one coherent critical
+    reference rank; residency is retained separately
 evidence:
   job_id: 3176721
   source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+  source_patch_sha256: null
+  protocol_file: protocol.json
+  protocol_sha256: e4f3a948495b877760b378ab8b75021eed68e7f2e9e6416bff3f866d11565c2f
   model_revision: b151fd157ff99b63198ab8558432f0bf43e14d58
   gdn_backend: flashinfer_bf16
   trace_files:
@@ -68,8 +77,25 @@ evidence:
     sha256: 6ea160c333a0abb1ba140f581a809cfbf63db75e2798413a18180be535c2fd83
   eager_mapping_file: kernel_mapping.tp1.jsonl
   eager_mapping_sha256: 33d3b0f25840c7ad2d7cf59295a416da4c692b41b08e5f81dd12e207865227be
-  mapping_policy: unique kernel signatures plus eager-stack-validated collective order
-  mapped_kernel_duration_ratio: 0.620455
+  mapping_policy: eager Python-stack/source binding transferred by direct signatures,
+    eager-validated collective order, and validated 48-layer execution sequence
+  mapped_kernel_duration_ratio: 1.0
+  reference_rank: 1
+  accounting:
+    kernel_count: 9330
+    attributed_kernel_count: 9330
+    unattributed_kernel_count: 0
+    attributed_gpu_residency_pct: 100.0
+    attribution_methods:
+      validated_execution_sequence: 4685
+      direct_signature: 4625
+      eager_stack_collective_order: 20
+    active_gpu_ms: 10.266612
+    gpu_residency_ms: 10.726215
+    gpu_elapsed_ms: 10.733725
+    device_gap_ms: 0.467113
+    gpu_busy_pct: 95.65
+    gpu_overlap_ms: 0.459604
   critical_decode_step_ms:
     samples:
     - 10.728165
@@ -89,292 +115,3355 @@ evidence:
     overall_throughput: 714.5063919435262
     started_at_unix: 1787219386.4733784
     finished_at_unix: 1787219399.428704
+profile_summary:
+  timing_phase: decode
+  timing_coverage: 100% of captured CUDA kernels
+  reference_rank: 1
+  node_time: active GPU time; overlap counted once
+  kernel_detail: GPU residency; concurrent streams may sum above node active time
+  provenance: direct / eager-stack collective / validated sequence shown per node
+  timing:
+    scope: one CUDA Graph decode step on the selected reference rank
+    elapsed_ms: 10.733725
+    active_gpu_ms: 10.266612
+    device_gap_ms: 0.467113
+    gpu_busy_pct: 95.65
+    gpu_residency_ms: 10.726215
+    gpu_overlap_ms: 0.459604
+    elapsed_source: ProfilerStep GPU annotation on the same reference rank
+    device_gap_reason: unclassified
+    reference_rank: 1
+    sample_count: 5
+    elapsed_samples_ms:
+    - 10.728165
+    - 10.740066
+    - 10.727011
+    - 10.745317
+    - 10.728066
+    active_samples_ms:
+    - 10.258486
+    - 10.275935
+    - 10.259867
+    - 10.276021
+    - 10.26275
+  gap_note: device gap is same-rank decode-step elapsed minus the union of all GPU
+    kernel intervals; its CPU/synchronization cause is not inferred without direct
+    evidence
+node_states:
+  top.token_ids:
+    status: structural
+    label: input tensor · no GPU kernel
+  top.logits:
+    status: structural
+    label: output tensor/materialization
+  stack.stack_in:
+    status: structural
+    label: tensor boundary
+  stack.schedule:
+    status: structural
+    label: control schedule · no kernel
+  stack.stack_out:
+    status: structural
+    label: tensor boundary
+  linear_layer.layer_in:
+    status: structural
+    label: tensor boundary
+  linear_layer.layer_out:
+    status: structural
+    label: tensor boundary
+  full_layer.layer_in:
+    status: structural
+    label: tensor boundary
+  full_layer.layer_out:
+    status: structural
+    label: tensor boundary
+  ple.token_history:
+    status: state
+    label: state access; timed support shown when present
+  ple.conv_state:
+    status: state
+    label: persistent state · no standalone kernel
+  linear_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  linear_attention.recurrent_state:
+    status: state
+    label: persistent state · updated by recurrence
+  linear_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  linear_attention.ba_projection:
+    status: fused
+    label: fused with q/k/v/z + beta/alpha projection
+    included_in: linear_attention.qkvz_projection
+  hyperconnection.hc_in:
+    status: structural
+    label: tensor boundary
+  hyperconnection.low_rank_gate:
+    status: fused
+    label: fused into hyper-connection mix kernel
+    included_in: hyperconnection.mix
+  hyperconnection.hc_out:
+    status: structural
+    label: tensor boundary
+  hyperconnection_mix.branch_states:
+    status: structural
+    label: branch-state input boundary
+  hyperconnection_mix.low_rank_gate:
+    status: fused
+    label: fused into hyper-connection mix kernel
+    included_in: hyperconnection_mix.mix
+  hyperconnection_mix.module_input:
+    status: structural
+    label: selected module-input boundary
+  hyperconnection_combine.branch_states:
+    status: structural
+    label: preserved branch-state input boundary
+  hyperconnection_combine.module_output:
+    status: structural
+    label: processed module-output boundary
+  hyperconnection_combine.updated_branch_states:
+    status: structural
+    label: updated branch-state output boundary
+  qsa_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  qsa_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  moe.moe_in:
+    status: structural
+    label: tensor boundary
+  moe.moe_out:
+    status: structural
+    label: tensor boundary
+  linear_attention.gating:
+    status: fused
+    label: included in fused decode recurrence when no separate kernel
+    included_in: linear_attention.delta_rule
 node_metrics:
+  full_layer.attn_hc_combine:
+    ms_per_iter: 0.11371
+    active_gpu_ms: 0.11371
+    gpu_residency_ms: 0.11371
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.11371
+    kernels:
+    - name: hyper-connection combine
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.476
+      total_us_per_iter: 113.71
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.11371
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_combine
+    drill_scope: full_layer.attn_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'attention output
+
+          [B,T,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      combine:
+        ms_per_iter: 0.11371
+        active_gpu_ms: 0.11371
+        gpu_residency_ms: 0.11371
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.11371
+        kernels:
+        - name: hyper-connection combine
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 9.476
+          total_us_per_iter: 113.71
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.11371
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.attn_hc_combine
+        display_label: 'update four branches
+
+          with attention output'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  full_layer.attn_hc_mix:
+    ms_per_iter: 0.174081
+    active_gpu_ms: 0.174081
+    gpu_residency_ms: 0.174081
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 86.43
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.150452
+        validated_execution_sequence:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.023629
+    kernels:
+    - name: hyper-connection fused gate + mix
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 12.538
+      total_us_per_iter: 150.452
+      share_in_node_pct: 86.43
+    - name: attention-branch RMSNorm
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.969
+      total_us_per_iter: 23.629
+      share_in_node_pct: 13.57
+    gpu_elapsed_ms: 0.178344
+    module_gap_ms: 0.004263
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.004263
+    module_active_pct: 97.61
+    device_busy_pct: 97.61
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_mix
+    drill_scope: full_layer.attn_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      branch_norm:
+        ms_per_iter: 0.023629
+        active_gpu_ms: 0.023629
+        gpu_residency_ms: 0.023629
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.023629
+        kernels:
+        - name: attention-branch RMSNorm
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 1.969
+          total_us_per_iter: 23.629
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.023629
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      mix:
+        ms_per_iter: 0.150452
+        active_gpu_ms: 0.150452
+        gpu_residency_ms: 0.150452
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.150452
+        kernels:
+        - name: hyper-connection fused gate + mix
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 12.538
+          total_us_per_iter: 150.452
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.150452
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.attn_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → attention input'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'attention input
+
+          [B,T,H]'
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  full_layer.mlp_hc_combine:
+    ms_per_iter: 0.089959
+    active_gpu_ms: 0.089959
+    gpu_residency_ms: 0.089959
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.089959
+    kernels:
+    - name: hyper-connection combine
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 7.497
+      total_us_per_iter: 89.959
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.089959
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_combine
+    drill_scope: full_layer.mlp_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'MoE output
+
+          [B,T,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      combine:
+        ms_per_iter: 0.089959
+        active_gpu_ms: 0.089959
+        gpu_residency_ms: 0.089959
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.089959
+        kernels:
+        - name: hyper-connection combine
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 7.497
+          total_us_per_iter: 89.959
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.089959
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.mlp_hc_combine
+        display_label: 'update four branches
+
+          with MoE output'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  full_layer.mlp_hc_mix:
+    ms_per_iter: 0.172347
+    active_gpu_ms: 0.172347
+    gpu_residency_ms: 0.172346
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 86.58
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.14921
+        validated_execution_sequence:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.023136
+    kernels:
+    - name: hyper-connection fused gate + mix
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 12.434
+      total_us_per_iter: 149.21
+      share_in_node_pct: 86.58
+    - name: MoE-branch RMSNorm
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.928
+      total_us_per_iter: 23.136
+      share_in_node_pct: 13.42
+    gpu_elapsed_ms: 0.176711
+    module_gap_ms: 0.004364
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.004364
+    module_active_pct: 97.53
+    device_busy_pct: 97.53
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_mix
+    drill_scope: full_layer.mlp_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      branch_norm:
+        ms_per_iter: 0.023137
+        active_gpu_ms: 0.023137
+        gpu_residency_ms: 0.023136
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.023136
+        kernels:
+        - name: MoE-branch RMSNorm
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 1.928
+          total_us_per_iter: 23.136
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.023137
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      mix:
+        ms_per_iter: 0.14921
+        active_gpu_ms: 0.14921
+        gpu_residency_ms: 0.14921
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.14921
+        kernels:
+        - name: hyper-connection fused gate + mix
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 12.434
+          total_us_per_iter: 149.21
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.14921
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: full_layer.mlp_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → MoE input'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'MoE input
+
+          [B,T,H]'
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  full_layer.moe:
+    ms_per_iter: 1.504706
+    active_gpu_ms: 1.504706
+    gpu_residency_ms: 1.536266
+    gpu_overlap_ms: 0.03156
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 79.06
+      methods:
+        direct_signature:
+          kernel_count: 600
+          gpu_residency_ms_per_iter: 1.214529
+        validated_execution_sequence:
+          kernel_count: 600
+          gpu_residency_ms_per_iter: 0.321737
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 18.14
+      total_us_per_iter: 435.362
+      share_in_node_pct: 28.34
+    - name: DeepEP token dispatch
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 13.454
+      total_us_per_iter: 322.902
+      share_in_node_pct: 21.02
+    - name: shared-expert overlapped projection
+      count: 420
+      count_per_iter: 84.0
+      avg_us: 2.89
+      total_us_per_iter: 242.747
+      share_in_node_pct: 15.8
+    - name: DeepEP token combine
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 8.861
+      total_us_per_iter: 212.667
+      share_in_node_pct: 13.84
+    - name: routed-expert activation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 11.137
+      total_us_per_iter: 133.639
+      share_in_node_pct: 8.7
+    - name: MoE router logits
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 4.386
+      total_us_per_iter: 105.268
+      share_in_node_pct: 6.85
+    - name: shared-expert activation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.66
+      total_us_per_iter: 31.924
+      share_in_node_pct: 2.08
+    - name: DeepEP routing-layout preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.613
+      total_us_per_iter: 19.354
+      share_in_node_pct: 1.26
+    - name: MoE padded-route mask
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.382
+      total_us_per_iter: 16.583
+      share_in_node_pct: 1.08
+    - name: MoE output combine support
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.318
+      total_us_per_iter: 15.821
+      share_in_node_pct: 1.03
+    gpu_elapsed_ms: 1.566763
+    module_gap_ms: 0.062057
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.062057
+    module_active_pct: 96.04
+    device_busy_pct: 96.04
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  full_layer.qsa_attention:
+    ms_per_iter: 0.73516
+    active_gpu_ms: 0.73516
+    gpu_residency_ms: 0.962387
+    gpu_overlap_ms: 0.227227
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 40.07
+      methods:
+        direct_signature:
+          kernel_count: 540
+          gpu_residency_ms_per_iter: 0.385665
+        validated_execution_sequence:
+          kernel_count: 780
+          gpu_residency_ms_per_iter: 0.576722
+    kernels:
+    - name: Q/K/V + output-gate projection
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 5.005
+      total_us_per_iter: 360.361
+      share_in_node_pct: 37.44
+    - name: QSA sparse attention
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.768
+      total_us_per_iter: 117.217
+      share_in_node_pct: 12.18
+    - name: QSA output projection
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.249
+      total_us_per_iter: 110.99
+      share_in_node_pct: 11.53
+    - name: QSA index query preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 5.671
+      total_us_per_iter: 68.058
+      share_in_node_pct: 7.07
+    - name: QSA index key compression
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 4.833
+      total_us_per_iter: 57.991
+      share_in_node_pct: 6.03
+    - name: QSA index projection/support
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.386
+      total_us_per_iter: 49.901
+      share_in_node_pct: 5.19
+    - name: QSA sigmoid output gate
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 1.721
+      total_us_per_iter: 41.312
+      share_in_node_pct: 4.29
+    - name: QSA compact KV
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.818
+      total_us_per_iter: 33.811
+      share_in_node_pct: 3.51
+    - name: QSA Q/K norm + RoPE
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.4
+      total_us_per_iter: 28.8
+      share_in_node_pct: 2.99
+    - name: QSA block-index expansion
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 2.116
+      total_us_per_iter: 25.395
+      share_in_node_pct: 2.64
+    - name: QSA index top-k
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.677
+      total_us_per_iter: 20.122
+      share_in_node_pct: 2.09
+    - name: QSA valid-count preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.563
+      total_us_per_iter: 18.752
+      share_in_node_pct: 1.95
+    gpu_elapsed_ms: 0.777931
+    module_gap_ms: 0.042771
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.042771
+    module_active_pct: 94.5
+    device_busy_pct: 94.5
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  hyperconnection.branch_norm:
+    ms_per_iter: 0.187048
+    active_gpu_ms: 0.187048
+    gpu_residency_ms: 0.187048
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 0.187048
+    kernels:
+    - name: MoE-branch RMSNorm
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.961
+      total_us_per_iter: 94.138
+      share_in_node_pct: 50.33
+    - name: attention-branch RMSNorm
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.936
+      total_us_per_iter: 92.91
+      share_in_node_pct: 49.67
+    gpu_elapsed_ms: 3.23487
+    module_gap_ms: 3.047822
+    other_gpu_work_ms: 2.958087
+    device_idle_ms: 0.089735
+    module_active_pct: 5.78
+    device_busy_pct: 97.23
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   hyperconnection.combine:
-    ms_per_iter: 0.849125
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.809009
-    - 0.849125
+    ms_per_iter: 0.814526
+    active_gpu_ms: 0.814526
+    gpu_residency_ms: 0.814525
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 0.814525
     kernels:
     - name: hyper-connection combine
       count: 480
       count_per_iter: 96.0
-      avg_us: 8.845
-      total_us_per_iter: 849.125
+      avg_us: 8.485
+      total_us_per_iter: 814.525
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 7.60594
+    module_gap_ms: 6.791414
+    other_gpu_work_ms: 6.506228
+    device_idle_ms: 0.285186
+    module_active_pct: 10.71
+    device_busy_pct: 96.25
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   hyperconnection.mix:
-    ms_per_iter: 1.207476
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 1.196026
-    - 1.207476
+    ms_per_iter: 1.187503
+    active_gpu_ms: 1.187503
+    gpu_residency_ms: 1.187502
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 1.187502
     kernels:
-    - name: hyper-connection mix
-      count: 485
-      count_per_iter: 97.0
-      avg_us: 12.448
-      total_us_per_iter: 1207.476
+    - name: hyper-connection fused gate + mix
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 12.37
+      total_us_per_iter: 1187.502
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 3.731672
+    module_gap_ms: 2.544169
+    other_gpu_work_ms: 2.454134
+    device_idle_ms: 0.090035
+    module_active_pct: 31.82
+    device_busy_pct: 97.59
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   linear_attention.causal_conv:
-    ms_per_iter: 0.122811
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.059027
-    - 0.122811
+    ms_per_iter: 0.060799
+    active_gpu_ms: 0.060799
+    gpu_residency_ms: 0.0608
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.0608
     kernels:
-    - name: GDN causal-conv update
+    - name: GDN causal Conv1D
       count: 180
       count_per_iter: 36.0
-      avg_us: 3.411
-      total_us_per_iter: 122.811
+      avg_us: 1.689
+      total_us_per_iter: 60.8
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.060799
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   linear_attention.delta_rule:
-    ms_per_iter: 0.116071
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.105972
-    - 0.116071
+    ms_per_iter: 0.111981
+    active_gpu_ms: 0.111981
+    gpu_residency_ms: 0.111981
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.111981
     kernels:
     - name: FlashInfer GDN recurrence
       count: 180
       count_per_iter: 36.0
-      avg_us: 3.224
-      total_us_per_iter: 116.071
+      avg_us: 3.111
+      total_us_per_iter: 111.981
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.111981
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   linear_attention.gated_norm:
-    ms_per_iter: 0.075796
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.069504
-    - 0.075796
+    ms_per_iter: 0.071745
+    active_gpu_ms: 0.071745
+    gpu_residency_ms: 0.071744
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.071744
     kernels:
     - name: GDN gated RMSNorm
       count: 180
       count_per_iter: 36.0
-      avg_us: 2.105
-      total_us_per_iter: 75.796
+      avg_us: 1.993
+      total_us_per_iter: 71.744
       share_in_node_pct: 100.0
-  linear_attention.split_pack:
-    ms_per_iter: 0.105057
-    aggregation: maximum per-rank kernel residency
-    source_rank: 2
-    rank_range_ms:
-    - 0.094784
-    - 0.105057
+    gpu_elapsed_ms: 0.071745
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_attention.output_projection:
+    ms_per_iter: 0.326947
+    active_gpu_ms: 0.326947
+    gpu_residency_ms: 0.326946
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.326946
     kernels:
-    - name: GDN split+pack
+    - name: GDN output projection
       count: 180
       count_per_iter: 36.0
-      avg_us: 2.918
-      total_us_per_iter: 105.057
+      avg_us: 9.082
+      total_us_per_iter: 326.946
       share_in_node_pct: 100.0
-  moe.deepep_combine:
-    ms_per_iter: 0.76581
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.727032
-    - 0.76581
+    gpu_elapsed_ms: 0.326947
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_attention.qkvz_projection:
+    ms_per_iter: 0.584676
+    active_gpu_ms: 0.584676
+    gpu_residency_ms: 0.584676
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.584676
     kernels:
-    - name: DeepEP combine
-      count: 480
-      count_per_iter: 96.0
-      avg_us: 7.977
-      total_us_per_iter: 765.81
+    - name: fused q/k/v/z + beta/alpha projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 16.241
+      total_us_per_iter: 584.676
       share_in_node_pct: 100.0
-  moe.deepep_dispatch:
-    ms_per_iter: 1.641097
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.95077
-    - 1.641097
+    gpu_elapsed_ms: 0.584676
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_attention.split_pack:
+    ms_per_iter: 0.098078
+    active_gpu_ms: 0.098078
+    gpu_residency_ms: 0.098081
+    gpu_overlap_ms: 2.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.098081
     kernels:
-    - name: DeepEP dispatch
-      count: 480
-      count_per_iter: 96.0
-      avg_us: 17.095
-      total_us_per_iter: 1641.097
+    - name: GDN split + pack
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.724
+      total_us_per_iter: 98.081
       share_in_node_pct: 100.0
-  moe.routed_experts:
-    ms_per_iter: 1.780651
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 1.75014
-    - 1.780651
+    gpu_elapsed_ms: 0.098078
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.attn_hc_combine:
+    ms_per_iter: 0.342773
+    active_gpu_ms: 0.342773
+    gpu_residency_ms: 0.342773
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.342773
     kernels:
-    - name: DeepGEMM expert GEMM
-      count: 480
-      count_per_iter: 96.0
-      avg_us: 18.548
-      total_us_per_iter: 1780.651
+    - name: hyper-connection combine
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 9.521
+      total_us_per_iter: 342.773
       share_in_node_pct: 100.0
-  moe.shared_expert:
-    ms_per_iter: 0.208796
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.126881
-    - 0.208796
+    gpu_elapsed_ms: 0.342773
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_combine
+    drill_scope: linear_layer.attn_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'attention output
+
+          [B,T,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      combine:
+        ms_per_iter: 0.342773
+        active_gpu_ms: 0.342773
+        gpu_residency_ms: 0.342773
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.342773
+        kernels:
+        - name: hyper-connection combine
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 9.521
+          total_us_per_iter: 342.773
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.342773
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.attn_hc_combine
+        display_label: 'update four branches
+
+          with attention output'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.attn_hc_mix:
+    ms_per_iter: 0.51692
+    active_gpu_ms: 0.51692
+    gpu_residency_ms: 0.516964
+    gpu_overlap_ms: 4.4e-05
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 86.6
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.447683
+        validated_execution_sequence:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.069281
     kernels:
-    - name: MoE shared-expert activation
+    - name: hyper-connection fused gate + mix
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 12.436
+      total_us_per_iter: 447.683
+      share_in_node_pct: 86.6
+    - name: attention-branch RMSNorm
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.924
+      total_us_per_iter: 69.281
+      share_in_node_pct: 13.4
+    gpu_elapsed_ms: 0.529502
+    module_gap_ms: 0.012582
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.012582
+    module_active_pct: 97.62
+    device_busy_pct: 97.62
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_mix
+    drill_scope: linear_layer.attn_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      branch_norm:
+        ms_per_iter: 0.069281
+        active_gpu_ms: 0.069281
+        gpu_residency_ms: 0.069281
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.069281
+        kernels:
+        - name: attention-branch RMSNorm
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 1.924
+          total_us_per_iter: 69.281
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.069281
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      mix:
+        ms_per_iter: 0.447684
+        active_gpu_ms: 0.447684
+        gpu_residency_ms: 0.447683
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.447683
+        kernels:
+        - name: hyper-connection fused gate + mix
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 12.436
+          total_us_per_iter: 447.683
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.447684
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.attn_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → attention input'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'attention input
+
+          [B,T,H]'
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.linear_attention:
+    ms_per_iter: 1.250921
+    active_gpu_ms: 1.250921
+    gpu_residency_ms: 1.254229
+    gpu_overlap_ms: 0.003308
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 27.32
+      methods:
+        direct_signature:
+          kernel_count: 720
+          gpu_residency_ms_per_iter: 0.342606
+        validated_execution_sequence:
+          kernel_count: 360
+          gpu_residency_ms_per_iter: 0.911622
+    kernels:
+    - name: fused q/k/v/z + beta/alpha projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 16.241
+      total_us_per_iter: 584.676
+      share_in_node_pct: 46.62
+    - name: GDN output projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 9.082
+      total_us_per_iter: 326.946
+      share_in_node_pct: 26.07
+    - name: FlashInfer GDN recurrence
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 3.111
+      total_us_per_iter: 111.981
+      share_in_node_pct: 8.93
+    - name: GDN split + pack
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.724
+      total_us_per_iter: 98.081
+      share_in_node_pct: 7.82
+    - name: GDN gated RMSNorm
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.993
+      total_us_per_iter: 71.744
+      share_in_node_pct: 5.72
+    - name: GDN causal Conv1D
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.689
+      total_us_per_iter: 60.8
+      share_in_node_pct: 4.85
+    gpu_elapsed_ms: 1.278063
+    module_gap_ms: 0.027142
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.027142
+    module_active_pct: 97.88
+    device_busy_pct: 97.88
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.mlp_hc_combine:
+    ms_per_iter: 0.268083
+    active_gpu_ms: 0.268083
+    gpu_residency_ms: 0.268084
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.268084
+    kernels:
+    - name: hyper-connection combine
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 7.447
+      total_us_per_iter: 268.084
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.268083
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_combine
+    drill_scope: linear_layer.mlp_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'MoE output
+
+          [B,T,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      combine:
+        ms_per_iter: 0.268083
+        active_gpu_ms: 0.268083
+        gpu_residency_ms: 0.268084
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.268084
+        kernels:
+        - name: hyper-connection combine
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 7.447
+          total_us_per_iter: 268.084
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.268083
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.mlp_hc_combine
+        display_label: 'update four branches
+
+          with MoE output'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.mlp_hc_mix:
+    ms_per_iter: 0.511159
+    active_gpu_ms: 0.511159
+    gpu_residency_ms: 0.511159
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 86.11
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.440157
+        validated_execution_sequence:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.071002
+    kernels:
+    - name: hyper-connection fused gate + mix
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 12.227
+      total_us_per_iter: 440.157
+      share_in_node_pct: 86.11
+    - name: MoE-branch RMSNorm
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.972
+      total_us_per_iter: 71.002
+      share_in_node_pct: 13.89
+    gpu_elapsed_ms: 0.52394
+    module_gap_ms: 0.012781
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.012781
+    module_active_pct: 97.56
+    device_busy_pct: 97.56
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    drill_view: hyperconnection_mix
+    drill_scope: linear_layer.mlp_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      branch_norm:
+        ms_per_iter: 0.071002
+        active_gpu_ms: 0.071002
+        gpu_residency_ms: 0.071002
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.071002
+        kernels:
+        - name: MoE-branch RMSNorm
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 1.972
+          total_us_per_iter: 71.002
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.071002
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      mix:
+        ms_per_iter: 0.440157
+        active_gpu_ms: 0.440157
+        gpu_residency_ms: 0.440157
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.440157
+        kernels:
+        - name: hyper-connection fused gate + mix
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 12.227
+          total_us_per_iter: 440.157
+          share_in_node_pct: 100.0
+        gpu_elapsed_ms: 0.440157
+        module_gap_ms: 0.0
+        other_gpu_work_ms: 0.0
+        device_idle_ms: 0.0
+        module_active_pct: 100.0
+        device_busy_pct: 100.0
+        elapsed_scope: union of validated invocation envelopes
+        gap_semantics: module gap = other GPU work + device idle inside the invocation
+          envelope; device-idle cause is unclassified
+        scope_target: linear_layer.mlp_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → MoE input'
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'MoE input
+
+          [B,T,H]'
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 1
+        rank_policy: one coherent critical reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  linear_layer.moe:
+    ms_per_iter: 4.336374
+    active_gpu_ms: 4.336374
+    gpu_residency_ms: 4.43339
+    gpu_overlap_ms: 0.097016
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 78.32
+      methods:
+        direct_signature:
+          kernel_count: 1800
+          gpu_residency_ms_per_iter: 3.472283
+        validated_execution_sequence:
+          kernel_count: 1800
+          gpu_residency_ms_per_iter: 0.961107
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 18.261
+      total_us_per_iter: 1314.778
+      share_in_node_pct: 29.66
+    - name: DeepEP token dispatch
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 12.319
+      total_us_per_iter: 886.943
+      share_in_node_pct: 20.01
+    - name: shared-expert overlapped projection
+      count: 1260
+      count_per_iter: 252.0
+      avg_us: 2.883
+      total_us_per_iter: 726.443
+      share_in_node_pct: 16.39
+    - name: DeepEP token combine
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 7.583
+      total_us_per_iter: 546.007
+      share_in_node_pct: 12.32
+    - name: routed-expert activation
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 11.148
+      total_us_per_iter: 401.328
+      share_in_node_pct: 9.05
+    - name: MoE router logits
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 4.353
+      total_us_per_iter: 313.39
+      share_in_node_pct: 7.07
+    - name: shared-expert activation
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.711
+      total_us_per_iter: 97.587
+      share_in_node_pct: 2.2
+    - name: DeepEP routing-layout preparation
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.497
+      total_us_per_iter: 53.908
+      share_in_node_pct: 1.22
+    - name: MoE output combine support
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.344
+      total_us_per_iter: 48.384
+      share_in_node_pct: 1.09
+    - name: MoE padded-route mask
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.239
+      total_us_per_iter: 44.621
+      share_in_node_pct: 1.01
+    gpu_elapsed_ms: 4.536577
+    module_gap_ms: 0.200204
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.200204
+    module_active_pct: 95.59
+    device_busy_pct: 95.59
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.combine:
+    ms_per_iter: 0.064206
+    active_gpu_ms: 0.064206
+    gpu_residency_ms: 0.064205
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.064205
+    kernels:
+    - name: MoE output combine support
       count: 240
       count_per_iter: 48.0
-      avg_us: 4.35
-      total_us_per_iter: 208.796
+      avg_us: 1.338
+      total_us_per_iter: 64.205
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.064206
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.deepep_combine:
+    ms_per_iter: 0.758675
+    active_gpu_ms: 0.758675
+    gpu_residency_ms: 0.758673
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 0.758673
+    kernels:
+    - name: DeepEP token combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 7.903
+      total_us_per_iter: 758.673
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.780627
+    module_gap_ms: 0.021952
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.021952
+    module_active_pct: 97.19
+    device_busy_pct: 97.19
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    communication:
+      observed_collectives:
+      - kind: all_to_all
+        kernel_count: 480
+        kernel_count_per_iter: 96.0
+      payload: weighted bf16 expert outputs + routing handles → source DP rank
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.deepep_dispatch:
+    ms_per_iter: 1.283107
+    active_gpu_ms: 1.283107
+    gpu_residency_ms: 1.283107
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 94.29
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 1.209845
+        validated_execution_sequence:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.073262
+    kernels:
+    - name: DeepEP token dispatch
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 12.603
+      total_us_per_iter: 1209.845
+      share_in_node_pct: 94.29
+    - name: DeepEP routing-layout preparation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.526
+      total_us_per_iter: 73.262
+      share_in_node_pct: 5.71
+    gpu_elapsed_ms: 1.327203
+    module_gap_ms: 0.044095
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.044095
+    module_active_pct: 96.68
+    device_busy_pct: 96.68
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    communication:
+      observed_collectives:
+      - kind: all_to_all
+        kernel_count: 480
+        kernel_count_per_iter: 96.0
+      payload: bf16 routed token activations + expert IDs/top-k weights/routing metadata
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.routed_experts:
+    ms_per_iter: 2.285109
+    active_gpu_ms: 2.285109
+    gpu_residency_ms: 2.285108
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 720
+          gpu_residency_ms_per_iter: 2.285108
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 18.231
+      total_us_per_iter: 1750.14
+      share_in_node_pct: 76.59
+    - name: routed-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 11.145
+      total_us_per_iter: 534.968
+      share_in_node_pct: 23.41
+    gpu_elapsed_ms: 2.319521
+    module_gap_ms: 0.034412
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.034412
+    module_active_pct: 98.52
+    device_busy_pct: 98.52
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.router:
+    ms_per_iter: 0.418658
+    active_gpu_ms: 0.418658
+    gpu_residency_ms: 0.418658
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 57.92
+      methods:
+        direct_signature:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.242471
+        validated_execution_sequence:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.176187
+    kernels:
+    - name: MoE router logits
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 4.361
+      total_us_per_iter: 418.658
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 1.481979
+    module_gap_ms: 1.063321
+    other_gpu_work_ms: 0.970748
+    device_idle_ms: 0.092573
+    module_active_pct: 28.25
+    device_busy_pct: 93.75
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.shared_expert:
+    ms_per_iter: 1.043557
+    active_gpu_ms: 1.043557
+    gpu_residency_ms: 1.098701
+    gpu_overlap_ms: 0.055145
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 11.79
+      methods:
+        direct_signature:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.129511
+        validated_execution_sequence:
+          kernel_count: 1680
+          gpu_residency_ms_per_iter: 0.96919
+    kernels:
+    - name: shared-expert overlapped projection
+      count: 1680
+      count_per_iter: 336.0
+      avg_us: 2.884
+      total_us_per_iter: 969.19
+      share_in_node_pct: 88.21
+    - name: shared-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 2.698
+      total_us_per_iter: 129.511
+      share_in_node_pct: 11.79
+    gpu_elapsed_ms: 1.132596
+    module_gap_ms: 0.089039
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.089039
+    module_active_pct: 92.14
+    device_busy_pct: 92.14
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  moe.topk:
+    ms_per_iter: 0.061204
+    active_gpu_ms: 0.061204
+    gpu_residency_ms: 0.061204
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.061204
+    kernels:
+    - name: MoE padded-route mask
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.275
+      total_us_per_iter: 61.204
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.061204
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.context_commit:
+    ms_per_iter: 0.00704
+    active_gpu_ms: 0.00704
+    gpu_residency_ms: 0.00704
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 20
+          gpu_residency_ms_per_iter: 0.00704
+    kernels:
+    - name: commit N-gram/short-conv state
+      count: 20
+      count_per_iter: 4.0
+      avg_us: 1.76
+      total_us_per_iter: 7.04
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   ple.dp_ngram_input_gather:
-    ms_per_iter: 0.034714
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.007219
-    - 0.034714
+    ms_per_iter: 0.02409
+    active_gpu_ms: 0.02409
+    gpu_residency_ms: 0.02409
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        eager_stack_collective_order:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.02409
     kernels:
-    - name: collective (eager-validated order)
+    - name: all gather (ple.dp_ngram_input_gather)
       count: 5
       count_per_iter: 1.0
-      avg_us: 34.714
-      total_us_per_iter: 34.714
+      avg_us: 24.09
+      total_us_per_iter: 24.09
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.02409
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    communication:
+      observed_collectives:
+      - kind: all_gather
+        kernel_count: 5
+        kernel_count_per_iter: 1.0
+      payload: int64 N-gram IDs + cached-context indices
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.dp_ngram_output_scatter:
+    ms_per_iter: 0.001594
+    active_gpu_ms: 0.001594
+    gpu_residency_ms: 0.001594
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.001594
+    kernels:
+    - name: DP-local N-gram embedding slice
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 1.594
+      total_us_per_iter: 1.594
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.001594
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    communication:
+      observed_collectives:
+      - kind: local_scatter
+        kernel_count: 5
+        kernel_count_per_iter: 1.0
+      payload: bf16 N-gram embeddings → local DP token slice
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.grouped_norm_gate:
+    ms_per_iter: 0.037901
+    active_gpu_ms: 0.037901
+    gpu_residency_ms: 0.037971
+    gpu_overlap_ms: 7.0e-05
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 85
+          gpu_residency_ms_per_iter: 0.037971
+    kernels:
+    - name: PLE grouped norm + gate
+      count: 85
+      count_per_iter: 17.0
+      avg_us: 2.234
+      total_us_per_iter: 37.971
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.043034
+    module_gap_ms: 0.005133
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.005133
+    module_active_pct: 88.07
+    device_busy_pct: 88.07
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.injection:
+    ms_per_iter: 0.009075
+    active_gpu_ms: 0.009075
+    gpu_residency_ms: 0.009075
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 25
+          gpu_residency_ms_per_iter: 0.009075
+    kernels:
+    - name: PLE gated residual injection
+      count: 25
+      count_per_iter: 5.0
+      avg_us: 1.815
+      total_us_per_iter: 9.075
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.031149
+    module_gap_ms: 0.022074
+    other_gpu_work_ms: 0.019424
+    device_idle_ms: 0.00265
+    module_active_pct: 29.13
+    device_busy_pct: 91.49
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.key_value_projection:
+    ms_per_iter: 0.025069
+    active_gpu_ms: 0.025069
+    gpu_residency_ms: 0.027015
+    gpu_overlap_ms: 0.001946
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 35
+          gpu_residency_ms_per_iter: 0.027015
+    kernels:
+    - name: PLE key/value projection
+      count: 35
+      count_per_iter: 7.0
+      avg_us: 3.859
+      total_us_per_iter: 27.015
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.028058
+    module_gap_ms: 0.002989
+    other_gpu_work_ms: 0.001581
+    device_idle_ms: 0.001408
+    module_active_pct: 89.35
+    device_busy_pct: 94.98
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.ngram_embedding:
+    ms_per_iter: 0.001965
+    active_gpu_ms: 0.001965
+    gpu_residency_ms: 0.001965
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.001965
+    kernels:
+    - name: N-gram embedding lookup
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 1.965
+      total_us_per_iter: 1.965
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.001965
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.ngram_hash:
+    ms_per_iter: 0.064207
+    active_gpu_ms: 0.064207
+    gpu_residency_ms: 0.064205
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.064205
+    kernels:
+    - name: N-gram context/hash preparation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.338
+      total_us_per_iter: 64.205
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.081121
+    module_gap_ms: 0.016914
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.016914
+    module_active_pct: 79.15
+    device_busy_pct: 79.15
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.short_conv:
+    ms_per_iter: 0.023776
+    active_gpu_ms: 0.023776
+    gpu_residency_ms: 0.023776
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 30
+          gpu_residency_ms_per_iter: 0.023776
+    kernels:
+    - name: PLE short-conv state update
+      count: 25
+      count_per_iter: 5.0
+      avg_us: 4.073
+      total_us_per_iter: 20.365
+      share_in_node_pct: 85.65
+    - name: PLE depthwise short convolution
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 3.411
+      total_us_per_iter: 3.411
+      share_in_node_pct: 14.35
+    gpu_elapsed_ms: 0.0312
+    module_gap_ms: 0.007424
+    other_gpu_work_ms: 0.004762
+    device_idle_ms: 0.002663
+    module_active_pct: 76.2
+    device_busy_pct: 91.47
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  ple.token_history:
+    ms_per_iter: 0.027719
+    active_gpu_ms: 0.027719
+    gpu_residency_ms: 0.027719
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 85
+          gpu_residency_ms_per_iter: 0.027719
+    kernels:
+    - name: prepare cached N-gram context
+      count: 85
+      count_per_iter: 17.0
+      avg_us: 1.631
+      total_us_per_iter: 27.719
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   ple.tp_embedding_collective:
-    ms_per_iter: 0.00624
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.002919
-    - 0.00624
+    ms_per_iter: 0.004365
+    active_gpu_ms: 0.004365
+    gpu_residency_ms: 0.004365
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        eager_stack_collective_order:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.004365
     kernels:
-    - name: collective (eager-validated order)
+    - name: all reduce (ple.tp_embedding_collective)
       count: 5
       count_per_iter: 1.0
-      avg_us: 6.24
-      total_us_per_iter: 6.24
+      avg_us: 4.365
+      total_us_per_iter: 4.365
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.004365
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 5
+        kernel_count_per_iter: 1.0
+      payload: bf16 vocabulary-sharded N-gram embeddings
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   qsa_attention.attention_core:
-    ms_per_iter: 0.19028
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.16765
-    - 0.19028
+    ms_per_iter: 0.183765
+    active_gpu_ms: 0.183765
+    gpu_residency_ms: 0.183937
+    gpu_overlap_ms: 0.000172
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 92.3
+      methods:
+        direct_signature:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.16978
+        validated_execution_sequence:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.014157
     kernels:
     - name: QSA sparse attention
       count: 60
       count_per_iter: 12.0
-      avg_us: 9.883
-      total_us_per_iter: 118.599
-      share_in_node_pct: 62.33
+      avg_us: 9.768
+      total_us_per_iter: 117.217
+      share_in_node_pct: 63.73
     - name: QSA compact KV
       count: 60
       count_per_iter: 12.0
-      avg_us: 3.88
-      total_us_per_iter: 46.56
-      share_in_node_pct: 24.47
+      avg_us: 2.818
+      total_us_per_iter: 33.811
+      share_in_node_pct: 18.38
     - name: QSA valid-count preparation
       count: 60
       count_per_iter: 12.0
-      avg_us: 1.703
-      total_us_per_iter: 20.442
-      share_in_node_pct: 10.74
-    - name: QSA graph layout
-      count: 5
-      count_per_iter: 1.0
-      avg_us: 4.678
-      total_us_per_iter: 4.678
-      share_in_node_pct: 2.46
+      avg_us: 1.563
+      total_us_per_iter: 18.752
+      share_in_node_pct: 10.19
+    - name: QSA attention preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.18
+      total_us_per_iter: 14.157
+      share_in_node_pct: 7.7
+    gpu_elapsed_ms: 0.19396
+    module_gap_ms: 0.010195
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.010195
+    module_active_pct: 94.74
+    device_busy_pct: 94.74
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   qsa_attention.indexer:
-    ms_per_iter: 0.24514
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.166119
-    - 0.24514
+    ms_per_iter: 0.217651
+    active_gpu_ms: 0.217651
+    gpu_residency_ms: 0.221466
+    gpu_overlap_ms: 0.003815
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 77.47
+      methods:
+        direct_signature:
+          kernel_count: 240
+          gpu_residency_ms_per_iter: 0.171565
+        validated_execution_sequence:
+          kernel_count: 180
+          gpu_residency_ms_per_iter: 0.049901
     kernels:
-    - name: QSA index top-k
+    - name: QSA index query preparation
       count: 60
       count_per_iter: 12.0
-      avg_us: 7.341
-      total_us_per_iter: 88.096
-      share_in_node_pct: 35.94
-    - name: QSA index query prep
-      count: 60
-      count_per_iter: 12.0
-      avg_us: 5.757
-      total_us_per_iter: 69.089
-      share_in_node_pct: 28.18
+      avg_us: 5.671
+      total_us_per_iter: 68.058
+      share_in_node_pct: 30.73
     - name: QSA index key compression
       count: 60
       count_per_iter: 12.0
-      avg_us: 4.956
-      total_us_per_iter: 59.475
-      share_in_node_pct: 24.26
+      avg_us: 4.833
+      total_us_per_iter: 57.991
+      share_in_node_pct: 26.18
+    - name: QSA index projection/support
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 1.386
+      total_us_per_iter: 49.901
+      share_in_node_pct: 22.53
     - name: QSA block-index expansion
       count: 60
       count_per_iter: 12.0
-      avg_us: 2.373
-      total_us_per_iter: 28.48
-      share_in_node_pct: 11.62
+      avg_us: 2.116
+      total_us_per_iter: 25.395
+      share_in_node_pct: 11.47
+    - name: QSA index top-k
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.677
+      total_us_per_iter: 20.122
+      share_in_node_pct: 9.09
+    gpu_elapsed_ms: 0.23634
+    module_gap_ms: 0.018689
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.018689
+    module_active_pct: 92.09
+    device_busy_pct: 92.09
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   qsa_attention.kv_cache:
-    ms_per_iter: 0.020224
-    aggregation: maximum per-rank kernel residency
-    source_rank: 3
-    rank_range_ms:
-    - 0.01481
-    - 0.020224
+    ms_per_iter: 0.015521
+    active_gpu_ms: 0.015521
+    gpu_residency_ms: 0.01552
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.01552
     kernels:
     - name: QSA KV-cache store
       count: 60
       count_per_iter: 12.0
-      avg_us: 1.685
-      total_us_per_iter: 20.224
+      avg_us: 1.293
+      total_us_per_iter: 15.52
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.015521
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  qsa_attention.metadata:
+    ms_per_iter: 0.001459
+    active_gpu_ms: 0.001459
+    gpu_residency_ms: 0.001459
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.001459
+    kernels:
+    - name: QSA graph metadata
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 1.459
+      total_us_per_iter: 1.459
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  qsa_attention.output_gate:
+    ms_per_iter: 0.041312
+    active_gpu_ms: 0.041312
+    gpu_residency_ms: 0.041312
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 120
+          gpu_residency_ms_per_iter: 0.041312
+    kernels:
+    - name: QSA sigmoid output gate
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 1.721
+      total_us_per_iter: 41.312
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.045798
+    module_gap_ms: 0.004486
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.004486
+    module_active_pct: 90.2
+    device_busy_pct: 90.2
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  qsa_attention.output_projection:
+    ms_per_iter: 0.11099
+    active_gpu_ms: 0.11099
+    gpu_residency_ms: 0.11099
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.11099
+    kernels:
+    - name: QSA output projection
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.249
+      total_us_per_iter: 110.99
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.11099
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   qsa_attention.qk_norm_rope:
-    ms_per_iter: 0.029965
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.0288
-    - 0.029965
+    ms_per_iter: 0.0288
+    active_gpu_ms: 0.0288
+    gpu_residency_ms: 0.0288
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.0288
     kernels:
     - name: QSA Q/K norm + RoPE
       count: 60
       count_per_iter: 12.0
-      avg_us: 2.497
-      total_us_per_iter: 29.965
+      avg_us: 2.4
+      total_us_per_iter: 28.8
       share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.0288
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  qsa_attention.qkv_gate_projection:
+    ms_per_iter: 0.191412
+    active_gpu_ms: 0.191412
+    gpu_residency_ms: 0.360361
+    gpu_overlap_ms: 0.168949
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 360
+          gpu_residency_ms_per_iter: 0.360361
+    kernels:
+    - name: Q/K/V + output-gate projection
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 5.005
+      total_us_per_iter: 360.361
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 0.191412
+    module_gap_ms: 0.0
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.0
+    module_active_pct: 100.0
+    device_busy_pct: 100.0
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  stack.full_layer:
+    ms_per_iter: 2.768644
+    active_gpu_ms: 2.768644
+    gpu_residency_ms: 3.048749
+    gpu_overlap_ms: 0.280105
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 69.0
+      methods:
+        direct_signature:
+          kernel_count: 1380
+          gpu_residency_ms_per_iter: 2.103526
+        validated_execution_sequence:
+          kernel_count: 1500
+          gpu_residency_ms_per_iter: 0.945223
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 18.14
+      total_us_per_iter: 435.362
+      share_in_node_pct: 14.28
+    - name: Q/K/V + output-gate projection
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 5.005
+      total_us_per_iter: 360.361
+      share_in_node_pct: 11.82
+    - name: DeepEP token dispatch
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 13.454
+      total_us_per_iter: 322.902
+      share_in_node_pct: 10.59
+    - name: hyper-connection fused gate + mix
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 12.486
+      total_us_per_iter: 299.662
+      share_in_node_pct: 9.83
+    - name: shared-expert overlapped projection
+      count: 420
+      count_per_iter: 84.0
+      avg_us: 2.89
+      total_us_per_iter: 242.747
+      share_in_node_pct: 7.96
+    - name: DeepEP token combine
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 8.861
+      total_us_per_iter: 212.667
+      share_in_node_pct: 6.98
+    - name: hyper-connection combine
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 8.486
+      total_us_per_iter: 203.669
+      share_in_node_pct: 6.68
+    - name: routed-expert activation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 11.137
+      total_us_per_iter: 133.639
+      share_in_node_pct: 4.38
+    - name: QSA sparse attention
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.768
+      total_us_per_iter: 117.217
+      share_in_node_pct: 3.84
+    - name: QSA output projection
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 9.249
+      total_us_per_iter: 110.99
+      share_in_node_pct: 3.64
+    - name: MoE router logits
+      count: 120
+      count_per_iter: 24.0
+      avg_us: 4.386
+      total_us_per_iter: 105.268
+      share_in_node_pct: 3.45
+    - name: QSA index query preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 5.671
+      total_us_per_iter: 68.058
+      share_in_node_pct: 2.23
+    gpu_elapsed_ms: 2.884422
+    module_gap_ms: 0.115778
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.115778
+    module_active_pct: 95.99
+    device_busy_pct: 95.99
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  stack.hc_expand:
+    ms_per_iter: 0.002906
+    active_gpu_ms: 0.002906
+    gpu_residency_ms: 0.002906
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 0.002906
+    kernels:
+    - name: initialize four HC branches
+      count: 10
+      count_per_iter: 2.0
+      avg_us: 1.453
+      total_us_per_iter: 2.906
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  stack.linear_layer:
+    ms_per_iter: 7.34779
+    active_gpu_ms: 7.34779
+    gpu_residency_ms: 7.520653
+    gpu_overlap_ms: 0.172863
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 71.03
+      methods:
+        direct_signature:
+          kernel_count: 3240
+          gpu_residency_ms_per_iter: 5.313585
+        eager_stack_collective_order:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 0.028454
+        validated_execution_sequence:
+          kernel_count: 2945
+          gpu_residency_ms_per_iter: 2.178613
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 18.261
+      total_us_per_iter: 1314.778
+      share_in_node_pct: 17.48
+    - name: hyper-connection fused gate + mix
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 12.331
+      total_us_per_iter: 887.84
+      share_in_node_pct: 11.81
+    - name: DeepEP token dispatch
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 12.319
+      total_us_per_iter: 886.943
+      share_in_node_pct: 11.79
+    - name: shared-expert overlapped projection
+      count: 1260
+      count_per_iter: 252.0
+      avg_us: 2.883
+      total_us_per_iter: 726.443
+      share_in_node_pct: 9.66
+    - name: hyper-connection combine
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 8.484
+      total_us_per_iter: 610.856
+      share_in_node_pct: 8.12
+    - name: fused q/k/v/z + beta/alpha projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 16.241
+      total_us_per_iter: 584.676
+      share_in_node_pct: 7.77
+    - name: DeepEP token combine
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 7.583
+      total_us_per_iter: 546.007
+      share_in_node_pct: 7.26
+    - name: routed-expert activation
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 11.148
+      total_us_per_iter: 401.328
+      share_in_node_pct: 5.34
+    - name: GDN output projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 9.082
+      total_us_per_iter: 326.946
+      share_in_node_pct: 4.35
+    - name: MoE router logits
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 4.353
+      total_us_per_iter: 313.39
+      share_in_node_pct: 4.17
+    - name: FlashInfer GDN recurrence
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 3.111
+      total_us_per_iter: 111.981
+      share_in_node_pct: 1.49
+    - name: GDN split + pack
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 2.724
+      total_us_per_iter: 98.081
+      share_in_node_pct: 1.3
+    gpu_elapsed_ms: 7.638042
+    module_gap_ms: 0.290253
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.290253
+    module_active_pct: 96.2
+    device_busy_pct: 96.2
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  stack.ple_injection:
+    ms_per_iter: 0.19053
+    active_gpu_ms: 0.19053
+    gpu_residency_ms: 0.194055
+    gpu_overlap_ms: 0.003525
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 14.66
+      methods:
+        eager_stack_collective_order:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 0.028454
+        validated_execution_sequence:
+          kernel_count: 425
+          gpu_residency_ms_per_iter: 0.165601
+    kernels:
+    - name: N-gram context/hash preparation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.338
+      total_us_per_iter: 64.205
+      share_in_node_pct: 33.09
+    - name: PLE grouped norm + gate
+      count: 85
+      count_per_iter: 17.0
+      avg_us: 2.234
+      total_us_per_iter: 37.971
+      share_in_node_pct: 19.57
+    - name: PLE key/value projection
+      count: 35
+      count_per_iter: 7.0
+      avg_us: 3.859
+      total_us_per_iter: 27.015
+      share_in_node_pct: 13.92
+    - name: all gather (ple.dp_ngram_input_gather)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 24.09
+      total_us_per_iter: 24.09
+      share_in_node_pct: 12.41
+    - name: PLE short-conv state update
+      count: 25
+      count_per_iter: 5.0
+      avg_us: 4.073
+      total_us_per_iter: 20.365
+      share_in_node_pct: 10.49
+    - name: PLE gated residual injection
+      count: 25
+      count_per_iter: 5.0
+      avg_us: 1.815
+      total_us_per_iter: 9.075
+      share_in_node_pct: 4.68
+    - name: all reduce (ple.tp_embedding_collective)
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 4.365
+      total_us_per_iter: 4.365
+      share_in_node_pct: 2.25
+    - name: PLE depthwise short convolution
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 3.411
+      total_us_per_iter: 3.411
+      share_in_node_pct: 1.76
+    - name: N-gram embedding lookup
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 1.965
+      total_us_per_iter: 1.965
+      share_in_node_pct: 1.01
+    - name: DP-local N-gram embedding slice
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 1.594
+      total_us_per_iter: 1.594
+      share_in_node_pct: 0.82
+    gpu_elapsed_ms: 0.221659
+    module_gap_ms: 0.031129
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.031129
+    module_active_pct: 85.96
+    device_busy_pct: 85.96
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.decoder_stack:
+    ms_per_iter: 10.140421
+    active_gpu_ms: 10.140421
+    gpu_residency_ms: 10.600026
+    gpu_overlap_ms: 0.459605
+    metric_kind: inclusive_rollup
+    aggregation: interval union on one reference rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 70.24
+      methods:
+        direct_signature:
+          kernel_count: 4620
+          gpu_residency_ms_per_iter: 7.417111
+        eager_stack_collective_order:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 0.028454
+        validated_execution_sequence:
+          kernel_count: 4540
+          gpu_residency_ms_per_iter: 3.154461
+    kernels:
+    - name: DeepGEMM routed-expert GEMM
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 18.231
+      total_us_per_iter: 1750.14
+      share_in_node_pct: 16.51
+    - name: DeepEP token dispatch
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 12.603
+      total_us_per_iter: 1209.845
+      share_in_node_pct: 11.41
+    - name: hyper-connection fused gate + mix
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 12.37
+      total_us_per_iter: 1187.502
+      share_in_node_pct: 11.2
+    - name: shared-expert overlapped projection
+      count: 1680
+      count_per_iter: 336.0
+      avg_us: 2.884
+      total_us_per_iter: 969.19
+      share_in_node_pct: 9.14
+    - name: hyper-connection combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 8.485
+      total_us_per_iter: 814.525
+      share_in_node_pct: 7.68
+    - name: DeepEP token combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 7.903
+      total_us_per_iter: 758.673
+      share_in_node_pct: 7.16
+    - name: fused q/k/v/z + beta/alpha projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 16.241
+      total_us_per_iter: 584.676
+      share_in_node_pct: 5.52
+    - name: routed-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 11.145
+      total_us_per_iter: 534.968
+      share_in_node_pct: 5.05
+    - name: MoE router logits
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 4.361
+      total_us_per_iter: 418.658
+      share_in_node_pct: 3.95
+    - name: Q/K/V + output-gate projection
+      count: 360
+      count_per_iter: 72.0
+      avg_us: 5.005
+      total_us_per_iter: 360.361
+      share_in_node_pct: 3.4
+    - name: GDN output projection
+      count: 180
+      count_per_iter: 36.0
+      avg_us: 9.082
+      total_us_per_iter: 326.946
+      share_in_node_pct: 3.08
+    - name: shared-expert activation
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 2.698
+      total_us_per_iter: 129.511
+      share_in_node_pct: 1.22
+    gpu_elapsed_ms: 10.553139
+    module_gap_ms: 0.412718
+    other_gpu_work_ms: 0.0
+    device_idle_ms: 0.412718
+    module_active_pct: 96.09
+    device_busy_pct: 96.09
+    elapsed_scope: selected module envelope within each profiled step
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   top.dp_logits_input_gather:
-    ms_per_iter: 0.010381
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.002797
-    - 0.010381
+    ms_per_iter: 0.016979
+    active_gpu_ms: 0.016979
+    gpu_residency_ms: 0.016979
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_mixed
+    attribution:
+      direct_duration_pct: 51.04
+      methods:
+        eager_stack_collective_order:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.008666
+        validated_execution_sequence:
+          kernel_count: 30
+          gpu_residency_ms_per_iter: 0.008314
     kernels:
-    - name: collective (eager-validated order)
+    - name: all reduce (top.dp_logits_input_gather)
       count: 5
       count_per_iter: 1.0
-      avg_us: 10.381
-      total_us_per_iter: 10.381
+      avg_us: 8.666
+      total_us_per_iter: 8.666
+      share_in_node_pct: 51.04
+    - name: DP hidden-state gather for TP LM head
+      count: 30
+      count_per_iter: 6.0
+      avg_us: 1.386
+      total_us_per_iter: 8.314
+      share_in_node_pct: 48.96
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 5
+        kernel_count_per_iter: 1.0
+      payload: bf16 DP-local final hidden states → TP LM-head input
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.dp_logits_output_scatter:
+    ms_per_iter: 0.007495
+    active_gpu_ms: 0.007495
+    gpu_residency_ms: 0.007494
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 15
+          gpu_residency_ms_per_iter: 0.007494
+    kernels:
+    - name: DP-local logits slice/materialization
+      count: 15
+      count_per_iter: 3.0
+      avg_us: 2.498
+      total_us_per_iter: 7.494
       share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: local_scatter
+        kernel_count: 15
+        kernel_count_per_iter: 3.0
+      payload: fp32 logits → owning DP request ranks
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.embedding:
+    ms_per_iter: 0.002125
+    active_gpu_ms: 0.002125
+    gpu_residency_ms: 0.002125
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.002125
+    kernels:
+    - name: token embedding lookup
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 2.125
+      total_us_per_iter: 2.125
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.final_hc_mix:
+    ms_per_iter: 0.014182
+    active_gpu_ms: 0.014182
+    gpu_residency_ms: 0.014182
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 0.014182
+    kernels:
+    - name: final HC norm + mix
+      count: 10
+      count_per_iter: 2.0
+      avg_us: 7.091
+      total_us_per_iter: 14.182
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.lm_head:
+    ms_per_iter: 0.050016
+    active_gpu_ms: 0.050016
+    gpu_residency_ms: 0.050016
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.050016
+    kernels:
+    - name: vocabulary-sharded LM head
+      count: 5
+      count_per_iter: 1.0
+      avg_us: 50.016
+      total_us_per_iter: 50.016
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  top.runtime_support:
+    ms_per_iter: 0.016871
+    active_gpu_ms: 0.016871
+    gpu_residency_ms: 0.01687
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 60
+          gpu_residency_ms_per_iter: 0.01687
+    kernels:
+    - name: decode metadata/cache preparation
+      count: 60
+      count_per_iter: 12.0
+      avg_us: 1.406
+      total_us_per_iter: 16.87
+      share_in_node_pct: 100.0
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
   top.tp_logits_collective:
-    ms_per_iter: 0.010694
-    aggregation: maximum per-rank kernel residency
-    source_rank: 0
-    rank_range_ms:
-    - 0.0096
-    - 0.010694
+    ms_per_iter: 0.010022
+    active_gpu_ms: 0.010022
+    gpu_residency_ms: 0.010022
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        eager_stack_collective_order:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.010022
     kernels:
-    - name: collective (eager-validated order)
+    - name: all gather (top.tp_logits_collective)
       count: 5
       count_per_iter: 1.0
-      avg_us: 10.694
-      total_us_per_iter: 10.694
+      avg_us: 10.022
+      total_us_per_iter: 10.022
       share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_gather
+        kernel_count: 5
+        kernel_count_per_iter: 1.0
+      payload: bf16 vocabulary-logit shards [B,T,V/TP]
+      scope: captured profile phase and selected reference rank
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  hyperconnection_mix.branch_norm:
+    ms_per_iter: 0.187048
+    active_gpu_ms: 0.187048
+    gpu_residency_ms: 0.187048
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_aligned
+    attribution:
+      direct_duration_pct: 0.0
+      methods:
+        validated_execution_sequence:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 0.187048
+    kernels:
+    - name: MoE-branch RMSNorm
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.961
+      total_us_per_iter: 94.138
+      share_in_node_pct: 50.33
+    - name: attention-branch RMSNorm
+      count: 240
+      count_per_iter: 48.0
+      avg_us: 1.936
+      total_us_per_iter: 92.91
+      share_in_node_pct: 49.67
+    gpu_elapsed_ms: 3.23487
+    module_gap_ms: 3.047822
+    other_gpu_work_ms: 2.958087
+    device_idle_ms: 0.089735
+    module_active_pct: 5.78
+    device_busy_pct: 97.23
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  hyperconnection_mix.mix:
+    ms_per_iter: 1.187503
+    active_gpu_ms: 1.187503
+    gpu_residency_ms: 1.187502
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 1.187502
+    kernels:
+    - name: hyper-connection fused gate + mix
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 12.37
+      total_us_per_iter: 1187.502
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 3.731672
+    module_gap_ms: 2.544169
+    other_gpu_work_ms: 2.454134
+    device_idle_ms: 0.090035
+    module_active_pct: 31.82
+    device_busy_pct: 97.59
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+  hyperconnection_combine.combine:
+    ms_per_iter: 0.814526
+    active_gpu_ms: 0.814526
+    gpu_residency_ms: 0.814525
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on one reference rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 480
+          gpu_residency_ms_per_iter: 0.814525
+    kernels:
+    - name: hyper-connection combine
+      count: 480
+      count_per_iter: 96.0
+      avg_us: 8.485
+      total_us_per_iter: 814.525
+      share_in_node_pct: 100.0
+    gpu_elapsed_ms: 7.60594
+    module_gap_ms: 6.791414
+    other_gpu_work_ms: 6.506228
+    device_idle_ms: 0.285186
+    module_active_pct: 10.71
+    device_busy_pct: 96.25
+    elapsed_scope: union of validated invocation envelopes
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 1
+    rank_policy: one coherent critical reference rank
+timeline:
+  schema_version: timeline.v1
+  artifact: cg_decode_gbs001_8k1k.timeline.json.gz
+  reference_rank: 1
+  step_count: 5
+  event_count: 9330
+  raw_trace_file: qwen40-dp_attention_ep4_deepep_deepgemm-cudagraph-gbs1-qwen40-dp_attention_ep4_deepep_deepgemm-cudagraph-gbs1-TP-1-DP-1-EP-1.trace.json.gz
+  sha256: 1a73ab0c65752517dd4b1ff56e9cbd6fa9a97456452a47c920c43e55488b7f20

@@ -34,41 +34,41 @@ transforms:
     after: top.final_hc_mix
     node:
       id: dp_logits_input_gather
-      label: "DP hidden-state gather\nfor TP LM head"
+      label: "DP→TP final-hidden bridge\nbf16 [B_local,H]"
       shape: elem
       semantic_op: execution.dp.logits_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
+      execution: {placement: tp_dp_bridge_group, collective: all_reduce, parallelism: DP_to_TP, payload: "DP-local final hidden states · bf16 [B_local,H]", result: "TP-visible global hidden batch", source_alternatives: "all-gatherv when ragged/padded batch rules select it"}
     edge: {shape: "[B,H]", dtype: bf16}
 
   - op: insert_after
     after: top.lm_head
     node:
       id: tp_logits_collective
-      label: "TP logits collective\nall-gather"
+      label: "TP vocabulary logits\nall-gather · bf16"
       shape: elem
       semantic_op: execution.tp.logits_collective
-      execution: {placement: tp_group, collective: all_gather, parallelism: TP}
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "vocabulary-logit shards · bf16 [B,V/TP]", result: "full vocabulary logits"}
     edge: {shape: "[B,V]", dtype: bf16}
 
   - op: insert_after
     after: top.tp_logits_collective
     node:
       id: dp_logits_output_scatter
-      label: "DP-local logits slice"
+      label: "DP-local logits slice\nlocal index/select · fp32"
       shape: elem
       semantic_op: execution.dp.logits_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter, parallelism: DP}
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "full logits · fp32 [B,V]", result: "owner rank logits [B_local,V]"}
     edge: {shape: "[B_local,V]", dtype: fp32}
 
   - op: insert_after
     after: ple.ngram_hash
     node:
       id: dp_ngram_input_gather
-      label: "DP N-gram ID gather"
+      label: "DP→TP N-gram IDs\nall-gather · int64"
       shape: elem
       semantic_op: execution.dp.ple_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
-    edge: {dtype: int64}
+      execution: {placement: tp_dp_bridge_group, collective: all_gather, parallelism: DP_to_TP, payload: "N-gram token IDs/context indices · int64 [B_local,T]", result: "global IDs for TP-sharded embedding", source_alternatives: "all-gatherv for uneven local token counts"}
+    edge: {shape: "[B_global,T]", dtype: int64}
 
   - op: annotate_node
     target: ple.ngram_embedding
@@ -79,21 +79,21 @@ transforms:
     after: ple.ngram_embedding
     node:
       id: tp_embedding_collective
-      label: "TP N-gram embedding collective\nall-reduce"
+      label: "TP N-gram embeddings\nall-reduce · bf16"
       shape: elem
       semantic_op: execution.tp.ple_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
-    edge: {dtype: bf16}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial N-gram embeddings · bf16 [B_global,T,H]", result: "replicated global N-gram embeddings"}
+    edge: {shape: "[B_global,T,H]", dtype: bf16}
 
   - op: insert_after
     after: ple.tp_embedding_collective
     node:
       id: dp_ngram_output_scatter
-      label: "DP-local N-gram embedding slice"
+      label: "DP-local N-gram slice\nlocal index/select · bf16"
       shape: elem
       semantic_op: execution.dp.ple_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter, parallelism: DP}
-    edge: {dtype: bf16}
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "global N-gram embeddings · bf16", result: "owner rank N-gram embeddings [B_local,T,H]"}
+    edge: {shape: "[B_local,T,H]", dtype: bf16}
 
   - op: annotate_node
     target: linear_attention.qkvz_projection
@@ -121,6 +121,11 @@ transforms:
       execution: {placement: dp_local_attention_rank, tensor_layout: replicated_across_dp, parallelism: DP}
 
   - op: annotate_node
+    target: qsa_attention.metadata
+    set:
+      execution: {placement: dp_local_attention_rank, tensor_layout: dp_local, parallelism: DP, payload: "local QSA layout and valid-count metadata"}
+
+  - op: annotate_node
     target: qsa_attention.output_projection
     set:
       execution: {placement: dp_local_attention_rank, tensor_layout: replicated_across_dp, parallelism: DP}
@@ -134,26 +139,28 @@ transforms:
     after: moe.topk
     node:
       id: deepep_dispatch
-      label: "DeepEP token dispatch\nall-to-all"
+      label: "DeepEP dispatch\nall-to-all · activations + routing"
       shape: elem
       semantic_op: execution.ep.deepep_dispatch
-      execution: {placement: ep_group, collective: all_to_all, parallelism: EP, backend: deepep}
-    edge: {shape: routed_tokens, dtype: bf16}
+      boundary_role: module_internal
+      execution: {placement: ep_group, collective: all_to_all, parallelism: EP, backend: deepep, payload: "bf16 token activations + expert IDs + top-k weights + routing metadata", result: "tokens grouped on expert-owner ranks"}
+    edge: {shape: "[routed_tokens,H] + routing metadata", dtype: "bf16 + int32/int64"}
 
   - op: annotate_node
     target: moe.routed_experts
     set:
-      execution: {placement: expert_owner_rank, tensor_layout: whole_expert_sharded, parallelism: EP, backend: deep_gemm}
+      execution: {placement: expert_owner_rank, tensor_layout: whole_expert_sharded, parallelism: EP, backend: deep_gemm, payload: "owner-local routed token activations", result: "owner-local expert outputs"}
 
   - op: insert_after
     after: moe.routed_experts
     node:
       id: deepep_combine
-      label: "DeepEP token combine\nall-to-all"
+      label: "DeepEP combine\nall-to-all · weighted expert outputs"
       shape: elem
       semantic_op: execution.ep.deepep_combine
-      execution: {placement: ep_group, collective: all_to_all, parallelism: EP, backend: deepep}
-    edge: {shape: routed_tokens, dtype: bf16}
+      boundary_role: module_internal
+      execution: {placement: ep_group, collective: all_to_all, parallelism: EP, backend: deepep, payload: "weighted bf16 expert outputs + reverse-routing handles", result: "combined token outputs on source DP ranks"}
+    edge: {shape: "[routed_tokens,H] + reverse routes", dtype: "bf16 + routing metadata"}
 
   - op: annotate_node
     target: moe.shared_expert

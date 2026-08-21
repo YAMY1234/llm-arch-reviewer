@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Build a topology-aware Qwen 4.0 CUDA-Graph decode profile overlay.
+"""Build a provenance-preserving Qwen 4.0 CUDA-Graph decode overlay.
 
-The eager trace supplies the source-backed collective ordering. CUDA Graph
-traces supply timing only. Four rank traces are validated and node residency is
-reported as the maximum per-rank value, never as a sum of parallel work.
+The eager trace supplies source/IR bindings and collective ordering.  CUDA
+Graph traces supply timing.  Every replay kernel is attributed, and all node
+times come from one coherent critical reference rank rather than mixing maxima
+from different ranks.
 """
 
 from __future__ import annotations
@@ -28,6 +29,18 @@ if str(REPO_ROOT) not in sys.path:
 from models.qwen40.build.build_qwen40_cudagraph_profile import (
     direct_kernel_mapping as common_direct_kernel_mapping,
 )
+from models.qwen40.build.qwen40_decode_attribution import (
+    collective_kind as canonical_collective_kind,
+    default_node_states,
+    interval_union_us,
+    map_decode_step,
+    metrics_for_rank as attributed_metrics_for_rank,
+)
+from models.common.timeline_artifact import (  # noqa: E402
+    attach_eager_stack_evidence,
+    build_timeline_artifact,
+    write_timeline_artifact,
+)
 
 
 SOURCE_COMMIT = "f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0"
@@ -39,6 +52,15 @@ DP_RANK = re.compile(r"-DP-(\d+)(?:-|\.)")
 TP_RANK = re.compile(r"-TP-(\d+)(?:-|\.)")
 
 CONFIGS = {
+    "tp_only": {
+        "execution_path_id": "tp_only",
+        "implementation_id": "sglang_f90a941aa",
+        "label": "pure TP4 · Triton GDN",
+        "tp_size": 4,
+        "dp_size": 1,
+        "ep_size": 1,
+        "gdn_backend": "triton",
+    },
     "dp_attention": {
         "execution_path_id": "dp_attention",
         "implementation_id": "sglang_f90a941aa_dp_attention",
@@ -59,7 +81,7 @@ CONFIGS = {
     },
     "tp4_flashinfer_gdn": {
         "execution_path_id": "tp_only",
-        "implementation_id": "sglang_f90a941aa",
+        "implementation_id": "sglang_f90a941aa_flashinfer_gdn",
         "label": "pure TP4 · FlashInfer GDN",
         "tp_size": 4,
         "dp_size": 1,
@@ -120,7 +142,7 @@ def load_formal_round(path: Path, batch_size: int) -> dict[str, Any]:
         row
         for row in rows
         if row.get("round") == "formal-1"
-        and row.get("global_batch_size") == batch_size
+        and row.get("global_batch_size", row.get("batch_size")) == batch_size
     ]
     if len(matches) != 1:
         raise ValueError(
@@ -199,14 +221,10 @@ def kernels_in_step(
 
 
 def collective_kind(name: str) -> str | None:
-    lowered = name.lower()
-    if "reducescatter" in lowered or "reduce_scatter" in lowered:
-        return "reduce_scatter"
-    if "allreduce" in lowered or "all_reduce" in lowered:
-        return "reduce"
-    if "allgather" in lowered or "all_gather" in lowered:
-        return "gather"
-    return None
+    canonical = canonical_collective_kind(name)
+    return {"all_reduce": "reduce", "all_gather": "gather"}.get(
+        canonical, canonical
+    )
 
 
 def eager_collective_template(path: Path) -> list[tuple[str, str]]:
@@ -226,6 +244,13 @@ def eager_collective_template(path: Path) -> list[tuple[str, str]]:
         template.append((kind, str(node)))
     if not template:
         raise ValueError("eager mapping contains no collectives")
+    # Some eager captures contain several identical decode iterations.  Keep
+    # the shortest exact period; this is deterministic and rejects drift.
+    for period in range(1, len(template) + 1):
+        if len(template) % period == 0 and template == template[:period] * (
+            len(template) // period
+        ):
+            return template[:period]
     return template
 
 
@@ -420,7 +445,9 @@ def aggregate_rank_metrics(
     return aggregated
 
 
-def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+def build_profile(
+    args: argparse.Namespace,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     config = CONFIGS[args.config_name]
     if args.chunked_prefill_size % config["dp_size"] != 0:
         raise ValueError(
@@ -440,45 +467,64 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
         protocol = json.loads(args.protocol.read_text())
         expected_protocol = {
             "mode": "cudagraph",
-            "config_name": args.config_name,
             "input_len": 8192,
             "output_len": 1024,
             "warmup_rounds": 3,
             "formal_rounds": 1,
-            "dp_size": config["dp_size"],
-            "max_prefill_tokens": args.max_prefill_tokens,
-            "chunked_prefill_size_requested": args.chunked_prefill_size,
-            "chunked_prefill_size_per_dp_rank": (
-                args.chunked_prefill_size // config["dp_size"]
-            ),
-            "admission_control": args.admission_control,
-            "admission_local_target": (
-                args.batch_size // config["dp_size"]
-                if args.admission_control
-                == "prefill-first-until-local-target"
-                else None
-            ),
-            "source_patch_sha256": args.source_patch_sha256,
         }
+        if args.config_name == "tp_only":
+            expected_protocol["topology"] = "tp4"
+            protocol_batches = protocol.get("batch_sizes", [])
+        else:
+            expected_protocol.update(
+                {
+                    "config_name": args.config_name,
+                    "dp_size": config["dp_size"],
+                }
+            )
+            optional_protocol = {
+                "max_prefill_tokens": args.max_prefill_tokens,
+                "chunked_prefill_size_requested": args.chunked_prefill_size,
+                "chunked_prefill_size_per_dp_rank": (
+                    args.chunked_prefill_size // config["dp_size"]
+                ),
+                "admission_control": args.admission_control,
+                "admission_local_target": (
+                    args.batch_size // config["dp_size"]
+                    if args.admission_control
+                    == "prefill-first-until-local-target"
+                    else None
+                ),
+                "source_patch_sha256": args.source_patch_sha256,
+            }
+            expected_protocol.update(
+                {
+                    key: value
+                    for key, value in optional_protocol.items()
+                    if key in protocol
+                }
+            )
+            protocol_batches = protocol.get("global_batch_sizes", [])
         mismatch = {
             key: {"expected": expected, "actual": protocol.get(key)}
             for key, expected in expected_protocol.items()
             if protocol.get(key) != expected
         }
-        if args.batch_size not in protocol.get("global_batch_sizes", []):
-            mismatch["global_batch_sizes"] = {
+        if args.batch_size not in protocol_batches:
+            mismatch["batch_sizes"] = {
                 "expected_to_contain": args.batch_size,
-                "actual": protocol.get("global_batch_sizes"),
+                "actual": protocol_batches,
             }
         if mismatch:
             raise ValueError(f"profile protocol mismatch: {mismatch}")
     formal = load_formal_round(args.rounds, args.batch_size)
     trigger = (formal.get("profile_trigger") or {}).get("trigger") or {}
-    if (
-        trigger.get("global_running_reqs") != args.batch_size
-        or trigger.get("global_waiting_reqs") != 0
-        or trigger.get("global_waiting_uncached_tokens") != 0
-    ):
+    running = trigger.get("global_running_reqs", trigger.get("num_running_reqs"))
+    waiting = trigger.get("global_waiting_reqs", trigger.get("num_waiting_reqs"))
+    waiting_tokens = trigger.get(
+        "global_waiting_uncached_tokens", trigger.get("num_waiting_uncached_tokens")
+    )
+    if running != args.batch_size or waiting != 0 or waiting_tokens != 0:
         raise ValueError(f"formal capture gate is not exact global BS: {trigger}")
     summaries = formal.get("trace_step_summary") or {}
     if len(summaries) != 4:
@@ -492,8 +538,10 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
         raise ValueError(f"rank trace coverage is incomplete: {traces_by_rank}")
 
     rank_metrics = {}
+    rank_events = {}
     rank_steps_ms = {}
     rank_signature_counts = {}
+    rank_step_bounds = {}
     all_mapped = []
     graph_launches = {}
     for rank, path in sorted(traces_by_rank.items()):
@@ -515,14 +563,17 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
                 )
             )
             mapped.extend(
-                map_step(
+                map_decode_step(
                     kernels=kernels,
-                    template=template,
+                    config_name=args.config_name,
+                    collective_template=template,
                     rank=rank,
                     step_index=step_index,
                 )
             )
-        rank_metrics[rank] = metrics_for_rank(mapped, SELECTED_STEPS)
+        rank_events[rank] = mapped
+        rank_step_bounds[rank] = selected
+        rank_metrics[rank] = attributed_metrics_for_rank(mapped, SELECTED_STEPS)
         rank_steps_ms[rank] = [float(step.get("dur", 0.0)) / 1000.0 for step in selected]
         rank_signature_counts[rank] = counts
         all_mapped.extend(mapped)
@@ -539,11 +590,68 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
         max(rank_steps_ms[rank][index] for rank in rank_steps_ms)
         for index in range(SELECTED_STEPS)
     ]
-    node_metrics = aggregate_rank_metrics(rank_metrics)
+    reference_rank = max(
+        rank_steps_ms,
+        key=lambda rank: statistics.fmean(rank_steps_ms[rank]),
+    )
+    rank_events[reference_rank] = attach_eager_stack_evidence(
+        rank_events[reference_rank], mapping_path=args.eager_mapping
+    )
+    node_metrics = rank_metrics[reference_rank]
+    for metric in node_metrics.values():
+        metric["source_rank"] = reference_rank
+        metric["rank_policy"] = "one coherent critical reference rank"
+        for drill_metric in metric.get("drill_metrics", {}).values():
+            drill_metric["source_rank"] = reference_rank
+            drill_metric["rank_policy"] = metric["rank_policy"]
+    reference_step_wall_ms = rank_steps_ms[reference_rank]
+    reference_active_ms = []
+    reference_residency_ms = []
+    for step_index in range(1, SELECTED_STEPS + 1):
+        step_events = [
+            event
+            for event in rank_events[reference_rank]
+            if int(event["step_index"]) == step_index
+        ]
+        reference_active_ms.append(interval_union_us(step_events) / 1000.0)
+        reference_residency_ms.append(
+            sum(float(event["dur_us"]) for event in step_events) / 1000.0
+        )
+    if any(
+        active > elapsed + 1e-6
+        for active, elapsed in zip(reference_active_ms, reference_step_wall_ms)
+    ):
+        raise ValueError("reference-rank active GPU time exceeds decode step wall")
+    elapsed_ms = statistics.fmean(reference_step_wall_ms)
+    active_ms = statistics.fmean(reference_active_ms)
+    residency_ms = statistics.fmean(reference_residency_ms)
+    device_gap_ms = max(0.0, elapsed_ms - active_ms)
+    overlap_ms = max(0.0, residency_ms - active_ms)
+    timing_summary = {
+        "scope": "one CUDA Graph decode step on the selected reference rank",
+        "elapsed_ms": round(elapsed_ms, 6),
+        "active_gpu_ms": round(active_ms, 6),
+        "device_gap_ms": round(device_gap_ms, 6),
+        "gpu_busy_pct": round(100.0 * active_ms / elapsed_ms, 2)
+        if elapsed_ms
+        else 0.0,
+        "gpu_residency_ms": round(residency_ms, 6),
+        "gpu_overlap_ms": round(overlap_ms, 6),
+        "elapsed_source": "ProfilerStep GPU annotation on the same reference rank",
+        "device_gap_reason": "unclassified",
+        "reference_rank": reference_rank,
+        "sample_count": SELECTED_STEPS,
+        "elapsed_samples_ms": [round(value, 6) for value in reference_step_wall_ms],
+        "active_samples_ms": [round(value, 6) for value in reference_active_ms],
+    }
     total_us = sum(event["dur_us"] for event in all_mapped)
     mapped_us = sum(event["dur_us"] for event in all_mapped if event["node"])
-    profile_id = f"qwen40_{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
-    variant_id = f"{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
+    if args.config_name == "tp_only":
+        profile_id = f"qwen40_tp4_cg_decode_bs{args.batch_size}_8k1k"
+        variant_id = f"tp4_cg_decode_bs{args.batch_size}_8k1k"
+    else:
+        profile_id = f"qwen40_{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
+        variant_id = f"{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
@@ -608,7 +716,10 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
                 ),
                 "active_during_profile": False,
             },
-            "gpu_metric_semantics": "maximum per-rank kernel residency; parallel ranks are not summed",
+            "gpu_metric_semantics": (
+                "overlap-aware active GPU interval union on one coherent critical "
+                "reference rank; residency is retained separately"
+            ),
         },
         "evidence": {
             "job_id": int(args.job_id) if args.job_id.isdigit() else args.job_id,
@@ -630,8 +741,43 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
             ],
             "eager_mapping_file": args.eager_mapping.name,
             "eager_mapping_sha256": sha256_file(args.eager_mapping),
-            "mapping_policy": "unique kernel signatures plus eager-stack-validated collective order",
+            "mapping_policy": (
+                "eager Python-stack/source binding transferred by direct signatures, "
+                "eager-validated collective order, and validated 48-layer execution sequence"
+            ),
             "mapped_kernel_duration_ratio": round(mapped_us / total_us, 6),
+            "reference_rank": reference_rank,
+            "accounting": {
+                "kernel_count": len(rank_events[reference_rank]),
+                "attributed_kernel_count": sum(
+                    bool(event.get("node")) for event in rank_events[reference_rank]
+                ),
+                "unattributed_kernel_count": sum(
+                    not event.get("node") for event in rank_events[reference_rank]
+                ),
+                "attributed_gpu_residency_pct": round(
+                    100.0
+                    * sum(
+                        event["dur_us"]
+                        for event in rank_events[reference_rank]
+                        if event.get("node")
+                    )
+                    / sum(event["dur_us"] for event in rank_events[reference_rank]),
+                    4,
+                ),
+                "attribution_methods": dict(
+                    Counter(
+                        event["attribution_method"]
+                        for event in rank_events[reference_rank]
+                    )
+                ),
+                "active_gpu_ms": timing_summary["active_gpu_ms"],
+                "gpu_residency_ms": timing_summary["gpu_residency_ms"],
+                "gpu_elapsed_ms": timing_summary["elapsed_ms"],
+                "device_gap_ms": timing_summary["device_gap_ms"],
+                "gpu_busy_pct": timing_summary["gpu_busy_pct"],
+                "gpu_overlap_ms": timing_summary["gpu_overlap_ms"],
+            },
             "critical_decode_step_ms": {
                 "samples": [round(value, 6) for value in critical_step_ms],
                 "mean": round(statistics.fmean(critical_step_ms), 6),
@@ -652,10 +798,73 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
                 )
             },
         },
+        "profile_summary": {
+            "timing_phase": "decode",
+            "timing_coverage": "100% of captured CUDA kernels",
+            "reference_rank": reference_rank,
+            "node_time": "active GPU time; overlap counted once",
+            "kernel_detail": "GPU residency; concurrent streams may sum above node active time",
+            "provenance": "direct / eager-stack collective / validated sequence shown per node",
+            "timing": timing_summary,
+            "gap_note": (
+                "device gap is same-rank decode-step elapsed minus the union of all "
+                "GPU kernel intervals; its CPU/synchronization cause is not inferred "
+                "without direct evidence"
+            ),
+        },
+        "node_states": default_node_states(phase="decode"),
         "node_metrics": node_metrics,
     }
     if args.node:
         profile["hardware"]["slurm_node"] = args.node
+
+    timeline_path = args.output_profile.with_suffix(".timeline.json.gz")
+    reference_trace = traces_by_rank[reference_rank]
+    timeline_steps = []
+    for step_index, step in enumerate(rank_step_bounds[reference_rank], start=1):
+        timeline_steps.append(
+            {
+                "step_index": step_index,
+                "label": f"formal decode step {step_index}",
+                "trace_start_us": float(step["ts"]),
+                "duration_us": float(step["dur"]),
+                "events": [
+                    event
+                    for event in rank_events[reference_rank]
+                    if int(event["step_index"]) == step_index
+                ],
+            }
+        )
+    timeline = build_timeline_artifact(
+        profile_id=profile_id,
+        phase="decode",
+        reference_rank=reference_rank,
+        steps=timeline_steps,
+        timing_summary=timing_summary,
+        raw_trace={
+            "file": reference_trace.name,
+            "sha256": sha256_file(reference_trace),
+            "format": "pytorch_trace_json_gzip",
+            "rank": reference_rank,
+        },
+        stack_source={
+            "source": "eager_trace",
+            "mapping_file": args.eager_mapping.name,
+            "mapping_sha256": sha256_file(args.eager_mapping),
+            "policy": (
+                "formal CUDA Graph timing plus eager Python-stack evidence; "
+                "each event records exact-kernel or representative-IR match provenance"
+            ),
+        },
+    )
+    profile["timeline"] = {
+        "schema_version": timeline["schema_version"],
+        "artifact": timeline_path.name,
+        "reference_rank": reference_rank,
+        "step_count": len(timeline["steps"]),
+        "event_count": sum(len(step["events"]) for step in timeline["steps"]),
+        "raw_trace_file": reference_trace.name,
+    }
 
     unmapped: Counter[str] = Counter()
     for event in all_mapped:
@@ -671,6 +880,8 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
         "rank_signature_counts": rank_signature_counts,
         "cuda_graph_launches": graph_launches,
         "mapped_kernel_duration_ratio": profile["evidence"]["mapped_kernel_duration_ratio"],
+        "reference_rank": reference_rank,
+        "accounting": profile["evidence"]["accounting"],
         "node_metrics": node_metrics,
         "top_unmapped_kernels": [
             {"name": name, "total_us": round(duration_us, 6)}
@@ -678,12 +889,16 @@ def build_profile(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, A
         ],
         "formal_capture_trigger": formal.get("profile_trigger"),
     }
-    return profile, analysis
+    return profile, analysis, timeline
 
 
 def main() -> int:
     args = parse_args()
-    profile, analysis = build_profile(args)
+    profile, analysis, timeline = build_profile(args)
+    timeline_path = args.output_profile.with_suffix(".timeline.json.gz")
+    profile["timeline"]["sha256"] = write_timeline_artifact(
+        timeline_path, timeline
+    )
     args.output_profile.parent.mkdir(parents=True, exist_ok=True)
     args.output_profile.write_text(
         yaml.safe_dump(profile, sort_keys=False, allow_unicode=True), encoding="utf-8"
@@ -693,6 +908,7 @@ def main() -> int:
         json.dumps(analysis, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(f"wrote {args.output_profile.resolve()}")
+    print(f"wrote {timeline_path.resolve()}")
     print(f"wrote {args.output_analysis.resolve()}")
     print(
         f"critical decode mean={profile['evidence']['critical_decode_step_ms']['mean']:.3f} ms, "

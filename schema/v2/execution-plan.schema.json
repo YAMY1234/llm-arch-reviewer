@@ -32,12 +32,39 @@
             "properties": {
               "op": {"const": "insert_after"},
               "after": {"type": "string"},
-              "node": {"type": "object"},
+              "node": {"$ref": "#/$defs/execution_node"},
               "edge": {"type": "object"}
             }
           }
         ]
       }
+    }
+  },
+  "$defs": {
+    "execution_node": {
+      "type": "object",
+      "required": ["id", "label", "shape", "semantic_op", "execution"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$"},
+        "label": {"type": "string"},
+        "shape": {"enum": ["io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"]},
+        "semantic_op": {"type": "string", "pattern": "^execution\\."},
+        "node_kind": {"enum": ["communication", "layout_transform"]},
+        "boundary_role": {"enum": ["module_boundary", "module_internal"]},
+        "execution": {
+          "type": "object",
+          "required": ["placement", "collective", "parallelism", "payload", "result"],
+          "properties": {
+            "placement": {"type": "string"},
+            "collective": {"type": "string"},
+            "parallelism": {"type": "string"},
+            "payload": {"type": "string"},
+            "result": {"type": "string"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
     }
   }
 }

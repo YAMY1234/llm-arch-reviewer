@@ -20,6 +20,30 @@ def frames(*raw: str) -> list[FrameRef]:
 
 
 class Qwen40TraceRulesTest(unittest.TestCase):
+    def test_ple_context_preparation_maps_without_ple_module_frame(self):
+        node, confidence = classify_qwen40_node(
+            "void at::native::vectorized_elementwise_kernel",
+            "aten::where",
+            frames(
+                "sglang/srt/models/qwen4_exp.py(97): _prepare_ple_batch",
+                "nn.Module: Qwen4ExpModel_0",
+            ),
+        )
+        self.assertEqual(node, "ple.token_history")
+        self.assertEqual(confidence, "high")
+
+    def test_ple_context_commit_maps_without_ple_module_frame(self):
+        node, confidence = classify_qwen40_node(
+            "void at::native::index_elementwise_kernel",
+            "aten::index_put_",
+            frames(
+                "sglang/srt/models/qwen4_exp.py(234): _commit_ple_batch",
+                "nn.Module: Qwen4ExpModel_0",
+            ),
+        )
+        self.assertEqual(node, "ple.context_commit")
+        self.assertEqual(confidence, "high")
+
     def test_token_embedding_collective_is_separate_from_lookup(self):
         node, confidence = classify_qwen40_node(
             "flashinfer::trtllm_allreduce_fusion_kernel",
@@ -64,9 +88,10 @@ class Qwen40TraceRulesTest(unittest.TestCase):
                 "python/sglang/srt/layers/moe/fused_moe_triton/layer.py(1): forward",
                 "nn.Module: FusedMoE_0",
                 "nn.Module: Qwen2MoeSparseMoeBlock_0",
+                "nn.Module: Qwen4ExpLinearDecoderLayer_0",
             ),
         )
-        self.assertEqual(node, "moe.tp_output_collective")
+        self.assertEqual(node, "linear_layer.tp_moe_output_collective")
         self.assertEqual(confidence, "high")
 
     def test_linear_attention_collective_uses_layer_context(self):
@@ -148,9 +173,10 @@ class Qwen40TraceRulesTest(unittest.TestCase):
                 "python/sglang/srt/layers/moe/fused_moe_triton/layer.py(1): forward",
                 "nn.Module: FusedMoE_0",
                 "nn.Module: Qwen2MoeSparseMoeBlock_0",
+                "nn.Module: Qwen4ExpAttentionDecoderLayer_3",
             ),
         )
-        self.assertEqual(node, "moe.ep_output_collective")
+        self.assertEqual(node, "full_layer.ep_moe_output_collective")
         self.assertEqual(confidence, "high")
 
     def test_deepep_dispatch_precedes_generic_moe_fallback(self):
@@ -164,6 +190,59 @@ class Qwen40TraceRulesTest(unittest.TestCase):
             ),
         )
         self.assertEqual(node, "moe.deepep_dispatch")
+        self.assertEqual(confidence, "high")
+
+    def test_mtp_embedding_collective_stays_in_auxiliary_scope(self):
+        node, confidence = classify_qwen40_node(
+            "ncclDevKernel_AllReduce",
+            None,
+            frames(
+                "nn.Module: VocabParallelEmbedding_0",
+                "python/sglang/srt/models/qwen4_exp_mtp.py(133): _prepare_input_embeds",
+                "nn.Module: Qwen4ExpForCausalLMMTP_0",
+            ),
+        )
+        self.assertEqual(node, "mtp_head.tp_embedding_collective")
+        self.assertEqual(confidence, "high")
+
+    def test_mtp_qsa_is_not_aggregated_into_target_qsa(self):
+        node, _ = classify_qwen40_node(
+            "flash_attention_kernel",
+            None,
+            frames(
+                "python/sglang/srt/layers/radix_attention.py(1): forward",
+                "nn.Module: Qwen4ExpAttentionDecoderLayer_0",
+                "python/sglang/srt/models/qwen4_exp_mtp.py(183): forward",
+                "nn.Module: Qwen4ExpForCausalLMMTP_0",
+            ),
+        )
+        self.assertEqual(node, "mtp_qsa_attention.attention_core")
+
+    def test_mtp_moe_collective_stays_in_auxiliary_layer(self):
+        node, confidence = classify_qwen40_node(
+            "ncclSymkDevKernel_AllReduce",
+            None,
+            frames(
+                "nn.Module: FusedMoE_0",
+                "nn.Module: Qwen2MoeSparseMoeBlock_0",
+                "nn.Module: Qwen4ExpAttentionDecoderLayer_0",
+                "nn.Module: Qwen4ExpForCausalLMMTP_0",
+            ),
+        )
+        self.assertEqual(node, "mtp_layer.tp_moe_output_collective")
+        self.assertEqual(confidence, "high")
+
+    def test_mtp_hyperconnection_keeps_reusable_leaf_semantics(self):
+        node, confidence = classify_qwen40_node(
+            "void sglang::hc_combine_kernel",
+            None,
+            frames(
+                "python/sglang/srt/layers/hyperconnection.py(1): combine",
+                "python/sglang/srt/models/qwen4_exp.py(1): _postprocess_qwen4_exp_layer",
+                "nn.Module: Qwen4ExpForCausalLMMTP_0",
+            ),
+        )
+        self.assertEqual(node, "hyperconnection.combine")
         self.assertEqual(confidence, "high")
 
 

@@ -31,41 +31,41 @@ transforms:
     after: top.final_hc_mix
     node:
       id: dp_logits_input_gather
-      label: "DP hidden-state gather\nfor TP LM head"
+      label: "DP→TP final-hidden bridge\nbf16 [B_local,H]"
       shape: elem
       semantic_op: execution.dp.logits_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
+      execution: {placement: tp_dp_bridge_group, collective: all_reduce, parallelism: DP_to_TP, payload: "DP-local final hidden states · bf16 [B_local,H]", result: "TP-visible global hidden batch", source_alternatives: "all-gatherv when ragged/padded batch rules select it"}
     edge: {shape: "[B,H]", dtype: bf16}
 
   - op: insert_after
     after: top.lm_head
     node:
       id: tp_logits_collective
-      label: "TP logits collective\nall-gather"
+      label: "TP vocabulary logits\nall-gather · bf16"
       shape: elem
       semantic_op: execution.tp.logits_collective
-      execution: {placement: tp_group, collective: all_gather, parallelism: TP}
+      execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "vocabulary-logit shards · bf16 [B,V/TP]", result: "full vocabulary logits"}
     edge: {shape: "[B,V]", dtype: bf16}
 
   - op: insert_after
     after: top.tp_logits_collective
     node:
       id: dp_logits_output_scatter
-      label: "DP-local logits slice"
+      label: "DP-local logits slice\nlocal index/select · fp32"
       shape: elem
       semantic_op: execution.dp.logits_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter, parallelism: DP}
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "full logits · fp32 [B,V]", result: "owner rank logits [B_local,V]"}
     edge: {shape: "[B_local,V]", dtype: fp32}
 
   - op: insert_after
     after: ple.ngram_hash
     node:
       id: dp_ngram_input_gather
-      label: "DP N-gram ID gather"
+      label: "DP→TP N-gram IDs\nall-gather · int64"
       shape: elem
       semantic_op: execution.dp.ple_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
-    edge: {dtype: int64}
+      execution: {placement: tp_dp_bridge_group, collective: all_gather, parallelism: DP_to_TP, payload: "N-gram token IDs/context indices · int64 [B_local,T]", result: "global IDs for TP-sharded embedding", source_alternatives: "all-gatherv for uneven local token counts"}
+    edge: {shape: "[B_global,T]", dtype: int64}
 
   - op: annotate_node
     target: ple.ngram_embedding
@@ -76,21 +76,21 @@ transforms:
     after: ple.ngram_embedding
     node:
       id: tp_embedding_collective
-      label: "TP N-gram embedding collective\nall-reduce"
+      label: "TP N-gram embeddings\nall-reduce · bf16"
       shape: elem
       semantic_op: execution.tp.ple_embedding_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
-    edge: {dtype: bf16}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "partial N-gram embeddings · bf16 [B_global,T,H]", result: "replicated global N-gram embeddings"}
+    edge: {shape: "[B_global,T,H]", dtype: bf16}
 
   - op: insert_after
     after: ple.tp_embedding_collective
     node:
       id: dp_ngram_output_scatter
-      label: "DP-local N-gram embedding slice"
+      label: "DP-local N-gram slice\nlocal index/select · bf16"
       shape: elem
       semantic_op: execution.dp.ple_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter, parallelism: DP}
-    edge: {dtype: bf16}
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "global N-gram embeddings · bf16", result: "owner rank N-gram embeddings [B_local,T,H]"}
+    edge: {shape: "[B_local,T,H]", dtype: bf16}
 
   - op: annotate_node
     target: linear_attention.qkvz_projection
@@ -118,6 +118,11 @@ transforms:
       execution: {placement: dp_local_attention_rank, tensor_layout: replicated_across_dp, parallelism: DP}
 
   - op: annotate_node
+    target: qsa_attention.metadata
+    set:
+      execution: {placement: dp_local_attention_rank, tensor_layout: dp_local, parallelism: DP, payload: "local QSA layout and valid-count metadata"}
+
+  - op: annotate_node
     target: qsa_attention.output_projection
     set:
       execution: {placement: dp_local_attention_rank, tensor_layout: replicated_across_dp, parallelism: DP}
@@ -126,20 +131,20 @@ transforms:
     after: linear_layer.mlp_hc_mix
     node:
       id: dp_moe_input_gather
-      label: "DP hidden-state gather\nfor TP MoE"
+      label: "DP→TP MoE input\nall-gather · bf16 [B_global,H]"
       shape: elem
       semantic_op: execution.dp.moe_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
+      execution: {placement: tp_dp_bridge_group, collective: all_gather, parallelism: DP_to_TP, payload: "DP-local post-attention hidden states · bf16 [B_local,T,H]", result: "global hidden batch for TP MoE", source_alternatives: "all-gatherv for uneven local token counts"}
     edge: {shape: "[B_global,H]", dtype: bf16}
 
   - op: insert_after
     after: full_layer.mlp_hc_mix
     node:
       id: dp_moe_input_gather
-      label: "DP hidden-state gather\nfor TP MoE"
+      label: "DP→TP MoE input\nall-gather · bf16 [B_global,H]"
       shape: elem
       semantic_op: execution.dp.moe_input_gather
-      execution: {placement: tp_dp_bridge_group, collective: all_gather_or_all_reduce, parallelism: DP_to_TP}
+      execution: {placement: tp_dp_bridge_group, collective: all_gather, parallelism: DP_to_TP, payload: "DP-local post-attention hidden states · bf16 [B_local,T,H]", result: "global hidden batch for TP MoE", source_alternatives: "all-gatherv for uneven local token counts"}
     edge: {shape: "[B_global,H]", dtype: bf16}
 
   - op: annotate_node
@@ -158,30 +163,40 @@ transforms:
       execution: {placement: all_tp_ranks, tensor_layout: hidden_sharded, parallelism: TP}
 
   - op: insert_after
-    after: moe.combine
+    after: linear_layer.moe
     node:
-      id: tp_output_collective
-      label: "TP MoE output collective\nall-reduce"
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce · bf16 [B_global,H]"
       shape: elem
       semantic_op: execution.tp.moe_output_collective
-      execution: {placement: tp_group, collective: all_reduce, parallelism: TP}
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "expert-hidden output partials · bf16 [B_global,T,H]", result: "replicated global MoE output"}
     edge: {shape: "[B_global,H]", dtype: bf16}
 
   - op: insert_after
-    after: linear_layer.moe
-    node:
-      id: dp_moe_output_scatter
-      label: "DP-local MoE output slice"
-      shape: elem
-      semantic_op: execution.dp.moe_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter_or_reduce_scatterv, parallelism: DP}
-    edge: {shape: "[B_local,H]", dtype: bf16}
-  - op: insert_after
     after: full_layer.moe
     node:
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce · bf16 [B_global,H]"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      execution: {placement: tp_group, collective: all_reduce, parallelism: TP, payload: "expert-hidden output partials · bf16 [B_global,T,H]", result: "replicated global MoE output"}
+    edge: {shape: "[B_global,H]", dtype: bf16}
+
+  - op: insert_after
+    after: linear_layer.tp_moe_output_collective
+    node:
       id: dp_moe_output_scatter
-      label: "DP-local MoE output slice"
+      label: "TP→DP MoE output\nbf16 hidden activations"
       shape: elem
       semantic_op: execution.dp.moe_output_scatter
-      execution: {placement: dp_local_attention_rank, collective: local_scatter_or_reduce_scatterv, parallelism: DP}
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "global TP MoE output · bf16 [B_global,T,H]", result: "owner rank output [B_local,T,H]", source_alternatives: "reduce-scatterv path exists for supported phase/padding/backend selections"}
+    edge: {shape: "[B_local,H]", dtype: bf16}
+  - op: insert_after
+    after: full_layer.tp_moe_output_collective
+    node:
+      id: dp_moe_output_scatter
+      label: "TP→DP MoE output\nbf16 hidden activations"
+      shape: elem
+      semantic_op: execution.dp.moe_output_scatter
+      execution: {placement: dp_local_attention_rank, collective: local_slice, parallelism: DP, payload: "global TP MoE output · bf16 [B_global,T,H]", result: "owner rank output [B_local,T,H]", source_alternatives: "reduce-scatterv path exists for supported phase/padding/backend selections"}
     edge: {shape: "[B_local,H]", dtype: bf16}

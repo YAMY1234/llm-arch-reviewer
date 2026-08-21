@@ -1,0 +1,3093 @@
+schema_version: profile.v2
+profile_id: qwen40_tp4_eager_prefill_gbs1_8k
+label: GB300 · pure TP4 · Triton GDN · eager prefill · global BS1 · 8k
+model_id: qwen40
+execution_path_id: tp_only
+implementation_id: sglang_f90a941aa
+variant_id: tp4_eager_prefill_gbs1_8k
+phase: prefill
+execution_parameters:
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+  cluster: CMH
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 1
+  batch_size_scope: global_request_count
+  warmup_rounds: 3
+  formal_rounds: 1
+  prompt_source: deterministic-random-ids
+  prompt_seed: 20260819
+  cache_policy: radix-disabled
+profiler:
+  type: torch
+  rank: 0
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: false
+  captured_phase: forward_extend
+  selected_iterations: 1
+  prefill_chunk_count: 1
+  with_stack: false
+  record_shapes: false
+  gpu_metric_semantics: GPU active interval union across every sequential chunk of
+    one full eager 8k prefill request; Python-stack attribution is transferred by
+    exact per-chunk kernel-name sequence alignment when a stack-disabled timing trace
+    is supplied
+evidence:
+  job_id: 3182153
+  source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+  model_revision: b151fd157ff99b63198ab8558432f0bf43e14d58
+  gdn_backend: triton
+  trace_file: qwen40-tp_only-eager-gbs1-qwen40-tp_only-eager-gbs1-TP-0.trace.json.gz
+  events_file: events.tp0.jsonl
+  events_sha256: 349515790ec9fd2cfeb1be686818ee194a1d925e2e3cd1165bd3ccdd983e6ac5
+  stack_trace_file: qwen40-tp4-eager-bs1-qwen40-tp4-eager-bs1-TP-0.trace.json.gz
+  stack_events_file: events.tp0.jsonl
+  stack_events_sha256: 8c22ada8f905143b6d656d3dd3c684b9f1d8661fea5902a77392f8681ec0f2b0
+  mapping_file: kernel_mapping.tp0.jsonl
+  mapping_sha256: ce8232e678246c9e77c10967040a4c7eb7aafbbecacb66ef6ddf1e8fad0d51b7
+  mapping_job_id: 3175289
+  protocol_file: protocol.json
+  protocol_sha256: ff9c7fb7e351a28f939971b77c420e40f59e2789a50edcab052fc5cc6071f112
+  window:
+    start_us: 4276054518214.223
+    end_us: 4276054826301.1104
+    duration_ms: 308.0868872070312
+    iter_bounds_us:
+    - - 4276054518214.223
+      - 4276054826301.1104
+    anchor_kernel_count: 36
+  stack_mapping_window:
+    start_us: 4244788561897.397
+    end_us: 4244789073571.528
+    duration_ms: 511.674130859375
+    iter_bounds_us:
+    - - 4244788561897.397
+      - 4244789073571.528
+    anchor_kernel_count: 36
+  timing_transfer: exact per-chunk kernel-name sequence alignment partitioned at stable
+    HC combine delimiters; stack-only support kernels deleted; timing-only kernels
+    require a direct signature or identical left/right IR semantics; no fuzzy-name
+    or duration matching
+  timing_alignment_chunks:
+  - exact_kernel_count: 2847
+    direct_timing_insert_count: 0
+    context_timing_insert_count: 0
+    stack_only_support_kernel_count: 234
+  stack_only_support_kernel_count: 234
+  original_stack_rule_mapped_duration_ratio: 0.9814129794636932
+  attributed_kernel_duration_ratio: 1.0
+  accounting:
+    kernel_count: 2847
+    attributed_kernel_count: 2847
+    unattributed_kernel_count: 0
+    stack_rule_kernel_count: 2325
+    stack_semantic_fallback_kernel_count: 522
+    active_gpu_ms: 199.841732
+    gpu_residency_ms: 201.334344
+    gpu_elapsed_ms: 308.086887
+    device_gap_ms: 108.245155
+    gpu_busy_pct: 64.87
+    gpu_overlap_ms: 1.492612
+profile_summary:
+  timing_phase: prefill
+  timing_coverage: 100% of kernels across the full 8k eager prefill request (1×8192-token
+    runtime chunks)
+  reference_rank: 0
+  node_time: active GPU time; overlap counted once
+  kernel_detail: GPU residency from the stack-disabled timing trace
+  provenance: Python-stack IR attribution transferred by exact per-chunk, HC-delimiter-partitioned
+    kernel-name sequence alignment onto the stack-disabled timing trace
+  scope_note: BS1 prefill only; decode has separate CUDA Graph BS sweeps
+  request_shape: one global BS1 / 8k-token request, executed as 1×8192-token chunks
+  timing:
+    scope: full prefill request on the selected reference rank
+    elapsed_ms: 308.086887
+    active_gpu_ms: 199.841732
+    device_gap_ms: 108.245155
+    gpu_busy_pct: 64.87
+    gpu_residency_ms: 201.334344
+    gpu_overlap_ms: 1.492612
+    elapsed_source: profiler-selected full-request iteration bounds
+    device_gap_reason: unclassified
+    reference_rank: 0
+    sample_count: 1
+  gap_note: device gap is request elapsed minus the union of all GPU kernel intervals
+    on the reference rank; its CPU/synchronization cause is not inferred without direct
+    evidence
+  node_elapsed_coverage: decoder-stack envelope only; per-node eager-prefill elapsed/gap
+    requires explicit invocation markers because concurrent streams interleave logical
+    layers
+node_states:
+  top.token_ids:
+    status: structural
+    label: input tensor · no GPU kernel
+  top.logits:
+    status: structural
+    label: output tensor/materialization
+  stack.stack_in:
+    status: structural
+    label: tensor boundary
+  stack.schedule:
+    status: structural
+    label: control schedule · no kernel
+  stack.stack_out:
+    status: structural
+    label: tensor boundary
+  linear_layer.layer_in:
+    status: structural
+    label: tensor boundary
+  linear_layer.layer_out:
+    status: structural
+    label: tensor boundary
+  full_layer.layer_in:
+    status: structural
+    label: tensor boundary
+  full_layer.layer_out:
+    status: structural
+    label: tensor boundary
+  ple.token_history:
+    status: state
+    label: state access; timed support shown when present
+  ple.conv_state:
+    status: state
+    label: persistent state · no standalone kernel
+  linear_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  linear_attention.recurrent_state:
+    status: state
+    label: persistent state · updated by recurrence
+  linear_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  linear_attention.ba_projection:
+    status: fused
+    label: fused with q/k/v/z + beta/alpha projection
+    included_in: linear_attention.qkvz_projection
+  hyperconnection.hc_in:
+    status: structural
+    label: tensor boundary
+  hyperconnection.low_rank_gate:
+    status: fused
+    label: fused into hyper-connection mix kernel
+    included_in: hyperconnection.mix
+  hyperconnection.hc_out:
+    status: structural
+    label: tensor boundary
+  hyperconnection_mix.branch_states:
+    status: structural
+    label: branch-state input boundary
+  hyperconnection_mix.low_rank_gate:
+    status: fused
+    label: fused into hyper-connection mix kernel
+    included_in: hyperconnection_mix.mix
+  hyperconnection_mix.module_input:
+    status: structural
+    label: selected module-input boundary
+  hyperconnection_combine.branch_states:
+    status: structural
+    label: preserved branch-state input boundary
+  hyperconnection_combine.module_output:
+    status: structural
+    label: processed module-output boundary
+  hyperconnection_combine.updated_branch_states:
+    status: structural
+    label: updated branch-state output boundary
+  qsa_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  qsa_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  moe.moe_in:
+    status: structural
+    label: tensor boundary
+  moe.moe_out:
+    status: structural
+    label: tensor boundary
+node_metrics:
+  full_layer.attn_hc_combine:
+    ms_per_iter: 1.44881
+    active_gpu_ms: 1.44881
+    gpu_residency_ms: 1.448809
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 1.448809
+    kernels:
+    - name: hyper-connection combine
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 120.734
+      total_us_per_iter: 1448.809
+      share_in_node_pct: 100.0
+    drill_view: hyperconnection_combine
+    drill_scope: full_layer.attn_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'attention output
+
+          [B,T,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      combine:
+        ms_per_iter: 1.44881
+        active_gpu_ms: 1.44881
+        gpu_residency_ms: 1.448809
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 12
+              gpu_residency_ms_per_iter: 1.448809
+        kernels:
+        - name: hyper-connection combine
+          count: 12
+          count_per_iter: 12.0
+          avg_us: 120.734
+          total_us_per_iter: 1448.809
+          share_in_node_pct: 100.0
+        scope_target: full_layer.attn_hc_combine
+        display_label: 'update four branches
+
+          with attention output'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.attn_hc_mix:
+    ms_per_iter: 2.458768
+    active_gpu_ms: 2.458768
+    gpu_residency_ms: 2.466159
+    gpu_overlap_ms: 0.007391
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 45
+          gpu_residency_ms_per_iter: 1.852236
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.613923
+    kernels:
+    - name: _mix_compute
+      count: 44
+      count_per_iter: 44.0
+      avg_us: 37.623
+      total_us_per_iter: 1655.402
+      share_in_node_pct: 67.12
+    - name: per-branch hyper-connection RMSNorm
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 51.16
+      total_us_per_iter: 613.923
+      share_in_node_pct: 24.89
+    - name: forward
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 196.834
+      total_us_per_iter: 196.834
+      share_in_node_pct: 7.98
+    drill_view: hyperconnection_mix
+    drill_scope: full_layer.attn_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      branch_norm:
+        ms_per_iter: 0.613923
+        active_gpu_ms: 0.613923
+        gpu_residency_ms: 0.613923
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_semantic_fallback+exact_sequence_timing_transfer:
+              kernel_count: 12
+              gpu_residency_ms_per_iter: 0.613923
+        kernels:
+        - name: per-branch hyper-connection RMSNorm
+          count: 12
+          count_per_iter: 12.0
+          avg_us: 51.16
+          total_us_per_iter: 613.923
+          share_in_node_pct: 100.0
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      mix:
+        ms_per_iter: 1.849708
+        active_gpu_ms: 1.849708
+        gpu_residency_ms: 1.852236
+        gpu_overlap_ms: 0.002528
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 45
+              gpu_residency_ms_per_iter: 1.852236
+        kernels:
+        - name: _mix_compute
+          count: 44
+          count_per_iter: 44.0
+          avg_us: 37.623
+          total_us_per_iter: 1655.402
+          share_in_node_pct: 89.37
+        - name: forward
+          count: 1
+          count_per_iter: 1.0
+          avg_us: 196.834
+          total_us_per_iter: 196.834
+          share_in_node_pct: 10.63
+        scope_target: full_layer.attn_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → attention input'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'attention input
+
+          [B,T,H]'
+        scope_target: full_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.mlp_hc_combine:
+    ms_per_iter: 2.334674
+    active_gpu_ms: 2.334674
+    gpu_residency_ms: 2.334674
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 1.157994
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 1.17668
+    kernels:
+    - name: combine
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 235.336
+      total_us_per_iter: 1176.68
+      share_in_node_pct: 50.4
+    - name: hyper-connection combine
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 96.499
+      total_us_per_iter: 1157.994
+      share_in_node_pct: 49.6
+    drill_view: hyperconnection_combine
+    drill_scope: full_layer.mlp_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'MoE output
+
+          [B,T,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      combine:
+        ms_per_iter: 2.334674
+        active_gpu_ms: 2.334674
+        gpu_residency_ms: 2.334674
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 12
+              gpu_residency_ms_per_iter: 1.157994
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 5
+              gpu_residency_ms_per_iter: 1.17668
+        kernels:
+        - name: combine
+          count: 5
+          count_per_iter: 5.0
+          avg_us: 235.336
+          total_us_per_iter: 1176.68
+          share_in_node_pct: 50.4
+        - name: hyper-connection combine
+          count: 12
+          count_per_iter: 12.0
+          avg_us: 96.499
+          total_us_per_iter: 1157.994
+          share_in_node_pct: 49.6
+        scope_target: full_layer.mlp_hc_combine
+        display_label: 'update four branches
+
+          with MoE output'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.mlp_hc_mix:
+    ms_per_iter: 2.413169
+    active_gpu_ms: 2.413169
+    gpu_residency_ms: 2.417265
+    gpu_overlap_ms: 0.004096
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 48
+          gpu_residency_ms_per_iter: 1.80718
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.610085
+    kernels:
+    - name: _mix_compute
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 37.65
+      total_us_per_iter: 1807.18
+      share_in_node_pct: 74.76
+    - name: per-branch hyper-connection RMSNorm
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 50.84
+      total_us_per_iter: 610.085
+      share_in_node_pct: 25.24
+    drill_view: hyperconnection_mix
+    drill_scope: full_layer.mlp_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      branch_norm:
+        ms_per_iter: 0.610085
+        active_gpu_ms: 0.610085
+        gpu_residency_ms: 0.610085
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_semantic_fallback+exact_sequence_timing_transfer:
+              kernel_count: 12
+              gpu_residency_ms_per_iter: 0.610085
+        kernels:
+        - name: per-branch hyper-connection RMSNorm
+          count: 12
+          count_per_iter: 12.0
+          avg_us: 50.84
+          total_us_per_iter: 610.085
+          share_in_node_pct: 100.0
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      mix:
+        ms_per_iter: 1.803917
+        active_gpu_ms: 1.803917
+        gpu_residency_ms: 1.80718
+        gpu_overlap_ms: 0.003263
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 1.80718
+        kernels:
+        - name: _mix_compute
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 37.65
+          total_us_per_iter: 1807.18
+          share_in_node_pct: 100.0
+        scope_target: full_layer.mlp_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → MoE input'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'MoE input
+
+          [B,T,H]'
+        scope_target: full_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.moe:
+    ms_per_iter: 4.123708
+    active_gpu_ms: 4.123708
+    gpu_residency_ms: 4.235293
+    gpu_overlap_ms: 0.111585
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 55
+          gpu_residency_ms_per_iter: 1.901515
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 29
+          gpu_residency_ms_per_iter: 1.498252
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 15
+          gpu_residency_ms_per_iter: 0.835526
+    kernels:
+    - name: MoE routed-expert finalize
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 116.755
+      total_us_per_iter: 1401.066
+      share_in_node_pct: 33.08
+    - name: forward
+      count: 28
+      count_per_iter: 28.0
+      avg_us: 44.406
+      total_us_per_iter: 1243.37
+      share_in_node_pct: 29.36
+    - name: routed-expert GEMM
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 202.775
+      total_us_per_iter: 608.324
+      share_in_node_pct: 14.36
+    - name: Qwen2MoeSparseMoeBlock_31
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 254.882
+      total_us_per_iter: 254.882
+      share_in_node_pct: 6.02
+    - name: MoE top-k routing
+      count: 24
+      count_per_iter: 24.0
+      avg_us: 10.153
+      total_us_per_iter: 243.68
+      share_in_node_pct: 5.75
+    - name: replicated MoE router projection
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 18.933
+      total_us_per_iter: 227.202
+      share_in_node_pct: 5.36
+    - name: shared/routed combine
+      count: 7
+      count_per_iter: 7.0
+      avg_us: 22.853
+      total_us_per_iter: 159.969
+      share_in_node_pct: 3.78
+    - name: shared-expert activation
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 8.067
+      total_us_per_iter: 96.8
+      share_in_node_pct: 2.29
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.qsa_attention:
+    ms_per_iter: 25.570759
+    active_gpu_ms: 25.570759
+    gpu_residency_ms: 25.596452
+    gpu_overlap_ms: 0.025693
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 72
+          gpu_residency_ms_per_iter: 3.247793
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 698
+          gpu_residency_ms_per_iter: 21.557936
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 134
+          gpu_residency_ms_per_iter: 0.790723
+    kernels:
+    - name: sparse_gqa_fwd_interface_triton
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1408.292
+      total_us_per_iter: 16899.503
+      share_in_node_pct: 66.02
+    - name: QSA index top-k
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 139.814
+      total_us_per_iter: 1677.771
+      share_in_node_pct: 6.55
+    - name: tilelang_qsa_mqa_prefill
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 28.222
+      total_us_per_iter: 1354.665
+      share_in_node_pct: 5.29
+    - name: forward_prepare_cuda_fused
+      count: 13
+      count_per_iter: 13.0
+      avg_us: 86.942
+      total_us_per_iter: 1130.247
+      share_in_node_pct: 4.42
+    - name: QSA Q/K norm + RoPE
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 63.094
+      total_us_per_iter: 757.123
+      share_in_node_pct: 2.96
+    - name: update_key_state_and_compress
+      count: 228
+      count_per_iter: 228.0
+      avg_us: 2.924
+      total_us_per_iter: 666.66
+      share_in_node_pct: 2.6
+    - name: QSA output projection
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 38.672
+      total_us_per_iter: 464.066
+      share_in_node_pct: 1.81
+    - name: QSA block-index expansion
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 32.987
+      total_us_per_iter: 395.842
+      share_in_node_pct: 1.55
+    - name: build_qsa_row_ranges
+      count: 168
+      count_per_iter: 168.0
+      avg_us: 2.011
+      total_us_per_iter: 337.797
+      share_in_node_pct: 1.32
+    - name: project_qk
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 27.557
+      total_us_per_iter: 330.689
+      share_in_node_pct: 1.29
+    - name: QSA index query preparation
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 25.387
+      total_us_per_iter: 304.641
+      share_in_node_pct: 1.19
+    - name: self_attention
+      count: 72
+      count_per_iter: 72.0
+      avg_us: 3.98
+      total_us_per_iter: 286.53
+      share_in_node_pct: 1.12
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.tp_attention_collective:
+    ms_per_iter: 7.859287
+    active_gpu_ms: 7.859287
+    gpu_residency_ms: 7.859286
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 7.859286
+    kernels:
+    - name: attn_tp_all_reduce
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 654.941
+      total_us_per_iter: 7859.286
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 12
+        kernel_count_per_iter: 12.0
+      payload: bf16 QSA attention output [B,T,H]
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  full_layer.tp_moe_output_collective:
+    ms_per_iter: 2.505841
+    active_gpu_ms: 2.505841
+    gpu_residency_ms: 2.505841
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 2.505841
+    kernels:
+    - name: forward
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 208.82
+      total_us_per_iter: 2505.841
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 12
+        kernel_count_per_iter: 12.0
+      payload: bf16 TP-sharded routed + shared expert output
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection.branch_norm:
+    ms_per_iter: 4.907169
+    active_gpu_ms: 4.907169
+    gpu_residency_ms: 4.907168
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 4.907168
+    kernels:
+    - name: per-branch hyper-connection RMSNorm
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 51.116
+      total_us_per_iter: 4907.168
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection.combine:
+    ms_per_iter: 11.643857
+    active_gpu_ms: 11.643857
+    gpu_residency_ms: 11.643854
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 9.643809
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 9
+          gpu_residency_ms_per_iter: 2.000045
+    kernels:
+    - name: hyper-connection combine
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 100.456
+      total_us_per_iter: 9643.809
+      share_in_node_pct: 82.82
+    - name: combine
+      count: 9
+      count_per_iter: 9.0
+      avg_us: 222.227
+      total_us_per_iter: 2000.045
+      share_in_node_pct: 17.18
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection.mix:
+    ms_per_iter: 16.612433
+    active_gpu_ms: 16.612433
+    gpu_residency_ms: 16.632652
+    gpu_overlap_ms: 0.020219
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 396
+          gpu_residency_ms_per_iter: 16.632652
+    kernels:
+    - name: _mix_compute
+      count: 385
+      count_per_iter: 385.0
+      avg_us: 37.948
+      total_us_per_iter: 14609.918
+      share_in_node_pct: 87.84
+    - name: mix
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 198.215
+      total_us_per_iter: 1189.288
+      share_in_node_pct: 7.15
+    - name: forward
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 166.689
+      total_us_per_iter: 833.446
+      share_in_node_pct: 5.01
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.causal_conv:
+    ms_per_iter: 1.161673
+    active_gpu_ms: 1.161673
+    gpu_residency_ms: 1.161673
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 1.161673
+    kernels:
+    - name: forward
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 32.269
+      total_us_per_iter: 1161.673
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.delta_rule:
+    ms_per_iter: 14.012632
+    active_gpu_ms: 14.012632
+    gpu_residency_ms: 14.012629
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 216
+          gpu_residency_ms_per_iter: 13.310128
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 132
+          gpu_residency_ms_per_iter: 0.702501
+    kernels:
+    - name: forward
+      count: 216
+      count_per_iter: 216.0
+      avg_us: 61.621
+      total_us_per_iter: 13310.128
+      share_in_node_pct: 94.99
+    - name: prefill GDN recurrence support
+      count: 132
+      count_per_iter: 132.0
+      avg_us: 5.322
+      total_us_per_iter: 702.501
+      share_in_node_pct: 5.01
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.gated_norm:
+    ms_per_iter: 1.095203
+    active_gpu_ms: 1.095203
+    gpu_residency_ms: 1.095203
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 0.980739
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.114464
+    kernels:
+    - name: GDN gated RMSNorm
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 27.243
+      total_us_per_iter: 980.739
+      share_in_node_pct: 89.55
+    - name: forward
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 9.539
+      total_us_per_iter: 114.464
+      share_in_node_pct: 10.45
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.gating:
+    ms_per_iter: 0.363557
+    active_gpu_ms: 0.363557
+    gpu_residency_ms: 0.363558
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 0.363558
+    kernels:
+    - name: GDN beta/decay gating
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 10.099
+      total_us_per_iter: 363.558
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.output_projection:
+    ms_per_iter: 1.391212
+    active_gpu_ms: 1.391212
+    gpu_residency_ms: 1.391213
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 1.391213
+    kernels:
+    - name: GDN output projection
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 38.645
+      total_us_per_iter: 1391.213
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.qkvz_projection:
+    ms_per_iter: 3.561594
+    active_gpu_ms: 3.561594
+    gpu_residency_ms: 3.650236
+    gpu_overlap_ms: 0.088642
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 73
+          gpu_residency_ms_per_iter: 3.650236
+    kernels:
+    - name: _forward_input_proj
+      count: 73
+      count_per_iter: 73.0
+      avg_us: 50.003
+      total_us_per_iter: 3650.236
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.recurrent_state:
+    ms_per_iter: 0.218914
+    active_gpu_ms: 0.218914
+    gpu_residency_ms: 0.218915
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 56
+          gpu_residency_ms_per_iter: 0.218915
+    kernels:
+    - name: linear-attention state preparation
+      count: 56
+      count_per_iter: 56.0
+      avg_us: 3.909
+      total_us_per_iter: 218.915
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_attention.split_pack:
+    ms_per_iter: 0.914884
+    active_gpu_ms: 0.914884
+    gpu_residency_ms: 0.914883
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 0.914883
+    kernels:
+    - name: GDN split + pack
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 25.413
+      total_us_per_iter: 914.883
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.attn_hc_combine:
+    ms_per_iter: 3.560568
+    active_gpu_ms: 3.560568
+    gpu_residency_ms: 3.560567
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 3.560567
+    kernels:
+    - name: hyper-connection combine
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 98.905
+      total_us_per_iter: 3560.567
+      share_in_node_pct: 100.0
+    drill_view: hyperconnection_combine
+    drill_scope: linear_layer.attn_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'attention output
+
+          [B,T,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      combine:
+        ms_per_iter: 3.560568
+        active_gpu_ms: 3.560568
+        gpu_residency_ms: 3.560567
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 36
+              gpu_residency_ms_per_iter: 3.560567
+        kernels:
+        - name: hyper-connection combine
+          count: 36
+          count_per_iter: 36.0
+          avg_us: 98.905
+          total_us_per_iter: 3560.567
+          share_in_node_pct: 100.0
+        scope_target: linear_layer.attn_hc_combine
+        display_label: 'update four branches
+
+          with attention output'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.attn_hc_mix:
+    ms_per_iter: 9.069146
+    active_gpu_ms: 9.069146
+    gpu_residency_ms: 9.091512
+    gpu_overlap_ms: 0.022366
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 154
+          gpu_residency_ms_per_iter: 7.24971
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 1.841802
+    kernels:
+    - name: _mix_compute
+      count: 144
+      count_per_iter: 144.0
+      avg_us: 37.665
+      total_us_per_iter: 5423.81
+      share_in_node_pct: 59.66
+    - name: per-branch hyper-connection RMSNorm
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 51.161
+      total_us_per_iter: 1841.802
+      share_in_node_pct: 20.26
+    - name: mix
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 198.215
+      total_us_per_iter: 1189.288
+      share_in_node_pct: 13.08
+    - name: forward
+      count: 4
+      count_per_iter: 4.0
+      avg_us: 159.153
+      total_us_per_iter: 636.612
+      share_in_node_pct: 7.0
+    drill_view: hyperconnection_mix
+    drill_scope: linear_layer.attn_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      branch_norm:
+        ms_per_iter: 1.841801
+        active_gpu_ms: 1.841801
+        gpu_residency_ms: 1.841802
+        gpu_overlap_ms: 1.0e-06
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_semantic_fallback+exact_sequence_timing_transfer:
+              kernel_count: 36
+              gpu_residency_ms_per_iter: 1.841802
+        kernels:
+        - name: per-branch hyper-connection RMSNorm
+          count: 36
+          count_per_iter: 36.0
+          avg_us: 51.161
+          total_us_per_iter: 1841.802
+          share_in_node_pct: 100.0
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      mix:
+        ms_per_iter: 7.242129
+        active_gpu_ms: 7.242129
+        gpu_residency_ms: 7.24971
+        gpu_overlap_ms: 0.007581
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 154
+              gpu_residency_ms_per_iter: 7.24971
+        kernels:
+        - name: _mix_compute
+          count: 144
+          count_per_iter: 144.0
+          avg_us: 37.665
+          total_us_per_iter: 5423.81
+          share_in_node_pct: 74.81
+        - name: mix
+          count: 6
+          count_per_iter: 6.0
+          avg_us: 198.215
+          total_us_per_iter: 1189.288
+          share_in_node_pct: 16.4
+        - name: forward
+          count: 4
+          count_per_iter: 4.0
+          avg_us: 159.153
+          total_us_per_iter: 636.612
+          share_in_node_pct: 8.78
+        scope_target: linear_layer.attn_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → attention input'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'attention input
+
+          [B,T,H]'
+        scope_target: linear_layer.attn_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.linear_attention:
+    ms_per_iter: 22.719605
+    active_gpu_ms: 22.719605
+    gpu_residency_ms: 22.80831
+    gpu_overlap_ms: 0.088705
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 108
+          gpu_residency_ms_per_iter: 2.25918
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 337
+          gpu_residency_ms_per_iter: 18.236501
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 224
+          gpu_residency_ms_per_iter: 2.312629
+    kernels:
+    - name: forward
+      count: 264
+      count_per_iter: 264.0
+      avg_us: 55.251
+      total_us_per_iter: 14586.265
+      share_in_node_pct: 63.95
+    - name: _forward_input_proj
+      count: 73
+      count_per_iter: 73.0
+      avg_us: 50.003
+      total_us_per_iter: 3650.236
+      share_in_node_pct: 16.0
+    - name: GDN output projection
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 38.645
+      total_us_per_iter: 1391.213
+      share_in_node_pct: 6.1
+    - name: GDN gated RMSNorm
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 27.243
+      total_us_per_iter: 980.739
+      share_in_node_pct: 4.3
+    - name: GDN split + pack
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 25.413
+      total_us_per_iter: 914.883
+      share_in_node_pct: 4.01
+    - name: prefill GDN recurrence support
+      count: 132
+      count_per_iter: 132.0
+      avg_us: 5.322
+      total_us_per_iter: 702.501
+      share_in_node_pct: 3.08
+    - name: GDN beta/decay gating
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 10.099
+      total_us_per_iter: 363.558
+      share_in_node_pct: 1.59
+    - name: linear-attention state preparation
+      count: 56
+      count_per_iter: 56.0
+      avg_us: 3.909
+      total_us_per_iter: 218.915
+      share_in_node_pct: 0.96
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.mlp_hc_combine:
+    ms_per_iter: 4.299805
+    active_gpu_ms: 4.299805
+    gpu_residency_ms: 4.299804
+    gpu_overlap_ms: 0.0
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 3.476439
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 4
+          gpu_residency_ms_per_iter: 0.823365
+    kernels:
+    - name: hyper-connection combine
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 96.568
+      total_us_per_iter: 3476.439
+      share_in_node_pct: 80.85
+    - name: combine
+      count: 4
+      count_per_iter: 4.0
+      avg_us: 205.841
+      total_us_per_iter: 823.365
+      share_in_node_pct: 19.15
+    drill_view: hyperconnection_combine
+    drill_scope: linear_layer.mlp_hc_combine
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: preserved branch-state input boundary
+        display_label: 'preserved branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_output:
+        status: structural
+        label: processed module-output boundary
+        display_label: 'MoE output
+
+          [B,T,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      combine:
+        ms_per_iter: 4.299805
+        active_gpu_ms: 4.299805
+        gpu_residency_ms: 4.299804
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 36
+              gpu_residency_ms_per_iter: 3.476439
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 4
+              gpu_residency_ms_per_iter: 0.823365
+        kernels:
+        - name: hyper-connection combine
+          count: 36
+          count_per_iter: 36.0
+          avg_us: 96.568
+          total_us_per_iter: 3476.439
+          share_in_node_pct: 80.85
+        - name: combine
+          count: 4
+          count_per_iter: 4.0
+          avg_us: 205.841
+          total_us_per_iter: 823.365
+          share_in_node_pct: 19.15
+        scope_target: linear_layer.mlp_hc_combine
+        display_label: 'update four branches
+
+          with MoE output'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      updated_branch_states:
+        status: structural
+        label: updated branch-state output boundary
+        display_label: 'updated branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_combine
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.mlp_hc_mix:
+    ms_per_iter: 7.217555
+    active_gpu_ms: 7.217555
+    gpu_residency_ms: 7.235603
+    gpu_overlap_ms: 0.018048
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 144
+          gpu_residency_ms_per_iter: 5.394245
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 1.841358
+    kernels:
+    - name: _mix_compute
+      count: 144
+      count_per_iter: 144.0
+      avg_us: 37.46
+      total_us_per_iter: 5394.245
+      share_in_node_pct: 74.55
+    - name: per-branch hyper-connection RMSNorm
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 51.149
+      total_us_per_iter: 1841.358
+      share_in_node_pct: 25.45
+    drill_view: hyperconnection_mix
+    drill_scope: linear_layer.mlp_hc_mix
+    drill_metrics:
+      branch_states:
+        status: structural
+        label: branch-state input boundary
+        display_label: 'current branch states
+
+          [B,T,4,H]'
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      branch_norm:
+        ms_per_iter: 1.84136
+        active_gpu_ms: 1.84136
+        gpu_residency_ms: 1.841358
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_semantic_fallback+exact_sequence_timing_transfer:
+              kernel_count: 36
+              gpu_residency_ms_per_iter: 1.841358
+        kernels:
+        - name: per-branch hyper-connection RMSNorm
+          count: 36
+          count_per_iter: 36.0
+          avg_us: 51.149
+          total_us_per_iter: 1841.358
+          share_in_node_pct: 100.0
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      low_rank_gate:
+        status: fused
+        label: fused into the selected hyper-connection mix kernels
+        included_in: hyperconnection.mix
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      mix:
+        ms_per_iter: 5.387397
+        active_gpu_ms: 5.387397
+        gpu_residency_ms: 5.394245
+        gpu_overlap_ms: 0.006848
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected layer-stage drill context
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 144
+              gpu_residency_ms_per_iter: 5.394245
+        kernels:
+        - name: _mix_compute
+          count: 144
+          count_per_iter: 144.0
+          avg_us: 37.46
+          total_us_per_iter: 5394.245
+          share_in_node_pct: 100.0
+        scope_target: linear_layer.mlp_hc_mix
+        display_label: 'weighted branch mix
+
+          4 branches → MoE input'
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      module_input:
+        status: structural
+        label: selected module-input boundary
+        display_label: 'MoE input
+
+          [B,T,H]'
+        scope_target: linear_layer.mlp_hc_mix
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.moe:
+    ms_per_iter: 19.839003
+    active_gpu_ms: 19.839003
+    gpu_residency_ms: 20.146781
+    gpu_overlap_ms: 0.307778
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 184
+          gpu_residency_ms_per_iter: 6.053892
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 129
+          gpu_residency_ms_per_iter: 12.762128
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 39
+          gpu_residency_ms_per_iter: 1.330761
+    kernels:
+    - name: forward
+      count: 105
+      count_per_iter: 105.0
+      avg_us: 67.029
+      total_us_per_iter: 7038.03
+      share_in_node_pct: 34.93
+    - name: _forward_router_experts
+      count: 23
+      count_per_iter: 23.0
+      avg_us: 239.59
+      total_us_per_iter: 5510.561
+      share_in_node_pct: 27.35
+    - name: MoE routed-expert finalize
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 116.944
+      total_us_per_iter: 4209.98
+      share_in_node_pct: 20.9
+    - name: shared/routed combine
+      count: 40
+      count_per_iter: 40.0
+      avg_us: 22.957
+      total_us_per_iter: 918.275
+      share_in_node_pct: 4.56
+    - name: routed-expert GEMM
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 227.649
+      total_us_per_iter: 682.947
+      share_in_node_pct: 3.39
+    - name: MoE top-k routing
+      count: 72
+      count_per_iter: 72.0
+      avg_us: 9.471
+      total_us_per_iter: 681.892
+      share_in_node_pct: 3.38
+    - name: replicated MoE router projection
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 17.995
+      total_us_per_iter: 647.814
+      share_in_node_pct: 3.22
+    - name: shared-expert activation
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 6.771
+      total_us_per_iter: 243.745
+      share_in_node_pct: 1.21
+    - name: Qwen2MoeSparseMoeBlock_42
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 213.537
+      total_us_per_iter: 213.537
+      share_in_node_pct: 1.06
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.tp_attention_collective:
+    ms_per_iter: 39.441317
+    active_gpu_ms: 39.441317
+    gpu_residency_ms: 39.441317
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 39.441317
+    kernels:
+    - name: attn_tp_all_reduce
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 1095.592
+      total_us_per_iter: 39441.317
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 36
+        kernel_count_per_iter: 36.0
+      payload: bf16 linear-attention output [B,T,H]
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  linear_layer.tp_moe_output_collective:
+    ms_per_iter: 35.618859
+    active_gpu_ms: 35.618859
+    gpu_residency_ms: 35.618861
+    gpu_overlap_ms: 2.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 36
+          gpu_residency_ms_per_iter: 35.618861
+    kernels:
+    - name: forward
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 989.413
+      total_us_per_iter: 35618.861
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 36
+        kernel_count_per_iter: 36.0
+      payload: bf16 TP-sharded routed + shared expert output
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  moe.combine:
+    ms_per_iter: 6.693928
+    active_gpu_ms: 6.693928
+    gpu_residency_ms: 6.712746
+    gpu_overlap_ms: 0.018818
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 6.712746
+    kernels:
+    - name: MoE routed-expert finalize
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 116.897
+      total_us_per_iter: 5611.046
+      share_in_node_pct: 83.59
+    - name: shared/routed combine
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 22.952
+      total_us_per_iter: 1101.7
+      share_in_node_pct: 16.41
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  moe.routed_experts:
+    ms_per_iter: 14.965055
+    active_gpu_ms: 14.965055
+    gpu_residency_ms: 15.047712
+    gpu_overlap_ms: 0.082657
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 62
+          gpu_residency_ms_per_iter: 13.071029
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 9
+          gpu_residency_ms_per_iter: 1.976683
+    kernels:
+    - name: forward
+      count: 37
+      count_per_iter: 37.0
+      avg_us: 191.677
+      total_us_per_iter: 7092.049
+      share_in_node_pct: 47.13
+    - name: _forward_router_experts
+      count: 23
+      count_per_iter: 23.0
+      avg_us: 239.59
+      total_us_per_iter: 5510.561
+      share_in_node_pct: 36.62
+    - name: routed-expert GEMM
+      count: 9
+      count_per_iter: 9.0
+      avg_us: 219.631
+      total_us_per_iter: 1976.683
+      share_in_node_pct: 13.14
+    - name: Qwen2MoeSparseMoeBlock_31
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 254.882
+      total_us_per_iter: 254.882
+      share_in_node_pct: 1.69
+    - name: Qwen2MoeSparseMoeBlock_42
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 213.537
+      total_us_per_iter: 213.537
+      share_in_node_pct: 1.42
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  moe.router:
+    ms_per_iter: 0.875017
+    active_gpu_ms: 0.875017
+    gpu_residency_ms: 0.875016
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 48
+          gpu_residency_ms_per_iter: 0.875016
+    kernels:
+    - name: replicated MoE router projection
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 18.23
+      total_us_per_iter: 875.016
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  moe.shared_expert:
+    ms_per_iter: 1.41393
+    active_gpu_ms: 1.41393
+    gpu_residency_ms: 1.529896
+    gpu_overlap_ms: 0.115966
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 48
+          gpu_residency_ms_per_iter: 0.340545
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 1.189351
+    kernels:
+    - name: forward
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 12.389
+      total_us_per_iter: 1189.351
+      share_in_node_pct: 77.74
+    - name: shared-expert activation
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 7.095
+      total_us_per_iter: 340.545
+      share_in_node_pct: 22.26
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  moe.topk:
+    ms_per_iter: 0.925572
+    active_gpu_ms: 0.925572
+    gpu_residency_ms: 0.925572
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 0.925572
+    kernels:
+    - name: MoE top-k routing
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 9.641
+      total_us_per_iter: 925.572
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.context_commit:
+    ms_per_iter: 0.178881
+    active_gpu_ms: 0.178881
+    gpu_residency_ms: 0.178881
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.178881
+    kernels:
+    - name: _commit_ple_batch
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 35.776
+      total_us_per_iter: 178.881
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.grouped_norm_gate:
+    ms_per_iter: 0.162849
+    active_gpu_ms: 0.162849
+    gpu_residency_ms: 0.163009
+    gpu_overlap_ms: 0.00016
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 3
+          gpu_residency_ms_per_iter: 0.163009
+    kernels:
+    - name: forward
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 54.336
+      total_us_per_iter: 163.009
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.injection:
+    ms_per_iter: 0.61818
+    active_gpu_ms: 0.61818
+    gpu_residency_ms: 0.618179
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 14
+          gpu_residency_ms_per_iter: 0.618179
+    kernels:
+    - name: forward
+      count: 14
+      count_per_iter: 14.0
+      avg_us: 44.156
+      total_us_per_iter: 618.179
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.key_value_projection:
+    ms_per_iter: 0.288514
+    active_gpu_ms: 0.288514
+    gpu_residency_ms: 0.292162
+    gpu_overlap_ms: 0.003648
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 2
+          gpu_residency_ms_per_iter: 0.292162
+    kernels:
+    - name: PLE key/value projection
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 146.081
+      total_us_per_iter: 292.162
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.ngram_embedding:
+    ms_per_iter: 0.090433
+    active_gpu_ms: 0.090433
+    gpu_residency_ms: 0.090433
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 0.090433
+    kernels:
+    - name: _embed_local_shard
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 90.433
+      total_us_per_iter: 90.433
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.ngram_hash:
+    ms_per_iter: 0.180931
+    active_gpu_ms: 0.180931
+    gpu_residency_ms: 0.18093
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 44
+          gpu_residency_ms_per_iter: 0.18093
+    kernels:
+    - name: _shift_right_ignore_eos
+      count: 32
+      count_per_iter: 32.0
+      avg_us: 4.907
+      total_us_per_iter: 157.026
+      share_in_node_pct: 86.79
+    - name: _hash_contexts
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1.992
+      total_us_per_iter: 23.904
+      share_in_node_pct: 13.21
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.short_conv:
+    ms_per_iter: 1.724426
+    active_gpu_ms: 1.724426
+    gpu_residency_ms: 1.724427
+    gpu_overlap_ms: 1.0e-06
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 10
+          gpu_residency_ms_per_iter: 1.724427
+    kernels:
+    - name: _short_conv
+      count: 8
+      count_per_iter: 8.0
+      avg_us: 214.329
+      total_us_per_iter: 1714.635
+      share_in_node_pct: 99.43
+    - name: _gather_at
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 4.896
+      total_us_per_iter: 9.792
+      share_in_node_pct: 0.57
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.token_history:
+    ms_per_iter: 0.049952
+    active_gpu_ms: 0.049952
+    gpu_residency_ms: 0.049952
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 24
+          gpu_residency_ms_per_iter: 0.049952
+    kernels:
+    - name: _prepare_ple_batch
+      count: 24
+      count_per_iter: 24.0
+      avg_us: 2.081
+      total_us_per_iter: 49.952
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  ple.tp_embedding_collective:
+    ms_per_iter: 3.198421
+    active_gpu_ms: 3.198421
+    gpu_residency_ms: 3.198421
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 3.198421
+    kernels:
+    - name: forward
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 3198.421
+      total_us_per_iter: 3198.421
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 1
+        kernel_count_per_iter: 1.0
+      payload: bf16 vocabulary-sharded N-gram embeddings
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.attention_core:
+    ms_per_iter: 17.037202
+    active_gpu_ms: 17.037202
+    gpu_residency_ms: 17.0372
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 72
+          gpu_residency_ms_per_iter: 17.0372
+    kernels:
+    - name: sparse_gqa_fwd_interface_triton
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1408.292
+      total_us_per_iter: 16899.503
+      share_in_node_pct: 99.19
+    - name: self_attention
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 2.295
+      total_us_per_iter: 137.697
+      share_in_node_pct: 0.81
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.indexer:
+    ms_per_iter: 5.655845
+    active_gpu_ms: 5.655845
+    gpu_residency_ms: 5.674214
+    gpu_overlap_ms: 0.018369
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 48
+          gpu_residency_ms_per_iter: 2.432558
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 601
+          gpu_residency_ms_per_iter: 3.241656
+    kernels:
+    - name: QSA index top-k
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 139.814
+      total_us_per_iter: 1677.771
+      share_in_node_pct: 29.57
+    - name: tilelang_qsa_mqa_prefill
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 28.222
+      total_us_per_iter: 1354.665
+      share_in_node_pct: 23.87
+    - name: update_key_state_and_compress
+      count: 228
+      count_per_iter: 228.0
+      avg_us: 2.924
+      total_us_per_iter: 666.66
+      share_in_node_pct: 11.75
+    - name: QSA block-index expansion
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 32.987
+      total_us_per_iter: 395.842
+      share_in_node_pct: 6.98
+    - name: build_qsa_row_ranges
+      count: 168
+      count_per_iter: 168.0
+      avg_us: 2.011
+      total_us_per_iter: 337.797
+      share_in_node_pct: 5.95
+    - name: project_qk
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 27.557
+      total_us_per_iter: 330.689
+      share_in_node_pct: 5.83
+    - name: QSA index query preparation
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 25.387
+      total_us_per_iter: 304.641
+      share_in_node_pct: 5.37
+    - name: forward_cuda
+      count: 25
+      count_per_iter: 25.0
+      avg_us: 10.552
+      total_us_per_iter: 263.809
+      share_in_node_pct: 4.65
+    - name: get_prefill_mqa_inputs
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 2.569
+      total_us_per_iter: 246.627
+      share_in_node_pct: 4.35
+    - name: QSA index key compression
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 4.525
+      total_us_per_iter: 54.304
+      share_in_node_pct: 0.96
+    - name: _fused_compress_store
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 2.085
+      total_us_per_iter: 25.024
+      share_in_node_pct: 0.44
+    - name: qsa_fast_topk
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1.365
+      total_us_per_iter: 16.385
+      share_in_node_pct: 0.29
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.kv_cache:
+    ms_per_iter: 0.058112
+    active_gpu_ms: 0.058112
+    gpu_residency_ms: 0.058112
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.058112
+    kernels:
+    - name: QSA KV-cache store
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 4.843
+      total_us_per_iter: 58.112
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.metadata:
+    ms_per_iter: 0.214081
+    active_gpu_ms: 0.214081
+    gpu_residency_ms: 0.214081
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 110
+          gpu_residency_ms_per_iter: 0.214081
+    kernels:
+    - name: QSA layout/KV metadata
+      count: 110
+      count_per_iter: 110.0
+      avg_us: 1.946
+      total_us_per_iter: 214.081
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.output_gate:
+    ms_per_iter: 0.261409
+    active_gpu_ms: 0.261409
+    gpu_residency_ms: 0.261409
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.148833
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.112576
+    kernels:
+    - name: self_attention
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 12.403
+      total_us_per_iter: 148.833
+      share_in_node_pct: 56.93
+    - name: QSA output/support elementwise
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 9.381
+      total_us_per_iter: 112.576
+      share_in_node_pct: 43.07
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.output_projection:
+    ms_per_iter: 0.464067
+    active_gpu_ms: 0.464067
+    gpu_residency_ms: 0.464066
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.464066
+    kernels:
+    - name: QSA output projection
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 38.672
+      total_us_per_iter: 464.066
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.qk_norm_rope:
+    ms_per_iter: 0.757124
+    active_gpu_ms: 0.757124
+    gpu_residency_ms: 0.757123
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 12
+          gpu_residency_ms_per_iter: 0.757123
+    kernels:
+    - name: QSA Q/K norm + RoPE
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 63.094
+      total_us_per_iter: 757.123
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  qsa_attention.qkv_gate_projection:
+    ms_per_iter: 1.130247
+    active_gpu_ms: 1.130247
+    gpu_residency_ms: 1.130247
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 13
+          gpu_residency_ms_per_iter: 1.130247
+    kernels:
+    - name: forward_prepare_cuda_fused
+      count: 13
+      count_per_iter: 13.0
+      avg_us: 86.942
+      total_us_per_iter: 1130.247
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  stack.full_layer:
+    ms_per_iter: 48.853538
+    active_gpu_ms: 48.853538
+    gpu_residency_ms: 49.19306
+    gpu_overlap_ms: 0.339522
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 151
+          gpu_residency_ms_per_iter: 7.756111
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 854
+          gpu_residency_ms_per_iter: 38.586692
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 173
+          gpu_residency_ms_per_iter: 2.850257
+    kernels:
+    - name: sparse_gqa_fwd_interface_triton
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1408.292
+      total_us_per_iter: 16899.503
+      share_in_node_pct: 34.35
+    - name: attn_tp_all_reduce
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 654.941
+      total_us_per_iter: 7859.286
+      share_in_node_pct: 15.98
+    - name: forward
+      count: 41
+      count_per_iter: 41.0
+      avg_us: 96.245
+      total_us_per_iter: 3946.045
+      share_in_node_pct: 8.02
+    - name: _mix_compute
+      count: 97
+      count_per_iter: 97.0
+      avg_us: 39.091
+      total_us_per_iter: 3791.863
+      share_in_node_pct: 7.71
+    - name: hyper-connection combine
+      count: 24
+      count_per_iter: 24.0
+      avg_us: 108.617
+      total_us_per_iter: 2606.803
+      share_in_node_pct: 5.3
+    - name: QSA index top-k
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 139.814
+      total_us_per_iter: 1677.771
+      share_in_node_pct: 3.41
+    - name: MoE routed-expert finalize
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 116.755
+      total_us_per_iter: 1401.066
+      share_in_node_pct: 2.85
+    - name: tilelang_qsa_mqa_prefill
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 28.222
+      total_us_per_iter: 1354.665
+      share_in_node_pct: 2.75
+    - name: per-branch hyper-connection RMSNorm
+      count: 24
+      count_per_iter: 24.0
+      avg_us: 51.0
+      total_us_per_iter: 1224.008
+      share_in_node_pct: 2.49
+    - name: combine
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 235.336
+      total_us_per_iter: 1176.68
+      share_in_node_pct: 2.39
+    - name: forward_prepare_cuda_fused
+      count: 13
+      count_per_iter: 13.0
+      avg_us: 86.942
+      total_us_per_iter: 1130.247
+      share_in_node_pct: 2.3
+    - name: QSA Q/K norm + RoPE
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 63.094
+      total_us_per_iter: 757.123
+      share_in_node_pct: 1.54
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  stack.hc_expand:
+    ms_per_iter: 0.592516
+    active_gpu_ms: 0.592516
+    gpu_residency_ms: 0.592516
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 5
+          gpu_residency_ms_per_iter: 0.592516
+    kernels:
+    - name: initialize four hyper-connection branches
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 118.503
+      total_us_per_iter: 592.516
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  stack.linear_layer:
+    ms_per_iter: 148.069613
+    active_gpu_ms: 148.069613
+    gpu_residency_ms: 149.135185
+    gpu_overlap_ms: 1.065572
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 364
+          gpu_residency_ms_per_iter: 15.350078
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 913
+          gpu_residency_ms_per_iter: 125.501526
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 343
+          gpu_residency_ms_per_iter: 8.283581
+    kernels:
+    - name: forward
+      count: 427
+      count_per_iter: 427.0
+      avg_us: 144.87
+      total_us_per_iter: 61859.377
+      share_in_node_pct: 41.48
+    - name: attn_tp_all_reduce
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 1095.592
+      total_us_per_iter: 39441.317
+      share_in_node_pct: 26.45
+    - name: _mix_compute
+      count: 288
+      count_per_iter: 288.0
+      avg_us: 37.563
+      total_us_per_iter: 10818.055
+      share_in_node_pct: 7.25
+    - name: hyper-connection combine
+      count: 72
+      count_per_iter: 72.0
+      avg_us: 97.736
+      total_us_per_iter: 7037.006
+      share_in_node_pct: 4.72
+    - name: _forward_router_experts
+      count: 23
+      count_per_iter: 23.0
+      avg_us: 239.59
+      total_us_per_iter: 5510.561
+      share_in_node_pct: 3.7
+    - name: MoE routed-expert finalize
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 116.944
+      total_us_per_iter: 4209.98
+      share_in_node_pct: 2.82
+    - name: per-branch hyper-connection RMSNorm
+      count: 72
+      count_per_iter: 72.0
+      avg_us: 51.155
+      total_us_per_iter: 3683.16
+      share_in_node_pct: 2.47
+    - name: _forward_input_proj
+      count: 73
+      count_per_iter: 73.0
+      avg_us: 50.003
+      total_us_per_iter: 3650.236
+      share_in_node_pct: 2.45
+    - name: _short_conv
+      count: 8
+      count_per_iter: 8.0
+      avg_us: 214.329
+      total_us_per_iter: 1714.635
+      share_in_node_pct: 1.15
+    - name: GDN output projection
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 38.645
+      total_us_per_iter: 1391.213
+      share_in_node_pct: 0.93
+    - name: mix
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 198.215
+      total_us_per_iter: 1189.288
+      share_in_node_pct: 0.8
+    - name: GDN gated RMSNorm
+      count: 36
+      count_per_iter: 36.0
+      avg_us: 27.243
+      total_us_per_iter: 980.739
+      share_in_node_pct: 0.66
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  stack.ple_injection:
+    ms_per_iter: 6.489546
+    active_gpu_ms: 6.489546
+    gpu_residency_ms: 6.496394
+    gpu_overlap_ms: 0.006848
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 102
+          gpu_residency_ms_per_iter: 6.204232
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 2
+          gpu_residency_ms_per_iter: 0.292162
+    kernels:
+    - name: forward
+      count: 18
+      count_per_iter: 18.0
+      avg_us: 221.089
+      total_us_per_iter: 3979.609
+      share_in_node_pct: 61.26
+    - name: _short_conv
+      count: 8
+      count_per_iter: 8.0
+      avg_us: 214.329
+      total_us_per_iter: 1714.635
+      share_in_node_pct: 26.39
+    - name: PLE key/value projection
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 146.081
+      total_us_per_iter: 292.162
+      share_in_node_pct: 4.5
+    - name: _commit_ple_batch
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 35.776
+      total_us_per_iter: 178.881
+      share_in_node_pct: 2.75
+    - name: _shift_right_ignore_eos
+      count: 32
+      count_per_iter: 32.0
+      avg_us: 4.907
+      total_us_per_iter: 157.026
+      share_in_node_pct: 2.42
+    - name: _embed_local_shard
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 90.433
+      total_us_per_iter: 90.433
+      share_in_node_pct: 1.39
+    - name: _prepare_ple_batch
+      count: 24
+      count_per_iter: 24.0
+      avg_us: 2.081
+      total_us_per_iter: 49.952
+      share_in_node_pct: 0.77
+    - name: _hash_contexts
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1.992
+      total_us_per_iter: 23.904
+      share_in_node_pct: 0.37
+    - name: _gather_at
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 4.896
+      total_us_per_iter: 9.792
+      share_in_node_pct: 0.15
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.decoder_stack:
+    ms_per_iter: 197.076338
+    active_gpu_ms: 197.076338
+    gpu_residency_ms: 198.557078
+    gpu_overlap_ms: 1.48074
+    metric_kind: inclusive_rollup
+    aggregation: interval union on the stack-profiled active rank
+    attribution_status: inclusive_rollup
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 515
+          gpu_residency_ms_per_iter: 23.106189
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 1796
+          gpu_residency_ms_per_iter: 164.317051
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 516
+          gpu_residency_ms_per_iter: 11.133838
+    kernels:
+    - name: forward
+      count: 468
+      count_per_iter: 468.0
+      avg_us: 140.61
+      total_us_per_iter: 65805.422
+      share_in_node_pct: 33.14
+    - name: attn_tp_all_reduce
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 985.429
+      total_us_per_iter: 47300.603
+      share_in_node_pct: 23.82
+    - name: sparse_gqa_fwd_interface_triton
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 1408.292
+      total_us_per_iter: 16899.503
+      share_in_node_pct: 8.51
+    - name: _mix_compute
+      count: 385
+      count_per_iter: 385.0
+      avg_us: 37.948
+      total_us_per_iter: 14609.918
+      share_in_node_pct: 7.36
+    - name: hyper-connection combine
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 100.456
+      total_us_per_iter: 9643.809
+      share_in_node_pct: 4.86
+    - name: MoE routed-expert finalize
+      count: 48
+      count_per_iter: 48.0
+      avg_us: 116.897
+      total_us_per_iter: 5611.046
+      share_in_node_pct: 2.83
+    - name: _forward_router_experts
+      count: 23
+      count_per_iter: 23.0
+      avg_us: 239.59
+      total_us_per_iter: 5510.561
+      share_in_node_pct: 2.78
+    - name: per-branch hyper-connection RMSNorm
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 51.116
+      total_us_per_iter: 4907.168
+      share_in_node_pct: 2.47
+    - name: _forward_input_proj
+      count: 73
+      count_per_iter: 73.0
+      avg_us: 50.003
+      total_us_per_iter: 3650.236
+      share_in_node_pct: 1.84
+    - name: combine
+      count: 9
+      count_per_iter: 9.0
+      avg_us: 222.227
+      total_us_per_iter: 2000.045
+      share_in_node_pct: 1.01
+    - name: _short_conv
+      count: 8
+      count_per_iter: 8.0
+      avg_us: 214.329
+      total_us_per_iter: 1714.635
+      share_in_node_pct: 0.86
+    - name: QSA index top-k
+      count: 12
+      count_per_iter: 12.0
+      avg_us: 139.814
+      total_us_per_iter: 1677.771
+      share_in_node_pct: 0.84
+    gpu_elapsed_ms: 307.103772
+    module_gap_ms: 110.027435
+    other_gpu_work_ms: 1.850731
+    device_idle_ms: 108.176704
+    module_active_pct: 64.17
+    device_busy_pct: 64.78
+    elapsed_scope: selected module envelope within each profiled step
+    gap_semantics: module gap = other GPU work + device idle inside the invocation
+      envelope; device-idle cause is unclassified
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.embedding:
+    ms_per_iter: 0.014976
+    active_gpu_ms: 0.014976
+    gpu_residency_ms: 0.014976
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 0.014976
+    kernels:
+    - name: token embedding support
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 14.976
+      total_us_per_iter: 14.976
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.final_hc_mix:
+    ms_per_iter: 0.200706
+    active_gpu_ms: 0.200706
+    gpu_residency_ms: 0.201378
+    gpu_overlap_ms: 0.000672
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 4
+          gpu_residency_ms_per_iter: 0.150529
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 0.050849
+    kernels:
+    - name: _mix_compute
+      count: 4
+      count_per_iter: 4.0
+      avg_us: 37.632
+      total_us_per_iter: 150.529
+      share_in_node_pct: 74.75
+    - name: per-branch hyper-connection RMSNorm
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 50.849
+      total_us_per_iter: 50.849
+      share_in_node_pct: 25.25
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.lm_head:
+    ms_per_iter: 0.06848
+    active_gpu_ms: 0.06848
+    gpu_residency_ms: 0.068576
+    gpu_overlap_ms: 9.6e-05
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 7
+          gpu_residency_ms_per_iter: 0.068576
+    kernels:
+    - name: _compute_lm_head
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 49.984
+      total_us_per_iter: 49.984
+      share_in_node_pct: 72.89
+    - name: _get_pruned_states
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 2.848
+      total_us_per_iter: 14.24
+      share_in_node_pct: 20.77
+    - name: _copy_logits_to_buffer
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 4.352
+      total_us_per_iter: 4.352
+      share_in_node_pct: 6.35
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.runtime_support:
+    ms_per_iter: 0.075233
+    active_gpu_ms: 0.075233
+    gpu_residency_ms: 0.075233
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 2
+          gpu_residency_ms_per_iter: 0.075233
+    kernels:
+    - name: model-runner metadata/cache support
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 37.616
+      total_us_per_iter: 75.233
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.tp_embedding_collective:
+    ms_per_iter: 1.135015
+    active_gpu_ms: 1.135015
+    gpu_residency_ms: 1.135015
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 1.135015
+    kernels:
+    - name: forward
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 1135.015
+      total_us_per_iter: 1135.015
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_reduce
+        kernel_count: 1
+        kernel_count_per_iter: 1.0
+      payload: bf16 token embeddings [B,T,H]
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  top.tp_logits_collective:
+    ms_per_iter: 0.645573
+    active_gpu_ms: 0.645573
+    gpu_residency_ms: 0.645573
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 1
+          gpu_residency_ms_per_iter: 0.645573
+    kernels:
+    - name: _get_logits
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 645.573
+      total_us_per_iter: 645.573
+      share_in_node_pct: 100.0
+    communication:
+      observed_collectives:
+      - kind: all_gather
+        kernel_count: 1
+        kernel_count_per_iter: 1.0
+      payload: bf16 vocabulary-logit shards [B,T,V/TP]
+      scope: captured profile phase and selected reference rank
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection_mix.branch_norm:
+    ms_per_iter: 4.907169
+    active_gpu_ms: 4.907169
+    gpu_residency_ms: 4.907168
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_semantic_fallback+exact_sequence_timing_transfer:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 4.907168
+    kernels:
+    - name: per-branch hyper-connection RMSNorm
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 51.116
+      total_us_per_iter: 4907.168
+      share_in_node_pct: 100.0
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection_mix.mix:
+    ms_per_iter: 16.612433
+    active_gpu_ms: 16.612433
+    gpu_residency_ms: 16.632652
+    gpu_overlap_ms: 0.020219
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 396
+          gpu_residency_ms_per_iter: 16.632652
+    kernels:
+    - name: _mix_compute
+      count: 385
+      count_per_iter: 385.0
+      avg_us: 37.948
+      total_us_per_iter: 14609.918
+      share_in_node_pct: 87.84
+    - name: mix
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 198.215
+      total_us_per_iter: 1189.288
+      share_in_node_pct: 7.15
+    - name: forward
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 166.689
+      total_us_per_iter: 833.446
+      share_in_node_pct: 5.01
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+  hyperconnection_combine.combine:
+    ms_per_iter: 11.643857
+    active_gpu_ms: 11.643857
+    gpu_residency_ms: 11.643854
+    gpu_overlap_ms: 0.0
+    metric_kind: exclusive_leaf
+    aggregation: kernel interval union on the stack-profiled active rank
+    attribution_status: measured_direct
+    attribution:
+      direct_duration_pct: 100.0
+      methods:
+        direct_signature:
+          kernel_count: 96
+          gpu_residency_ms_per_iter: 9.643809
+        python_stack_ir_rule+exact_sequence_timing_transfer:
+          kernel_count: 9
+          gpu_residency_ms_per_iter: 2.000045
+    kernels:
+    - name: hyper-connection combine
+      count: 96
+      count_per_iter: 96.0
+      avg_us: 100.456
+      total_us_per_iter: 9643.809
+      share_in_node_pct: 82.82
+    - name: combine
+      count: 9
+      count_per_iter: 9.0
+      avg_us: 222.227
+      total_us_per_iter: 2000.045
+      share_in_node_pct: 17.18
+    source_rank: 0
+    rank_policy: critical stack-disabled timing rank
+timeline:
+  schema_version: timeline.v1
+  artifact: eager_prefill_gbs001_8k.timeline.json.gz
+  reference_rank: 0
+  step_count: 1
+  event_count: 2847
+  raw_trace_file: qwen40-tp_only-eager-gbs1-qwen40-tp_only-eager-gbs1-TP-0.trace.json.gz
+  sha256: 65d791c60462ccc475209cd1fcb2f1708c12acd3998d93f1fcbb6964bd6dc323

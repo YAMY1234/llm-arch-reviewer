@@ -25,6 +25,7 @@ from llm_arch_v2.compiler import (  # noqa: E402
 
 MODEL_ROOT = REPO_ROOT / "catalog" / "qwen40"
 QWEN40_ROOT = MODEL_ROOT
+QWEN35_ROOT = REPO_ROOT / "catalog" / "qwen35"
 
 
 def _node_ids(bundle: dict, view_id: str) -> list[str]:
@@ -40,10 +41,28 @@ def test_compile_qwen40_catalog() -> None:
     assert bundle["default_execution_variant"].startswith("exec_")
     assert bundle["default_implementation"] == "sglang_f90a941aa"
     assert bundle["default_profile"] == "qwen40_tp4_cg_decode_bs1_8k1k"
+    timeline = bundle["profiles"][bundle["default_profile"]]["meta"]["timeline"]
+    assert timeline["schema_version"] == "timeline.v1"
+    assert timeline["url"] == (
+        "timelines/qwen40_tp4_cg_decode_bs1_8k1k.timeline.json.gz"
+    )
+    assert timeline["event_count"] > 0
+    disabled_mtp = bundle["profiles"][bundle["default_profile"]]["data"][
+        "mtp_head.decoder_layer"
+    ]["tp4_cg_decode_bs1_8k1k"]
+    assert disabled_mtp["status"] == "disabled"
+    assert disabled_mtp["label"] == "MTP is disabled in this profile"
 
     assert "tp_attention_collective" in _node_ids(bundle, "linear_layer")
     assert "tp_attention_collective" in _node_ids(bundle, "full_layer")
-    assert "tp_output_collective" in _node_ids(bundle, "moe")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "linear_layer")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "full_layer")
+    assert "tp_output_collective" not in _node_ids(bundle, "moe")
+    assert "mtp_generation" in bundle["model_ir"]["views"]
+    assert "mtp_head" in bundle["model_ir"]["views"]
+    assert "tp_embedding_collective" in _node_ids(bundle, "mtp_head")
+    assert "tp_attention_collective" in _node_ids(bundle, "mtp_layer")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "mtp_layer")
 
     qkvz = next(
         node
@@ -57,6 +76,96 @@ def test_compile_qwen40_catalog() -> None:
     )
 
 
+def test_model_ir_and_execution_ir_are_separate_graphs() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    model_views = bundle["model_ir"]["views"]
+
+    assert "tp_moe_output_collective" not in [
+        node["id"] for node in model_views["linear_layer"]["nodes"]
+    ]
+    assert all(
+        node["ir_origin"] == "model_ir"
+        for view in model_views.values()
+        for node in view["nodes"]
+    )
+
+    collective = next(
+        node
+        for node in bundle["views"]["linear_layer"]["nodes"]
+        if node["id"] == "tp_moe_output_collective"
+    )
+    assert collective["ir_origin"] == "execution_plan"
+    assert collective["node_kind"] == "communication"
+    assert collective["boundary_role"] == "module_boundary"
+
+
+def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> None:
+    model_path = MODEL_ROOT / "model_ir.yaml"
+    plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(model_path)
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    fingerprint = execution_fingerprint(model, plan, views)
+    raw = load_yaml(
+        MODEL_ROOT
+        / "profiles"
+        / "tp_only"
+        / "sglang_f90a941aa"
+        / "cg_decode_bs001_8k1k.yaml"
+    )
+    raw["generation_mode"] = "eagle_mtp"
+    raw["entry_view"] = "mtp_generation"
+    compiled = compile_profile(
+        raw,
+        plan=plan,
+        fingerprint=fingerprint,
+        node_targets={
+            f"{view_id}.{node['id']}"
+            for view_id, view in views.items()
+            for node in view["nodes"]
+        },
+        source=Path("mtp_profile.yaml"),
+    )
+
+    assert compiled["execution_variant"] == fingerprint
+    assert compiled["meta"]["generation_mode"] == "eagle_mtp"
+    assert compiled["meta"]["entry_view"] == "mtp_generation"
+
+
+def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    group = profile["fusion_groups"]["fusion:linear_attention.qkvz_projection"]
+
+    assert group == {
+        "owner": "linear_attention.qkvz_projection",
+        "ir_nodes": [
+            "linear_attention.qkvz_projection",
+            "linear_attention.ba_projection",
+        ],
+        "timing_semantics": "shared_interval",
+        "provenance": "profile.node_states",
+    }
+    fused_cell = profile["data"]["linear_attention.ba_projection"][
+        "tp4_cg_decode_bs1_8k1k"
+    ]
+    group_id = "fusion:linear_attention.qkvz_projection"
+    assert fused_cell["fusion_group_id"] == group_id
+    assert group_id in profile["fusion_groups"]
+
+
+def test_qwen35_collective_adapters_live_on_layer_boundaries() -> None:
+    bundle = compile_catalog(QWEN35_ROOT)
+
+    assert "tp_output_collective" not in _node_ids(bundle, "linear_attention")
+    assert "tp_output_collective" not in _node_ids(bundle, "full_attention")
+    assert "tp_output_collective" not in _node_ids(bundle, "moe")
+    assert "tp_attention_output_collective" in _node_ids(bundle, "linear_layer")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "linear_layer")
+    assert "tp_attention_output_collective" in _node_ids(bundle, "full_layer")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "full_layer")
+
+
 def test_compile_qwen40_pure_tp_layout() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
 
@@ -67,7 +176,9 @@ def test_compile_qwen40_pure_tp_layout() -> None:
     assert "tp_embedding_collective" in _node_ids(bundle, "ple")
     assert "tp_attention_collective" in _node_ids(bundle, "linear_layer")
     assert "tp_attention_collective" in _node_ids(bundle, "full_layer")
-    assert "tp_output_collective" in _node_ids(bundle, "moe")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "linear_layer")
+    assert "tp_moe_output_collective" in _node_ids(bundle, "full_layer")
+    assert "tp_output_collective" not in _node_ids(bundle, "moe")
 
     indexer = next(
         node
@@ -88,6 +199,27 @@ def test_qwen40_topology_binding_inherits_common_source_mapping() -> None:
     assert "linear_layer.tp_attention_collective" not in binding["node_bindings"]
 
 
+def test_qwen40_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    binding = bundle["implementations"][
+        "sglang_qwen4_main_32e9cb5_qsa_hardening_flashinfer_gdn"
+    ]
+
+    assert binding["source_commit"] == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
+    assert (
+        binding["binding_compatible_base_commit"]
+        == "f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0"
+    )
+    assert binding["source_patch_sha256"] == (
+        "07c22e094da7103011301ced5824134e0387b310a5a03df0579bdd7ed08f17b3"
+    )
+    assert "mtp_generation.target_verify" in binding["node_bindings"]
+    assert "linear_attention.delta_rule" in binding["node_bindings"]
+    assert "/blob/32e9cb5" in binding["node_bindings"][
+        "mtp_generation.target_verify"
+    ]["code_links"][0]["url"]
+
+
 def test_insert_after_redirects_existing_output_edge() -> None:
     bundle = compile_catalog(MODEL_ROOT)
     edges = bundle["views"]["linear_layer"]["edges"]
@@ -105,6 +237,20 @@ def test_insert_after_redirects_existing_output_edge() -> None:
     )
     assert not any(
         edge["from"] == "linear_attention" and edge["to"] == "attn_hc_combine"
+        for edge in edges
+    )
+
+    assert any(
+        edge["from"] == "moe" and edge["to"] == "tp_moe_output_collective"
+        for edge in edges
+    )
+    assert any(
+        edge["from"] == "tp_moe_output_collective"
+        and edge["to"] == "mlp_hc_combine"
+        for edge in edges
+    )
+    assert not any(
+        edge["from"] == "moe" and edge["to"] == "mlp_hc_combine"
         for edge in edges
     )
 
@@ -171,6 +317,20 @@ def test_profile_cannot_create_architecture_nodes() -> None:
             },
             source=Path("profile.yaml"),
         )
+
+
+def test_execution_communication_requires_payload_and_result() -> None:
+    model_path = MODEL_ROOT / "model_ir.yaml"
+    plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(model_path)
+    plan = load_yaml(plan_path)
+    inserted = next(
+        transform for transform in plan["transforms"] if transform["op"] == "insert_after"
+    )
+    del inserted["node"]["execution"]["payload"]
+
+    with pytest.raises(CatalogError, match="requires execution.payload"):
+        apply_execution_plan(model, plan, source=plan_path)
 
 
 def test_schema_documents_are_valid_json() -> None:

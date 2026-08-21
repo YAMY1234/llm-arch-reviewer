@@ -171,7 +171,7 @@ def expected_all_reduce_roles() -> list[str]:
             roles.append("ple.tp_embedding_collective")
         layer_view = "full_layer" if layer_id % 4 == 3 else "linear_layer"
         roles.append(f"{layer_view}.tp_attention_collective")
-        roles.append("moe.tp_output_collective")
+        roles.append(f"{layer_view}.tp_moe_output_collective")
     if len(roles) != 98:
         raise AssertionError(f"invalid TP all-reduce role template: {len(roles)}")
     return roles
