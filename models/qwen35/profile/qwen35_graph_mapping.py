@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pathlib import Path
+import re
 
 from models.common.timeline_artifact import load_eager_stack_index
 from models.common.trace_mapping import ForwardWindow, _primary_gpu_annotations
@@ -214,6 +215,18 @@ def _target_annotation(
     if len(candidates) != 1:
         raise ValueError(f"expected one primary target verify annotation, got {len(candidates)}")
     return candidates[0]
+
+
+def target_verify_batch_size(
+    trace_events: list[dict[str, Any]], window: ForwardWindow
+) -> int:
+    """Read the measured local target-verify batch from the primary NVTX range."""
+
+    annotation = _target_annotation(trace_events, window)
+    match = re.fullmatch(r"step\[TARGET_VERIFY bs=(\d+)\]", str(annotation["name"]))
+    if match is None:
+        raise ValueError(f"invalid target verify annotation: {annotation['name']!r}")
+    return int(match.group(1))
 
 
 def _phase_ranges(
@@ -414,6 +427,7 @@ def map_graph_window(
         ),
         "strict_signature_duration_ratio": by_status["mapped"] / total_us if total_us else 0.0,
         "signature_counts": counts,
+        "target_verify_batch_size": target_verify_batch_size(trace_events, window),
     }
     return mapped, validation
 

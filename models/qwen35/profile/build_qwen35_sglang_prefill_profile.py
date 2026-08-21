@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--traces", type=Path, nargs=4, required=True)
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--eager-mapping", type=Path, required=True)
+    parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-timeline", type=Path, required=True)
     parser.add_argument("--output-analysis", type=Path, required=True)
@@ -243,7 +244,7 @@ def build(args: argparse.Namespace):
             "gpu_metric_semantics": "maximum per-rank kernel residency; parallel ranks are not summed",
         },
         "evidence": {
-            "job_id": 3206483,
+            "job_id": args.job_id,
             "source_commit": SOURCE_COMMIT,
             "runtime_source_commit": RUNTIME_SOURCE_COMMIT,
             "model_revision": MODEL_REVISION,

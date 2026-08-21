@@ -12,6 +12,10 @@ from models.qwen35.profile.qwen35_graph_mapping import (
     direct_graph_mapping,
     map_graph_window,
 )
+from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
+    parse_benchmark_snapshot,
+    parse_worker_profile_observations,
+)
 
 
 def _annotation(name: str, ts: float, dur: float, tid: int = 1):
@@ -82,7 +86,43 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
     assert validation["signature_counts"]["target_gdn_layers"] == 45
     assert validation["signature_counts"]["target_attention_layers"] == 15
     assert validation["attributed_duration_ratio"] == 1.0
+    assert validation["target_verify_batch_size"] == 8
     assert {event["mapping_status"] for event in mapped} == {"mapped", "fusion"}
     assert all(event["node"] for event in mapped)
     assert any(event["layer_id"] == 59 for event in mapped)
     assert any(event["node"] == "generation_loop.replay_gdn" for event in mapped)
+
+
+def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    worker_log.write_text(
+        "[x DP0 TP0 EP0] Decode batch [9], #running-req: 99, accept len: 1.0, "
+        "cuda graph: False, #queue-req: 3\n"
+        "[x DP0 TP0 EP0] Profiling starts.\n"
+        + "".join(
+            f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{10 + rank}], "
+            f"#running-req: {31 + rank}, other, accept len: 4.{7 + rank}, other, "
+            "cuda graph: True, other, #queue-req: 0\n"
+            for rank in range(4)
+        )
+        + "[x DP0 TP0 EP0] Stop profiling...\n"
+        "[x DP0 TP0 EP0] Decode batch [20], #running-req: 88, accept len: 1.0, "
+        "cuda graph: False, #queue-req: 2\n"
+    )
+    rows = parse_worker_profile_observations(worker_log)
+    assert [row["running_requests"] for row in rows] == [31, 32, 33, 34]
+    assert all(row["cuda_graph"] and row["queued_requests"] == 0 for row in rows)
+
+    benchmark = tmp_path / "benchmark.out"
+    benchmark.write_text(
+        "rps=27.8 (avg 27.2) tput=1 done=28,533 ok=28,533 err=0\n"
+        "rps=30.4 (avg 27.3) tput=1 done=29,567 ok=29,567 err=0\n"
+    )
+    snapshot = parse_benchmark_snapshot(benchmark)
+    assert snapshot == {
+        "instant_rps": 30.4,
+        "average_rps": 27.3,
+        "done": 29567,
+        "ok": 29567,
+        "errors": 0,
+    }

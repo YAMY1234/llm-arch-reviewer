@@ -128,6 +128,36 @@ def start_profile(
     return record
 
 
+def stop_profile(base_url: str, *, timeout_seconds: int) -> dict[str, Any]:
+    """Stop all DP-rank profilers after the bounded formal workload finishes.
+
+    SGLang's ``num_steps`` counter is rank-local.  Attention-DP requests can
+    finish globally before every rank observes the requested number of local
+    scheduler forwards, so relying only on the automatic stop can leave a
+    complete capture resident in memory until the job times out.  The public
+    stop endpoint synchronously asks every rank to export the window it did
+    observe.
+    """
+
+    response = requests.post(
+        base_url + "/stop_profile",
+        json={},
+        timeout=timeout_seconds,
+    )
+    response.raise_for_status()
+    record: dict[str, Any] = {
+        "status_code": response.status_code,
+        "content_type": response.headers.get("content-type"),
+        "body_prefix": response.text[:512],
+    }
+    if response.content.strip():
+        try:
+            record["body"] = response.json()
+        except requests.exceptions.JSONDecodeError:
+            record["body"] = None
+    return record
+
+
 def normalized_loads(base_url: str, expected_ranks: int) -> list[dict[str, Any]]:
     body = get_json(base_url, "/v1/loads?include=core")
     loads = body.get("loads") or []
@@ -230,19 +260,49 @@ def main() -> int:
     }
 
     if args.kind == "attribution":
-        protocol["warmup"].append({"batch": 4, "isl": 64, "osl": 8})
-        run_batch(args.base_url, batch_size=4, input_len=64, output_len=8, token_seed=101)
-        response = start_profile(
-            args.base_url,
-            trace_dir,
-            profile_id="qwen35-dep4-attribution-cgoff",
-            num_steps=8,
-            with_stack=True,
-        )
-        protocol["formal"] = {"batch": 4, "isl": 256, "osl": 8, "profile_steps": 8}
-        formal_results = run_batch(
-            args.base_url, batch_size=4, input_len=256, output_len=8, token_seed=211
-        )
+        protocol["warmup"].append({"batch": 4, "isl": 64, "osl": 16})
+        run_batch(args.base_url, batch_size=4, input_len=64, output_len=16, token_seed=101)
+        # A single eager MTP decode iteration contains the complete 60-layer
+        # target verify, draft cycle, accept/sample, KV/GDN replay, and both
+        # target/draft EP4 paths.  Capturing eight such iterations with Python
+        # stacks and shapes exceeded 670 GiB of host memory during export.
+        # Establish a live 1-request-per-rank decode batch first, then capture
+        # exactly one complete iteration without weakening any structure gate.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            formal_future = executor.submit(
+                run_batch,
+                args.base_url,
+                batch_size=4,
+                input_len=256,
+                output_len=128,
+                token_seed=211,
+            )
+            trigger = wait_for_decode_batch(
+                args.base_url,
+                formal_future,
+                expected_ranks=args.expected_ranks,
+                batch_size=4,
+            )
+            response = start_profile(
+                args.base_url,
+                trace_dir,
+                profile_id="qwen35-dep4-attribution-cgoff",
+                num_steps=1,
+                with_stack=True,
+            )
+            formal_results = formal_future.result()
+        protocol["formal"] = {
+            "batch": 4,
+            "per_rank_running": [
+                rank["num_running_reqs"] for rank in trigger["trigger"]["ranks"]
+            ],
+            "isl": 256,
+            "osl": 128,
+            "profile_steps": 1,
+            "cuda_graph": False,
+            "trigger": trigger,
+            "capture_scope": "one complete eager target+MTP decode iteration",
+        }
     elif args.kind == "prefill8k":
         # Attention DP4 requires a non-empty local batch on every rank in this
         # frozen TRTLLM-MHA backend (a zero-request rank divides by batch_size).
@@ -318,6 +378,21 @@ def main() -> int:
     protocol["formal"]["response_summary"] = summarize_generation_results(
         formal_results
     )
+
+    # Explicitly close bounded eager/prefill windows.  Automatic num_steps
+    # stopping is sufficient for the fixed decode batch, but is not a valid
+    # completion condition for DP-rank-skewed eager or prefill requests.
+    if args.kind in {"attribution", "prefill8k"}:
+        completed_traces = sorted(trace_dir.glob("*.trace.json.gz"))
+        if len(completed_traces) == args.expected_ranks:
+            protocol["stop_profile_response"] = {
+                "skipped": "automatic stop already produced all rank traces"
+            }
+        else:
+            protocol["stop_profile_response"] = stop_profile(
+                args.base_url,
+                timeout_seconds=5400 if args.kind == "attribution" else 1800,
+            )
 
     # with_stack=True serializes large Python call trees after the GPU window.
     # Four Qwen3.5 ranks can legitimately need much longer than 15 minutes to

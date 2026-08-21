@@ -423,6 +423,10 @@ def build_timeline_artifact(
         )
         active_us = sum(stop - start for start, stop in active_intervals)
         residency_us = sum(float(event["dur_us"]) for event in step_events)
+        node_residency: Counter[str] = Counter()
+        for event in step_events:
+            if event.get("node"):
+                node_residency[str(event["node"])] += float(event["dur_us"])
         encoded_steps.append(
             {
                 "step_index": raw_step["step_index"],
@@ -433,6 +437,13 @@ def build_timeline_artifact(
                 "gpu_residency_us": round(residency_us, 6),
                 "device_gap_us": round(max(0.0, duration_us - active_us), 6),
                 "gpu_overlap_us": round(max(0.0, residency_us - active_us), 6),
+                "node_timings": [
+                    {
+                        "ir_node": strings.add(node),
+                        "gpu_residency_us": round(node_us, 6),
+                    }
+                    for node, node_us in node_residency.most_common()
+                ],
                 "tracks": _stream_tracks(
                     step_events, kernel_kind_resolver=kernel_kind_resolver
                 ),
