@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 import json
 from pathlib import Path
 import re
@@ -140,6 +140,7 @@ def build(args: argparse.Namespace):
     all_mappings: list[dict[str, Any]] = []
     reference_source = f"{workers[0]}/rank0"
     reference_steps: list[dict[str, Any]] = []
+    observed_steps: list[dict[str, Any]] = []
     owner_rank_positions: set[int] = set()
     shape_observations: list[dict[str, Any]] = []
 
@@ -181,22 +182,33 @@ def build(args: argparse.Namespace):
             timing_by_step.setdefault(step.step_id, []).append(
                 {
                     "source": source,
+                    "context_reqs": validation["context_reqs"],
+                    "context_tokens": validation["context_tokens"],
+                    "generation_reqs": validation["generation_reqs"],
                     "cpu_wall_us": validation["cpu_wall_us"],
                     "gpu_span_us": validation["gpu_span_us"],
                     "gpu_busy_union_us": validation["gpu_busy_union_us"],
                     "gpu_residency_us": validation["gpu_residency_us"],
                 }
             )
-            if source == reference_source:
-                reference_steps.append(
-                    {
+            observed_steps.append(
+                {
+                    "source": source,
+                    "worker": worker,
+                    "rank": rank,
+                    "path": path,
+                    "step_id": step.step_id,
+                    "context_reqs": validation["context_reqs"],
+                    "context_tokens": validation["context_tokens"],
+                    "timeline_step": {
                         "step_index": step.step_id,
                         "label": step.label,
                         "trace_start_us": min(float(item["ts_us"]) for item in mappings),
                         "duration_us": validation["gpu_span_us"],
                         "events": mappings,
-                    }
-                )
+                    },
+                }
+            )
         source_metrics[source] = _metrics_for_rank(source_mappings, len(steps))
         validations[source] = source_validations
         all_mappings.extend(source_mappings)
@@ -205,6 +217,50 @@ def build(args: argparse.Namespace):
         raise ValueError(
             f"prefill reports do not validate owner compute on all rank positions: {owner_rank_positions}"
         )
+
+    if args.phase == "prefill":
+        exact_8k = [
+            row
+            for row in observed_steps
+            if row["context_reqs"] == 1 and row["context_tokens"] == 8192
+        ]
+        if not exact_8k:
+            raise ValueError("TRT prefill capture has no exact one-request/8192-token step")
+        exact_counts = Counter(str(row["source"]) for row in exact_8k)
+        reference_source = min(
+            exact_counts,
+            key=lambda source: (-exact_counts[source], source),
+        )
+        reference_observations = [
+            row for row in exact_8k if row["source"] == reference_source
+        ]
+        reference_steps = [row["timeline_step"] for row in reference_observations]
+        exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
+        for row in exact_8k:
+            exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
+        timing_by_step = {
+            step_id: [
+                row
+                for row in rows
+                if row["source"] in exact_sources_by_step.get(step_id, set())
+                and row["context_reqs"] == 1
+                and row["context_tokens"] == 8192
+            ]
+            for step_id, rows in timing_by_step.items()
+            if exact_sources_by_step.get(step_id)
+        }
+        reference_path = Path(reference_observations[0]["path"])
+        reference_rank = int(reference_observations[0]["rank"])
+        reference_worker = str(reference_observations[0]["worker"])
+    else:
+        reference_steps = [
+            row["timeline_step"]
+            for row in observed_steps
+            if row["source"] == reference_source
+        ]
+        reference_path = paths[(workers[0], 0)]
+        reference_rank = 0
+        reference_worker = workers[0]
 
     critical_steps = {}
     for step_id, rows in sorted(timing_by_step.items()):
@@ -248,20 +304,19 @@ def build(args: argparse.Namespace):
         },
     }
 
-    reference_path = paths[(workers[0], 0)]
     profile_id = f"qwen35_trtllm_attention_dp4_moe_ep4_agentx_{args.phase}"
     timeline = build_timeline_artifact(
         profile_id=profile_id,
         phase=args.phase,
-        reference_rank=0,
+        reference_rank=reference_rank,
         steps=reference_steps,
         timing_summary=timing_summary,
         raw_trace={
             "file": reference_path.name,
             "sha256": sha256_file(reference_path),
             "format": "Nsight Systems SQLite export",
-            "rank": 0,
-            "worker": workers[0],
+            "rank": reference_rank,
+            "worker": reference_worker,
         },
         stack_source={
             "mode": "nsight_nvtx_and_cuda_graph_node_identity",
@@ -371,6 +426,7 @@ def build(args: argparse.Namespace):
         "validations": validations,
         "shape_observations": shape_observations,
         "owner_rank_positions": sorted(owner_rank_positions),
+        "reference_source": reference_source,
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),
         "mapped_or_fusion_duration_ratio": attributed_ratio,
@@ -388,7 +444,7 @@ def main() -> int:
         "schema_version": "timeline.v1",
         "artifact": args.output_timeline.name,
         "sha256": timeline_sha,
-        "reference_rank": 0,
+        "reference_rank": timeline["reference_rank"],
         "step_count": len(timeline["steps"]),
         "event_count": sum(len(step["events"]) for step in timeline["steps"]),
         "raw_trace_file": timeline["raw_trace"]["file"],

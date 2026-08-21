@@ -130,6 +130,38 @@ def test_trt_prefill_mapping_distinguishes_owner_compute_and_collective_only_ran
     assert collective["target_ep4_dispatch"] == 60
 
 
+def test_trt_prefill_mapping_recognizes_sm103_and_context_causal_conv_signatures():
+    kernels: list[NsysKernel] = []
+    for layer_id, kind in enumerate(TARGET_PATTERN):
+        kernels.append(
+            _kernel(
+                "causal_conv1d_fwd_kernel<128>"
+                if kind == "gdn"
+                else "fmhaSm103aKernel_Context",
+                len(kernels),
+            )
+        )
+        _moe(kernels, layer_id, draft=False)
+    step = NsysStep(
+        step_id=10000,
+        rank=0,
+        label="[Executor] _forward_step 10000: 1 ctx reqs, 8192 ctx tokens, 0 gen reqs",
+        cpu_start_ns=0,
+        cpu_end_ns=1_000_000,
+        context_reqs=1,
+        context_tokens=8192,
+        generation_reqs=0,
+        kernels=tuple(kernels),
+        graph_launch_count=61,
+    )
+    mapped, validation = map_prefill_step(step)
+    assert validation["owner_compute"] is True
+    assert validation["target_gdn_layers"] == 45
+    assert validation["target_attention_layers"] == 15
+    assert sum(event["node"] == "gdn_moe_block.causal_conv" for event in mapped) == 45
+    assert sum(event["node"] == "full_attention_moe_block.causal_gqa" for event in mapped) == 15
+
+
 def test_nsys_parser_splits_overlapping_graph_executions_by_node_occurrence(tmp_path):
     path = tmp_path / "worker-decode-rank0.sqlite"
     connection = sqlite3.connect(path)
@@ -178,3 +210,52 @@ def test_nsys_parser_splits_overlapping_graph_executions_by_node_occurrence(tmp_
     assert [step.step_id for step in steps] == [10, 11]
     assert [kernel.name for kernel in steps[0].kernels] == ["direct", "node_a", "node_b"]
     assert [kernel.name for kernel in steps[1].kernels] == ["node_a", "node_b"]
+
+
+def test_nsys_parser_supports_repeated_multi_graph_prefill_sequence(tmp_path):
+    path = tmp_path / "worker-prefill-rank0.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(start integer, end integer, text text, textId integer);
+        create table CUPTI_ACTIVITY_KIND_RUNTIME(
+          start integer, end integer, correlationId integer, nameId integer
+        );
+        create table CUPTI_ACTIVITY_KIND_KERNEL(
+          start integer, end integer, streamId integer, correlationId integer,
+          graphId integer, graphNodeId integer, demangledName integer
+        );
+        """
+    )
+    connection.executemany(
+        "insert into StringIds values (?,?)",
+        [(1, "cudaGraphLaunch_v10000"), (2, "graph_a"), (3, "graph_b")],
+    )
+    connection.executemany(
+        "insert into NVTX_EVENTS values (?,?,?,null)",
+        [
+            (0, 200, "[Executor] _forward_step 10: 1 ctx reqs, 8 ctx tokens, 0 gen reqs"),
+            (200, 400, "[Executor] _forward_step 11: 1 ctx reqs, 8 ctx tokens, 0 gen reqs"),
+        ],
+    )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_RUNTIME values (?,?,?,?)",
+        [(10, 20, 10, 1), (30, 40, 20, 1), (210, 220, 30, 1), (230, 240, 40, 1)],
+    )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?,?)",
+        [
+            (100, 110, 1, 0, 7, 700, 2),
+            (300, 310, 1, 0, 7, 700, 2),
+            (120, 130, 1, 0, 8, 800, 3),
+            (320, 330, 1, 0, 8, 800, 3),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    steps = load_nsys_steps(path)
+    assert [step.graph_launch_count for step in steps] == [2, 2]
+    assert [kernel.name for kernel in steps[0].kernels] == ["graph_a", "graph_b"]
+    assert [kernel.name for kernel in steps[1].kernels] == ["graph_a", "graph_b"]

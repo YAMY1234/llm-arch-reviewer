@@ -153,33 +153,77 @@ def _graph_executions(
     graph_kernels = [kernel for kernel in kernels if kernel.graph_id is not None]
     if not graph_kernels:
         return []
-    graph_ids = {kernel.graph_id for kernel in graph_kernels}
-    if len(graph_ids) != 1:
-        raise ValueError(f"expected one executed CUDA Graph, got graph IDs {graph_ids}")
     if launch_count <= 0:
         raise ValueError("CUDA Graph child kernels exist without cudaGraphLaunch calls")
 
-    by_node: dict[int, list[NsysKernel]] = defaultdict(list)
+    by_graph_and_node: dict[int, dict[int, list[NsysKernel]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for kernel in graph_kernels:
-        if kernel.graph_node_id is None:
+        if kernel.graph_id is None or kernel.graph_node_id is None:
             raise ValueError("CUDA Graph child kernel lacks graphNodeId")
-        by_node[kernel.graph_node_id].append(kernel)
-    multiplicity = Counter(len(events) for events in by_node.values())
-    if multiplicity != Counter({launch_count: len(by_node)}):
+        by_graph_and_node[kernel.graph_id][kernel.graph_node_id].append(kernel)
+
+    # Decode replays one large graph per forward. TRT prefill instead launches
+    # one graph per target layer/segment (61 graph IDs in the formal capture),
+    # with the CPU enqueue running well ahead of GPU execution. Split each
+    # graph independently by graph-node occurrence, then rebuild the repeated
+    # launch sequence. This retains the same fail-closed graphNodeId invariant
+    # without assuming a decode-only, single-graph topology.
+    per_graph_executions: dict[int, list[list[NsysKernel]]] = {}
+    graph_multiplicities: dict[int, int] = {}
+    for graph_id, by_node in by_graph_and_node.items():
+        multiplicity = Counter(len(events) for events in by_node.values())
+        if len(multiplicity) != 1:
+            raise ValueError(
+                "CUDA Graph node occurrence mismatch: "
+                f"graph_id={graph_id}, node multiplicities={dict(multiplicity)}"
+            )
+        occurrences = next(iter(multiplicity))
+        graph_multiplicities[graph_id] = occurrences
+        executions: list[list[NsysKernel]] = [[] for _ in range(occurrences)]
+        for events in by_node.values():
+            if len({event.name for event in events}) != 1:
+                raise ValueError(
+                    f"CUDA Graph {graph_id} node produced inconsistent kernel signatures"
+                )
+            for occurrence, event in enumerate(
+                sorted(events, key=lambda item: item.start_ns)
+            ):
+                executions[occurrence].append(event)
+        for events in executions:
+            events.sort(key=lambda item: item.start_ns)
+        per_graph_executions[graph_id] = executions
+
+    occurrence_counts = set(graph_multiplicities.values())
+    if len(occurrence_counts) != 1:
         raise ValueError(
-            "CUDA Graph node occurrence mismatch: "
-            f"launches={launch_count}, node multiplicities={dict(multiplicity)}"
+            "CUDA Graphs were not launched with one repeated sequence: "
+            f"per-graph launch counts={graph_multiplicities}"
+        )
+    occurrences = next(iter(occurrence_counts))
+    expected_launches = len(per_graph_executions) * occurrences
+    if expected_launches != launch_count:
+        raise ValueError(
+            "CUDA Graph launch/execution mismatch: "
+            f"runtime launches={launch_count}, graph executions={expected_launches}"
         )
 
-    executions: list[list[NsysKernel]] = [[] for _ in range(launch_count)]
-    for events in by_node.values():
-        if len({event.name for event in events}) != 1:
-            raise ValueError("one CUDA Graph node produced inconsistent kernel signatures")
-        for occurrence, event in enumerate(sorted(events, key=lambda item: item.start_ns)):
-            executions[occurrence].append(event)
-    for events in executions:
-        events.sort(key=lambda item: item.start_ns)
-    return executions
+    launch_order: list[int] | None = None
+    output: list[list[NsysKernel]] = []
+    for occurrence in range(occurrences):
+        current_order = sorted(
+            per_graph_executions,
+            key=lambda graph_id: per_graph_executions[graph_id][occurrence][0].start_ns,
+        )
+        if launch_order is None:
+            launch_order = current_order
+        elif current_order != launch_order:
+            raise ValueError(
+                "CUDA Graph execution order changed across repeated forward steps"
+            )
+        output.extend(per_graph_executions[graph_id][occurrence] for graph_id in current_order)
+    return output
 
 
 def load_nsys_steps(path: Path, *, rank: int | None = None) -> list[NsysStep]:
@@ -267,9 +311,12 @@ def _contains(name: str, *needles: str) -> bool:
 
 def _anchor_kind(name: str) -> str | None:
     lowered = name.lower()
-    if "_causal_conv1d_update_kernel" in lowered:
+    if (
+        "_causal_conv1d_update_kernel" in lowered
+        or "causal_conv1d_fwd_kernel" in lowered
+    ):
         return "gdn"
-    if "fmhasm100" in lowered:
+    if "fmhasm10" in lowered:
         return "attention"
     return None
 
@@ -308,10 +355,13 @@ def _direct_node(
     if moe is not None:
         return moe
     attention_prefix = "mtp_full_attention_moe_block" if draft else "full_attention_moe_block"
-    if "fmhasm100" in lowered:
+    if "fmhasm10" in lowered:
         return (f"{attention_prefix}.causal_gqa", "causal GQA", "mapped")
     if not draft and layer_kind == "gdn":
-        if "_causal_conv1d_update_kernel" in lowered:
+        if (
+            "_causal_conv1d_update_kernel" in lowered
+            or "causal_conv1d_fwd_kernel" in lowered
+        ):
             return ("gdn_moe_block.causal_conv", "GDN causal convolution", "mapped")
         if "_cached_replay_kernel" in lowered:
             return ("gdn_moe_block.gated_delta_recurrence", "GDN recurrent update", "mapped")
