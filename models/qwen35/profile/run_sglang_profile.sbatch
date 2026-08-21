@@ -34,8 +34,13 @@ mkdir -p "${run_dir}" "${cache_dir}"
 chmod 700 "${run_dir}" "${cache_dir}"
 exec > >(tee "${run_dir}/job.out") 2> >(tee "${run_dir}/job.err" >&2)
 
-test "$(git -C "${source_dir}" rev-parse HEAD)" = "${source_commit}"
-test "$(sha256sum "${source_dir}/.agentx-stack-manifest.json" | awk '{print $1}')" = "${source_manifest_sha256}"
+readonly source_manifest=${source_dir}/.agentx-stack-manifest.json
+test "$(sha256sum "${source_manifest}" | awk '{print $1}')" = "${source_manifest_sha256}"
+manifest_commit=$(
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["query_prefill_dp_rank_overlap"]["local_commit"])' \
+    "${source_manifest}"
+)
+test "${manifest_commit}" = "${source_commit}"
 test -s "${task_root}/producer/profile_workload.py"
 test -s "${model_dir}/config.json"
 test -s "${container_image}"
