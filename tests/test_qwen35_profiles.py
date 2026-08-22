@@ -181,6 +181,30 @@ def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
             assert {"gdn_moe_block.moe", "full_attention_moe_block.moe"} & profile_targets
 
 
+def test_architecture_exposes_timeline_rollups_on_drill_modules():
+    bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
+    profile_id = bundle["default_profile"]
+    expected_targets = {
+        "top.decoder_stack",
+        "stack.gdn_layer",
+        "stack.full_attention_layer",
+        "gdn_moe_block.attention",
+        "gdn_moe_block.moe",
+        "full_attention_moe_block.attention",
+        "full_attention_moe_block.moe",
+    }
+    for target in expected_targets:
+        view_id, node_id = target.split(".", 1)
+        cell = bundle["enriched"][view_id]["nodes_profile"][node_id][profile_id][
+            "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_steady"
+        ]
+        assert cell["attribution_status"] == "inclusive_rollup"
+        assert cell["active_gpu_ms"] > 0
+        assert cell["gpu_elapsed_ms"] >= cell["active_gpu_ms"]
+        assert cell["gpu_residency_ms"] >= cell["active_gpu_ms"]
+        assert cell["timeline_observed_step_count"] == cell["timeline_step_count"]
+
+
 def test_decode_timelines_expose_lifecycle_and_preserve_capture_boundaries():
     by_engine = {}
     for path, profile in _profiles():

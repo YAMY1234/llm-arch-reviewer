@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import gzip
 import hashlib
+import json
 from pathlib import Path
 import sys
 
@@ -216,6 +218,100 @@ def test_timeline_artifacts_are_hash_checked_and_copied(tmp_path: Path) -> None:
     assert (docs_dir / "timelines" / "toy_profile.timeline.json.gz").read_bytes() == (
         artifact.read_bytes()
     )
+
+
+def test_timeline_node_timings_fill_missing_architecture_rollups(
+    tmp_path: Path,
+) -> None:
+    model = toy_model()
+    plan = toy_plan()
+    views = apply_execution_plan(model, plan, source=Path("toy-plan.yaml"))
+    fingerprint = execution_fingerprint(model, plan, views)
+    node_targets = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in views.items()
+        for node in view["nodes"]
+    }
+    timeline = {
+        "schema_version": "timeline.v1",
+        "profile_id": "toy_profile",
+        "reference_rank": 3,
+        "strings": ["top.compute"],
+        "steps": [
+            {
+                "node_timings": [
+                    {
+                        "ir_node": 0,
+                        "occurrence_count": 2,
+                        "elapsed_us": 100,
+                        "active_gpu_us": 80,
+                        "gpu_residency_us": 90,
+                        "gpu_overlap_us": 10,
+                        "module_gap_us": 20,
+                        "other_gpu_work_us": 15,
+                    }
+                ]
+            },
+            {
+                "node_timings": [
+                    {
+                        "ir_node": 0,
+                        "occurrence_count": 4,
+                        "elapsed_us": 300,
+                        "active_gpu_us": 150,
+                        "gpu_residency_us": 180,
+                        "gpu_overlap_us": 30,
+                        "module_gap_us": 150,
+                        "other_gpu_work_us": 100,
+                    }
+                ]
+            },
+        ],
+    }
+    artifact = tmp_path / "toy.timeline.json.gz"
+    artifact.write_bytes(gzip.compress(json.dumps(timeline).encode(), mtime=0))
+    source = tmp_path / "toy-profile.yaml"
+    profile = {
+        "schema_version": "profile.v2",
+        "profile_id": "toy_profile",
+        "label": "Toy measured profile",
+        "model_id": "toy",
+        "execution_path_id": plan["execution_path_id"],
+        "implementation_id": "toy_engine_deadbeef",
+        "variant_id": "formal_decode",
+        "phase": "decode",
+        "execution_parameters": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "cp_size": 1,
+            "ep_size": 4,
+        },
+        "timeline": {
+            "schema_version": "timeline.v1",
+            "artifact": artifact.name,
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        },
+        "node_metrics": {},
+    }
+
+    compiled = compile_profile(
+        profile,
+        plan=plan,
+        fingerprint=fingerprint,
+        node_targets=node_targets,
+        source=source,
+    )
+    cell = compiled["data"]["top.compute"]["formal_decode"]
+    assert cell["attribution_status"] == "inclusive_rollup"
+    assert cell["gpu_elapsed_ms"] == pytest.approx(0.2)
+    assert cell["active_gpu_ms"] == pytest.approx(0.115)
+    assert cell["gpu_residency_ms"] == pytest.approx(0.135)
+    assert cell["device_idle_ms"] == pytest.approx(0.0275)
+    assert cell["occurrence_count_per_iter"] == pytest.approx(3.0)
+    assert cell["module_active_pct"] == pytest.approx(57.5)
+    assert cell["device_busy_pct"] == pytest.approx(86.25)
+    assert cell["timeline_reference_rank"] == 3
+    assert cell["timeline_step_count"] == 2
 
 
 def test_viewer_contains_bidirectional_architecture_timeline_navigation() -> None:

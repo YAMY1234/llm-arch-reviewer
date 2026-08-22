@@ -15,6 +15,7 @@ existing static viewer.
 from __future__ import annotations
 
 import copy
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -406,6 +407,141 @@ def _validate_parallelism(
         raise CatalogError(f"{source}: tp_size must be >= {min_tp}")
 
 
+_TIMELINE_ROLLUP_FIELDS = (
+    "elapsed_us",
+    "active_gpu_us",
+    "gpu_residency_us",
+    "gpu_overlap_us",
+    "module_gap_us",
+    "other_gpu_work_us",
+    "occurrence_count",
+)
+
+
+def load_timeline_rollup_metrics(
+    profile: dict[str, Any],
+    *,
+    source: Path,
+    node_targets: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Load inclusive per-node timing from a sibling timeline artifact.
+
+    Profile ``node_metrics`` are conservative leaf attribution aggregates and
+    cannot reconstruct active time when descendant kernels overlap.  Timeline
+    artifacts already contain an interval union for every direct target and
+    visible drill ancestor.  Expose those measured roll-ups to Architecture so
+    module cards do not lose performance data merely because a hierarchy was
+    split into additional drill views.
+
+    The returned values are mean-per-step metrics for the timeline reference
+    rank.  Missing steps contribute zero, matching the workload-level
+    ``per_iter`` convention.  Authored profile metrics remain authoritative;
+    callers use these roll-ups only for targets absent from ``node_metrics``.
+    """
+
+    timeline_meta = profile.get("timeline")
+    if not isinstance(timeline_meta, dict):
+        return {}
+    artifact_name = str(timeline_meta.get("artifact") or "")
+    if not artifact_name or Path(artifact_name).name != artifact_name:
+        return {}
+    artifact_path = source.parent / artifact_name
+    # ``compile_profile`` is also used with in-memory fixtures.  Catalog builds
+    # always have the sibling artifact and the publishing path independently
+    # requires it, while a direct unit fixture may intentionally omit it.
+    if not artifact_path.is_file():
+        return {}
+
+    expected_sha256 = str(timeline_meta.get("sha256") or "")
+    actual_sha256 = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    if expected_sha256 and actual_sha256 != expected_sha256:
+        raise CatalogError(
+            f"{source}: timeline SHA256 mismatch for {artifact_path}: "
+            f"{actual_sha256} != {expected_sha256}"
+        )
+    try:
+        with gzip.open(artifact_path, "rt") as stream:
+            timeline = json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CatalogError(f"{source}: invalid timeline artifact {artifact_path}") from exc
+
+    if timeline.get("schema_version") != "timeline.v1":
+        raise CatalogError(
+            f"{source}: timeline artifact requires schema_version='timeline.v1'"
+        )
+    if timeline.get("profile_id") != profile.get("profile_id"):
+        raise CatalogError(
+            f"{source}: timeline profile_id does not match {profile.get('profile_id')!r}"
+        )
+    strings = timeline.get("strings") or []
+    steps = timeline.get("steps") or []
+    if not isinstance(strings, list) or not isinstance(steps, list) or not steps:
+        return {}
+
+    totals: dict[str, dict[str, float]] = {}
+    observed_steps: dict[str, int] = {}
+    for step in steps:
+        seen_in_step: set[str] = set()
+        for timing in step.get("node_timings") or []:
+            index = timing.get("ir_node")
+            if not isinstance(index, int) or not 0 <= index < len(strings):
+                raise CatalogError(f"{source}: timeline has an invalid ir_node index")
+            target = str(strings[index])
+            if target not in node_targets:
+                raise CatalogError(
+                    f"{source}: timeline timing references unknown node {target!r}"
+                )
+            accumulator = totals.setdefault(
+                target, {field: 0.0 for field in _TIMELINE_ROLLUP_FIELDS}
+            )
+            for field in _TIMELINE_ROLLUP_FIELDS:
+                accumulator[field] += float(timing.get(field) or 0.0)
+            seen_in_step.add(target)
+        for target in seen_in_step:
+            observed_steps[target] = observed_steps.get(target, 0) + 1
+
+    step_count = len(steps)
+    reference_rank = timeline.get("reference_rank")
+    result: dict[str, dict[str, Any]] = {}
+    for target, sums in totals.items():
+        mean = {field: value / step_count for field, value in sums.items()}
+        elapsed_us = mean["elapsed_us"]
+        active_us = mean["active_gpu_us"]
+        other_gpu_work_us = mean["other_gpu_work_us"]
+        device_idle_us = max(0.0, mean["module_gap_us"] - other_gpu_work_us)
+        result[target] = {
+            # ``ms_per_iter`` remains the kernel-residency compatibility value;
+            # the viewer prefers the explicit overlap-safe active metric.
+            "ms_per_iter": round(mean["gpu_residency_us"] / 1000.0, 6),
+            "gpu_elapsed_ms": round(elapsed_us / 1000.0, 6),
+            "active_gpu_ms": round(active_us / 1000.0, 6),
+            "gpu_residency_ms": round(mean["gpu_residency_us"] / 1000.0, 6),
+            "gpu_overlap_ms": round(mean["gpu_overlap_us"] / 1000.0, 6),
+            "module_gap_ms": round(mean["module_gap_us"] / 1000.0, 6),
+            "other_gpu_work_ms": round(other_gpu_work_us / 1000.0, 6),
+            "device_idle_ms": round(device_idle_us / 1000.0, 6),
+            "occurrence_count_per_iter": round(mean["occurrence_count"], 6),
+            "module_active_pct": round(100.0 * active_us / elapsed_us, 3)
+            if elapsed_us > 0
+            else 0.0,
+            "device_busy_pct": round(
+                100.0 * min(elapsed_us, active_us + other_gpu_work_us) / elapsed_us,
+                3,
+            )
+            if elapsed_us > 0
+            else 0.0,
+            "metric_kind": "inclusive_timeline_rollup",
+            "attribution_status": "inclusive_rollup",
+            "elapsed_scope": "mean descendant envelope per measured step",
+            "aggregation": "interval union per step, then mean over timeline steps",
+            "timeline_reference_rank": reference_rank,
+            "timeline_step_count": step_count,
+            "timeline_observed_step_count": observed_steps.get(target, 0),
+            "from_aggregate": True,
+        }
+    return result
+
+
 def compile_profile(
     profile: dict[str, Any],
     *,
@@ -416,10 +552,17 @@ def compile_profile(
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
     effective_states = copy.deepcopy(profile.get("node_states") or {})
-    unknown = sorted(set(profile.get("node_metrics") or {}) - node_targets)
+    effective_metrics = copy.deepcopy(profile.get("node_metrics") or {})
+    timeline_rollups = load_timeline_rollup_metrics(
+        profile, source=source, node_targets=node_targets
+    )
+    for target, metric in timeline_rollups.items():
+        effective_metrics.setdefault(target, metric)
+
+    unknown = sorted(set(effective_metrics) - node_targets)
     if unknown:
         raise CatalogError(f"{source}: profile references unknown nodes: {unknown}")
-    for target, metric in (profile.get("node_metrics") or {}).items():
+    for target, metric in effective_metrics.items():
         if not isinstance(metric, dict) or "ms_per_iter" not in metric:
             raise CatalogError(f"{source}: metric {target!r} requires ms_per_iter")
         if float(metric["ms_per_iter"]) < 0:
@@ -510,12 +653,10 @@ def compile_profile(
 
     variant = profile["variant_id"]
     data = {}
-    targets = set(effective_states) | set(
-        profile.get("node_metrics") or {}
-    )
+    targets = set(effective_states) | set(effective_metrics)
     for target in targets:
         cell = copy.deepcopy(effective_states.get(target, {}))
-        cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
+        cell.update(copy.deepcopy(effective_metrics.get(target, {})))
         group_id = fusion_group_for_target.get(target)
         if group_id:
             cell["fusion_group_id"] = group_id
