@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit with: sbatch --export=ALL,PROFILE_KIND=<attribution|attribution-prefill|prefill8k|decode-bs32> run_sglang_profile.sbatch
+# Submit with: sbatch --export=ALL,PROFILE_KIND=<attribution|attribution-bs32|attribution-prefill|attribution-prefill8k|prefill8k|decode-bs32> run_sglang_profile.sbatch
 #SBATCH --job-name=qwen35-dep4-profile
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -14,9 +14,9 @@
 
 set -euo pipefail
 
-: "${PROFILE_KIND:?set PROFILE_KIND to attribution, attribution-prefill, prefill8k, or decode-bs32}"
+: "${PROFILE_KIND:?set PROFILE_KIND to attribution, attribution-bs32, attribution-prefill, attribution-prefill8k, prefill8k, or decode-bs32}"
 case "${PROFILE_KIND}" in
-  attribution|attribution-prefill|prefill8k|decode-bs32) ;;
+  attribution|attribution-bs32|attribution-prefill|attribution-prefill8k|prefill8k|decode-bs32) ;;
   *) echo "invalid PROFILE_KIND=${PROFILE_KIND}" >&2; exit 2 ;;
 esac
 
@@ -114,7 +114,7 @@ srun \
     chunk_args=(--chunked-prefill-size 8192 --max-prefill-tokens 8192)
     if [[ "$PROFILE_KIND" == decode-bs32 ]]; then
       graph_args=(--cuda-graph-max-bs 32)
-    elif [[ "$PROFILE_KIND" == prefill8k ]]; then
+    elif [[ "$PROFILE_KIND" == prefill8k || "$PROFILE_KIND" == attribution-prefill8k ]]; then
       draft_args=()
       # This phase isolates one target-model prefill chunk. Frozen MTP
       # draft code asserts for a one-request-per-DP-rank batch after target

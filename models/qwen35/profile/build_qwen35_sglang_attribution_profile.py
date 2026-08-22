@@ -36,8 +36,10 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
 from models.qwen35.profile.qwen35_graph_mapping import (
     attach_graph_stack_evidence,
     complete_eager_decode_window,
+    load_unique_eager_kernel_signatures,
     map_graph_window,
 )
+from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_mtp6_eager_attribution"
@@ -125,6 +127,7 @@ def validate_protocol(path: Path) -> dict[str, Any]:
 
 def build(args: argparse.Namespace):
     protocol = validate_protocol(args.protocol)
+    eager_signatures = load_unique_eager_kernel_signatures(args.eager_mapping)
     paths_by_rank = {trace_rank(path): path.resolve() for path in args.traces}
     if set(paths_by_rank) != {0, 1, 2, 3}:
         raise ValueError(f"incomplete four-rank trace coverage: {paths_by_rank}")
@@ -149,6 +152,7 @@ def build(args: argparse.Namespace):
             window=window,
             rank=rank,
             step_index=0,
+            eager_signatures=eager_signatures,
         )
         _validate_step_signatures(validation, rank=rank, step=0)
         rank_metrics[rank] = _metrics_for_rank(mapped, 1)
@@ -168,9 +172,6 @@ def build(args: argparse.Namespace):
         float(event["dur_us"]) for event in reference_events if event.get("python_stack")
     )
     stack_ratio = stack_reference_us / total_reference_us if total_reference_us else 0.0
-    if stack_ratio < 0.95:
-        raise ValueError(f"direct eager stack coverage {stack_ratio:.4f} < 0.95")
-
     critical_wall_ms = max(rank_wall_ms.values())
     timing_summary = {
         "semantics": "attribution-only eager timing; critical wall is max across ranks and residency is never summed",
@@ -204,6 +205,7 @@ def build(args: argparse.Namespace):
             "sha256": sha256_file(args.eager_mapping),
             "mapped_residency_ratio": round(stack_ratio, 6),
         },
+        target_resolver=QWEN35_TIMELINE_TARGETS,
     )
 
     total_us = sum(float(event["dur_us"]) for event in all_mapping_rows)
@@ -222,7 +224,7 @@ def build(args: argparse.Namespace):
         "variant_id": "sglang_agentx_dep4_mtp6_eager_attribution_cgoff",
         "phase": "decode",
         "generation_mode": "mtp",
-        "entry_view": "generation_loop",
+        "entry_view": "top",
         "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
         "workload": {
@@ -265,6 +267,11 @@ def build(args: argparse.Namespace):
             "eager_mapping_sha256": sha256_file(args.eager_mapping),
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
             "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
+            "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
+            "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
+            "semantic_attribution_gate": {"threshold": 0.95, "passed": attributed_ratio >= 0.95},
             "direct_eager_stack_duration_ratio": round(stack_ratio, 6),
             "critical_attribution_wall_ms": round(critical_wall_ms, 6),
         },

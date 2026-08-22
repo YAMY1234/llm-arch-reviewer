@@ -91,5 +91,5 @@ def test_full_attention_target_and_draft_stay_separate() -> None:
             "nn.Module: Qwen3_5ForCausalLMMTP",
         ),
     )
-    assert target == ("full_attention_moe_block.causal_gqa", "high")
-    assert draft == ("mtp_full_attention_moe_block.causal_gqa", "high")
+    assert target == ("full_attention.causal_gqa", "high")
+    assert draft == ("mtp_full_attention.causal_gqa", "high")

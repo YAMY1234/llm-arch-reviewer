@@ -93,6 +93,36 @@ def test_primary_decoder_drill_uses_a_compact_stack_summary() -> None:
     assert _nodes(model_ir, "generation_loop")["target_verify"]["drill"] == "stack"
 
 
+def test_representative_layers_drill_symmetrically_into_attention_and_moe() -> None:
+    model_ir = _load(CATALOG_ROOT / "model_ir.yaml")
+
+    gdn_layer = _nodes(model_ir, "gdn_moe_block")
+    full_layer = _nodes(model_ir, "full_attention_moe_block")
+    mtp_layer = _nodes(model_ir, "mtp_full_attention_moe_block")
+    assert gdn_layer["attention"]["drill"] == "gdn_attention"
+    assert full_layer["attention"]["drill"] == "full_attention"
+    assert mtp_layer["attention"]["drill"] == "mtp_full_attention"
+    assert gdn_layer["moe"]["drill"] == "moe_block"
+    assert full_layer["moe"]["drill"] == "moe_block"
+    assert mtp_layer["moe"]["drill"] == "mtp_moe_block"
+
+    for layer in (gdn_layer, full_layer, mtp_layer):
+        assert set(layer) == {
+            "input_hidden",
+            "input_norm",
+            "attention",
+            "attention_residual",
+            "post_attention_norm",
+            "moe",
+            "layer_residual",
+            "output_hidden",
+        }
+
+    assert "qkvz_projection" in _nodes(model_ir, "gdn_attention")
+    assert "causal_gqa" in _nodes(model_ir, "full_attention")
+    assert "causal_gqa" in _nodes(model_ir, "mtp_full_attention")
+
+
 def test_kv_gdn_state_and_mtp_transaction_are_explicit() -> None:
     model_ir = _load(CATALOG_ROOT / "model_ir.yaml")
     states = _nodes(model_ir, "state_tensors")

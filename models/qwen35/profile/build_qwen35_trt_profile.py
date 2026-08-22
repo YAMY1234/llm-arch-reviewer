@@ -30,6 +30,7 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     map_decode_step,
     map_prefill_step,
 )
+from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 REPORT_RE = re.compile(
@@ -316,6 +317,17 @@ def build(args: argparse.Namespace):
         },
     }
 
+    total_us = sum(float(row["dur_us"]) for row in all_mappings)
+    status_us: Counter[str] = Counter()
+    for row in all_mappings:
+        status_us[str(row["mapping_status"])] += float(row["dur_us"])
+    attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
+    strict_signature_us = sum(
+        float(event["dur_us"])
+        for event in all_mappings
+        if event.get("attribution_method") == "unique_kernel_signature"
+    )
+
     profile_id = f"qwen35_trtllm_attention_dp4_moe_ep4_agentx_{args.phase}"
     timeline = build_timeline_artifact(
         profile_id=profile_id,
@@ -334,18 +346,12 @@ def build(args: argparse.Namespace):
             "mode": "nsight_nvtx_and_cuda_graph_node_identity",
             "file": reference_path.name,
             "sha256": sha256_file(reference_path),
-            "mapped_residency_ratio": 1.0,
-            "policy": "NVTX forward-step identity, runtime correlation, and per-graph-node occurrence index",
+            "mapped_residency_ratio": round(attributed_ratio, 6),
+            "unmapped_residency_ratio": round(status_us["unmapped"] / total_us, 6),
+            "policy": "unique kernel signatures remain mapped; unresolved graph occurrences remain explicit unmapped events with candidates",
         },
+        target_resolver=QWEN35_TIMELINE_TARGETS,
     )
-
-    total_us = sum(float(row["dur_us"]) for row in all_mappings)
-    status_us: Counter[str] = Counter()
-    for row in all_mappings:
-        status_us[str(row["mapping_status"])] += float(row["dur_us"])
-    attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
-    if attributed_ratio < 0.90:
-        raise ValueError(f"TRT {args.phase} mapped+fusion ratio {attributed_ratio:.4f} < 0.90")
 
     if args.phase == "decode":
         measured_shape = {
@@ -411,7 +417,7 @@ def build(args: argparse.Namespace):
         "variant_id": f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97",
         "phase": args.phase,
         "generation_mode": "mtp",
-        "entry_view": "generation_loop" if args.phase == "decode" else "top",
+        "entry_view": "top",
         "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {
             "gpu": "GB300",
@@ -460,7 +466,12 @@ def build(args: argparse.Namespace):
             ],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
-            "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
+            "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
+            "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
+            "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
+            "semantic_attribution_gate": {"threshold": 0.90, "passed": attributed_ratio >= 0.90},
             "critical_step_wall_ms": timing_summary["critical_step_wall_ms"],
             "critical_cpu_launch_wall_ms": timing_summary[
                 "critical_cpu_launch_wall_ms"
@@ -484,7 +495,7 @@ def build(args: argparse.Namespace):
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),
         "mapped_or_fusion_duration_ratio": attributed_ratio,
-        "strict_signature_duration_ratio": status_us["mapped"] / total_us,
+        "strict_signature_duration_ratio": strict_signature_us / total_us,
         "node_metrics": profile["node_metrics"],
     }
     return profile, timeline, analysis, all_mappings

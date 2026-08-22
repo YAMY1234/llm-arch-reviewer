@@ -223,6 +223,16 @@ def test_viewer_contains_bidirectional_architecture_timeline_navigation() -> Non
     assert "function showTimelineEventInArchitecture()" in viewer
     assert "function openNodeOnTimeline(viewName, nodeId)" in viewer
     assert "event._irTargets.includes(TIMELINE_IR_TARGET)" in viewer
-    assert "Show measured kernels on timeline" in viewer
+    assert "function timelineMatchesForTarget(target)" in viewer
+    assert "timelineMeta && timelineMatches.length" in viewer
+    assert "CURRENT_VIEW_MODE === \"architecture\" ? \"split\" : CURRENT_VIEW_MODE," in viewer
+    assert "true,\n    false," in viewer
+    assert "CURRENT_TIMELINE" not in viewer
+    assert "TIMELINE_DATA?.reference_rank" in viewer
+    assert "No measured kernel occurrence" in viewer
+    assert "No exact Architecture leaf" in viewer
+    assert "event._candidateNodes" in viewer
+    assert "paths.sort((left, right) => left.views.length - right.views.length)" in viewer
     assert "event._engine" in viewer
     assert "directFusionGroup" in viewer
+    assert 'event._mappingStatus === "fusion"' in viewer

@@ -270,8 +270,15 @@ evidence:
     sha256: 0a6a58c8ebed942dbc7adf4b6de1ed7173be108afc898c49b50cc66cbbb7a801
   mapping_policy: NVTX step + runtime correlation + CUDA Graph node occurrence + exact
     GGGA/MTP6 order
-  mapped_or_fusion_duration_ratio: 1.0
-  strict_signature_duration_ratio: 0.908341
+  mapped_or_fusion_duration_ratio: 0.901381
+  strict_signature_duration_ratio: 0.858054
+  mapped_duration_ratio: 0.858054
+  fusion_duration_ratio: 0.043327
+  unmapped_duration_ratio: 0.098619
+  timeline_interval_coverage_ratio: 1.0
+  semantic_attribution_gate:
+    threshold: 0.9
+    passed: true
   critical_step_wall_ms:
     samples:
     - 380.344041
@@ -293,14 +300,30 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: prefill_8k.timeline.json.gz
-  sha256: b34cf02a4eb4c193b3207388088661dac53e95023fac472ad077330dce6036cb
+  sha256: 4238ebfee6090aa9c7edf8e198aa048be323df18f089d2604ff066a273ddf1cb
   reference_rank: 0
   step_count: 2
   event_count: 4012
   raw_trace_file: nvl72d150-T03-prefill-rank0.1.sqlite
 node_states: {}
 node_metrics:
-  full_attention_moe_block.causal_gqa:
+  full_attention.attention_output_gate:
+    ms_per_iter: 0.8612
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output gate
+      count: 30
+      count_per_iter: 15.0
+      avg_us: 57.413
+      total_us_per_iter: 861.2
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank0
+    worker_rank_range_ms:
+    - 0.806464
+    - 0.8612
+  full_attention.causal_gqa:
     ms_per_iter: 201.005212
     mapping_status_duration_pct:
       mapped: 100.0
@@ -316,23 +339,61 @@ node_metrics:
     worker_rank_range_ms:
     - 56.461984
     - 201.005212
-  full_attention_moe_block.output_hidden:
-    ms_per_iter: 6.307103
+  full_attention.qkv_projection:
+    ms_per_iter: 5.234304
     mapping_status_duration_pct:
       fusion: 100.0
     kernels:
-    - name: target prefill layer fused/auxiliary kernel
-      count: 183
-      count_per_iter: 183.0
-      avg_us: 34.465
-      total_us_per_iter: 6307.103
+    - name: QKV projection + Q/K norm + RoPE + output-gate projection
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 270.071
+      total_us_per_iter: 4051.072
+      share_in_node_pct: 77.395
+    - name: QKV projection epilogue + RoPE + KV-cache write
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 78.882
+      total_us_per_iter: 1183.232
+      share_in_node_pct: 22.605
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 4.848
+    - 5.234304
+  full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.702096
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 30
+      count_per_iter: 15.0
+      avg_us: 46.806
+      total_us_per_iter: 702.096
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank0
+    worker_rank_range_ms:
+    - 0.672608
+    - 0.702096
+  full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.564704
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + next-layer input RMSNorm
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 37.647
+      total_us_per_iter: 564.704
       share_in_node_pct: 100.0
     aggregation: maximum per worker/rank kernel residency
     source_worker_rank: nvl72d150-T03/rank1
     worker_rank_range_ms:
-    - 6.08787
-    - 6.307103
-  gdn_moe_block.causal_conv:
+    - 0.55392
+    - 0.564704
+  gdn_attention.causal_conv:
     ms_per_iter: 4.568096
     mapping_status_duration_pct:
       mapped: 100.0
@@ -348,22 +409,109 @@ node_metrics:
     worker_rank_range_ms:
     - 4.146944
     - 4.568096
-  gdn_moe_block.output_hidden:
-    ms_per_iter: 43.173973
+  gdn_attention.gated_delta_recurrence:
+    ms_per_iter: 19.588192
     mapping_status_duration_pct:
-      fusion: 100.0
+      fusion: 76.1739
+      mapped: 23.8261
     kernels:
-    - name: target prefill layer fused/auxiliary kernel
-      count: 802
-      count_per_iter: 802.0
-      avg_us: 53.833
-      total_us_per_iter: 43173.973
+    - name: chunked GDN recurrence + final-state write
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 331.58
+      total_us_per_iter: 14921.088
+      share_in_node_pct: 76.174
+    - name: GDN post-convolution gate preparation
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 103.713
+      total_us_per_iter: 4667.104
+      share_in_node_pct: 23.826
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 17.892352
+    - 19.588192
+  gdn_attention.output_gate_norm:
+    ms_per_iter: 5.21008
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN gated output RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 115.78
+      total_us_per_iter: 5210.08
       share_in_node_pct: 100.0
     aggregation: maximum per worker/rank kernel residency
     source_worker_rank: nvl72d150-T03/rank1
     worker_rank_range_ms:
-    - 39.895898
-    - 43.173973
+    - 4.742144
+    - 5.21008
+  gdn_attention.recurrent_state_read:
+    ms_per_iter: 0.148224
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN recurrent-state gather
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 3.294
+      total_us_per_iter: 148.224
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 0.139232
+    - 0.148224
+  gdn_attention.state_write:
+    ms_per_iter: 0.111664
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN recurrent-state scatter
+      count: 90
+      count_per_iter: 45.0
+      avg_us: 2.481
+      total_us_per_iter: 111.664
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank0
+    worker_rank_range_ms:
+    - 0.101472
+    - 0.111664
+  gdn_moe_block.attention_residual:
+    ms_per_iter: 2.127392
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 47.275
+      total_us_per_iter: 2127.392
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 2.022432
+    - 2.127392
+  gdn_moe_block.layer_residual:
+    ms_per_iter: 1.695744
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + next-layer input RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 37.683
+      total_us_per_iter: 1695.744
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 1.647808
+    - 1.695744
   generation_loop.accept_prefix:
     ms_per_iter: 0.682528
     mapping_status_duration_pct:
@@ -397,21 +545,21 @@ node_metrics:
     - 0.007424
     - 0.011968
   moe_block.routed_experts:
-    ms_per_iter: 69.274112
+    ms_per_iter: 34.461856
     mapping_status_duration_pct:
       mapped: 100.0
     kernels:
     - name: routed expert GEMM
-      count: 360
-      count_per_iter: 360.0
-      avg_us: 192.428
-      total_us_per_iter: 69274.112
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 287.182
+      total_us_per_iter: 34461.856
       share_in_node_pct: 100.0
     aggregation: maximum per worker/rank kernel residency
     source_worker_rank: nvl72d150-T03/rank1
     worker_rank_range_ms:
-    - 66.696481
-    - 69.274112
+    - 33.488993
+    - 34.461856
   moe_block.router:
     ms_per_iter: 0.919424
     mapping_status_duration_pct:

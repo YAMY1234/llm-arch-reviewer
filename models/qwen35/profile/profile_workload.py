@@ -18,7 +18,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--kind",
-        choices=("attribution", "attribution-prefill", "prefill8k", "decode-bs32"),
+        choices=(
+            "attribution",
+            "attribution-bs32",
+            "attribution-prefill",
+            "attribution-prefill8k",
+            "prefill8k",
+            "decode-bs32",
+        ),
         required=True,
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:30000")
@@ -304,51 +311,72 @@ def main() -> int:
             "cuda_graph": False,
             "capture_scope": "one complete eager target prefill iteration with MTP enabled",
         }
-    elif args.kind == "attribution":
-        protocol["warmup"].append({"batch": 4, "isl": 64, "osl": 16})
-        run_batch(args.base_url, batch_size=4, input_len=64, output_len=16, token_seed=101)
+    elif args.kind in {"attribution", "attribution-bs32"}:
+        batch_size = 32 if args.kind == "attribution-bs32" else 4
+        warmup_isl = 32 if args.kind == "attribution-bs32" else 64
+        formal_isl = 128 if args.kind == "attribution-bs32" else 256
+        formal_osl = 64 if args.kind == "attribution-bs32" else 128
+        profile_id = (
+            "qwen35-dep4-attribution-bs32-cgoff"
+            if args.kind == "attribution-bs32"
+            else "qwen35-dep4-attribution-cgoff"
+        )
+        protocol["warmup"].append(
+            {"batch": batch_size, "isl": warmup_isl, "osl": 16}
+        )
+        run_batch(
+            args.base_url,
+            batch_size=batch_size,
+            input_len=warmup_isl,
+            output_len=16,
+            token_seed=101,
+        )
         # A single eager MTP decode iteration contains the complete 60-layer
         # target verify, draft cycle, accept/sample, KV/GDN replay, and both
         # target/draft EP4 paths.  Capturing eight such iterations with Python
         # stacks and shapes exceeded 670 GiB of host memory during export.
-        # Establish a live 1-request-per-rank decode batch first, then capture
+        # Establish the exact queue-free DP distribution first, then capture
         # exactly one complete iteration without weakening any structure gate.
         with ThreadPoolExecutor(max_workers=1) as executor:
             formal_future = executor.submit(
                 run_batch,
                 args.base_url,
-                batch_size=4,
-                input_len=256,
-                output_len=128,
+                batch_size=batch_size,
+                input_len=formal_isl,
+                output_len=formal_osl,
                 token_seed=211,
             )
             trigger = wait_for_decode_batch(
                 args.base_url,
                 formal_future,
                 expected_ranks=args.expected_ranks,
-                batch_size=4,
+                batch_size=batch_size,
             )
             response = start_profile(
                 args.base_url,
                 trace_dir,
-                profile_id="qwen35-dep4-attribution-cgoff",
+                profile_id=profile_id,
                 num_steps=1,
                 with_stack=True,
             )
             formal_results = formal_future.result()
         protocol["formal"] = {
-            "batch": 4,
+            "batch": batch_size,
             "per_rank_running": [
                 rank["num_running_reqs"] for rank in trigger["trigger"]["ranks"]
             ],
-            "isl": 256,
-            "osl": 128,
+            "isl": formal_isl,
+            "osl": formal_osl,
             "profile_steps": 1,
             "cuda_graph": False,
             "trigger": trigger,
-            "capture_scope": "one complete eager target+MTP decode iteration",
+            "capture_scope": (
+                "one complete shape-matched eager target+MTP decode iteration"
+                if args.kind == "attribution-bs32"
+                else "one complete eager target+MTP decode iteration"
+            ),
         }
-    elif args.kind == "prefill8k":
+    elif args.kind in {"prefill8k", "attribution-prefill8k"}:
         # Attention DP4 requires a non-empty local batch on every rank in this
         # frozen TRTLLM-MHA backend (a zero-request rank divides by batch_size).
         # Four concurrent requests are round-robin owned one per DP rank. The
@@ -359,12 +387,17 @@ def main() -> int:
             {"global_batch": 4, "per_rank_batch": 1, "isl": 8192, "osl": 1}
         )
         run_batch(args.base_url, batch_size=4, input_len=8192, output_len=1, token_seed=307)
+        with_stack = args.kind == "attribution-prefill8k"
         response = start_profile(
             args.base_url,
             trace_dir,
-            profile_id="qwen35-dep4-prefill8k-cgoff",
+            profile_id=(
+                "qwen35-dep4-attribution-prefill8k-cgoff"
+                if with_stack
+                else "qwen35-dep4-prefill8k-cgoff"
+            ),
             num_steps=4,
-            with_stack=False,
+            with_stack=with_stack,
         )
         protocol["formal"] = {
             "global_batch": 4,
@@ -378,6 +411,11 @@ def main() -> int:
             "chunked_prefill_size_requested_global": 32768,
             "max_prefill_tokens_requested_global": 32768,
             "chunked_prefill_size_effective_per_dp_rank": 8192,
+            "capture_scope": (
+                "shape-matched eager target-only 8K prefill attribution"
+                if with_stack
+                else "target-only 8K prefill timing"
+            ),
         }
         formal_results = run_batch(
             args.base_url, batch_size=4, input_len=8192, output_len=1, token_seed=401
@@ -427,7 +465,13 @@ def main() -> int:
     # Explicitly close bounded eager/prefill windows.  Automatic num_steps
     # stopping is sufficient for the fixed decode batch, but is not a valid
     # completion condition for DP-rank-skewed eager or prefill requests.
-    if args.kind in {"attribution", "attribution-prefill", "prefill8k"}:
+    if args.kind in {
+        "attribution",
+        "attribution-bs32",
+        "attribution-prefill",
+        "attribution-prefill8k",
+        "prefill8k",
+    }:
         completed_traces = sorted(trace_dir.glob("*.trace.json.gz"))
         if len(completed_traces) == args.expected_ranks:
             protocol["stop_profile_response"] = {
@@ -438,7 +482,12 @@ def main() -> int:
                 args.base_url,
                 timeout_seconds=(
                     5400
-                    if args.kind in {"attribution", "attribution-prefill"}
+                    if args.kind in {
+                        "attribution",
+                        "attribution-bs32",
+                        "attribution-prefill",
+                        "attribution-prefill8k",
+                    }
                     else 1800
                 ),
             )
@@ -447,7 +496,15 @@ def main() -> int:
     # Four Qwen3.5 ranks can legitimately need much longer than 15 minutes to
     # export; killing the server during PythonTracer.stop loses every trace.
     trace_export_timeout_seconds = (
-        5400 if args.kind in {"attribution", "attribution-prefill"} else 900
+        5400
+        if args.kind
+        in {
+            "attribution",
+            "attribution-bs32",
+            "attribution-prefill",
+            "attribution-prefill8k",
+        }
+        else 900
     )
     protocol["trace_export_timeout_seconds"] = trace_export_timeout_seconds
     traces = wait_for_traces(

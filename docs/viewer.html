@@ -1703,14 +1703,17 @@ function decodeTimelineArtifact(artifact) {
       event._engine = timelineStringFrom(artifact, event.engine);
       event._irNode = timelineStringFrom(artifact, event.ir_node);
       event._irTargets = (event.ir_targets || []).map(index => timelineStringFrom(artifact, index));
+      event._mappingStatus = timelineStringFrom(artifact, event.mapping_status);
       event._fusionGroupIds = [];
       const directFusionGroup = timelineStringFrom(artifact, event.fusion_group);
       if (directFusionGroup) event._fusionGroupIds.push(directFusionGroup);
-      for (const [groupId, group] of Object.entries(currentFusionGroups())) {
-        const covered = group.ir_nodes || [];
-        if (covered.some(target => event._irTargets.includes(target))) {
-          event._fusionGroupIds.push(groupId);
-          event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+      if (event._mappingStatus === "fusion") {
+        for (const [groupId, group] of Object.entries(currentFusionGroups())) {
+          const covered = group.ir_nodes || [];
+          if (covered.some(target => event._irTargets.includes(target))) {
+            event._fusionGroupIds.push(groupId);
+            event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+          }
         }
       }
       event._layerKind = timelineStringFrom(artifact, event.layer_kind);
@@ -1718,6 +1721,10 @@ function decodeTimelineArtifact(artifact) {
       event._kernelKind = timelineStringFrom(artifact, event.kernel_kind);
       event._attributionMethod = timelineStringFrom(artifact, event.attribution_method);
       event._confidence = timelineStringFrom(artifact, event.confidence);
+      event._unmappedReason = timelineStringFrom(artifact, event.unmapped_reason);
+      event._candidateNodes = (event.candidate_nodes || []).map(
+        index => timelineStringFrom(artifact, index)
+      );
       event._cpuOpName = timelineStringFrom(artifact, event.cpu_op_name);
       event._stack = event.stack_id == null ? null : artifact.stacks?.[event.stack_id];
     }
@@ -1783,6 +1790,12 @@ async function loadTimelineForCurrentProfile() {
     document.getElementById("timeline-canvas").style.display = "block";
     setViewMode(CURRENT_VIEW_MODE, false);
     renderTimeline();
+    if (SELECTED?.view && SELECTED?.nodeId) {
+      const selectedNode = (DATA.views?.[SELECTED.view]?.nodes || []).find(
+        node => node.id === SELECTED.nodeId
+      );
+      if (selectedNode) showDetail(selectedNode, SELECTED.view);
+    }
   } catch (error) {
     if (token !== TIMELINE_LOAD_TOKEN) return;
     TIMELINE_DATA = null;
@@ -1889,6 +1902,17 @@ function timelineEventMatches(event) {
     if (!haystack.includes(TIMELINE_SEARCH.toLowerCase())) return false;
   }
   return true;
+}
+
+function timelineMatchesForTarget(target) {
+  if (!TIMELINE_DATA || TIMELINE_PROFILE_ID !== CURRENT_PROFILE) return [];
+  const matches = [];
+  for (const [stepIndex, step] of (TIMELINE_DATA.steps || []).entries()) {
+    for (const event of (step.events || [])) {
+      if (event._irTargets.includes(target)) matches.push({stepIndex, event});
+    }
+  }
+  return matches;
 }
 
 function timelineColor(kind) {
@@ -2069,15 +2093,18 @@ function showTimelineEventDetail(event) {
   const stackNote = stack
     ? `${evidence.source || "unknown"} · ${evidence.match || "unknown match"} · ${evidence.kind || "stack"}`
     : "not available for this timing-only/support kernel";
+  const architectureAction = event._irNode
+    ? `<button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>`
+    : `<button class="detail-action" disabled title="No leaf attribution is supported by current evidence">No exact Architecture leaf</button>`;
   document.getElementById("detail").innerHTML = `
     <h2>${escapeHtml(event._kernelLabel || event._irNode || "kernel")}</h2>
     <div>
-      <button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>
+      ${architectureAction}
       <button class="detail-action" onclick="openSelectedRangeInPerfetto()">Open exact slice in Perfetto ↗</button>
     </div>
     <div class="kv">
       <div class="k">IR node</div><div>${escapeHtml(event._irNode)}</div>
-      <div class="k">engine / rank / device</div><div>${escapeHtml(event._engine || "—")} / ${CURRENT_TIMELINE?.reference_rank ?? "—"} / ${event.device ?? "—"}</div>
+      <div class="k">engine / rank / device</div><div>${escapeHtml(event._engine || "—")} / ${TIMELINE_DATA?.reference_rank ?? "—"} / ${event.device ?? "—"}</div>
       <div class="k">IR targets</div><div>${escapeHtml(event._irTargets.join(", "))}</div>
       ${event._fusionGroupIds?.length ? `<div class="k">fusion</div><div>${escapeHtml(event._fusionGroupIds.join(", "))} · one shared kernel interval</div>` : ""}
       <div class="k">kernel</div><div style="word-break:break-all">${escapeHtml(event._kernelName)}</div>
@@ -2089,6 +2116,9 @@ function showTimelineEventDetail(event) {
       <div class="k">MTP round</div><div>${event.mtp_round == null ? "—" : event.mtp_round}</div>
       <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
       <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
+      <div class="k">mapping status</div><div>${escapeHtml(event._mappingStatus || "—")}</div>
+      ${event._unmappedReason ? `<div class="k">unmapped reason</div><div>${escapeHtml(event._unmappedReason)}</div>` : ""}
+      ${event._candidateNodes?.length ? `<div class="k">candidate nodes</div><div>${escapeHtml(event._candidateNodes.join(", "))}</div>` : ""}
       <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>
     </div>
     ${frames ? `<h3>mapped Python stack</h3><ol class="stack-frames">${frames}</ol>` : ""}
@@ -2099,6 +2129,30 @@ function showTimelineEventDetail(event) {
 function architectureRouteForEvent(event) {
   const direct = event._irNode || "";
   const [view, nodeId] = direct.split(".", 2);
+  if (view && DATA.views?.[view]) {
+    const root = DATA.views?.top ? "top" : defaultViewName();
+    const paths = [];
+    function visit(currentView, views, from, visited) {
+      if (currentView === view) {
+        paths.push({views, from, view, nodeId});
+        return;
+      }
+      for (const node of (DATA.views?.[currentView]?.nodes || [])) {
+        if (!node.drill || visited.has(node.drill) || !DATA.views?.[node.drill]) continue;
+        visit(
+          node.drill,
+          [...views, node.drill],
+          [...from, node.id],
+          new Set([...visited, node.drill]),
+        );
+      }
+    }
+    visit(root, [root], [null], new Set([root]));
+    if (paths.length) {
+      paths.sort((left, right) => left.views.length - right.views.length);
+      return paths[0];
+    }
+  }
   const mtpOrigin = String(event._substage || "").includes("prefill")
     ? "mtp_prefill" : "mtp_draft_extend";
   if (view === "mtp_generation") {
@@ -2187,11 +2241,30 @@ async function showTimelineEventInArchitecture() {
 
 function openNodeOnTimeline(viewName, nodeId) {
   if (!TIMELINE_DATA) return;
-  TIMELINE_IR_TARGET = `${viewName}.${nodeId}`;
+  const target = `${viewName}.${nodeId}`;
+  const matches = timelineMatchesForTarget(target);
+  if (!matches.length) {
+    document.getElementById("timeline-status").textContent =
+      `no measured kernel occurrence for ${target} in this profile`;
+    return;
+  }
+  TIMELINE_IR_TARGET = target;
+  TIMELINE_STEP_INDEX = matches[0].stepIndex;
+  document.getElementById("timeline-step").value = String(TIMELINE_STEP_INDEX);
+  TIMELINE_LAYER = "";
+  document.getElementById("timeline-layer").value = "";
+  resetTimelineRange();
   document.getElementById("timeline-search").value = "";
   TIMELINE_SEARCH = "";
   const nearest = focusNearestTimelineEvent();
-  setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE);
+  // The architecture is already rendered.  Suppress setViewMode's deferred
+  // renderView here: it would race with showTimelineEventDetail and overwrite
+  // the selected-kernel detail pane on the next animation frame.
+  setViewMode(
+    CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE,
+    true,
+    false,
+  );
   if (nearest) showTimelineEventDetail(nearest);
   else renderTimeline();
 }
@@ -2715,11 +2788,21 @@ function showDetail(n, viewName) {
          </a>
        </div>`
     : "";
-  const timelineBtn = currentTimelineMeta()
+  const timelineMeta = currentTimelineMeta();
+  const timelineLoaded = !!TIMELINE_DATA && TIMELINE_PROFILE_ID === CURRENT_PROFILE;
+  const timelineMatches = timelineLoaded ? timelineMatchesForTarget(target) : [];
+  const timelineBtn = timelineMeta && timelineMatches.length
     ? `<div style="margin: 6px 0 10px;">
          <button class="detail-action primary" onclick="openNodeOnTimeline('${viewName}', '${n.id}')">
-           Show measured kernels on timeline →
+           Show ${timelineMatches.length} measured kernel${timelineMatches.length === 1 ? "" : "s"} on timeline →
          </button>
+       </div>`
+    : "";
+  const timelineAvailability = timelineMeta && !timelineMatches.length
+    ? `<div style="margin:6px 0 10px; color:var(--muted); font-size:12px">
+         ${timelineLoaded
+           ? `No measured kernel occurrence for <code>${escapeHtml(target)}</code> in this profile.${cell?.status ? ` Node state: ${escapeHtml(cell.status)}.` : ""}`
+           : "Loading measured-kernel availability…"}
        </div>`
     : "";
 
@@ -2732,6 +2815,7 @@ function showDetail(n, viewName) {
     <h2>${escapeHtml(n.label || n.id)}</h2>
     ${variants ? `<div style="margin-bottom:8px">${variants}</div>` : ""}
     ${timelineBtn}
+    ${timelineAvailability}
     <div class="kv">
       <div class="k">id</div><div>${escapeHtml(n.id)}</div>
       <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>

@@ -74,6 +74,16 @@ class NsysStep:
         return max(kernel.end_ns for kernel in self.kernels)
 
 
+@dataclass(frozen=True)
+class NsysAttribution:
+    node: str
+    label: str
+    status: str = "mapped"
+    ir_targets: tuple[str, ...] = ()
+    attribution_method: str = "unique_kernel_signature"
+    confidence: str = "high"
+
+
 def _strings(connection: sqlite3.Connection) -> dict[int, str]:
     return {int(key): str(value) for key, value in connection.execute(
         "select id, value from StringIds"
@@ -321,56 +331,205 @@ def _anchor_kind(name: str) -> str | None:
     return None
 
 
-def _moe_node(name: str, *, draft: bool) -> tuple[str, str, str] | None:
+def _moe_node(name: str, *, draft: bool) -> NsysAttribution | None:
     lowered = name.lower()
     prefix = "mtp_moe_block" if draft else "moe_block"
     if "moea2apreparedispatch" in lowered:
-        return (f"{prefix}.{'draft' if draft else 'target'}_ep4_pack", "MoE EP4 dispatch pack", "mapped")
+        return NsysAttribution(
+            f"{prefix}.{'draft' if draft else 'target'}_ep4_pack",
+            "MoE EP4 dispatch pack",
+        )
     if "moea2adispatchkernel" in lowered or "moea2asanitizeexpertids" in lowered:
-        return (f"{prefix}.{'draft' if draft else 'target'}_ep4_dispatch", "MoE EP4 dispatch", "mapped")
+        return NsysAttribution(
+            f"{prefix}.{'draft' if draft else 'target'}_ep4_dispatch",
+            "MoE EP4 dispatch",
+        )
     if "moea2apreparecombine" in lowered or "moea2acombinekernel" in lowered:
-        return (f"{prefix}.{'draft' if draft else 'target'}_ep4_combine", "MoE EP4 combine", "mapped")
+        return NsysAttribution(
+            f"{prefix}.{'draft' if draft else 'target'}_ep4_combine",
+            "MoE EP4 combine",
+        )
     if _contains(lowered, "custommoeroutingkernel", "routingindicesclusterkernel"):
-        return (f"{prefix}.router", "MoE top-k router", "mapped")
+        return NsysAttribution(f"{prefix}.router", "MoE top-k router")
     if _contains(
         lowered,
         "contiguous_gather_grouped_gemm_act_fusion",
         "contiguous_grouped_gemm_finalize_fusion",
-        "nvjet_sm103_qqtst",
+        "groupproblemshape",
+        "expandinputrowskernel",
+        "doactivationkernel",
     ):
-        return (f"{prefix}.routed_experts", "routed expert GEMM", "mapped")
+        return NsysAttribution(f"{prefix}.routed_experts", "routed expert GEMM")
     if "silu_and_mul_kernel" in lowered:
-        return (f"{prefix}.shared_expert", "shared expert activation", "mapped")
+        return NsysAttribution(f"{prefix}.shared_expert", "shared expert activation")
     if "sigmoid_gate_mul_add_kernel" in lowered:
-        return (f"{prefix}.weighted_combine", "MoE weighted combine", "mapped")
+        return NsysAttribution(f"{prefix}.weighted_combine", "MoE weighted combine")
     return None
 
 
 def _direct_node(
-    name: str, *, section: str, layer_kind: str | None
-) -> tuple[str, str, str] | None:
+    name: str,
+    *,
+    section: str,
+    layer_kind: str | None,
+    before_moe: bool | None = None,
+) -> NsysAttribution | None:
     lowered = name.lower()
     draft = section == "draft"
     moe = _moe_node(name, draft=draft)
     if moe is not None:
         return moe
-    attention_prefix = "mtp_full_attention_moe_block" if draft else "full_attention_moe_block"
+    attention_prefix = "mtp_full_attention" if draft else "full_attention"
     if "fmhasm10" in lowered:
-        return (f"{attention_prefix}.causal_gqa", "causal GQA", "mapped")
+        return NsysAttribution(f"{attention_prefix}.causal_gqa", "causal GQA")
+    if "_fused_qkv_gemma_rmsnorm_rope_gate_kernel" in lowered:
+        return NsysAttribution(
+            f"{attention_prefix}.qkv_projection",
+            "QKV projection + Q/K norm + RoPE + output-gate projection",
+            "fusion",
+            (
+                f"{attention_prefix}.qk_norm",
+                f"{attention_prefix}.partial_rope",
+                f"{attention_prefix}.attention_output_gate",
+            ),
+            "kernel_signature_fusion",
+        )
+    if "applybiasropeupdatekvcachev2" in lowered:
+        return NsysAttribution(
+            f"{attention_prefix}.qkv_projection",
+            "QKV projection epilogue + RoPE + KV-cache write",
+            "fusion",
+            (
+                f"{attention_prefix}.partial_rope",
+                f"{attention_prefix}.kv_state_write",
+            ),
+            "kernel_signature_fusion",
+        )
+    if "_fused_sigmoid_mul_kernel" in lowered:
+        return NsysAttribution(
+            f"{attention_prefix}.attention_output_gate",
+            "attention output gate",
+        )
+
+    layer_view = (
+        "mtp_full_attention_moe_block"
+        if draft
+        else "gdn_moe_block"
+        if layer_kind == "gdn"
+        else "full_attention_moe_block"
+    )
+    if "fused_add_rmsnorm" in lowered and before_moe is not None:
+        if before_moe:
+            return NsysAttribution(
+                f"{layer_view}.attention_residual",
+                "attention residual add + pre-MoE RMSNorm",
+                "fusion",
+                (f"{layer_view}.post_attention_norm",),
+                "validated_graph_sequence_fusion",
+            )
+        return NsysAttribution(
+            f"{layer_view}.layer_residual",
+            "MoE residual add + next-layer input RMSNorm",
+            "fusion",
+            (f"{layer_view}.input_norm",),
+            "validated_graph_sequence_fusion",
+        )
+
+    # TRT's stable CUDA-Graph schedule has four block-scaled QQ GEMMs per
+    # target layer. Their exact tile signatures and one-per-layer cardinality
+    # distinguish attention input/output, router, and shared-expert work. Do
+    # not use a generic QQTST fallback: any unlisted shape remains unmapped.
+    if not draft and "nvjet_sm103_qqtst_144x128_128x8" in lowered:
+        return NsysAttribution(
+            "gdn_attention.qkvz_projection",
+            "GDN Q/K/V/Z projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+    if not draft and "nvjet_sm103_tst_32x64_64x16_4x2_2cta" in lowered:
+        return NsysAttribution(
+            "gdn_attention.ba_projection",
+            "GDN B/A gate projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+    if not draft and "nvjet_sm103_qqtst_256x112_128x5" in lowered:
+        return NsysAttribution(
+            "full_attention.qkv_projection",
+            "full-attention Q/K/V projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+    if not draft and "nvjet_sm103_qqtst_112x64_128x14" in lowered:
+        output_prefix = "gdn_attention" if layer_kind == "gdn" else "full_attention"
+        return NsysAttribution(
+            f"{output_prefix}.output_projection",
+            "attention output projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+    if not draft and "nvjet_sm103_qqtst_64x64_128x16" in lowered:
+        return NsysAttribution(
+            "moe_block.router",
+            "MoE router projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+    if not draft and "nvjet_sm103_qqtst_64x112_128x14" in lowered:
+        return NsysAttribution(
+            "moe_block.shared_expert",
+            "shared-expert projection",
+            attribution_method="validated_graph_signature_slot",
+        )
+
+    if draft and "nvjet_sm103_tst_448x64_64x3" in lowered:
+        return NsysAttribution(
+            "mtp_draft_head.shared_lm_head",
+            "MTP shared LM-head projection",
+            attribution_method="validated_graph_signature_slot",
+        )
     if not draft and layer_kind == "gdn":
         if (
             "_causal_conv1d_update_kernel" in lowered
             or "causal_conv1d_fwd_kernel" in lowered
         ):
-            return ("gdn_moe_block.causal_conv", "GDN causal convolution", "mapped")
+            return NsysAttribution("gdn_attention.causal_conv", "GDN causal convolution")
         if "_cached_replay_kernel" in lowered:
-            return ("gdn_moe_block.gated_delta_recurrence", "GDN recurrent update", "mapped")
+            return NsysAttribution(
+                "gdn_attention.gated_delta_recurrence", "GDN recurrent update"
+            )
+        if "gateddeltanetchunkedkernel" in lowered:
+            return NsysAttribution(
+                "gdn_attention.gated_delta_recurrence",
+                "chunked GDN recurrence + final-state write",
+                "fusion",
+                ("gdn_attention.state_write",),
+                "kernel_signature_fusion",
+            )
+        if "_fused_gdn_post_conv_kernel" in lowered:
+            return NsysAttribution(
+                "gdn_attention.gated_delta_recurrence",
+                "GDN post-convolution gate preparation",
+            )
+        if "_rms_norm_gated_fwd_multirow_kernel" in lowered:
+            return NsysAttribution(
+                "gdn_attention.output_gate_norm", "GDN gated output RMSNorm"
+            )
+        if "_gather_cast_vk_to_fp32_vk_kernel" in lowered:
+            return NsysAttribution(
+                "gdn_attention.recurrent_state_read", "GDN recurrent-state gather"
+            )
+        if "_cast_scatter_fp32_vk_to_vk_kernel" in lowered:
+            return NsysAttribution(
+                "gdn_attention.state_write", "GDN recurrent-state scatter"
+            )
+    if "_cached_replay_layered_commit_kernel" in lowered:
+        return NsysAttribution(
+            "generation_loop.commit_gdn", "accepted layered GDN-state commit"
+        )
     if "_promote_mamba_state_kernel" in lowered:
-        return ("generation_loop.commit_gdn", "accepted GDN state commit", "mapped")
+        return NsysAttribution(
+            "generation_loop.commit_gdn", "accepted GDN state commit"
+        )
     if "copybatchblockoffsetstodevicekernel" in lowered:
-        return ("generation_loop.commit_kv", "KV block-table commit", "mapped")
+        return NsysAttribution("generation_loop.commit_kv", "KV block-table commit")
     if _contains(lowered, "sampling", "sampler", "topk", "topp"):
-        return ("generation_loop.accept_prefix", "accept/sample", "mapped")
+        return NsysAttribution("generation_loop.accept_prefix", "accept/sample")
     return None
 
 
@@ -456,23 +615,53 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
             else None
         )
 
-        direct = _direct_node(kernel.name, section=section, layer_kind=layer_kind)
-        if direct is None and section == "target":
-            view = "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
-            direct = (f"{view}.output_hidden", "target layer fused/auxiliary kernel", "fusion")
-        elif direct is None:
-            direct = (
-                "mtp_draft_head.draft_decoder_layer",
-                "MTP draft fused/auxiliary kernel",
-                "fusion",
+        if section == "target":
+            before_moe = event_index < target_prepare[int(layer_id)]
+        else:
+            before_moe = event_index < prepare[60 + int(mtp_round)]
+        direct = _direct_node(
+            kernel.name,
+            section=section,
+            layer_kind=layer_kind,
+            before_moe=before_moe,
+        )
+        candidates: list[str] = []
+        unmapped_reason = None
+        if direct is None:
+            status = "unmapped"
+            node = None
+            label = f"Unmapped TRT {section} kernel"
+            unmapped_reason = (
+                "Graph occurrence identifies the containing target layer but not a unique leaf operation."
+                if section == "target"
+                else "Graph occurrence identifies the MTP draft range but not a unique draft leaf operation."
             )
-        node, label, status = direct
+            layer_view = (
+                "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
+            )
+            candidates = (
+                [
+                    f"{layer_view}.attention",
+                    f"{layer_view}.moe",
+                    f"{layer_view}.attention_residual",
+                    f"{layer_view}.layer_residual",
+                ]
+                if section == "target"
+                else [
+                    "mtp_full_attention_moe_block.attention",
+                    "mtp_full_attention_moe_block.moe",
+                    "mtp_draft_head.fc_projection",
+                    "mtp_draft_head.shared_lm_head",
+                ]
+            )
+        else:
+            node = direct.node
+            label = direct.label
+            status = direct.status
         duration_ns = kernel.end_ns - kernel.start_ns
         status_ns[status] += duration_ns
-        ir_targets = []
-        if layer_id is not None:
-            ir_targets.append(f"layer_schedule.layer_{layer_id:02d}")
-        if section == "target" and not node.startswith("generation_loop."):
+        ir_targets = list(direct.ir_targets) if direct is not None else []
+        if section == "target" and (node is None or not node.startswith("generation_loop.")):
             ir_targets.append("generation_loop.target_verify")
         if section == "draft":
             ir_targets.append("generation_loop.draft_propose")
@@ -494,9 +683,11 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
                     else None
                 ),
                 "attribution_method": (
-                    "unique_kernel_signature" if status == "mapped" else "validated_graph_scope"
+                    direct.attribution_method if direct is not None else "unresolved"
                 ),
-                "confidence": "high" if status == "mapped" else "structural",
+                "confidence": direct.confidence if direct is not None else "unknown",
+                "unmapped_reason": unmapped_reason,
+                "candidate_nodes": candidates,
                 "layer_id": layer_id,
                 "layer_kind": layer_kind,
                 "substage": section,
@@ -516,6 +707,11 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
         )
 
     attributed_ns = status_ns["mapped"] + status_ns["fusion"]
+    strict_signature_ns = sum(
+        float(event["dur_us"]) * 1000.0
+        for event in mapped
+        if event.get("attribution_method") == "unique_kernel_signature"
+    )
     validation = {
         "step_id": step.step_id,
         "rank": step.rank,
@@ -554,7 +750,12 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
             status: duration / 1000.0 for status, duration in sorted(status_ns.items())
         },
         "attributed_duration_ratio": attributed_ns / total_ns if total_ns else 0.0,
-        "strict_signature_duration_ratio": status_ns["mapped"] / total_ns if total_ns else 0.0,
+        "strict_signature_duration_ratio": (
+            strict_signature_ns / total_ns if total_ns else 0.0
+        ),
+        "timeline_interval_coverage_ratio": (
+            sum(status_ns.values()) / total_ns if total_ns else 0.0
+        ),
     }
     expected = {
         "target_gdn_layers": 45,
@@ -574,8 +775,6 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
         raise ValueError(f"step {step.step_id}: structural validation failed: {mismatch}")
     if abs(validation["timing_closure_us"]) > 1e-6:
         raise ValueError(f"step {step.step_id}: kernel timing does not close")
-    if validation["attributed_duration_ratio"] < 0.90:
-        raise ValueError(f"step {step.step_id}: attributed residency is below 90%")
     return mapped, validation
 
 
@@ -620,22 +819,31 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
     for event_index, kernel in enumerate(kernels):
         layer_id = max(0, bisect_right(layer_anchors, event_index) - 1)
         layer_kind = layer_kinds[layer_id]
-        direct = _direct_node(kernel.name, section="target", layer_kind=layer_kind)
+        direct = _direct_node(
+            kernel.name,
+            section="target",
+            layer_kind=layer_kind,
+            before_moe=event_index < prepare[layer_id],
+        )
+        candidates: list[str] = []
+        unmapped_reason = None
         if direct is None:
-            if owner_compute:
-                view = "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
-                direct = (
-                    f"{view}.output_hidden",
-                    "target prefill layer fused/auxiliary kernel",
-                    "fusion",
-                )
-            else:
-                direct = (
-                    "top.decoder_stack",
-                    "collective-only EP-rank auxiliary kernel",
-                    "fusion",
-                )
-        node, label, status = direct
+            node = None
+            label = "Unmapped TRT target-prefill kernel"
+            status = "unmapped"
+            unmapped_reason = (
+                "Owner-rank layer occurrence does not uniquely identify a leaf operation."
+                if owner_compute
+                else "Collective-only EP-rank occurrence has no unique target-model leaf attribution."
+            )
+            layer_view = (
+                "gdn_moe_block" if layer_kind == "gdn" else "full_attention_moe_block"
+            )
+            candidates = [f"{layer_view}.attention", f"{layer_view}.moe"]
+        else:
+            node = direct.node
+            label = direct.label
+            status = direct.status
         duration_ns = kernel.end_ns - kernel.start_ns
         status_ns[status] += duration_ns
         mapped.append(
@@ -648,7 +856,7 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
                 "kernel_name": kernel.name,
                 "kernel_label": label,
                 "node": node,
-                "ir_targets": [f"layer_schedule.layer_{layer_id:02d}"],
+                "ir_targets": list(direct.ir_targets) if direct is not None else [],
                 "mapping_status": status,
                 "fusion_group": (
                     f"r{step.rank}-p{step.step_id}-k{event_index}"
@@ -656,13 +864,11 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
                     else None
                 ),
                 "attribution_method": (
-                    "unique_kernel_signature"
-                    if status == "mapped"
-                    else "validated_owner_layer_scope"
-                    if owner_compute
-                    else "validated_collective_only_rank_scope"
+                    direct.attribution_method if direct is not None else "unresolved"
                 ),
-                "confidence": "high" if status == "mapped" else "structural",
+                "confidence": direct.confidence if direct is not None else "unknown",
+                "unmapped_reason": unmapped_reason,
+                "candidate_nodes": candidates,
                 "layer_id": layer_id,
                 "layer_kind": layer_kind,
                 "substage": "target_prefill",
@@ -682,6 +888,11 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         )
 
     total_ns = sum(kernel.end_ns - kernel.start_ns for kernel in kernels)
+    strict_signature_ns = sum(
+        float(event["dur_us"]) * 1000.0
+        for event in mapped
+        if event.get("attribution_method") == "unique_kernel_signature"
+    )
     validation = {
         "step_id": step.step_id,
         "rank": step.rank,
@@ -714,7 +925,10 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
             (status_ns["mapped"] + status_ns["fusion"]) / total_ns if total_ns else 0.0
         ),
         "strict_signature_duration_ratio": (
-            status_ns["mapped"] / total_ns if total_ns else 0.0
+            strict_signature_ns / total_ns if total_ns else 0.0
+        ),
+        "timeline_interval_coverage_ratio": (
+            sum(status_ns.values()) / total_ns if total_ns else 0.0
         ),
     }
     if validation["target_ep4_dispatch"] != 60 or validation["target_ep4_combine"] != 60:
@@ -726,6 +940,4 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         raise ValueError(f"prefill step {step.step_id}: incomplete target-model layers")
     if abs(validation["timing_closure_us"]) > 1e-6:
         raise ValueError(f"prefill step {step.step_id}: kernel timing does not close")
-    if validation["attributed_duration_ratio"] < 0.90:
-        raise ValueError(f"prefill step {step.step_id}: attributed residency is below 90%")
     return mapped, validation

@@ -101,9 +101,9 @@ def classify_qwen35_node(
     # GDN primitives are target-only in the canonical 60-layer decoder.  Any
     # GDN work reached from draft_extend was classified as replay above.
     if QWEN35_GDN_SIGNATURE_KERNEL in kernel:
-        return "gdn_moe_block.qkvz_projection", "high"
+        return "gdn_attention.qkvz_projection", "high"
     if "causal_conv1d" in kernel:
-        return "gdn_moe_block.causal_conv", "high"
+        return "gdn_attention.causal_conv", "high"
     if _contains_any(
         kernel,
         (
@@ -116,40 +116,40 @@ def classify_qwen35_node(
             "l2norm_fwd",
         ),
     ):
-        return "gdn_moe_block.gated_delta_recurrence", "high"
+        return "gdn_attention.gated_delta_recurrence", "high"
     if "fused_gdn_gating" in kernel:
-        return "gdn_moe_block.output_gate_norm", "high"
+        return "gdn_attention.output_gate_norm", "high"
 
     if "qwen3_5gateddeltanet" in names:
         if "out_proj" in names:
-            return "gdn_moe_block.output_projection", "medium"
+            return "gdn_attention.output_projection", "medium"
         if "in_proj_ba" in names:
-            return "gdn_moe_block.ba_projection", "medium"
+            return "gdn_attention.ba_projection", "medium"
         if "in_proj_qkvz" in names or "_forward_input_proj" in names:
-            return "gdn_moe_block.qkvz_projection", "medium"
+            return "gdn_attention.qkvz_projection", "medium"
         if "norm" in names or "rmsnorm" in kernel or "layer_norm" in kernel:
-            return "gdn_moe_block.output_gate_norm", "medium"
-        return "gdn_moe_block.gated_delta_recurrence", "low"
+            return "gdn_attention.output_gate_norm", "medium"
+        return "gdn_attention.gated_delta_recurrence", "low"
 
     attention_node = (
-        "mtp_full_attention_moe_block.causal_gqa"
+        "mtp_full_attention.causal_gqa"
         if draft
-        else "full_attention_moe_block.causal_gqa"
+        else "full_attention.causal_gqa"
     )
     if "qwen3_5attentiondecoderlayer" in names:
         if _contains_any(kernel, ("fmha", "mha", "attention")) or "radixattention" in names:
             return attention_node, "high"
         if _contains_any(names, ("o_proj", "self_attention")):
             return (
-                "mtp_full_attention_moe_block.output_projection"
+                "mtp_full_attention.output_projection"
                 if draft
-                else "full_attention_moe_block.output_projection"
+                else "full_attention.output_projection"
             ), "medium"
         if _contains_any(names, ("qkv", "forward_prepare")):
             return (
-                "mtp_full_attention_moe_block.qkv_projection"
+                "mtp_full_attention.qkv_projection"
                 if draft
-                else "full_attention_moe_block.qkv_projection"
+                else "full_attention.qkv_projection"
             ), "medium"
 
     moe_prefix = "mtp_moe_block" if draft else "moe_block"

@@ -24,8 +24,11 @@ from models.common.timeline_artifact import build_timeline_artifact, write_timel
 from models.common.trace_mapping import find_eagle_mtp_decode_windows, load_trace
 from models.qwen35.profile.qwen35_graph_mapping import (
     attach_graph_stack_evidence,
+    load_contextual_eager_signatures,
+    load_unique_eager_kernel_signatures,
     map_graph_window,
 )
+from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_mtp6_cg_decode_gbs32"
@@ -37,37 +40,37 @@ CONTAINER_SHA256 = "87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae0
 TRACE_RANK = re.compile(r"-TP-(\d+)-DP-(\d+)-EP-(\d+)\.trace\.json\.gz$")
 SELECTED_WINDOW_INDICES = (2, 3, 4, 5)
 SGLANG_NODE_STATES = {
-    "gdn_moe_block.ba_projection": {
+    "gdn_attention.ba_projection": {
         "status": "fused",
-        "included_in": "gdn_moe_block.qkvz_projection",
+        "included_in": "gdn_attention.qkvz_projection",
     },
-    "gdn_moe_block.state_write": {
+    "gdn_attention.state_write": {
         "status": "fused",
-        "included_in": "gdn_moe_block.gated_delta_recurrence",
+        "included_in": "gdn_attention.gated_delta_recurrence",
     },
-    "full_attention_moe_block.partial_rope": {
+    "full_attention.partial_rope": {
         "status": "fused",
-        "included_in": "full_attention_moe_block.qk_norm",
+        "included_in": "full_attention.qk_norm",
     },
-    "full_attention_moe_block.attention_output_gate": {
+    "full_attention.attention_output_gate": {
         "status": "fused",
-        "included_in": "full_attention_moe_block.qk_norm",
+        "included_in": "full_attention.qk_norm",
     },
-    "full_attention_moe_block.kv_state_write": {
+    "full_attention.kv_state_write": {
         "status": "fused",
-        "included_in": "full_attention_moe_block.qkv_projection",
+        "included_in": "full_attention.qkv_projection",
     },
-    "mtp_full_attention_moe_block.partial_rope": {
+    "mtp_full_attention.partial_rope": {
         "status": "fused",
-        "included_in": "mtp_full_attention_moe_block.qk_norm",
+        "included_in": "mtp_full_attention.qk_norm",
     },
-    "mtp_full_attention_moe_block.attention_output_gate": {
+    "mtp_full_attention.attention_output_gate": {
         "status": "fused",
-        "included_in": "mtp_full_attention_moe_block.qk_norm",
+        "included_in": "mtp_full_attention.qk_norm",
     },
-    "mtp_full_attention_moe_block.kv_state_write": {
+    "mtp_full_attention.kv_state_write": {
         "status": "fused",
-        "included_in": "mtp_full_attention_moe_block.qkv_projection",
+        "included_in": "mtp_full_attention.qkv_projection",
     },
 }
 SGLANG_DECODE_NODE_STATES = {
@@ -100,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--traces", type=Path, nargs=4, required=True)
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--eager-mapping", type=Path, required=True)
+    parser.add_argument("--eager-trace", type=Path)
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-timeline", type=Path, required=True)
     parser.add_argument("--output-analysis", type=Path, required=True)
@@ -261,15 +265,19 @@ def _validate_step_signatures(validation: dict[str, Any], *, rank: int, step: in
     }
     if mismatch:
         raise ValueError(f"rank {rank} step {step} signature mismatch: {mismatch}")
-    if validation["attributed_duration_ratio"] < 0.95:
-        raise ValueError(
-            f"rank {rank} step {step} attributed duration ratio "
-            f"{validation['attributed_duration_ratio']:.4f} < 0.95"
-        )
 
 
 def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     protocol = validate_protocol(args.protocol)
+    eager_signatures = load_unique_eager_kernel_signatures(args.eager_mapping)
+    contextual_signatures = (
+        load_contextual_eager_signatures(
+            trace_path=args.eager_trace.resolve(),
+            mapping_path=args.eager_mapping.resolve(),
+        )
+        if args.eager_trace
+        else {}
+    )
     paths_by_rank = {trace_rank(path): path.resolve() for path in args.traces}
     if set(paths_by_rank) != {0, 1, 2, 3}:
         raise ValueError(f"incomplete four-rank trace coverage: {paths_by_rank}")
@@ -299,6 +307,8 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
                 window=window,
                 rank=rank,
                 step_index=window_index,
+                eager_signatures=eager_signatures,
+                contextual_signatures=contextual_signatures,
             )
             _validate_step_signatures(validation, rank=rank, step=window_index)
             mapped_rank.extend(mapped)
@@ -329,11 +339,6 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
     )
     total_reference_us = sum(float(event["dur_us"]) for event in reference_events)
     stack_ratio = stack_us / total_reference_us if total_reference_us else 0.0
-    if stack_ratio < 0.95:
-        raise ValueError(
-            f"eager stack transfer covers {stack_ratio:.4f} of reference-rank residency; "
-            "required >= 0.95"
-        )
 
     critical_wall_ms = [
         max(rank_wall_ms[rank][index] for rank in rank_wall_ms)
@@ -372,6 +377,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "mapped_residency_ratio": round(stack_ratio, 6),
             "policy": "exact kernel+IR, representative IR node, then declared containing IR scope",
         },
+        target_resolver=QWEN35_TIMELINE_TARGETS,
     )
 
     total_us = sum(float(event["dur_us"]) for event in all_mapping_rows)
@@ -380,6 +386,11 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         status_us[str(event["mapping_status"])] += float(event["dur_us"])
     attributed_ratio = (
         (status_us["mapped"] + status_us["fusion"]) / total_us if total_us else 0.0
+    )
+    strict_signature_us = sum(
+        float(event["dur_us"])
+        for event in all_mapping_rows
+        if event.get("attribution_method") == "unique_kernel_signature"
     )
     profile = {
         "schema_version": "profile.v2",
@@ -391,7 +402,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "variant_id": "sglang_agentx_dep4_mtp6_cg_decode_gbs32_128x64",
         "phase": "decode",
         "generation_mode": "mtp",
-        "entry_view": "generation_loop",
+        "entry_view": "top",
         "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1},
         "workload": {
@@ -434,9 +445,23 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             ],
             "eager_mapping_file": args.eager_mapping.name,
             "eager_mapping_sha256": sha256_file(args.eager_mapping),
-            "mapping_policy": "unique signatures plus exact GGGA layer order and eager-stack transfer",
+            "contextual_eager_trace": (
+                {
+                    "file": args.eager_trace.name,
+                    "sha256": sha256_file(args.eager_trace),
+                    "validated_repeated_slots": len(contextual_signatures),
+                }
+                if args.eager_trace
+                else None
+            ),
+            "mapping_policy": "unique static signatures plus exact eager signatures that always resolve to one leaf; unresolved intervals remain unmapped",
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
-            "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
+            "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
+            "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
+            "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
+            "semantic_attribution_gate": {"threshold": 0.95, "passed": attributed_ratio >= 0.95},
             "eager_stack_transfer_duration_ratio": round(stack_ratio, 6),
             "critical_decode_step_ms": timing_summary["critical_wall_ms"],
         },
@@ -451,7 +476,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "rank_validation": rank_validation,
         "status_duration_us": dict(status_us),
         "mapped_or_fusion_duration_ratio": attributed_ratio,
-        "strict_signature_duration_ratio": status_us["mapped"] / total_us,
+        "strict_signature_duration_ratio": strict_signature_us / total_us,
         "eager_stack_transfer_duration_ratio": stack_ratio,
         "node_metrics": profile["node_metrics"],
         "protocol_formal": protocol["formal"],

@@ -104,6 +104,47 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
     )
 
 
+def build_ancestor_target_resolver(
+    views: dict[str, dict[str, Any]],
+) -> Callable[[dict[str, Any]], list[str]]:
+    """Return a resolver that closes event targets over every drill ancestor.
+
+    A view may have more than one parent (for example the target decoder stack
+    is reachable both from the model overview and from target verification).
+    Keeping all parents makes the same measured event reachable from every
+    Architecture entry point without asking each profile producer to maintain
+    a second, fragile hierarchy table.
+    """
+
+    parents_by_view: dict[str, list[str]] = defaultdict(list)
+    for parent_view, view in views.items():
+        for node in view.get("nodes") or []:
+            child_view = node.get("drill")
+            if child_view and node.get("timeline_rollup", True):
+                parents_by_view[str(child_view)].append(
+                    f"{parent_view}.{node['id']}"
+                )
+
+    def resolve(event: dict[str, Any]) -> list[str]:
+        resolved = timeline_targets(event)
+        seen = set(resolved)
+        queue = list(resolved)
+        while queue:
+            target = queue.pop(0)
+            view_id, separator, _node_id = target.partition(".")
+            if not separator:
+                continue
+            for parent in parents_by_view.get(view_id, ()):
+                if parent in seen:
+                    continue
+                seen.add(parent)
+                resolved.append(parent)
+                queue.append(parent)
+        return resolved
+
+    return resolve
+
+
 def _events_path_for_mapping(mapping_path: Path) -> Path | None:
     name = mapping_path.name
     if not name.startswith("kernel_mapping."):
@@ -384,8 +425,10 @@ def build_timeline_artifact(
         start_us = float(raw_step["trace_start_us"])
         duration_us = float(raw_step["duration_us"])
         encoded_events = []
+        resolved_targets_by_event: list[tuple[dict[str, Any], list[str]]] = []
         for index, event in enumerate(step_events):
             targets = target_resolver(event)
+            resolved_targets_by_event.append((event, targets))
             encoded_events.append(
                 {
                     "event_id": f"r{reference_rank}-s{raw_step['step_index']}-k{index}",
@@ -408,8 +451,14 @@ def build_timeline_artifact(
                     "attribution_method": strings.add(
                         event.get("attribution_method")
                     ),
+                    "mapping_status": strings.add(event.get("mapping_status")),
                     "confidence": strings.add(event.get("confidence")),
                     "fusion_group": strings.add(event.get("fusion_group")),
+                    "unmapped_reason": strings.add(event.get("unmapped_reason")),
+                    "candidate_nodes": [
+                        strings.add(candidate)
+                        for candidate in (event.get("candidate_nodes") or [])
+                    ],
                     "cpu_op_name": strings.add(event.get("cpu_op_name")),
                     "stack_id": encode_stack(event),
                 }
@@ -427,9 +476,9 @@ def build_timeline_artifact(
         active_us = sum(stop - start for start, stop in active_intervals)
         residency_us = sum(float(event["dur_us"]) for event in step_events)
         events_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for event in step_events:
-            if event.get("node"):
-                events_by_node[str(event["node"])].append(event)
+        for event, targets in resolved_targets_by_event:
+            for target in targets:
+                events_by_node[target].append(event)
         node_timings = []
         for node, node_events in events_by_node.items():
             node_start = min(float(event["ts_us"]) for event in node_events)

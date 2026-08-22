@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.timeline_artifact import (  # noqa: E402
+    build_ancestor_target_resolver,
     build_timeline_artifact,
     timeline_targets,
     write_timeline_artifact,
@@ -134,6 +135,60 @@ def test_custom_target_and_kernel_kind_resolvers_are_supported() -> None:
         "main compute",
         "exchange",
     ]
+
+
+def test_ancestor_resolver_covers_every_drill_parent_and_aggregates_by_union() -> None:
+    views = {
+        "top": {
+            "nodes": [{"id": "stack", "drill": "stack"}],
+        },
+        "generation": {
+            "nodes": [{"id": "verify", "drill": "stack"}],
+        },
+        "stack": {
+            "nodes": [{"id": "layer", "drill": "block"}],
+        },
+        "block": {
+            "nodes": [{"id": "attention", "drill": "attention"}],
+        },
+        "attention": {
+            "nodes": [{"id": "projection"}, {"id": "kernel"}],
+        },
+    }
+    resolver = build_ancestor_target_resolver(views)
+    first = _event("attention.projection", timestamp=101.0, duration=4.0, stream=1)
+    second = _event("attention.kernel", timestamp=103.0, duration=4.0, stream=2)
+
+    assert resolver(first) == [
+        "attention.projection",
+        "block.attention",
+        "stack.layer",
+        "top.stack",
+        "generation.verify",
+    ]
+
+    artifact = build_timeline_artifact(
+        profile_id="profile",
+        phase="decode",
+        reference_rank=0,
+        steps=[{
+            "step_index": 1,
+            "trace_start_us": 100.0,
+            "duration_us": 10.0,
+            "events": [first, second],
+        }],
+        timing_summary={},
+        raw_trace={"file": "trace.json.gz", "sha256": "0" * 64},
+        stack_source={"source": "eager_trace"},
+        target_resolver=resolver,
+    )
+    strings = artifact["strings"]
+    timings = {
+        strings[item["ir_node"]]: item for item in artifact["steps"][0]["node_timings"]
+    }
+    assert timings["block.attention"]["gpu_residency_us"] == 8.0
+    assert timings["block.attention"]["active_gpu_us"] == 6.0
+    assert timings["block.attention"]["elapsed_us"] == 6.0
 
 
 def test_timeline_separates_elapsed_active_residency_idle_and_overlap() -> None:

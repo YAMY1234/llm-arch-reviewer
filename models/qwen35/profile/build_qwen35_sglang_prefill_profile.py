@@ -7,6 +7,7 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -33,8 +34,12 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
 )
 from models.qwen35.profile.qwen35_graph_mapping import (
     attach_graph_stack_evidence,
+    load_occurrence_stack_mapping,
+    load_unique_eager_kernel_signatures,
     map_prefill_window,
+    transfer_occurrence_stack_mapping,
 )
+from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 PROFILE_ID = "qwen35_sglang_attention_dp4_moe_ep4_target_prefill_8k"
@@ -45,7 +50,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--traces", type=Path, nargs=4, required=True)
     parser.add_argument("--protocol", type=Path, required=True)
-    parser.add_argument("--eager-mapping", type=Path, required=True)
+    parser.add_argument("--eager-mapping", type=Path)
+    parser.add_argument(
+        "--occurrence-mappings",
+        type=Path,
+        nargs=4,
+        help="four rank-local kernel_mapping.tpN.jsonl files from this exact trace set",
+    )
+    parser.add_argument("--attribution-job-id", type=int)
     parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-timeline", type=Path, required=True)
@@ -135,15 +147,36 @@ def _full_prefill_annotation(events: list[dict[str, Any]], *, rank: int) -> dict
 
 
 def build(args: argparse.Namespace):
+    occurrence_mode = bool(args.occurrence_mappings)
+    if occurrence_mode == bool(args.eager_mapping):
+        raise ValueError(
+            "choose exactly one of --eager-mapping or --occurrence-mappings"
+        )
+    if occurrence_mode and args.attribution_job_id is None:
+        raise ValueError("--attribution-job-id is required with occurrence transfer")
     protocol = _validate_protocol(args.protocol)
+    eager_signatures = (
+        {} if occurrence_mode else load_unique_eager_kernel_signatures(args.eager_mapping)
+    )
     paths_by_rank = {trace_rank(path): path.resolve() for path in args.traces}
     if set(paths_by_rank) != {0, 1, 2, 3}:
         raise ValueError(f"incomplete four-rank trace coverage: {paths_by_rank}")
+
+    occurrence_by_rank: dict[int, Path] = {}
+    if occurrence_mode:
+        for path in args.occurrence_mappings:
+            match = re.search(r"\.tp(?P<rank>[0-3])\.jsonl$", path.name)
+            if match is None:
+                raise ValueError(f"cannot infer rank from occurrence mapping {path}")
+            occurrence_by_rank[int(match.group("rank"))] = path.resolve()
+        if set(occurrence_by_rank) != {0, 1, 2, 3}:
+            raise ValueError(f"incomplete occurrence mappings: {occurrence_by_rank}")
 
     rank_metrics: dict[int, dict[str, Any]] = {}
     rank_validation: dict[int, dict[str, Any]] = {}
     rank_wall_ms: dict[int, float] = {}
     all_mapping_rows: list[dict[str, Any]] = []
+    strict_signature_us = 0.0
     reference_events: list[dict[str, Any]] = []
     reference_start = 0.0
     for rank, path in sorted(paths_by_rank.items()):
@@ -157,15 +190,34 @@ def build(args: argparse.Namespace):
             end_us=end_us,
             rank=rank,
             step_index=0,
+            eager_signatures=eager_signatures,
         )
+        strict_signature_us += validation["strict_signature_duration_ratio"] * sum(
+            float(event["dur_us"]) for event in mapped
+        )
+        if occurrence_mode:
+            mapping_path = occurrence_by_rank[rank]
+            events_path = mapping_path.parent / f"events.tp{rank}.jsonl"
+            source_mapped, _source_validation = load_occurrence_stack_mapping(
+                events_path=events_path,
+                mapping_path=mapping_path,
+                rank=rank,
+            )
+            mapped, validation = transfer_occurrence_stack_mapping(
+                mapped, source_mapped
+            )
         rank_metrics[rank] = _metrics_for_rank(mapped, 1)
         rank_validation[rank] = validation
         rank_wall_ms[rank] = (end_us - start_us) / 1000.0
         all_mapping_rows.extend(mapped)
         if rank == 0:
             reference_start = start_us
-            reference_events = attach_graph_stack_evidence(
-                mapped, mapping_path=args.eager_mapping
+            reference_events = (
+                mapped
+                if occurrence_mode
+                else attach_graph_stack_evidence(
+                    mapped, mapping_path=args.eager_mapping
+                )
             )
 
     reference_total_us = sum(float(event["dur_us"]) for event in reference_events)
@@ -173,11 +225,6 @@ def build(args: argparse.Namespace):
         float(event["dur_us"]) for event in reference_events if event.get("python_stack")
     )
     stack_ratio = stack_us / reference_total_us if reference_total_us else 0.0
-    if stack_ratio < 0.95:
-        raise ValueError(
-            f"eager stack transfer covers {stack_ratio:.4f} of prefill residency; required >= 0.95"
-        )
-
     critical_wall_ms = max(rank_wall_ms.values())
     timing_summary = {
         "semantics": "critical wall time is maximum across ranks; GPU residency is never summed across ranks",
@@ -204,12 +251,28 @@ def build(args: argparse.Namespace):
             "format": "PyTorch profiler trace JSON gzip",
             "rank": 0,
         },
-        stack_source={
-            "mode": "eager_trace_transfer",
-            "file": args.eager_mapping.name,
-            "sha256": sha256_file(args.eager_mapping),
-            "mapped_residency_ratio": round(stack_ratio, 6),
-        },
+        stack_source=(
+            {
+                "mode": "exact_occurrence_sequence_transfer",
+                "files": [
+                    {
+                        "rank": rank,
+                        "file": path.name,
+                        "sha256": sha256_file(path),
+                    }
+                    for rank, path in sorted(occurrence_by_rank.items())
+                ],
+                "mapped_residency_ratio": round(stack_ratio, 6),
+            }
+            if occurrence_mode
+            else {
+                "mode": "eager_trace_transfer",
+                "file": args.eager_mapping.name,
+                "sha256": sha256_file(args.eager_mapping),
+                "mapped_residency_ratio": round(stack_ratio, 6),
+            }
+        ),
+        target_resolver=QWEN35_TIMELINE_TARGETS,
     )
 
     total_us = sum(float(event["dur_us"]) for event in all_mapping_rows)
@@ -265,10 +328,32 @@ def build(args: argparse.Namespace):
                 {"rank": rank, "file": path.name, "sha256": sha256_file(path)}
                 for rank, path in sorted(paths_by_rank.items())
             ],
-            "mapping_policy": "unique signatures plus exact GGGA layer order and eager-stack transfer",
+            "mapping_policy": (
+                "occurrence-local Python stacks transferred only across an exact contiguous kernel-name sequence, plus narrowly validated kernel/sequence slots; low-confidence generic occurrences remain unmapped"
+                if occurrence_mode
+                else "unique static signatures plus exact eager signatures that always resolve to one leaf; unresolved intervals remain unmapped"
+            ),
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
-            "strict_signature_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
+            "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
+            "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
+            "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
+            "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
+            "semantic_attribution_gate": {"threshold": 0.95, "passed": attributed_ratio >= 0.95},
             "eager_stack_transfer_duration_ratio": round(stack_ratio, 6),
+            "occurrence_stack_files": (
+                [
+                    {
+                        "rank": rank,
+                        "file": path.name,
+                        "sha256": sha256_file(path),
+                    }
+                    for rank, path in sorted(occurrence_by_rank.items())
+                ]
+                if occurrence_mode
+                else []
+            ),
+            "attribution_job_id": args.attribution_job_id if occurrence_mode else None,
             "critical_prefill_wall_ms": round(critical_wall_ms, 6),
         },
         "timeline": {},
@@ -282,7 +367,7 @@ def build(args: argparse.Namespace):
         "rank_validation": rank_validation,
         "status_duration_us": dict(status_us),
         "mapped_or_fusion_duration_ratio": attributed_ratio,
-        "strict_signature_duration_ratio": status_us["mapped"] / total_us,
+        "strict_signature_duration_ratio": strict_signature_us / total_us,
         "eager_stack_transfer_duration_ratio": stack_ratio,
         "node_metrics": profile["node_metrics"],
         "protocol_formal": protocol["formal"],

@@ -216,6 +216,7 @@ def _layer_schedule(layer_types: list[str]) -> dict[str, Any]:
                     else "qwen3_5.decoder.full_attention_moe_layer"
                 ),
                 drill="gdn_moe_block" if is_linear else "full_attention_moe_block",
+                timeline_rollup=False,
                 layer_index=index,
                 layer_type=layer_type,
             )
@@ -236,17 +237,82 @@ def _layer_schedule(layer_types: list[str]) -> dict[str, Any]:
     }
 
 
-def _gdn_view(config: dict[str, Any]) -> dict[str, Any]:
+def _decoder_layer_view(*, mtp: bool = False, gdn: bool = False) -> dict[str, Any]:
+    semantic_prefix = "generation.mtp" if mtp else "qwen3_5"
+    attention_label = "Gated Delta Network" if gdn else "Gated grouped-query attention"
+    attention_view = "gdn_attention" if gdn else ("mtp_full_attention" if mtp else "full_attention")
+    moe_view = "mtp_moe_block" if mtp else "moe_block"
+
+    def semantic(suffix: str) -> str:
+        return f"{semantic_prefix}.{suffix}"
+
+    return {
+        "title": (
+            "Qwen3.5 MTP full-attention + MoE decoder layer"
+            if mtp
+            else f"Qwen3.5 {attention_label} + MoE decoder layer"
+        ),
+        "nodes": [
+            _node("input_hidden", "Layer input", "io", semantic("layer_input")),
+            _node(
+                "input_norm",
+                "Pre-attention RMSNorm" if not gdn else "Pre-GDN RMSNorm",
+                "norm",
+                semantic("input_rms_norm"),
+            ),
+            _node(
+                "attention",
+                attention_label,
+                "attn",
+                semantic("gdn" if gdn else "attention"),
+                drill=attention_view,
+            ),
+            _node(
+                "attention_residual",
+                "Attention residual add" if not gdn else "GDN residual add",
+                "elem",
+                semantic("residual_add"),
+            ),
+            _node(
+                "post_attention_norm",
+                "Pre-MoE RMSNorm",
+                "norm",
+                semantic("post_attention_rms_norm"),
+            ),
+            _node(
+                "moe",
+                "Sparse MoE + shared expert",
+                "moe",
+                semantic("moe"),
+                drill=moe_view,
+            ),
+            _node("layer_residual", "MoE residual add", "elem", semantic("residual_add")),
+            _node("output_hidden", "Layer output", "io", semantic("layer_output")),
+        ],
+        "edges": [
+            _edge("input_hidden", "input_norm", shape="[N,H]", dtype="bf16"),
+            _edge("input_norm", "attention", dtype="bf16"),
+            _edge("input_hidden", "attention_residual", label="residual"),
+            _edge("attention", "attention_residual"),
+            _edge("attention_residual", "post_attention_norm", dtype="bf16"),
+            _edge("post_attention_norm", "moe", dtype="bf16"),
+            _edge("attention_residual", "layer_residual", label="residual"),
+            _edge("moe", "layer_residual"),
+            _edge("layer_residual", "output_hidden", shape="[N,H]", dtype="bf16"),
+        ],
+    }
+
+
+def _gdn_attention_view(config: dict[str, Any]) -> dict[str, Any]:
     hidden = config["hidden_size"]
     key_dim = config["linear_num_key_heads"] * config["linear_key_head_dim"]
     value_dim = config["linear_num_value_heads"] * config["linear_value_head_dim"]
     conv_dim = 2 * key_dim + value_dim
     window = config["linear_conv_kernel_dim"] - 1
     return {
-        "title": "Qwen3.5 Gated Delta Network + MoE decoder layer",
+        "title": "Qwen3.5 Gated Delta Network module",
         "nodes": [
-            _node("input_hidden", "Layer input", "io", "qwen3_5.layer_input"),
-            _node("input_norm", "Pre-GDN RMSNorm", "norm", "qwen3_5.input_rms_norm"),
+            _node("module_input", "Normalized hidden states", "io", "qwen3_5.gdn.input"),
             _node(
                 "qkvz_projection",
                 "Q/K/V/Z projection",
@@ -305,16 +371,11 @@ def _gdn_view(config: dict[str, Any]) -> dict[str, Any]:
                 "qwen3_5.gdn.output_gate_norm",
             ),
             _node("output_projection", "GDN output projection", "gemm", "qwen3_5.gdn.out_proj"),
-            _node("attention_residual", "GDN residual add", "elem", "qwen3_5.residual_add"),
-            _node("post_attention_norm", "Pre-MoE RMSNorm", "norm", "qwen3_5.post_attention_rms_norm"),
-            _node("moe", "Sparse MoE + shared expert", "moe", "qwen3_5.moe", drill="moe_block"),
-            _node("layer_residual", "MoE residual add", "elem", "qwen3_5.residual_add"),
-            _node("output_hidden", "Layer output", "io", "qwen3_5.layer_output"),
+            _node("module_output", "GDN output", "io", "qwen3_5.gdn.output"),
         ],
         "edges": [
-            _edge("input_hidden", "input_norm", shape="[N,H]", dtype="bf16"),
-            _edge("input_norm", "qkvz_projection", dtype="bf16"),
-            _edge("input_norm", "ba_projection", dtype="bf16"),
+            _edge("module_input", "qkvz_projection", dtype="bf16"),
+            _edge("module_input", "ba_projection", dtype="bf16"),
             _edge("qkvz_projection", "causal_conv", label="Q/K/V"),
             _edge("conv_state_read", "causal_conv", kind="state_read"),
             _edge("causal_conv", "gated_delta_recurrence", label="convolved Q/K/V"),
@@ -324,32 +385,24 @@ def _gdn_view(config: dict[str, Any]) -> dict[str, Any]:
             _edge("gated_delta_recurrence", "output_gate_norm"),
             _edge("qkvz_projection", "output_gate_norm", label="Z gate"),
             _edge("output_gate_norm", "output_projection", dtype="bf16"),
-            _edge("input_hidden", "attention_residual", label="residual"),
-            _edge("output_projection", "attention_residual"),
-            _edge("attention_residual", "post_attention_norm", dtype="bf16"),
-            _edge("post_attention_norm", "moe", dtype="bf16"),
-            _edge("attention_residual", "layer_residual", label="residual"),
-            _edge("moe", "layer_residual"),
-            _edge("layer_residual", "output_hidden", shape="[N,H]", dtype="bf16"),
+            _edge("output_projection", "module_output", shape="[N,H]", dtype="bf16"),
         ],
     }
 
 
-def _full_attention_view(config: dict[str, Any], *, mtp: bool = False) -> dict[str, Any]:
+def _full_attention_module_view(config: dict[str, Any], *, mtp: bool = False) -> dict[str, Any]:
     q_width = config["num_attention_heads"] * config["head_dim"]
     kv_width = config["num_key_value_heads"] * config["head_dim"]
     semantic_prefix = "generation.mtp" if mtp else "qwen3_5"
     title_prefix = "Qwen3.5 MTP draft" if mtp else "Qwen3.5"
-    moe_view = "mtp_moe_block" if mtp else "moe_block"
 
     def semantic(suffix: str) -> str:
         return f"{semantic_prefix}.{suffix}"
 
     return {
-        "title": f"{title_prefix} gated GQA + MoE decoder layer",
+        "title": f"{title_prefix} gated grouped-query attention module",
         "nodes": [
-            _node("input_hidden", "Layer input", "io", semantic("layer_input")),
-            _node("input_norm", "Pre-attention RMSNorm", "norm", semantic("input_rms_norm")),
+            _node("module_input", "Normalized hidden states", "io", semantic("attention.input")),
             _node(
                 "qkv_projection",
                 "Q/K/V projection",
@@ -385,15 +438,10 @@ def _full_attention_view(config: dict[str, Any], *, mtp: bool = False) -> dict[s
                 semantic("attention.output_gate"),
             ),
             _node("output_projection", "Attention output projection", "gemm", semantic("attention.o_proj")),
-            _node("attention_residual", "Attention residual add", "elem", semantic("residual_add")),
-            _node("post_attention_norm", "Pre-MoE RMSNorm", "norm", semantic("post_attention_rms_norm")),
-            _node("moe", "Sparse MoE + shared expert", "moe", semantic("moe"), drill=moe_view),
-            _node("layer_residual", "MoE residual add", "elem", semantic("residual_add")),
-            _node("output_hidden", "Layer output", "io", semantic("layer_output")),
+            _node("module_output", "Attention output", "io", semantic("attention.output")),
         ],
         "edges": [
-            _edge("input_hidden", "input_norm", dtype="bf16"),
-            _edge("input_norm", "qkv_projection", dtype="bf16"),
+            _edge("module_input", "qkv_projection", dtype="bf16"),
             _edge("qkv_projection", "qk_norm", label="Q/K"),
             _edge("qk_norm", "partial_rope"),
             _edge("partial_rope", "causal_gqa", label="Q/K"),
@@ -404,13 +452,7 @@ def _full_attention_view(config: dict[str, Any], *, mtp: bool = False) -> dict[s
             _edge("causal_gqa", "attention_output_gate"),
             _edge("qkv_projection", "attention_output_gate", label="gate"),
             _edge("attention_output_gate", "output_projection", dtype="bf16"),
-            _edge("input_hidden", "attention_residual", label="residual"),
-            _edge("output_projection", "attention_residual"),
-            _edge("attention_residual", "post_attention_norm", dtype="bf16"),
-            _edge("post_attention_norm", "moe", dtype="bf16"),
-            _edge("attention_residual", "layer_residual", label="residual"),
-            _edge("moe", "layer_residual"),
-            _edge("layer_residual", "output_hidden", dtype="bf16"),
+            _edge("output_projection", "module_output", dtype="bf16"),
         ],
     }
 
@@ -619,6 +661,7 @@ def _generation_view() -> dict[str, Any]:
                 "block",
                 "generation.mtp.draft",
                 drill="mtp_draft_head",
+                timeline_rollup=False,
             ),
             _node("candidate_tokens", "Candidate tokens", "io", "generation.mtp.candidates"),
             _node(
@@ -627,6 +670,7 @@ def _generation_view() -> dict[str, Any]:
                 "block",
                 "generation.mtp.target_verify",
                 drill="stack",
+                timeline_rollup=False,
             ),
             _node(
                 "tentative_state",
@@ -779,10 +823,13 @@ def build_model_ir(raw_config: dict[str, Any], config_sha256: str) -> dict[str, 
             "top": _top_view(text["hidden_size"], text["vocab_size"]),
             "stack": _stack_view(layer_types),
             "layer_schedule": _layer_schedule(layer_types),
-            "gdn_moe_block": _gdn_view(text),
-            "full_attention_moe_block": _full_attention_view(text),
+            "gdn_moe_block": _decoder_layer_view(gdn=True),
+            "gdn_attention": _gdn_attention_view(text),
+            "full_attention_moe_block": _decoder_layer_view(),
+            "full_attention": _full_attention_module_view(text),
             "moe_block": _moe_view(text),
-            "mtp_full_attention_moe_block": _full_attention_view(text, mtp=True),
+            "mtp_full_attention_moe_block": _decoder_layer_view(mtp=True),
+            "mtp_full_attention": _full_attention_module_view(text, mtp=True),
             "mtp_moe_block": _moe_view(text, mtp=True),
             "state_tensors": _state_view(text),
             "mtp_draft_head": _mtp_head_view(text),
@@ -953,26 +1000,29 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
         "stack.gdn_layer",
         "stack.full_attention_layer",
         "gdn_moe_block.input_norm",
-        "gdn_moe_block.qkvz_projection",
-        "gdn_moe_block.ba_projection",
-        "gdn_moe_block.causal_conv",
-        "gdn_moe_block.gated_delta_recurrence",
-        "gdn_moe_block.output_gate_norm",
-        "gdn_moe_block.output_projection",
+        "gdn_moe_block.attention",
+        "gdn_attention.qkvz_projection",
+        "gdn_attention.ba_projection",
+        "gdn_attention.causal_conv",
+        "gdn_attention.gated_delta_recurrence",
+        "gdn_attention.output_gate_norm",
+        "gdn_attention.output_projection",
         "full_attention_moe_block.input_norm",
-        "full_attention_moe_block.qkv_projection",
-        "full_attention_moe_block.qk_norm",
-        "full_attention_moe_block.partial_rope",
-        "full_attention_moe_block.causal_gqa",
-        "full_attention_moe_block.attention_output_gate",
-        "full_attention_moe_block.output_projection",
+        "full_attention_moe_block.attention",
+        "full_attention.qkv_projection",
+        "full_attention.qk_norm",
+        "full_attention.partial_rope",
+        "full_attention.causal_gqa",
+        "full_attention.attention_output_gate",
+        "full_attention.output_projection",
         "mtp_full_attention_moe_block.input_norm",
-        "mtp_full_attention_moe_block.qkv_projection",
-        "mtp_full_attention_moe_block.qk_norm",
-        "mtp_full_attention_moe_block.partial_rope",
-        "mtp_full_attention_moe_block.causal_gqa",
-        "mtp_full_attention_moe_block.attention_output_gate",
-        "mtp_full_attention_moe_block.output_projection",
+        "mtp_full_attention_moe_block.attention",
+        "mtp_full_attention.qkv_projection",
+        "mtp_full_attention.qk_norm",
+        "mtp_full_attention.partial_rope",
+        "mtp_full_attention.causal_gqa",
+        "mtp_full_attention.attention_output_gate",
+        "mtp_full_attention.output_projection",
         "mtp_draft_head.fc_projection",
         "mtp_draft_head.draft_decoder_layer",
         "mtp_draft_head.shared_lm_head",
@@ -985,13 +1035,13 @@ def build_execution_plan(layer_types: list[str]) -> dict[str, Any]:
     for index, _layer_type in enumerate(layer_types):
         transforms.append(_annotate(f"layer_schedule.layer_{index:02d}", **dp_execution))
     for target in (
-        "gdn_moe_block.conv_state_read",
-        "gdn_moe_block.recurrent_state_read",
-        "gdn_moe_block.state_write",
-        "full_attention_moe_block.kv_state_read",
-        "full_attention_moe_block.kv_state_write",
-        "mtp_full_attention_moe_block.kv_state_read",
-        "mtp_full_attention_moe_block.kv_state_write",
+        "gdn_attention.conv_state_read",
+        "gdn_attention.recurrent_state_read",
+        "gdn_attention.state_write",
+        "full_attention.kv_state_read",
+        "full_attention.kv_state_write",
+        "mtp_full_attention.kv_state_read",
+        "mtp_full_attention.kv_state_write",
         "state_tensors.attention_keys",
         "state_tensors.attention_values",
         "state_tensors.mtp_draft_keys",

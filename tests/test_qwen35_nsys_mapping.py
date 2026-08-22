@@ -11,6 +11,7 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     NsysKernel,
     NsysStep,
     TARGET_PATTERN,
+    _direct_node,
     load_nsys_steps,
     map_decode_step,
     map_prefill_step,
@@ -78,8 +79,12 @@ def test_trt_decode_mapping_keeps_target_and_six_mtp_collectives_separate():
     assert validation["draft_ep4_dispatch"] == 6
     assert validation["mtp_passes"] == 6
     assert validation["timing_closure_us"] == 0
-    assert validation["attributed_duration_ratio"] == 1.0
-    assert all(event["mapping_status"] in {"mapped", "fusion"} for event in mapped)
+    assert validation["attributed_duration_ratio"] < 1.0
+    assert validation["timeline_interval_coverage_ratio"] == 1.0
+    unresolved = [event for event in mapped if event["mapping_status"] == "unmapped"]
+    assert unresolved
+    assert all(event["node"] is None for event in unresolved)
+    assert all(event["candidate_nodes"] and event["unmapped_reason"] for event in unresolved)
     assert sum(event["node"] == "moe_block.target_ep4_dispatch" for event in mapped) == 60
     assert sum(event["node"] == "mtp_moe_block.draft_ep4_dispatch" for event in mapped) == 6
 
@@ -93,6 +98,33 @@ def test_trt_decode_mapping_rejects_missing_mtp_pass():
         assert "66 MoE calls" in str(error) or "six MTP" in str(error)
     else:
         raise AssertionError("missing MTP pass was accepted")
+
+
+def test_trt_signature_slots_are_narrow_and_residual_fusion_has_two_leaves():
+    assert _direct_node(
+        "nvjet_sm103_qqtst_unknown_shape",
+        section="target",
+        layer_kind="gdn",
+    ) is None
+    qkvz = _direct_node(
+        "nvjet_sm103_qqtst_144x128_128x8_2x2f_2cta_h_bz_TNN",
+        section="target",
+        layer_kind="gdn",
+    )
+    assert qkvz is not None
+    assert qkvz.node == "gdn_attention.qkvz_projection"
+    assert qkvz.attribution_method == "validated_graph_signature_slot"
+
+    residual = _direct_node(
+        "kernel_flashinfernorm_fused_add_rmsnorm_kernel",
+        section="target",
+        layer_kind="gdn",
+        before_moe=True,
+    )
+    assert residual is not None
+    assert residual.status == "fusion"
+    assert residual.node == "gdn_moe_block.attention_residual"
+    assert residual.ir_targets == ("gdn_moe_block.post_attention_norm",)
 
 
 def test_trt_prefill_mapping_distinguishes_owner_compute_and_collective_only_rank():
@@ -158,8 +190,8 @@ def test_trt_prefill_mapping_recognizes_sm103_and_context_causal_conv_signatures
     assert validation["owner_compute"] is True
     assert validation["target_gdn_layers"] == 45
     assert validation["target_attention_layers"] == 15
-    assert sum(event["node"] == "gdn_moe_block.causal_conv" for event in mapped) == 45
-    assert sum(event["node"] == "full_attention_moe_block.causal_gqa" for event in mapped) == 15
+    assert sum(event["node"] == "gdn_attention.causal_conv" for event in mapped) == 45
+    assert sum(event["node"] == "full_attention.causal_gqa" for event in mapped) == 15
 
 
 def test_nsys_parser_splits_overlapping_graph_executions_by_node_occurrence(tmp_path):

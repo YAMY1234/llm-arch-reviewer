@@ -13,6 +13,7 @@ from models.qwen35.profile.qwen35_graph_mapping import (
     direct_graph_mapping,
     map_graph_window,
     map_prefill_window,
+    transfer_occurrence_stack_mapping,
 )
 from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
     parse_benchmark_snapshot,
@@ -77,7 +78,7 @@ def test_generation_lifecycle_signatures_are_not_left_in_a_generic_scope():
     assert bonus.ir_targets == ("generation_loop.accept_prefix",)
 
 
-def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_kernel():
+def test_graph_window_preserves_unknown_kernels_as_explicit_unmapped_events():
     events = [
         _annotation("step[TARGET_VERIFY bs=8]", 100.0, 700.0),
         _annotation("draft_extend", 820.0, 40.0),
@@ -112,11 +113,20 @@ def test_graph_window_requires_exact_60_layer_ggga_sequence_and_labels_every_ker
     )
     assert validation["signature_counts"]["target_gdn_layers"] == 45
     assert validation["signature_counts"]["target_attention_layers"] == 15
-    assert validation["attributed_duration_ratio"] == 1.0
+    assert validation["attributed_duration_ratio"] < 1.0
+    assert validation["timeline_interval_coverage_ratio"] == 1.0
     assert validation["target_verify_batch_size"] == 8
     assert validation["signature_counts"]["mtp_draft_rounds"] == 5
-    assert {event["mapping_status"] for event in mapped} == {"mapped", "fusion"}
-    assert all(event["node"] for event in mapped)
+    assert {event["mapping_status"] for event in mapped} == {
+        "mapped",
+        "fusion",
+        "unmapped",
+    }
+    unresolved = [event for event in mapped if event["mapping_status"] == "unmapped"]
+    assert unresolved
+    assert all(event["node"] is None for event in unresolved)
+    assert all(event["candidate_nodes"] for event in unresolved)
+    assert all(event["unmapped_reason"] for event in unresolved)
     assert any(event["layer_id"] == 59 for event in mapped)
     assert any(event["node"] == "generation_loop.replay_gdn" for event in mapped)
     assert all(
@@ -168,6 +178,53 @@ def test_prefill_window_separates_target_layers_from_mtp_seed():
     assert validation["signature_counts"]["mtp_seed_attention_layers"] == 1
     assert validation["signature_counts"]["mtp_seed_ep4_dispatch"] == 2
     assert all(event["layer_id"] is None for event in mapped if event["substage"] == "mtp_seed_prefill")
+
+
+def test_occurrence_transfer_requires_one_exact_contiguous_sequence():
+    target = [
+        {
+            "event_id": f"target-{index}",
+            "kernel_name": name,
+            "dur_us": 2.0,
+            "mapping_status": "unmapped",
+            "attribution_method": "unresolved",
+        }
+        for index, name in enumerate(("scheduler", "a", "b", "c"))
+    ]
+    source = [
+        {
+            "event_id": f"source-{index}",
+            "kernel_name": name,
+            "dur_us": 99.0,
+            "node": "gdn_attention.causal_conv",
+            "ir_targets": [],
+            "mapping_status": "mapped",
+            "attribution_method": "occurrence_python_stack",
+            "confidence": "high",
+            "python_stack": [name],
+        }
+        for index, name in enumerate(("a", "b", "c", "profiler_tail"))
+    ]
+    transferred, validation = transfer_occurrence_stack_mapping(target, source)
+    assert transferred[0]["mapping_status"] == "unmapped"
+    assert [event["node"] for event in transferred[1:]] == [
+        "gdn_attention.causal_conv"
+    ] * 3
+    assert [event["dur_us"] for event in transferred] == [2.0] * 4
+    assert validation["occurrence_alignment"] == {
+        "method": "exact_contiguous_kernel_name_sequence",
+        "target_prefix_untransferred": 1,
+        "aligned_kernel_count": 3,
+        "source_suffix_unused": 1,
+    }
+
+    source[1]["kernel_name"] = "different"
+    try:
+        transfer_occurrence_stack_mapping(target, source)
+    except ValueError as error:
+        assert "exact contiguous alignment" in str(error)
+    else:
+        raise AssertionError("fuzzy occurrence sequence was accepted")
 
 
 def test_eager_window_uses_preceding_draft_when_one_step_stop_cuts_tail():

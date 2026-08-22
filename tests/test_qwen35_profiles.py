@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_ROOT = REPO_ROOT / "catalog" / "qwen35"
@@ -54,7 +56,20 @@ def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
         assert len(evidence["model_config_sha256"]) == 64
         assert len(evidence["container_sha256"]) == 64
         threshold = 0.95 if profile["implementation_id"].startswith("sglang_") else 0.90
-        assert evidence["mapped_or_fusion_duration_ratio"] >= threshold
+        assert evidence["semantic_attribution_gate"] == {
+            "threshold": threshold,
+            "passed": evidence["mapped_or_fusion_duration_ratio"] >= threshold,
+        }
+        assert math.isclose(
+            evidence["mapped_duration_ratio"]
+            + evidence["fusion_duration_ratio"]
+            + evidence["unmapped_duration_ratio"],
+            1.0,
+            abs_tol=2e-6,
+        )
+        assert math.isclose(
+            evidence["timeline_interval_coverage_ratio"], 1.0, abs_tol=1e-6
+        )
 
         timeline_path = path.parent / profile["timeline"]["artifact"]
         assert _sha256(timeline_path) == profile["timeline"]["sha256"]
@@ -108,6 +123,62 @@ def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
                     node["module_gap_us"], node_elapsed - node_active, abs_tol=2e-2
                 )
                 assert node["other_gpu_work_us"] >= 0
+
+
+def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
+    model_ir = yaml.safe_load((CATALOG_ROOT / "model_ir.yaml").read_text())
+    resolver = QWEN35_TIMELINE_TARGETS
+    bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
+    variant = next(iter(bundle["execution_variants"].values()))
+    valid_nodes = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in variant["views"].items()
+        for node in view["nodes"]
+    }
+
+    for path, profile in _profiles():
+        timeline = json.loads(
+            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+        )
+        strings = timeline["strings"]
+        profile_targets: set[str] = set()
+        for step in timeline["steps"]:
+            timing_targets = {
+                strings[item["ir_node"]] for item in step["node_timings"]
+            }
+            for event in step["events"]:
+                direct = strings[event["ir_node"]] if event["ir_node"] is not None else ""
+                targets = {strings[index] for index in event["ir_targets"]}
+                profile_targets.update(targets)
+                expected = set(resolver({"node": direct, "ir_targets": list(targets)}))
+                assert expected <= targets
+                assert targets <= timing_targets
+                assert not any(target.startswith("layer_schedule.layer_") for target in targets)
+
+                status = strings[event["mapping_status"]]
+                assert status in {"mapped", "fusion", "unmapped"}
+                if status == "unmapped":
+                    assert not direct
+                    assert event["unmapped_reason"] is not None
+                    candidates = {strings[index] for index in event["candidate_nodes"]}
+                    assert candidates
+                    assert candidates <= valid_nodes
+                else:
+                    assert direct in valid_nodes
+                if status == "fusion":
+                    assert event["fusion_group"] is not None
+                    assert strings[event["attribution_method"]] in {
+                        "kernel_signature_fusion",
+                        "validated_graph_sequence_fusion",
+                    }
+                    assert len(targets) >= 2
+
+        if any(target.startswith("gdn_attention.") for target in profile_targets):
+            assert {"gdn_moe_block.attention", "stack.gdn_layer", "top.decoder_stack"} <= profile_targets
+        if any(target.startswith("full_attention.") for target in profile_targets):
+            assert {"full_attention_moe_block.attention", "stack.full_attention_layer", "top.decoder_stack"} <= profile_targets
+        if any(target.startswith("moe_block.") for target in profile_targets):
+            assert {"gdn_moe_block.moe", "full_attention_moe_block.moe"} & profile_targets
 
 
 def test_decode_timelines_expose_lifecycle_and_preserve_capture_boundaries():
