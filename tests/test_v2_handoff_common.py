@@ -344,8 +344,13 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "node.drill && Number(node.layer_count) > 0" in viewer
     assert "function comparisonKernelEntries(cell)" in viewer
     assert "function comparisonAggregate(cell)" in viewer
+    assert "function prepareComparisonTarget(target, summary = false)" in viewer
     assert "function exportComparisonCsv()" in viewer
     assert "do not read the columns as a direct engine speedup" in viewer
+    assert "GPU Σ is summed kernel residency" in viewer
+    assert 'rowKind: "module_summary"' in viewer
+    assert '"sglang_active_union_ms", "sglang_wall_elapsed_ms"' in viewer
+    assert '"trtllm_active_union_ms", "trtllm_wall_elapsed_ms"' in viewer
     assert viewer.index('if (cell?.status === "fused")') < viewer.index(
         "const residency = cell?.gpu_residency_ms ?? cell?.ms_per_iter;"
     )

@@ -210,7 +210,7 @@
   }
   #compare-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
   table.module-compare {
-    width: 100%; min-width: 1580px; border-collapse: separate; border-spacing: 0;
+    width: 100%; min-width: 1640px; border-collapse: separate; border-spacing: 0;
     table-layout: fixed; font-size: 11px;
   }
   table.module-compare col.module-l1 { width: 180px; }
@@ -218,7 +218,7 @@
   table.module-compare col.module-l3 { width: 230px; }
   table.module-compare col.kernel-name { width: 265px; }
   table.module-compare col.kernel-time { width: 105px; }
-  table.module-compare col.aggregate-time { width: 115px; }
+  table.module-compare col.aggregate-time { width: 145px; }
   table.module-compare th, table.module-compare td {
     border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
     padding: 6px 8px; vertical-align: top; background: var(--panel);
@@ -254,6 +254,9 @@
     display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 400;
     font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
   }
+  table.module-compare tr.summary-row td { background: #f6f8fa; }
+  table.module-compare tr.summary-row td.aggregate { background: #eef4ff; }
+  table.module-compare td.summary-label { color: var(--muted); font-style: italic; font-weight: 500; }
   table.module-compare tr.leaf-start td { border-top: 1px solid var(--border2); }
   table.module-compare tr.module-start td { border-top: 2px solid var(--border2); }
   table.module-compare .sticky-l1 { position: sticky; left: 0; z-index: 4; }
@@ -8549,6 +8552,7 @@ function comparisonHierarchy() {
         return {
           label: comparisonLabel(child.label || child.id),
           target: `${childViewId}.${child.id}`,
+          hasDetail: detailNodes.length > 0,
           leaves,
         };
       });
@@ -8603,23 +8607,49 @@ function comparisonKernelEntries(cell) {
 
 function comparisonAggregate(cell) {
   if (cell?.status === "fused") {
-    return {valueMs: null, text: "shared", detail: `owner: ${cell.included_in || "fusion group"}`};
+    return {
+      valueMs: null,
+      residencyMs: null,
+      activeMs: null,
+      wallMs: null,
+      text: "shared",
+      details: [`owner: ${cell.included_in || "fusion group"}`],
+    };
   }
   const residency = cell?.gpu_residency_ms ?? cell?.ms_per_iter;
   if (residency != null) {
     const active = cell?.active_gpu_ms;
+    const wall = cell?.gpu_elapsed_ms;
     return {
       valueMs: Number(residency),
-      text: `Σ ${formatMs(residency)} ms`,
-      detail: active != null
-        ? `active ∪ ${formatMs(active)} ms`
-        : "kernel residency / iter",
+      residencyMs: Number(residency),
+      activeMs: active == null ? null : Number(active),
+      wallMs: wall == null ? null : Number(wall),
+      text: `GPU Σ ${formatMs(residency)} ms`,
+      details: [
+        active != null ? `active ∪ ${formatMs(active)} ms` : null,
+        wall != null ? `wall ${formatMs(wall)} ms` : "wall —",
+      ].filter(Boolean),
     };
   }
   if (cell?.status === "unobserved") {
-    return {valueMs: null, text: "—", detail: "unobserved"};
+    return {
+      valueMs: null,
+      residencyMs: null,
+      activeMs: null,
+      wallMs: null,
+      text: "—",
+      details: ["unobserved"],
+    };
   }
-  return {valueMs: null, text: "—", detail: "not attributed"};
+  return {
+    valueMs: null,
+    residencyMs: null,
+    activeMs: null,
+    wallMs: null,
+    text: "—",
+    details: ["not attributed"],
+  };
 }
 
 function comparisonKernelHtml(entry) {
@@ -8634,7 +8664,31 @@ function comparisonKernelTimeHtml(entry) {
 }
 
 function comparisonAggregateHtml(aggregate) {
-  return `${escapeHtml(aggregate.text)}<span class="subvalue">${escapeHtml(aggregate.detail)}</span>`;
+  const details = (aggregate.details || [])
+    .map(detail => `<span class="subvalue">${escapeHtml(detail)}</span>`)
+    .join("");
+  return `${escapeHtml(aggregate.text)}${details}`;
+}
+
+function prepareComparisonTarget(target, summary = false) {
+  const sglangCell = comparisonProfileCell(COMPARE_SGLANG_PROFILE, target);
+  const trtllmCell = comparisonProfileCell(COMPARE_TRTLLM_PROFILE, target);
+  const summaryEntry = {
+    name: "inclusive descendant intervals",
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  };
+  const sglangKernels = summary ? [summaryEntry] : comparisonKernelEntries(sglangCell);
+  const trtllmKernels = summary ? [summaryEntry] : comparisonKernelEntries(trtllmCell);
+  return {
+    target,
+    sglangKernels,
+    trtllmKernels,
+    sglangAggregate: comparisonAggregate(sglangCell),
+    trtllmAggregate: comparisonAggregate(trtllmCell),
+    rowCount: Math.max(sglangKernels.length, trtllmKernels.length, 1),
+  };
 }
 
 function comparisonCaveat() {
@@ -8651,7 +8705,8 @@ function comparisonCaveat() {
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
   return `${CURRENT_PHASE || "selected phase"}: ${context} `
-    + "Kernel and aggregate values retain each profile's own provenance; do not read the columns as a direct engine speedup."
+    + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
+    + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
     + (attributionOnly ? " An attribution-only profile is selected and is not a performance baseline." : "");
 }
 
@@ -8670,76 +8725,102 @@ function renderComparisonTable() {
   const prepared = hierarchy.map(root => {
     const children = root.children.map(child => {
       const leaves = child.leaves.map(leaf => {
-        const sglangCell = comparisonProfileCell(COMPARE_SGLANG_PROFILE, leaf.target);
-        const trtllmCell = comparisonProfileCell(COMPARE_TRTLLM_PROFILE, leaf.target);
-        const sglangKernels = comparisonKernelEntries(sglangCell);
-        const trtllmKernels = comparisonKernelEntries(trtllmCell);
         return {
           ...leaf,
-          sglangCell,
-          trtllmCell,
-          sglangKernels,
-          trtllmKernels,
-          sglangAggregate: comparisonAggregate(sglangCell),
-          trtllmAggregate: comparisonAggregate(trtllmCell),
-          rowCount: Math.max(sglangKernels.length, trtllmKernels.length, 1),
+          ...prepareComparisonTarget(leaf.target),
         };
       });
-      return {...child, leaves, rowCount: leaves.reduce((sum, leaf) => sum + leaf.rowCount, 0)};
+      const summary = child.hasDetail ? prepareComparisonTarget(child.target, true) : null;
+      return {
+        ...child,
+        leaves,
+        summary,
+        rowCount: (summary?.rowCount || 0) + leaves.reduce((sum, leaf) => sum + leaf.rowCount, 0),
+      };
     });
-    return {...root, children, rowCount: children.reduce((sum, child) => sum + child.rowCount, 0)};
+    const summary = prepareComparisonTarget(root.target, true);
+    return {
+      ...root,
+      children,
+      summary,
+      rowCount: summary.rowCount + children.reduce((sum, child) => sum + child.rowCount, 0),
+    };
   });
 
   const sglangLabel = RAW_DATA.profiles[COMPARE_SGLANG_PROFILE]?.meta?.label || COMPARE_SGLANG_PROFILE;
   const trtllmLabel = RAW_DATA.profiles[COMPARE_TRTLLM_PROFILE]?.meta?.label || COMPARE_TRTLLM_PROFILE;
   let rows = "";
   COMPARE_EXPORT_ROWS = [];
-  prepared.forEach((root, rootIndex) => {
-    root.children.forEach((child, childIndex) => {
+  const appendTimingRow = ({targetData, leftCells, classes, labels, rowKind}) => {
+    for (let rowIndex = 0; rowIndex < targetData.rowCount; rowIndex += 1) {
+      const firstTargetRow = rowIndex === 0;
+      const sglangKernel = targetData.sglangKernels[rowIndex] || {name: "", timeMs: null, empty: true};
+      const trtllmKernel = targetData.trtllmKernels[rowIndex] || {name: "", timeMs: null, empty: true};
+      rows += `<tr class="${firstTargetRow ? classes : ""}">${firstTargetRow ? leftCells : ""}`;
+      rows += `<td class="kernel${sglangKernel.empty ? " empty" : ""}">${comparisonKernelHtml(sglangKernel)}</td>`;
+      rows += `<td class="numeric">${comparisonKernelTimeHtml(sglangKernel)}</td>`;
+      if (firstTargetRow) {
+        rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.sglangAggregate)}</td>`;
+      }
+      rows += `<td class="kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonKernelHtml(trtllmKernel)}</td>`;
+      rows += `<td class="numeric">${comparisonKernelTimeHtml(trtllmKernel)}</td>`;
+      if (firstTargetRow) {
+        rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.trtllmAggregate)}</td>`;
+      }
+      rows += "</tr>";
+      COMPARE_EXPORT_ROWS.push({
+        row_kind: rowKind,
+        module: labels.module,
+        submodule: labels.submodule,
+        operation: labels.operation,
+        ir_target: targetData.target,
+        sglang_kernel: sglangKernel.name,
+        sglang_kernel_ms: sglangKernel.timeMs,
+        sglang_residency_ms: targetData.sglangAggregate.residencyMs,
+        sglang_active_union_ms: targetData.sglangAggregate.activeMs,
+        sglang_wall_elapsed_ms: targetData.sglangAggregate.wallMs,
+        trtllm_kernel: trtllmKernel.name,
+        trtllm_kernel_ms: trtllmKernel.timeMs,
+        trtllm_residency_ms: targetData.trtllmAggregate.residencyMs,
+        trtllm_active_union_ms: targetData.trtllmAggregate.activeMs,
+        trtllm_wall_elapsed_ms: targetData.trtllmAggregate.wallMs,
+      });
+    }
+  };
+  prepared.forEach(root => {
+    appendTimingRow({
+      targetData: root.summary,
+      leftCells: `<td class="module-cell level-1 sticky-l1" rowspan="${root.rowCount}">${escapeHtml(root.label)}</td>`
+        + `<td class="module-cell level-2 sticky-l2 summary-label">∑ layer family</td>`
+        + `<td class="module-cell level-3 sticky-l3 summary-label">all descendants</td>`,
+      classes: "module-start summary-row",
+      labels: {module: root.label, submodule: "∑ layer family", operation: "all descendants"},
+      rowKind: "module_summary",
+    });
+    root.children.forEach(child => {
+      if (child.summary) {
+        appendTimingRow({
+          targetData: child.summary,
+          leftCells: `<td class="module-cell level-2 sticky-l2" rowspan="${child.rowCount}">${escapeHtml(child.label)}</td>`
+            + `<td class="module-cell level-3 sticky-l3 summary-label">∑ submodule</td>`,
+          classes: "leaf-start summary-row",
+          labels: {module: root.label, submodule: child.label, operation: "∑ submodule"},
+          rowKind: "module_summary",
+        });
+      }
       child.leaves.forEach((leaf, leafIndex) => {
-        for (let rowIndex = 0; rowIndex < leaf.rowCount; rowIndex += 1) {
-          const firstRootRow = childIndex === 0 && leafIndex === 0 && rowIndex === 0;
-          const firstChildRow = leafIndex === 0 && rowIndex === 0;
-          const firstLeafRow = rowIndex === 0;
-          const classes = [firstLeafRow ? "leaf-start" : ""];
-          if (firstRootRow) classes.push("module-start");
-          const sglangKernel = leaf.sglangKernels[rowIndex] || {name: "", timeMs: null, empty: true};
-          const trtllmKernel = leaf.trtllmKernels[rowIndex] || {name: "", timeMs: null, empty: true};
-          rows += `<tr class="${classes.filter(Boolean).join(" ")}">`;
-          if (firstRootRow) {
-            rows += `<td class="module-cell level-1 sticky-l1" rowspan="${root.rowCount}">${escapeHtml(root.label)}</td>`;
-          }
-          if (firstChildRow) {
-            rows += `<td class="module-cell level-2 sticky-l2" rowspan="${child.rowCount}">${escapeHtml(child.label)}</td>`;
-          }
-          if (firstLeafRow) {
-            const detailClass = leaf.label === "—" ? " empty-detail" : "";
-            rows += `<td class="module-cell level-3 sticky-l3${detailClass}" rowspan="${leaf.rowCount}">${escapeHtml(leaf.label)}</td>`;
-          }
-          rows += `<td class="kernel${sglangKernel.empty ? " empty" : ""}">${comparisonKernelHtml(sglangKernel)}</td>`;
-          rows += `<td class="numeric">${comparisonKernelTimeHtml(sglangKernel)}</td>`;
-          if (firstLeafRow) {
-            rows += `<td class="aggregate" rowspan="${leaf.rowCount}">${comparisonAggregateHtml(leaf.sglangAggregate)}</td>`;
-          }
-          rows += `<td class="kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonKernelHtml(trtllmKernel)}</td>`;
-          rows += `<td class="numeric">${comparisonKernelTimeHtml(trtllmKernel)}</td>`;
-          if (firstLeafRow) {
-            rows += `<td class="aggregate" rowspan="${leaf.rowCount}">${comparisonAggregateHtml(leaf.trtllmAggregate)}</td>`;
-          }
-          rows += "</tr>";
-          COMPARE_EXPORT_ROWS.push({
-            module: root.label,
-            submodule: child.label,
-            operation: leaf.label,
-            ir_target: leaf.target,
-            sglang_kernel: sglangKernel.name,
-            sglang_kernel_ms: sglangKernel.timeMs,
-            sglang_aggregate_ms: leaf.sglangAggregate.valueMs,
-            trtllm_kernel: trtllmKernel.name,
-            trtllm_kernel_ms: trtllmKernel.timeMs,
-            trtllm_aggregate_ms: leaf.trtllmAggregate.valueMs,
-          });
-        }
+        const firstLeaf = leafIndex === 0;
+        const leftCells = (!child.summary && firstLeaf
+          ? `<td class="module-cell level-2 sticky-l2" rowspan="${child.rowCount}">${escapeHtml(child.label)}</td>`
+          : "")
+          + `<td class="module-cell level-3 sticky-l3${leaf.label === "—" ? " empty-detail" : ""}" rowspan="${leaf.rowCount}">${escapeHtml(leaf.label)}</td>`;
+        appendTimingRow({
+          targetData: leaf,
+          leftCells,
+          classes: "leaf-start",
+          labels: {module: root.label, submodule: child.label, operation: leaf.label},
+          rowKind: "kernel_detail",
+        });
       });
     });
   });
@@ -8758,8 +8839,8 @@ function renderComparisonTable() {
         <th class="sticky-l1">Layer family</th>
         <th class="sticky-l2">Submodule</th>
         <th class="sticky-l3">Leaf operation</th>
-        <th>Attributed kernel</th><th>residency / iter</th><th>leaf aggregate</th>
-        <th>Attributed kernel</th><th>residency / iter</th><th>leaf aggregate</th>
+        <th>Attributed kernel</th><th>kernel / iter</th><th>GPU Σ · active ∪ · wall</th>
+        <th>Attributed kernel</th><th>kernel / iter</th><th>GPU Σ · active ∪ · wall</th>
       </tr>
     </thead><tbody>${rows}</tbody>`;
   document.getElementById("compare-caveat").textContent = comparisonCaveat();
@@ -8774,9 +8855,11 @@ function csvValue(value) {
 function exportComparisonCsv() {
   if (!COMPARE_EXPORT_ROWS.length) return;
   const headers = [
-    "module", "submodule", "operation", "ir_target",
-    "sglang_kernel", "sglang_kernel_ms", "sglang_aggregate_ms",
-    "trtllm_kernel", "trtllm_kernel_ms", "trtllm_aggregate_ms",
+    "row_kind", "module", "submodule", "operation", "ir_target",
+    "sglang_kernel", "sglang_kernel_ms", "sglang_residency_ms",
+    "sglang_active_union_ms", "sglang_wall_elapsed_ms",
+    "trtllm_kernel", "trtllm_kernel_ms", "trtllm_residency_ms",
+    "trtllm_active_union_ms", "trtllm_wall_elapsed_ms",
   ];
   const lines = [headers.map(csvValue).join(",")];
   for (const row of COMPARE_EXPORT_ROWS) {
