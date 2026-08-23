@@ -47,7 +47,7 @@ def _timeline_targets(timeline: dict) -> set[str]:
 
 def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
     profiles = list(_profiles())
-    assert len(profiles) == 7
+    assert len(profiles) == 8
     for path, profile in profiles:
         assert profile["generation_mode"] == "mtp"
         assert profile["execution_parameters"] == EXPECTED_EXECUTION_PARAMETERS
@@ -130,6 +130,98 @@ def test_trt_decode_comparison_profile_uses_exact_bs32_nsys_subset():
     assert profile["evidence"]["selection_policy"] == (
         "exact generation_reqs=32 events only"
     )
+    assert profile["evidence"]["nsys_export"] == {
+        "product": "NVIDIA Nsight Systems",
+        "version": "2026.2.1.210",
+        "schema_version": "3.25.0",
+    }
+    assert all(
+        report["nsys_export"] == profile["evidence"]["nsys_export"]
+        for report in profile["evidence"]["report_files"]
+    )
+
+
+def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
+    sglang_paths = sorted(
+        (
+            PROFILE_ROOT
+            / "sglang_85c23c62_attention_dp4_moe_ep4_mtp"
+        ).glob("agentx_nsys_bs*.yaml")
+    )
+    assert len(sglang_paths) == 1
+    sglang = yaml.safe_load(sglang_paths[0].read_text())
+    trt = yaml.safe_load(
+        (
+            PROFILE_ROOT
+            / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
+            / "decode_bs32.yaml"
+        ).read_text()
+    )
+
+    selected_batch = sglang["workload"]["selected_exact_target_verify_batch"]
+    assert selected_batch == trt["workload"]["measured_shape"][
+        "selected_exact_generation_requests"
+    ]
+    assert sglang["profiler"]["type"] == trt["profiler"]["type"] == (
+        "nsight_systems_worker_local"
+    )
+    assert sglang["profiler"]["capture_trigger"] == "nvtx"
+    assert sglang["profiler"]["capture_range"] == "agentx_decode_capture"
+    assert sglang["profiler"]["capture_range_end"] == "repeat:1:async"
+    assert sglang["profiler"]["nvtx_registered_strings_only"] is False
+    assert sglang["workload"]["selected_samples"] == sum(
+        sglang["workload"]["selected_samples_by_source"].values()
+    )
+    assert sglang["workload"]["selected_samples"] == 2
+    assert set(sglang["workload"]["structurally_validated_worker_rank_sources"]) == {
+        "w0/r0",
+        "w1/r0",
+    }
+    evidence = sglang["evidence"]
+    assert evidence["job_id"] == 3253468
+    assert evidence["profiling_source_commit"] == (
+        "9fd6cc7f485bc6efd58025f9dd03edde47b77bda"
+    )
+    assert evidence["profiling_overlay_commit"] == (
+        "68bc798308541086ffa6779ace956cdeaf113070"
+    )
+    assert evidence["profiling_harness_commit"] == (
+        "ebf9b696269c484713bd25b58feead000ca120d1"
+    )
+    assert evidence["profiler_manager_sha256"] == (
+        "6c485b3bae27effffc0b954d75bd92e49138075fe4ae35b65f35c1f9cb12593d"
+    )
+    assert evidence["scheduler_nvtx_sha256"] == (
+        "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
+    )
+    assert evidence["runtime_manifest_sha256"] == (
+        "7726df599bf57233106c789bc410c30a1c9decda47c2b90fc74ef3cb1f9c47dc"
+    )
+    assert evidence["symm_mem_gather_sha256"] == (
+        "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
+    )
+    assert sglang["profiler"]["scheduler_capture_steps"] == {
+        "start_inclusive": 28500,
+        "stop_exclusive": 28900,
+    }
+    assert len(evidence["report_files"]) == 2
+    assert evidence["nsys_export"]["product"] == "NVIDIA Nsight Systems"
+    assert evidence["nsys_export"]["version"]
+    assert evidence["nsys_export"]["schema_version"]
+    assert all(
+        report["nsys_export"] == evidence["nsys_export"]
+        for report in evidence["report_files"]
+    )
+    assert len(evidence["nsys_report_files"]) == 2
+    assert len(evidence["worker_logs"]) == 2
+    assert evidence["instrumented_worker_rank_sources"] == ["w0/r0", "w1/r0"]
+    assert evidence["four_rank_validation"] is False
+    assert evidence["worker_count"] == 2
+    assert evidence["semantic_attribution_gate"] == {
+        "metric": "mapped_or_fusion_active_union_ratio",
+        "threshold": 0.95,
+        "passed": True,
+    }
 
 
 def test_trt_prefill_profile_uses_only_exact_one_by_8k_nsys_subset():

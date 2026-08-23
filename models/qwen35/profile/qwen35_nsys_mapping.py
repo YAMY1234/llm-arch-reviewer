@@ -100,6 +100,43 @@ class NsysAttribution:
     confidence: str = "high"
 
 
+def read_nsys_export_metadata(path: Path) -> dict[str, str]:
+    """Read only the non-sensitive Nsight exporter identity from an export."""
+
+    connection = sqlite3.connect(path)
+    try:
+        rows = dict(
+            connection.execute(
+                "select name, value from META_DATA_EXPORT "
+                "where name in (?, ?, ?)",
+                (
+                    "EXPORT_PRODUCT_NAME",
+                    "EXPORT_PRODUCT_VERSION",
+                    "EXPORT_SCHEMA_VERSION",
+                ),
+            )
+        )
+    except sqlite3.DatabaseError as error:
+        raise ValueError(f"{path}: missing Nsight export metadata: {error}") from error
+    finally:
+        connection.close()
+
+    expected = {
+        "EXPORT_PRODUCT_NAME": "product",
+        "EXPORT_PRODUCT_VERSION": "version",
+        "EXPORT_SCHEMA_VERSION": "schema_version",
+    }
+    missing = sorted(
+        name for name in expected if not str(rows.get(name) or "").strip()
+    )
+    if missing:
+        raise ValueError(f"{path}: incomplete Nsight export metadata: {missing}")
+    metadata = {field: str(rows[name]) for name, field in expected.items()}
+    if metadata["product"] != "NVIDIA Nsight Systems":
+        raise ValueError(f"{path}: unexpected trace exporter {metadata['product']!r}")
+    return metadata
+
+
 def _strings(connection: sqlite3.Connection) -> dict[int, str]:
     return {int(key): str(value) for key, value in connection.execute(
         "select id, value from StringIds"

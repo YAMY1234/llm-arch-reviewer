@@ -48,6 +48,7 @@ from models.qwen35.profile.qwen35_graph_mapping import (
 )
 from models.qwen35.profile.qwen35_nsys_mapping import (
     load_sglang_nsys_steps,
+    read_nsys_export_metadata,
     sglang_nsys_trace_events,
     validate_sglang_graph_node_stability,
 )
@@ -55,17 +56,17 @@ from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
-PROFILING_SOURCE_COMMIT = "33742cdf7b9641bd278d6ef1fe31dbef2023818d"
-PROFILING_OVERLAY_COMMIT = "8e750fbcbed6b88e91e285cae3ea6e5852350d0a"
+PROFILING_SOURCE_COMMIT = "9fd6cc7f485bc6efd58025f9dd03edde47b77bda"
+PROFILING_OVERLAY_COMMIT = "68bc798308541086ffa6779ace956cdeaf113070"
 SRT_SLURM_CAPTURE_COMMIT = "ebf9b696269c484713bd25b58feead000ca120d1"
 PROFILER_MANAGER_SHA256 = (
-    "8e596723f13023f5d550d57db2194977ebb35433a1c3760faac21b27753207e6"
+    "6c485b3bae27effffc0b954d75bd92e49138075fe4ae35b65f35c1f9cb12593d"
 )
 SCHEDULER_NVTX_SHA256 = (
     "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
 )
 RUNTIME_MANIFEST_SHA256 = (
-    "37618995f1ebc599804b54e00cf0b0e6f54f51e99b681ad52765500b46387d7c"
+    "7726df599bf57233106c789bc410c30a1c9decda47c2b90fc74ef3cb1f9c47dc"
 )
 SYMM_MEM_GATHER_SHA256 = (
     "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
@@ -342,6 +343,14 @@ def build(args: argparse.Namespace):
     if set(reports) != {0, 1}:
         raise ValueError(f"incomplete SGLang NSYS reports: {sorted(reports)}")
     nsys_reports = _validate_nsys_report_files(args.nsys_reports)
+    nsys_export_metadata = {
+        worker: read_nsys_export_metadata(path)
+        for worker, path in sorted(reports.items())
+    }
+    if len({tuple(sorted(row.items())) for row in nsys_export_metadata.values()}) != 1:
+        raise ValueError(
+            f"SGLang workers use different Nsight exporters: {nsys_export_metadata}"
+        )
 
     source_metrics: dict[str, dict[str, Any]] = {}
     source_validation: dict[str, dict[str, Any]] = {}
@@ -647,9 +656,11 @@ def build(args: argparse.Namespace):
                     "worker": worker,
                     "file": path.name,
                     "sha256": sha256_file(path),
+                    "nsys_export": nsys_export_metadata[worker],
                 }
                 for worker, path in sorted(reports.items())
             ],
+            "nsys_export": nsys_export_metadata[min(nsys_export_metadata)],
             "nsys_report_files": [
                 {
                     "worker": worker,

@@ -30,6 +30,7 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     load_nsys_steps,
     map_decode_step,
     map_prefill_step,
+    read_nsys_export_metadata,
 )
 from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
@@ -140,6 +141,14 @@ def build(args: argparse.Namespace):
         ranks = {rank for candidate, rank in paths if candidate == worker}
         if ranks != {0, 1, 2, 3}:
             raise ValueError(f"worker {worker} lacks four-rank coverage: {ranks}")
+    nsys_export_metadata = {
+        identity: read_nsys_export_metadata(path)
+        for identity, path in sorted(paths.items())
+    }
+    if len({tuple(sorted(row.items())) for row in nsys_export_metadata.values()}) != 1:
+        raise ValueError(
+            f"TRT-LLM reports use different Nsight exporters: {nsys_export_metadata}"
+        )
 
     source_metrics: dict[str, dict[str, Any]] = {}
     validations: dict[str, list[dict[str, Any]]] = {}
@@ -538,9 +547,11 @@ def build(args: argparse.Namespace):
                     "rank": rank,
                     "file": path.name,
                     "sha256": sha256_file(path),
+                    "nsys_export": nsys_export_metadata[(worker, rank)],
                 }
                 for (worker, rank), path in sorted(paths.items())
             ],
+            "nsys_export": nsys_export_metadata[min(nsys_export_metadata)],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "selection_policy": (
                 f"exact generation_reqs={decode_batch} events only"

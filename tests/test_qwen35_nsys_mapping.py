@@ -18,6 +18,7 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     load_sglang_nsys_steps,
     map_decode_step,
     map_prefill_step,
+    read_nsys_export_metadata,
     sglang_graph_roles,
     sglang_nsys_trace_events,
     validate_sglang_graph_node_stability,
@@ -38,6 +39,29 @@ def _kernel(name: str, index: int) -> NsysKernel:
         graph_id=1,
         graph_node_id=index,
     )
+
+
+def test_sglang_nsys_export_metadata_is_auditable_and_narrow(tmp_path):
+    path = tmp_path / "report.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("create table META_DATA_EXPORT(name text, value text)")
+    connection.executemany(
+        "insert into META_DATA_EXPORT values (?, ?)",
+        [
+            ("EXPORT_PRODUCT_NAME", "NVIDIA Nsight Systems"),
+            ("EXPORT_PRODUCT_VERSION", "2026.4.1.191"),
+            ("EXPORT_SCHEMA_VERSION", "3.28.0"),
+            ("SENSITIVE_OR_UNRELATED", "must not be returned"),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    assert read_nsys_export_metadata(path) == {
+        "product": "NVIDIA Nsight Systems",
+        "version": "2026.4.1.191",
+        "schema_version": "3.28.0",
+    }
 
 
 def test_sglang_nsys_rejects_graph_metadata_without_cuda_activity(tmp_path):

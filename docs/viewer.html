@@ -2208,6 +2208,8 @@ function comparisonCaveat() {
   const trtllm = RAW_DATA?.profiles?.[COMPARE_TRTLLM_PROFILE];
   const sWorkload = sglang?.meta?.workload || {};
   const tWorkload = trtllm?.meta?.workload || {};
+  const sEvidence = sglang?.meta?.evidence || {};
+  const tEvidence = trtllm?.meta?.evidence || {};
   const sameConcurrency = sWorkload.concurrency != null
     && Number(sWorkload.concurrency) === Number(tWorkload.concurrency);
   const sBatch = comparisonExactBatch(COMPARE_SGLANG_PROFILE);
@@ -2226,7 +2228,19 @@ function comparisonCaveat() {
   const attributionOnly = [sWorkload, tWorkload].some(workload =>
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
+  const rankCoverage = [
+    sglang?.meta?.profiler?.rank ? `SGLang rank coverage: ${sglang.meta.profiler.rank}.` : "",
+    trtllm?.meta?.profiler?.rank ? `TRT-LLM rank coverage: ${trtllm.meta.profiler.rank}.` : "",
+  ].filter(Boolean).join(" ");
+  const exporterVersions = [
+    sEvidence.nsys_export?.version
+      ? `SGLang NSYS ${sEvidence.nsys_export.version}` : "",
+    tEvidence.nsys_export?.version
+      ? `TRT-LLM NSYS ${tEvidence.nsys_export.version}` : "",
+  ].filter(Boolean).join("; ");
   return `${CURRENT_PHASE || "selected phase"}: ${context} `
+    + (rankCoverage ? `${rankCoverage} ` : "")
+    + (exporterVersions ? `Exporter provenance: ${exporterVersions}. ` : "")
     + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
     + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
     + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."

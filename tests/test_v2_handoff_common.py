@@ -377,6 +377,8 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "function comparisonConcreteKernelIndex(profileId)" in viewer
     assert "function comparisonConcreteKernelEntries(profileId, target, kernel)" in viewer
     assert "function comparisonAggregate(cell)" in viewer
+    assert "SGLang rank coverage" in viewer
+    assert "Exporter provenance" in viewer
     assert "function prepareComparisonTarget(target, summary = false)" in viewer
     assert "function exportComparisonCsv()" in viewer
     assert 'RAW_DATA?.meta?.model_id || "model"' in viewer
