@@ -69,21 +69,51 @@ def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
             "-c",
             "nvtx",
             "-p",
-            "agentx_decode_capture",
+            "agentx_decode_capture@*",
+            "--capture-range-end",
+            "repeat:1:async",
             "--kill",
             "none",
         ],
     }
     environment = {
         "SGLANG_NSYS_NVTX_CAPTURE_RANGE": "agentx_decode_capture",
+        "NSYS_NVTX_PROFILER_REGISTER_ONLY": "0",
     }
     assert (
         _validate_nsys_capture_contract(profiling, environment)
-        == "agentx_decode_capture"
+        == ("agentx_decode_capture", "repeat:1:async")
     )
+
+    environment.pop("NSYS_NVTX_PROFILER_REGISTER_ONLY")
+    with pytest.raises(ValueError, match="unregistered NVTX"):
+        _validate_nsys_capture_contract(profiling, environment)
+    environment["NSYS_NVTX_PROFILER_REGISTER_ONLY"] = "0"
 
     profiling["extra_nsys_args"] = ["-c", "cudaProfilerApi"]
     with pytest.raises(ValueError, match="matching '-c nvtx'"):
+        _validate_nsys_capture_contract(profiling, environment)
+
+    profiling["extra_nsys_args"] = [
+        "-c",
+        "nvtx",
+        "-p",
+        "agentx_decode_capture",
+        "--capture-range-end",
+        "repeat:1:async",
+    ]
+    with pytest.raises(ValueError, match="all-domain"):
+        _validate_nsys_capture_contract(profiling, environment)
+
+    profiling["extra_nsys_args"] = [
+        "-c",
+        "nvtx",
+        "-p",
+        "agentx_decode_capture@*",
+        "--capture-range-end",
+        "stop",
+    ]
+    with pytest.raises(ValueError, match="asynchronous report finalization"):
         _validate_nsys_capture_contract(profiling, environment)
 
 

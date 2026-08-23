@@ -369,6 +369,11 @@ def _global_pid(global_tid: int) -> int:
 
 def _sglang_process_by_device(connection: sqlite3.Connection) -> dict[int, int]:
     columns = _table_columns(connection, "CUPTI_ACTIVITY_KIND_KERNEL")
+    if not columns:
+        raise ValueError(
+            "SGLang Nsight report lacks CUPTI_ACTIVITY_KIND_KERNEL; "
+            "graph metadata without CUDA activity is diagnostic-only"
+        )
     if not {"globalPid", "deviceId"}.issubset(columns):
         raise ValueError("SGLang Nsight report lacks globalPid/deviceId identity")
     candidates: dict[int, set[int]] = defaultdict(set)

@@ -2,6 +2,8 @@ import sys
 from pathlib import Path
 import sqlite3
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -33,6 +35,25 @@ def _kernel(name: str, index: int) -> NsysKernel:
         graph_id=1,
         graph_node_id=index,
     )
+
+
+def test_sglang_nsys_rejects_graph_metadata_without_cuda_activity(tmp_path):
+    path = tmp_path / "metadata-only.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(
+          start integer, end integer, text text, textId integer, globalTid integer
+        );
+        create table CUDA_GRAPH_NODE_EVENTS(start integer, end integer);
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="lacks CUPTI_ACTIVITY_KIND_KERNEL"):
+        load_sglang_nsys_steps(path, rank=0)
 
 
 def _moe(kernels: list[NsysKernel], call: int, *, draft: bool) -> None:
