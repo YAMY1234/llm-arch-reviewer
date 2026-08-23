@@ -94,8 +94,11 @@ one has `generation_mode: mtp`:
 | TRT-LLM | exact one-request/8K prefill | job `532540` | mean 374.482 ms |
 | TRT-LLM | worker-local decode, 30–32 generation requests | job `532540` | mean 37.612 ms |
 
-All selected kernel intervals are retained and attributed. The SGLang and TRT-LLM
-mapped-plus-fusion residency ratios are 1.0, above their respective 95% and 90% gates.
+All selected kernel intervals are retained and classified as mapped, evidence-backed
+fusion, or explicit unmapped with candidates and a reason.  Those three classes close
+to 100%; that closure is not a claim of 100% precise attribution.  The semantic gate is
+evaluated against the overlap-safe mapped/fusion active union (95% for SGLang and 90%
+for TRT-LLM), while strict-signature and residency coverage remain separate diagnostics.
 Each profile references a deterministic compressed timeline with wall, active GPU union,
 residency, overlap, idle/gap, per-node elapsed/active/module-gap/other-work, streams,
 fusion groups, layer identifiers, and MTP rounds. One reference rank is displayed; all
