@@ -1404,6 +1404,10 @@ def map_graph_window(
                 "dur_us": float(kernel.get("dur", 0.0)),
                 "stream": (kernel.get("args") or {}).get("stream"),
                 "device": (kernel.get("args") or {}).get("device"),
+                "correlation_id": (kernel.get("args") or {}).get("correlation"),
+                "graph_id": (kernel.get("args") or {}).get("graph_id"),
+                "graph_node_id": (kernel.get("args") or {}).get("graph_node_id"),
+                "graph_role": (kernel.get("args") or {}).get("graph_role"),
                 "pid": kernel.get("pid"),
                 "tid": kernel.get("tid"),
             }
@@ -1413,17 +1417,25 @@ def map_graph_window(
         "target_gdn_layers": sum(kind == "gdn" for _ts, kind in anchors),
         "target_attention_layers": sum(kind == "attention" for _ts, kind in anchors),
         "target_ep4_dispatch": sum(
-            "moea2adispatchkernel" in event["kernel_name"].lower() for event in mapped
+            event["substage"] == "target_verify"
+            and "moea2adispatchkernel" in event["kernel_name"].lower()
+            for event in mapped
         ),
         "target_ep4_combine": sum(
-            "moea2acombinekernel" in event["kernel_name"].lower() for event in mapped
+            event["substage"] == "target_verify"
+            and "moea2acombinekernel" in event["kernel_name"].lower()
+            for event in mapped
         ),
         "draft_deepep_dispatch": sum(
+            event["substage"] in {"draft", "draft_extend"}
+            and
             "deep_ep::" in event["kernel_name"].lower()
             and "dispatch" in event["kernel_name"].lower()
             for event in mapped
         ),
         "draft_deepep_combine": sum(
+            event["substage"] in {"draft", "draft_extend"}
+            and
             "deep_ep::" in event["kernel_name"].lower()
             and "combine" in event["kernel_name"].lower()
             for event in mapped

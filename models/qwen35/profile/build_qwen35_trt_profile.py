@@ -203,6 +203,7 @@ def build(args: argparse.Namespace):
                     "step_id": step.step_id,
                     "context_reqs": validation["context_reqs"],
                     "context_tokens": validation["context_tokens"],
+                    "generation_reqs": validation["generation_reqs"],
                     "timeline_step": {
                         "step_index": step.step_id,
                         "label": step.label,
@@ -266,14 +267,49 @@ def build(args: argparse.Namespace):
         reference_rank = int(reference_observations[0]["rank"])
         reference_worker = str(reference_observations[0]["worker"])
     else:
-        reference_steps = [
-            row["timeline_step"]
-            for row in observed_steps
-            if row["source"] == reference_source
+        exact_bs32 = [row for row in observed_steps if row["generation_reqs"] == 32]
+        if not exact_bs32:
+            raise ValueError("TRT decode capture has no exact BS32 generation step")
+        exact_counts = Counter(str(row["source"]) for row in exact_bs32)
+        reference_source = min(
+            exact_counts,
+            key=lambda source: (-exact_counts[source], source),
+        )
+        reference_observations = [
+            row for row in exact_bs32 if row["source"] == reference_source
         ]
-        reference_path = paths[(workers[0], 0)]
-        reference_rank = 0
-        reference_worker = workers[0]
+        reference_steps = [row["timeline_step"] for row in reference_observations]
+        exact_events_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        exact_step_counts: Counter[str] = Counter()
+        for row in exact_bs32:
+            source = str(row["source"])
+            exact_events_by_source[source].extend(row["timeline_step"]["events"])
+            exact_step_counts[source] += 1
+        source_metrics = {
+            source: _metrics_for_rank(events, exact_step_counts[source])
+            for source, events in sorted(exact_events_by_source.items())
+        }
+        all_mappings = [
+            event
+            for row in exact_bs32
+            for event in row["timeline_step"]["events"]
+        ]
+        exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
+        for row in exact_bs32:
+            exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
+        timing_by_step = {
+            step_id: [
+                row
+                for row in rows
+                if row["source"] in exact_sources_by_step.get(step_id, set())
+                and row["generation_reqs"] == 32
+            ]
+            for step_id, rows in timing_by_step.items()
+            if exact_sources_by_step.get(step_id)
+        }
+        reference_path = Path(reference_observations[0]["path"])
+        reference_rank = int(reference_observations[0]["rank"])
+        reference_worker = str(reference_observations[0]["worker"])
 
     critical_steps = {}
     for step_id, rows in sorted(timing_by_step.items()):
@@ -362,7 +398,10 @@ def build(args: argparse.Namespace):
                     row["generation_reqs"] for row in shape_observations
                 ),
                 "max": max(row["generation_reqs"] for row in shape_observations),
-            }
+            },
+            "selected_exact_generation_requests": 32,
+            "selected_samples": len(exact_bs32),
+            "selected_samples_by_source": dict(sorted(exact_counts.items())),
         }
     else:
         owner_shapes = [row for row in shape_observations if row["owner_compute"]]
@@ -410,7 +449,11 @@ def build(args: argparse.Namespace):
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
-        "label": f"Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · {args.phase}",
+        "label": (
+            "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · exact BS32 decode"
+            if args.phase == "decode"
+            else "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · prefill"
+        ),
         "model_id": "qwen35_397b_a17b",
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
@@ -465,6 +508,11 @@ def build(args: argparse.Namespace):
                 for (worker, rank), path in sorted(paths.items())
             ],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
+            "selection_policy": (
+                "exact generation_reqs=32 events only"
+                if args.phase == "decode"
+                else "exact one-request/8192-token owner events only"
+            ),
             "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
             "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
             "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),

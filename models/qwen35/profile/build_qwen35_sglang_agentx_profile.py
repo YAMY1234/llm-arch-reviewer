@@ -148,7 +148,9 @@ def parse_benchmark_snapshot(path: Path) -> dict[str, Any]:
     return result
 
 
-def validate_run_inputs(args: argparse.Namespace) -> dict[str, Any]:
+def validate_run_inputs(
+    args: argparse.Namespace, *, expected_job_id: int = JOB_ID
+) -> dict[str, Any]:
     config = yaml.safe_load(args.config.read_text())
     job = json.loads(args.job_metadata.read_text())
     resources = config.get("resources") or {}
@@ -185,8 +187,11 @@ def validate_run_inputs(args: argparse.Namespace) -> dict[str, Any]:
     }
     if "a-z97" not in str(config.get("name", "")).lower():
         mismatch["workload distribution"] = {"expected": "A-Z97", "actual": config.get("name")}
-    if int(job.get("job_id", -1)) != JOB_ID:
-        mismatch["job id"] = {"expected": JOB_ID, "actual": job.get("job_id")}
+    if int(job.get("job_id", -1)) != expected_job_id:
+        mismatch["job id"] = {
+            "expected": expected_job_id,
+            "actual": job.get("job_id"),
+        }
     if mismatch:
         raise ValueError(f"AgentX run identity mismatch: {mismatch}")
     return {"config": config, "job": job}

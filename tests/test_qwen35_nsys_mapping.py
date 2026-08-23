@@ -13,9 +13,14 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     TARGET_PATTERN,
     _direct_node,
     load_nsys_steps,
+    load_sglang_nsys_steps,
     map_decode_step,
     map_prefill_step,
+    sglang_graph_roles,
+    sglang_nsys_trace_events,
+    validate_sglang_graph_node_stability,
 )
+from models.qwen35.profile.qwen35_graph_mapping import map_graph_window
 
 
 def _kernel(name: str, index: int) -> NsysKernel:
@@ -291,3 +296,112 @@ def test_nsys_parser_supports_repeated_multi_graph_prefill_sequence(tmp_path):
     assert [step.graph_launch_count for step in steps] == [2, 2]
     assert [kernel.name for kernel in steps[0].kernels] == ["graph_a", "graph_b"]
     assert [kernel.name for kernel in steps[1].kernels] == ["graph_a", "graph_b"]
+
+
+def test_sglang_nsys_uses_scheduler_wall_and_proves_three_graph_roles(tmp_path):
+    path = tmp_path / "sglang-worker.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(
+          start integer, end integer, text text, textId integer, globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_RUNTIME(
+          start integer, end integer, correlationId integer, nameId integer,
+          globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_KERNEL(
+          start integer, end integer, deviceId integer, contextId integer,
+          streamId integer, correlationId integer, globalPid integer,
+          graphId integer, graphNodeId integer, demangledName integer
+        );
+        """
+    )
+    names = {
+        1: "cudaGraphLaunch_v10000",
+        2: "fused_qkvzba_split",
+        3: "_fused_qk_rmsnorm_rope_gate_kernel",
+    }
+    connection.executemany("insert into StringIds values (?,?)", names.items())
+    process = 100 << 24
+    global_tid = process + 17
+    connection.executemany(
+        "insert into NVTX_EVENTS values (?,?,?,null,?)",
+        [
+            (0, 900_000, "scheduler.run_batch", global_tid),
+            (1_000_000, 1_900_000, "scheduler.run_batch", global_tid),
+            (2_000_000, 2_900_000, "scheduler.run_batch", global_tid),
+        ],
+    )
+    runtime_rows = []
+    kernel_rows = []
+    for step in range(2):
+        base = step * 1_000_000 + 100_000
+        runtime_rows.extend(
+            (base + offset, base + offset + 100, 10 + offset, 1, global_tid)
+            for offset in (0, 300_000, 600_000)
+        )
+        node = 0
+        for layer_id, kind in enumerate(TARGET_PATTERN):
+            name_id = 2 if kind == "gdn" else 3
+            start = base + layer_id * 2_000
+            kernel_rows.append(
+                (start, start + 500, 0, 1, 7, 0, process, 2, node, name_id)
+            )
+            node += 1
+        for round_id in range(4):
+            start = base + 300_000 + round_id * 2_000
+            kernel_rows.append(
+                (start, start + 500, 0, 1, 7, 0, process, 23, round_id, 3)
+            )
+        start = base + 600_000
+        kernel_rows.append(
+            (start, start + 500, 0, 1, 7, 0, process, 44, 0, 3)
+        )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_RUNTIME values (?,?,?,?,?)", runtime_rows
+    )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?,?,?,?,?)",
+        kernel_rows,
+    )
+    connection.commit()
+    connection.close()
+
+    steps, evidence = load_sglang_nsys_steps(path, rank=0)
+    assert len(steps) == 2
+    assert evidence["marker_source"] == "scheduler.run_batch"
+    assert all(step.cpu_wall_us == 1000.0 for step in steps)
+    assert all(step.graph_launch_count == 3 for step in steps)
+    assert sglang_graph_roles(steps[0].kernels) == {
+        "target_verify": 2,
+        "draft": 23,
+        "draft_extend": 44,
+    }
+    stability = validate_sglang_graph_node_stability(steps)
+    assert stability["step_count"] == 2
+    assert stability["role_counts"] == {
+        "target_verify": 2,
+        "draft": 2,
+        "draft_extend": 2,
+    }
+
+    trace_events, window, _roles = sglang_nsys_trace_events(
+        steps[0], batch_size=32
+    )
+    mapped, validation = map_graph_window(
+        trace_events, window=window, rank=0, step_index=0
+    )
+    assert validation["target_verify_batch_size"] == 32
+    assert validation["signature_counts"]["target_gdn_layers"] == 45
+    assert validation["signature_counts"]["target_attention_layers"] == 15
+    assert validation["signature_counts"]["mtp_draft_rounds"] == 5
+    graph_events = [event for event in mapped if event["graph_id"] is not None]
+    assert len(graph_events) == 65
+    assert all(event["graph_node_id"] is not None for event in graph_events)
+    assert {event["graph_role"] for event in graph_events} == {
+        "target_verify",
+        "draft",
+        "draft_extend",
+    }

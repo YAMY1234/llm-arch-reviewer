@@ -104,6 +104,34 @@ def test_semantic_kernel_aggregates_retain_concrete_profiler_symbols():
                 assert all(name.strip() for name in concrete)
 
 
+def test_trt_decode_comparison_profile_uses_exact_bs32_nsys_subset():
+    path = (
+        PROFILE_ROOT
+        / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
+        / "decode_bs32.yaml"
+    )
+    profile = yaml.safe_load(path.read_text())
+    assert profile["profiler"]["type"] == "nsight_systems_worker_local"
+    shape = profile["workload"]["measured_shape"]
+    assert shape["selected_exact_generation_requests"] == 32
+    assert shape["selected_samples"] == sum(
+        shape["selected_samples_by_source"].values()
+    )
+    assert set(shape["selected_samples_by_source"]) == {
+        "nvl72d150-T05/rank0",
+        "nvl72d150-T05/rank1",
+        "nvl72d150-T05/rank2",
+        "nvl72d150-T05/rank3",
+        "nvl72d150-T06/rank0",
+        "nvl72d150-T06/rank1",
+        "nvl72d150-T06/rank2",
+        "nvl72d150-T06/rank3",
+    }
+    assert profile["evidence"]["selection_policy"] == (
+        "exact generation_reqs=32 events only"
+    )
+
+
 def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
     bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
     variant = next(iter(bundle["execution_variants"].values()))
