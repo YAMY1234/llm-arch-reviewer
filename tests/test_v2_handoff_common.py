@@ -366,6 +366,12 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "function comparisonProfileIsNsys(profileId)" in viewer
     assert "function comparisonExactBatch(profileId)" in viewer
     assert "function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId)" in viewer
+    assert "function comparisonProfileContract(profileId)" in viewer
+    assert "function comparisonProfileCompatibility(sglangProfileId, trtllmProfileId)" in viewer
+    assert '"dataset_sha256"' in viewer
+    assert '"captured_decode_iterations"' in viewer
+    assert "A2A PASS: validated 8K/1K contract" in viewer
+    assert "not-a2a:" in viewer
     assert "function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds)" in viewer
     assert "Number(right.compatible) - Number(left.compatible)" in viewer
     assert "sglangPreferredValid ? [sglangPreferred] : sglangProfileIds" in viewer
@@ -390,8 +396,8 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert '"trtllm_profile_id", "trtllm_variant_id", "trtllm_profiler_type"' in viewer
     assert "sglang_nsys_version: sglangProvenance.nsysVersion" in viewer
     assert "trtllm_nsys_version: trtllmProvenance.nsysVersion" in viewer
-    assert "Matched timing axes: worker-local NSYS on both engines" in viewer
-    assert "Context/KV shape, accepted-length distribution" in viewer
+    assert "validated 8K/1K contract, worker-local NSYS on both engines" in viewer
+    assert "Dataset, ISL/OSL, topology, MTP/acceptance policy" in viewer
     assert "Concrete kernel name" in viewer
     assert 'rowKind: "module_summary"' in viewer
     assert '"sglang_concrete_kernel_name", "sglang_concrete_kernel_ms"' in viewer
