@@ -365,3 +365,9 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert viewer.index('if (cell?.status === "fused")') < viewer.index(
         "const residency = cell?.gpu_residency_ms ?? cell?.ms_per_iter;"
     )
+
+
+def test_viewer_header_controls_cannot_shrink_into_overlapping_hit_targets() -> None:
+    viewer = (REPO_ROOT / "docs" / "viewer.html").read_text()
+    assert "header h1 {\n    flex: 0 0 auto;" in viewer
+    assert "header .controls > .view-switch { flex: 0 0 auto; }" in viewer
