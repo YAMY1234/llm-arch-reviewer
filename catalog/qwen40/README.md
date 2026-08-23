@@ -27,7 +27,8 @@ code-path facts explicit:
 - attention output is all-reduced before the hyper-connection combine;
 - routed and shared MoE hidden dimensions are TP-sharded and use one
   post-expert all-reduce after their local results are combined;
-- the vocabulary-sharded LM head is followed by the logits all-gather.
+- the vocabulary-sharded LM head is followed by a vocabulary-resolution
+  boundary: logits all-gather plus materialization of the full-logit result.
 
 ## Execution-path contract
 
@@ -73,16 +74,17 @@ The pinned implementation uses a two-stage evidence pipeline:
 3. CUDA-Graph-enabled formal traces at BS 1/16/64/256 attach decode performance
    to the same IR nodes without changing the architecture or execution graph.
 
-For EAGLE MTP, the currently validated pure-TP path is eager-only. One
-stack/shape trace supplies direct target-versus-auxiliary scope evidence, and
-separate stack-disabled traces supply prefill BS1 plus decode BS1/16/64/256
-timing. Transfer remains exact and order-preserving inside HC-delimited
-segments; a timing-only signature is not allowed to cross the target/MTP scope
-boundary. MTP timing windows use generation-level runtime annotations rather
-than a target-model kernel signature: prefill spans target EXTEND plus the MTP
-seed EXTEND, while decode spans TARGET_VERIFY, accept/commit, MTP
-DRAFT_EXTEND_V2, and draft selection. This keeps embedding/HC work, auxiliary
-work, and inter-stage device gaps inside the reported iteration wall interval.
+For EAGLE MTP, one eager stack/shape trace supplies direct
+target-versus-auxiliary scope evidence. Stack-disabled eager timing supplies
+prefill BS1, while stack-disabled CUDA Graph traces supply production decode
+timing at BS1/16/64/256. Transfer remains exact and order-preserving inside
+HC-delimited segments; a timing-only signature is not allowed to cross the
+target/MTP scope or collective boundary. MTP timing windows use
+generation-level runtime annotations rather than a target-model kernel
+signature: prefill spans target EXTEND plus the MTP seed EXTEND, while decode
+spans TARGET_VERIFY, accept/commit, one-layer MTP graph replay, proposal-state
+commit, and draft selection. This keeps embedding/HC work, auxiliary work, and
+inter-stage device gaps inside the reported iteration wall interval.
 The request remains ISL/OSL 8192/1024. Server context capacity is 9218 because
 draft width 2 requires two internal candidate slots; those slots are not
 counted as prompt or requested output tokens.
@@ -119,6 +121,15 @@ retain normal asynchronous CUDA execution. The semantic trace is used only for
 stack and IR attribution; every reported duration and overlap
 comes from the matching stack-disabled trace. The builder rejects a pair that
 does not preserve these protocol boundaries.
+
+MTP decode attribution also enforces the contract-level graph boundary after
+the auxiliary head. The sharded vocabulary GEMM belongs only to
+`mtp_head.lm_head`; all-gather plus its immediate full-logit copy belong to
+`mtp_head.tp_logits_collective`; the eager-proven logits/HC selection and state
+writes belong to `mtp_generation.proposal_update`. Index, argmax, fill, and
+index-put kernels remain visible in the timeline/detail panel but do not become
+framework-specific IR nodes. If this exact post-collective sequence changes,
+the build fails rather than sweeping the new kernels into the LM head.
 
 Every profile keeps four timing concepts separate:
 

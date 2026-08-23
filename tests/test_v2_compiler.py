@@ -60,7 +60,33 @@ def test_compile_qwen40_catalog() -> None:
     assert "tp_output_collective" not in _node_ids(bundle, "moe")
     assert "mtp_generation" in bundle["model_ir"]["views"]
     assert "mtp_head" in bundle["model_ir"]["views"]
+    mtp_root_nodes = {
+        node["id"]: node for node in bundle["model_ir"]["views"]["mtp_generation"]["nodes"]
+    }
+    assert mtp_root_nodes["target_prefill"]["drill"] == "top"
+    assert mtp_root_nodes["target_verify"]["drill"] == "top"
+    assert mtp_root_nodes["mtp_prefill"]["drill"] == "mtp_head"
+    assert mtp_root_nodes["mtp_draft_extend"]["drill"] == "mtp_head"
+    assert "initialize MTP state + first proposal" in mtp_root_nodes["mtp_prefill"]["label"]
+    assert "one-layer MTP draft forward" in mtp_root_nodes["mtp_draft_extend"]["label"]
+    assert "finalize next MTP proposal" in mtp_root_nodes["proposal_update"]["label"]
+    mtp_edges = bundle["model_ir"]["views"]["mtp_generation"]["edges"]
+    assert any(
+        edge["from"] == "mtp_draft_extend" and edge["to"] == "proposal_update"
+        for edge in mtp_edges
+    )
+    assert any(
+        edge["from"] == "proposal_update" and edge["to"] == "proposal_cache"
+        for edge in mtp_edges
+    )
     assert "tp_embedding_collective" in _node_ids(bundle, "mtp_head")
+    mtp_vocab = next(
+        node
+        for node in bundle["views"]["mtp_head"]["nodes"]
+        if node["id"] == "tp_logits_collective"
+    )
+    assert "vocabulary resolution" in mtp_vocab["label"]
+    assert mtp_vocab["execution"]["collective"] == "all_gather"
     assert "tp_attention_collective" in _node_ids(bundle, "mtp_layer")
     assert "tp_moe_output_collective" in _node_ids(bundle, "mtp_layer")
 

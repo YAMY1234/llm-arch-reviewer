@@ -73,9 +73,14 @@ node_bindings:
       - {file: python/sglang/srt/speculative/eagle_worker_common.py, symbol: run_eagle_verify, display: eagle_worker_common.py — accepted path and target-state commit}
 
   mtp_generation.mtp_draft_extend:
-    symbols: [EAGLEDraftWorkerV2._draft_extend_for_decode, spec_stage_span]
+    symbols: [EAGLEDraftWorkerV2._draft_extend_for_decode, Qwen4ExpForCausalLMMTP.forward, spec_stage_span]
     links:
-      - {file: python/sglang/srt/speculative/eagle_worker_v2.py, symbol: EAGLEDraftWorkerV2._draft_extend_for_decode, display: eagle_worker_v2.py — one-layer MTP forward after target verify}
+      - {file: python/sglang/srt/speculative/eagle_worker_v2.py, symbol: EAGLEDraftWorkerV2._draft_extend_for_decode, display: eagle_worker_v2.py — launch one-layer MTP forward after target verify}
+
+  mtp_generation.proposal_update:
+    symbols: [EAGLEDraftWorkerV2._draft_extend_for_decode]
+    links:
+      - {file: python/sglang/srt/speculative/eagle_worker_v2.py, symbol: EAGLEDraftWorkerV2._draft_extend_for_decode, display: eagle_worker_v2.py — select next token and commit proposal logits/HC state}
 
   mtp_head.embedding:
     symbols: [Qwen4ExpForCausalLMMTP._prepare_input_embeds, VocabParallelEmbedding]
@@ -119,10 +124,10 @@ node_bindings:
       - {file: python/sglang/srt/models/qwen4_exp_mtp.py, symbol: Qwen4ExpForCausalLMMTP.lm_head, display: qwen4_exp_mtp.py — shared vocabulary head}
 
   mtp_head.tp_logits_collective:
-    symbols: [LogitsProcessor._get_logits, LogitsProcessor._logits_gatherer]
+    symbols: [LogitsProcessor._get_logits, LogitsProcessor._logits_gatherer, LogitsProcessor._copy_logits_to_buffer]
     kernel_signatures: [_all_gather_kernel_inner, ncclDevKernel_AllGather, ncclSymkDevKernel_AllGather]
     links:
-      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._get_logits, display: logits_processor.py — MTP vocabulary-logit all-gather}
+      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._get_logits, display: logits_processor.py — MTP vocabulary-logit gather and full-logit materialization}
 
   mtp_layer.qsa_attention:
     symbols: [Qwen4ExpAttentionDecoderLayer.forward, QSAIndexer, RadixAttention]

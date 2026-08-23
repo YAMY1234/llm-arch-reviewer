@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build Qwen 4.0 EAGLE-MTP eager profiles from stack and timing traces."""
+"""Build Qwen 4.0 EAGLE-MTP profiles from eager semantics and measured timing."""
 
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+from collections import Counter, defaultdict
 import hashlib
 import json
 from pathlib import Path
@@ -29,11 +29,18 @@ from models.qwen40.build.build_qwen40_eager_prefill_profile import (  # noqa: E4
     stack_text,
 )
 from models.qwen40.build.qwen40_decode_attribution import (  # noqa: E402
+    _assign,
+    _hc_mix_end,
+    _is_gemm,
     _metric,
+    _map_moe,
+    _map_qsa_attention,
+    collective_kind,
     communication_semantics,
     default_node_states,
     direct_kernel_mapping,
     interval_union_us,
+    map_decode_step,
     metrics_for_rank,
 )
 
@@ -46,7 +53,8 @@ SOURCE_PATCH_COMPONENTS = [
     {"name": "qsa_hardening", "sha256": SOURCE_PATCH_SHA256},
 ]
 IMPLEMENTATION_ID = "sglang_qwen4_main_32e9cb5_qsa_hardening_flashinfer_gdn"
-LAYER_MODULE = re.compile(r"Qwen4Exp(?:Linear|Attention)DecoderLayer_(\d+)")
+LINEAR_LAYER_MODULE = re.compile(r"Qwen4ExpLinearDecoderLayer_(\d+)")
+ATTENTION_LAYER_MODULE = re.compile(r"Qwen4ExpAttentionDecoderLayer_(\d+)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timing-events", type=Path, required=True)
     parser.add_argument("--timing-manifest", type=Path, required=True)
     parser.add_argument("--timing-protocol", type=Path, required=True)
+    parser.add_argument("--timing-rounds", type=Path)
+    parser.add_argument("--cross-rank-summary", type=Path)
     parser.add_argument("--semantic-job-id", required=True)
     parser.add_argument("--timing-job-id", required=True)
     parser.add_argument("--output-profile", type=Path, required=True)
@@ -70,6 +80,55 @@ def parse_args() -> argparse.Namespace:
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def validate_cudagraph_round(
+    rounds_path: Path | None, *, batch_size: int, profile_steps: int
+) -> dict[str, Any]:
+    if rounds_path is None:
+        raise ValueError("CUDA Graph timing requires --timing-rounds")
+    formal = [
+        row
+        for row in load_jsonl(rounds_path)
+        if row.get("round") == "formal-1"
+        and int(row.get("global_batch_size", -1)) == batch_size
+    ]
+    if len(formal) != 1:
+        raise ValueError(
+            f"expected one formal CUDA Graph round for BS{batch_size}, got {len(formal)}"
+        )
+    record = formal[0]
+    trigger = (record.get("profile_trigger") or {}).get("trigger") or {}
+    expected_trigger = {
+        "global_running_reqs": batch_size,
+        "global_waiting_reqs": 0,
+        "global_waiting_uncached_tokens": 0,
+        "local_running_min": batch_size,
+        "local_running_max": batch_size,
+    }
+    actual_trigger = {key: trigger.get(key) for key in expected_trigger}
+    if actual_trigger != expected_trigger:
+        raise ValueError(
+            f"formal CUDA Graph profile was not armed at exact BS{batch_size}: "
+            f"expected {expected_trigger}, got {actual_trigger}"
+        )
+    traces = record.get("trace_files") or []
+    summaries = record.get("trace_step_summary") or {}
+    if len(traces) != 4 or len(summaries) != 4:
+        raise ValueError("CUDA Graph timing must contain validated traces for four TP ranks")
+    expected = [f"step[TARGET_VERIFY bs={batch_size}]"] * profile_steps
+    invalid = {
+        name: summary
+        for name, summary in summaries.items()
+        if summary.get("cpu_step_names") != expected
+        or summary.get("primary_gpu_step_names") != expected
+        or int(summary.get("cuda_graph_launch_count") or 0) != 2 * profile_steps
+        or summary.get("cuda_graph_launch_iteration_counts")
+        != [2] * profile_steps
+    }
+    if invalid:
+        raise ValueError(f"invalid MTP CUDA Graph replay evidence: {invalid}")
+    return record
 
 
 def sha256_file(path: Path) -> str:
@@ -117,10 +176,14 @@ def _layer_context(event: dict[str, Any], node: str) -> tuple[int | None, str | 
         or "qwen4expforcausallmmtp" in lowered
     ):
         return 0, "mtp"
-    match = LAYER_MODULE.search(stack_text(event))
-    if match:
-        layer_id = int(match.group(1))
-        return layer_id, "full" if layer_id % 4 == 3 else "linear"
+    stack = stack_text(event)
+    linear = LINEAR_LAYER_MODULE.search(stack)
+    if linear:
+        local_id = int(linear.group(1))
+        return 4 * (local_id // 3) + local_id % 3, "linear"
+    attention = ATTENTION_LAYER_MODULE.search(stack)
+    if attention:
+        return 4 * int(attention.group(1)) + 3, "full"
     if node.startswith(("linear_attention.", "linear_layer.")):
         return None, "linear"
     if node.startswith(("qsa_attention.", "full_layer.")):
@@ -220,6 +283,15 @@ def semantic_events(args: argparse.Namespace) -> list[dict[str, Any]]:
         if "replicatedlinear" in lowered_stack and "_forward_router_experts" in lowered_stack:
             node = "moe.router"
             label = "replicated MoE router projection"
+            confidence = "high"
+            method = "python_stack_semantic_function"
+        if (
+            node == "mtp_generation.accept_commit"
+            and "layers/vocab_parallel_embedding.py" in lowered_stack
+            and "run_eagle_verify" in lowered_stack
+        ):
+            node = "top.tp_embedding_collective"
+            label = "target-model TP token-embedding all-reduce"
             confidence = "high"
             method = "python_stack_semantic_function"
         node = str(node)
@@ -551,15 +623,713 @@ def _reconcile_hyperconnection_structure(
         if copy_index < upper_bound and events[copy_index].get("cpu_op_name") == "aten::copy_":
             events[copy_index].update(
                 {
-                    "node": lm_head_node,
+                    # The gather has not completed its execution contract until
+                    # SGLang materializes the full-vocabulary result buffer.
+                    # Keep that implementation copy on the communication/layout
+                    # boundary instead of charging it back to the sharded GEMM.
+                    "node": collective_node,
                     "layer_id": layer_id,
                     "layer_kind": layer_kind,
                     "invocation_id": invocation_id,
                     "substage": substage,
-                    "attribution_method": "post_collective_logits_copy_structure",
+                    "attribution_method": "post_collective_result_materialization",
                     "confidence": "high",
                 }
             )
+        if layer_kind == "mtp" and phase == "decode":
+            proposal_indices = _validated_mtp_proposal_update_indices(
+                events, copy_index + 1, upper_bound
+            )
+            for member in proposal_indices:
+                events[member].update(
+                    {
+                        "node": "mtp_generation.proposal_update",
+                        "layer_id": None,
+                        "layer_kind": None,
+                        "invocation_id": None,
+                        "substage": "proposal_update",
+                        "attribution_method": "eager_stack_proposal_contract_sequence",
+                        "confidence": "high",
+                    }
+                )
+
+
+def _validated_mtp_proposal_update_indices(
+    events: list[dict[str, Any]], start: int, upper_bound: int
+) -> list[int]:
+    """Return the eager-proven next-proposal selection sequence.
+
+    This deliberately recognizes the reviewed contract sequence instead of
+    sweeping every kernel after the MTP logits collective into the LM head.
+    Any implementation change fails closed and must be revalidated against an
+    eager trace before CUDA Graph timing can inherit the mapping.
+    """
+
+    candidates = list(range(start, min(start + 4, upper_bound)))
+    if len(candidates) != 4:
+        raise ValueError("MTP decode logits must be followed by four proposal-update kernels")
+    rows = [events[index] for index in candidates]
+    cpu_ops = [str(row.get("cpu_op_name") or "") for row in rows]
+    names = [str(row.get("kernel_name") or "").lower() for row in rows]
+    expected_cpu_ops = ["aten::index", "aten::index", "aten::argmax", "aten::fill_"]
+    valid = (
+        all(
+            not actual or actual == expected
+            for actual, expected in zip(cpu_ops, expected_cpu_ops)
+        )
+        and all(
+            "index_elementwise_kernel" in name or "vectorized_gather_kernel" in name
+            for name in names[:2]
+        )
+        and "argmaxops" in names[2]
+        and "fillfunctor<float>" in names[3]
+    )
+    if not valid:
+        summary = list(zip(cpu_ops, names))
+        raise ValueError(f"MTP proposal-update contract sequence changed: {summary}")
+    return candidates
+
+
+def _target_collective_template(
+    source_events: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    template = []
+    for event in source_events:
+        kind = collective_kind(str(event["kernel_name"]))
+        if kind is None:
+            continue
+        node = str(event["node"])
+        if event.get("layer_kind") == "mtp" or node.startswith("mtp_"):
+            continue
+        template.append((kind, node))
+    expected = Counter(
+        {
+            "top.tp_embedding_collective": 1,
+            "ple.tp_embedding_collective": 1,
+            "linear_layer.tp_attention_collective": 36,
+            "linear_layer.tp_moe_output_collective": 36,
+            "full_layer.tp_attention_collective": 12,
+            "full_layer.tp_moe_output_collective": 12,
+            "top.tp_logits_collective": 1,
+        }
+    )
+    actual = Counter(node for _kind, node in template)
+    if actual != expected or len(template) != 99:
+        raise ValueError(
+            "eager target stack does not prove the exact TP4 collective order: "
+            f"expected={expected} actual={actual}"
+        )
+    return template
+
+
+def _timing_as_graph_kernels(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "ph": "X",
+            "cat": "kernel",
+            "name": event["kernel_name"],
+            "ts": float(event["ts_us"]),
+            "dur": float(event["dur_us"]),
+            "pid": event.get("pid"),
+            "tid": event.get("tid"),
+            "args": {
+                "stream": event.get("stream"),
+                "device": event.get("device"),
+                "correlation": event.get("correlation"),
+            },
+        }
+        for event in events
+    ]
+
+
+def _set_mtp_context(
+    rows: list[dict[str, Any]],
+    start: int,
+    stop: int,
+    *,
+    substage: str,
+    layer: bool = True,
+) -> None:
+    for index in range(start, stop):
+        rows[index]["layer_id"] = 0 if layer else None
+        rows[index]["layer_kind"] = "mtp" if layer else None
+        rows[index]["invocation_id"] = "mtp:0" if layer else None
+        rows[index]["substage"] = substage
+
+
+def _map_mtp_draft_graph(
+    events: list[dict[str, Any]], *, rank: int, step_index: int
+) -> list[dict[str, Any]]:
+    rows = []
+    for event in events:
+        node, label = direct_kernel_mapping(str(event["kernel_name"]))
+        rows.append(
+            {
+                "rank": rank,
+                "step_index": step_index,
+                "kernel_name": event["kernel_name"],
+                "kernel_label": label,
+                "node": node,
+                "ts_us": float(event["ts_us"]),
+                "dur_us": float(event["dur_us"]),
+                "stream": event.get("stream"),
+                "device": event.get("device"),
+                "correlation": event.get("correlation"),
+                "pid": event.get("pid"),
+                "tid": event.get("tid"),
+                "cpu_op_name": event.get("cpu_op_name"),
+                "cpu_input_dims": event.get("cpu_input_dims"),
+                "cpu_input_types": event.get("cpu_input_types"),
+                "layer_id": None,
+                "layer_kind": None,
+                "invocation_id": None,
+                "substage": None,
+                "attribution_method": "direct_signature" if node else None,
+                "confidence": "high" if node else None,
+            }
+        )
+
+    collective_indices = [
+        index
+        for index, row in enumerate(rows)
+        if collective_kind(str(row["kernel_name"])) is not None
+    ]
+    collective_nodes = (
+        "mtp_head.tp_embedding_collective",
+        "mtp_layer.tp_attention_collective",
+        "mtp_layer.tp_moe_output_collective",
+        "mtp_head.tp_logits_collective",
+    )
+    if len(collective_indices) != len(collective_nodes):
+        raise ValueError(
+            "one-layer MTP graph collective structure changed: "
+            f"{len(collective_indices)} != {len(collective_nodes)}"
+        )
+    for index, node in zip(collective_indices, collective_nodes):
+        _assign(
+            rows,
+            index,
+            node,
+            f"{collective_kind(rows[index]['kernel_name'])} ({node})",
+            "eager_stack_collective_order",
+            "high",
+            overwrite=True,
+        )
+
+    combines = [
+        index
+        for index, row in enumerate(rows)
+        if "hc_combine_kernel" in str(row["kernel_name"]).lower()
+    ]
+    if len(combines) != 2:
+        raise ValueError(f"one-layer MTP graph must have two HC combines: {combines}")
+    attn_combine, mlp_combine = combines
+    qk = next(
+        (
+            index
+            for index in range(attn_combine)
+            if rows[index].get("node") == "qsa_attention.qk_norm_rope"
+        ),
+        None,
+    )
+    if qk is None:
+        raise ValueError("one-layer MTP graph is missing the QSA Q/K anchor")
+    attn_norm = next(
+        (
+            index
+            for index in range(qk - 1, -1, -1)
+            if "grouped_gemma_rmsnorm_kernel"
+            in str(rows[index]["kernel_name"]).lower()
+        ),
+        None,
+    )
+    if attn_norm is None:
+        raise ValueError("one-layer MTP graph is missing its attention HC norm")
+    attn_mix_end = _hc_mix_end(rows, attn_norm + 1, qk)
+    attention_start = attn_mix_end + 1
+
+    embedding_collective = collective_indices[0]
+    vocab = next(
+        (
+            index
+            for index in range(0, embedding_collective)
+            if "vocab_parallel_embedding" in str(rows[index]["kernel_name"]).lower()
+        ),
+        None,
+    )
+    prefix_norms = [
+        index
+        for index in range(embedding_collective + 1, attn_norm)
+        if "rmsnorm" in str(rows[index]["kernel_name"]).lower()
+        and "grouped_gemma" not in str(rows[index]["kernel_name"]).lower()
+    ]
+    if vocab is None or len(prefix_norms) != 2:
+        raise ValueError(
+            "one-layer MTP input fusion anchors changed: "
+            f"vocab={vocab} norms={prefix_norms}"
+        )
+    first_norm, second_norm = prefix_norms
+    first_gemm = next(
+        (
+            index
+            for index in range(first_norm + 1, second_norm)
+            if _is_gemm(str(rows[index]["kernel_name"]))
+        ),
+        None,
+    )
+    second_gemm = next(
+        (
+            index
+            for index in range(second_norm + 1, attn_norm)
+            if _is_gemm(str(rows[index]["kernel_name"]))
+        ),
+        None,
+    )
+    if first_gemm is None or second_gemm is None:
+        raise ValueError("one-layer MTP input projection GEMMs changed")
+
+    for index in range(0, vocab):
+        _assign(
+            rows,
+            index,
+            "mtp_generation.mtp_draft_extend",
+            "MTP/QSA graph-state preparation",
+            "validated_mtp_graph_structure",
+            "high",
+            overwrite=True,
+        )
+        _set_mtp_context(
+            rows, index, index + 1, substage="mtp_draft_extend_runtime", layer=False
+        )
+    for index in range(vocab, first_norm):
+        if index == embedding_collective:
+            continue
+        _assign(
+            rows,
+            index,
+            "mtp_head.embedding",
+            "MTP token embedding support",
+            "validated_mtp_graph_structure",
+            "high",
+            overwrite=True,
+        )
+        _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
+    for start, stop, node, label in (
+        (
+            first_norm,
+            first_gemm + 1,
+            "mtp_head.embedding_projection",
+            "MTP embedding RMSNorm + projection",
+        ),
+        (
+            second_norm,
+            second_gemm + 1,
+            "mtp_head.hidden_projection",
+            "MTP HC-state RMSNorm + projection",
+        ),
+        (
+            second_gemm + 1,
+            attn_norm,
+            "mtp_head.residual_fusion",
+            "MTP residual input fusion",
+        ),
+    ):
+        for index in range(start, stop):
+            _assign(
+                rows,
+                index,
+                node,
+                label,
+                "validated_mtp_graph_structure",
+                "high",
+                overwrite=True,
+            )
+            _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
+
+    _set_mtp_context(rows, attn_norm, attention_start, substage="mtp_draft_extend_attn_hc_mix")
+    _assign(
+        rows,
+        attn_norm,
+        "hyperconnection.branch_norm",
+        "MTP attention-branch RMSNorm",
+        "validated_mtp_graph_structure",
+        "high",
+        overwrite=True,
+    )
+    for index in range(attn_norm + 1, attention_start):
+        _assign(
+            rows,
+            index,
+            "hyperconnection.mix",
+            "MTP attention-branch HC mix",
+            "validated_mtp_graph_structure",
+            "high",
+            overwrite=True,
+        )
+    _set_mtp_context(
+        rows, attention_start, attn_combine, substage="mtp_draft_extend_attention"
+    )
+    _map_qsa_attention(rows, attention_start, attn_combine)
+    for index in range(attention_start, attn_combine):
+        node = str(rows[index]["node"])
+        if node.startswith("qsa_attention."):
+            rows[index]["node"] = "mtp_qsa_attention." + node.split(".", 1)[1]
+    _set_mtp_context(
+        rows, attn_combine, attn_combine + 1, substage="mtp_draft_extend_attn_hc_combine"
+    )
+
+    mlp_norm = next(
+        (
+            index
+            for index in range(attn_combine + 1, mlp_combine)
+            if "grouped_gemma_rmsnorm_kernel"
+            in str(rows[index]["kernel_name"]).lower()
+        ),
+        None,
+    )
+    if mlp_norm is None:
+        raise ValueError("one-layer MTP graph is missing its MoE HC norm")
+    mlp_mix_end = _hc_mix_end(rows, mlp_norm + 1, mlp_combine)
+    moe_start = mlp_mix_end + 1
+    _set_mtp_context(rows, attn_combine + 1, moe_start, substage="mtp_draft_extend_mlp_hc_mix")
+    _assign(
+        rows,
+        mlp_norm,
+        "hyperconnection.branch_norm",
+        "MTP MoE-branch RMSNorm",
+        "validated_mtp_graph_structure",
+        "high",
+        overwrite=True,
+    )
+    for index in range(mlp_norm + 1, moe_start):
+        _assign(
+            rows,
+            index,
+            "hyperconnection.mix",
+            "MTP MoE-branch HC mix",
+            "validated_mtp_graph_structure",
+            "high",
+            overwrite=True,
+        )
+    _set_mtp_context(rows, moe_start, mlp_combine, substage="mtp_draft_extend_moe")
+    _map_moe(rows, moe_start, mlp_combine, config_name="tp4_flashinfer_gdn")
+    for index in range(moe_start, mlp_combine):
+        node = str(rows[index]["node"])
+        if node.startswith("moe."):
+            rows[index]["node"] = "mtp_moe." + node.split(".", 1)[1]
+    _set_mtp_context(
+        rows, mlp_combine, mlp_combine + 1, substage="mtp_draft_extend_mlp_hc_combine"
+    )
+
+    final_norm = next(
+        (
+            index
+            for index in range(mlp_combine + 1, len(rows))
+            if "grouped_gemma_rmsnorm_kernel"
+            in str(rows[index]["kernel_name"]).lower()
+        ),
+        None,
+    )
+    logits_collective = collective_indices[-1]
+    if final_norm is None:
+        raise ValueError("one-layer MTP graph is missing its final HC norm")
+    final_mix_end = _hc_mix_end(rows, final_norm + 1, logits_collective)
+    lm_head_indices = [
+        index
+        for index in range(final_mix_end + 1, logits_collective)
+        if _is_gemm(str(rows[index]["kernel_name"]))
+    ]
+    if lm_head_indices != list(range(final_mix_end + 1, logits_collective)) or len(
+        lm_head_indices
+    ) != 1:
+        raise ValueError(
+            "one-layer MTP graph must contain exactly one LM-head GEMM before "
+            f"the logits collective: {lm_head_indices}"
+        )
+
+    # Runtime graph/state preparation may execute before the final HC mix on an
+    # auxiliary stream. It belongs to the draft-forward stage, not to lm_head.
+    for index in range(mlp_combine + 1, final_norm):
+        _assign(
+            rows,
+            index,
+            "mtp_generation.mtp_draft_extend",
+            "MTP draft-forward runtime support",
+            "validated_mtp_graph_structure",
+            "medium",
+            overwrite=True,
+        )
+        _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
+
+    for index in range(final_norm, final_mix_end + 1):
+        _assign(
+            rows,
+            index,
+            "mtp_head.final_hc_mix",
+            "MTP final HC norm + mix",
+            "validated_mtp_graph_structure",
+            "high",
+            overwrite=True,
+        )
+        _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
+
+    lm_head = lm_head_indices[0]
+    _assign(
+        rows,
+        lm_head,
+        "mtp_head.lm_head",
+        "MTP sharded vocabulary LM-head GEMM",
+        "validated_mtp_graph_structure",
+        "high",
+        overwrite=True,
+    )
+    _set_mtp_context(rows, lm_head, lm_head + 1, substage="mtp_draft_extend", layer=False)
+
+    materialization_index = logits_collective + 1
+    if materialization_index >= len(rows) or not (
+        "direct_copy_kernel_cuda"
+        in str(rows[materialization_index]["kernel_name"]).lower()
+        and rows[materialization_index].get("cpu_op_name") in {None, "aten::copy_"}
+    ):
+        raise ValueError("MTP logits collective is missing its result materialization copy")
+    _assign(
+        rows,
+        materialization_index,
+        "mtp_head.tp_logits_collective",
+        "materialize full MTP vocabulary logits",
+        "validated_mtp_vocabulary_resolution_contract",
+        "high",
+        overwrite=True,
+    )
+    _set_mtp_context(
+        rows,
+        materialization_index,
+        materialization_index + 1,
+        substage="mtp_draft_extend_vocab_resolution",
+        layer=False,
+    )
+
+    proposal_indices = _validated_mtp_proposal_update_indices(
+        rows, materialization_index + 1, len(rows)
+    )
+    for index in proposal_indices:
+        _assign(
+            rows,
+            index,
+            "mtp_generation.proposal_update",
+            "finalize next MTP proposal state",
+            "validated_mtp_proposal_contract",
+            "high",
+            overwrite=True,
+        )
+        _set_mtp_context(rows, index, index + 1, substage="proposal_update", layer=False)
+
+    claimed = {
+        *range(mlp_combine + 1, final_mix_end + 1),
+        lm_head,
+        logits_collective,
+        materialization_index,
+        *proposal_indices,
+    }
+    deferred_runtime = [
+        index for index in range(mlp_combine + 1, len(rows)) if index not in claimed
+    ]
+    final_norm_ts = float(rows[final_norm]["ts_us"])
+    if any(float(rows[index]["ts_us"]) >= final_norm_ts for index in deferred_runtime):
+        raise ValueError(
+            "unexpected post-LM-head kernels remain inside the MTP graph: "
+            f"{[rows[index]['kernel_name'] for index in deferred_runtime]}"
+        )
+    for index in deferred_runtime:
+        _assign(
+            rows,
+            index,
+            "mtp_generation.mtp_draft_extend",
+            "MTP draft-forward runtime support",
+            "validated_mtp_graph_structure",
+            "medium",
+            overwrite=True,
+        )
+        _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
+
+    unresolved = [row for row in rows if row.get("node") is None]
+    if unresolved:
+        raise ValueError(
+            "one-layer MTP CUDA Graph attribution is incomplete: "
+            f"{Counter(row['kernel_name'] for row in unresolved).most_common(8)}"
+        )
+    return rows
+
+
+def _runtime_stage_rows(
+    events: list[dict[str, Any]],
+    *,
+    rank: int,
+    step_index: int,
+    node: str,
+    label: str,
+    substage: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            **event,
+            "rank": rank,
+            "step_index": step_index,
+            "kernel_label": label,
+            "node": node,
+            "layer_id": None,
+            "layer_kind": None,
+            "invocation_id": None,
+            "substage": substage,
+            "attribution_method": "validated_gpu_annotation_stage_boundary",
+            "confidence": "high",
+        }
+        for event in events
+    ]
+
+
+def _attach_semantic_stack_evidence(
+    events: list[dict[str, Any]], source_events: list[dict[str, Any]]
+) -> None:
+    exact: dict[tuple[str, str], dict[str, Any]] = {}
+    by_node: dict[str, dict[str, Any]] = {}
+    for source in source_events:
+        if not source.get("python_stack"):
+            continue
+        node = str(source.get("node") or "")
+        name = str(source.get("kernel_name") or "")
+        exact.setdefault((node, name), source)
+        by_node.setdefault(node, source)
+    for event in events:
+        key = (str(event.get("node") or ""), str(event.get("kernel_name") or ""))
+        source = exact.get(key) or by_node.get(key[0])
+        if source is None:
+            event.setdefault("python_stack", [])
+            event["stack_evidence"] = {
+                "source": "gpu_annotation_and_model_ir",
+                "match": "validated_runtime_stage_boundary",
+                "kind": "execution_structure",
+                "confidence": "high",
+            }
+            continue
+        event["python_stack"] = source.get("python_stack") or []
+        event["cpu_op_name"] = source.get("cpu_op_name")
+        event["stack_evidence"] = {
+            "source": "eager_mtp_trace",
+            "match": (
+                "exact_kernel_name_and_ir_node"
+                if exact.get(key) is not None
+                else "representative_ir_node_stack"
+            ),
+            "kind": "eager_python_stack_for_cudagraph_structure",
+            "event_id": source.get("stack_evidence", {}).get("event_id"),
+            "confidence": source.get("confidence", "high"),
+        }
+
+
+def _transfer_cudagraph_timing(
+    source: list[dict[str, Any]],
+    timing: list[dict[str, Any]],
+    timing_manifest: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, int]]]:
+    timing_chunks = _split_events(timing, timing_manifest)
+    substages = timing_manifest.get("mtp_cudagraph_substages") or []
+    if len(substages) != len(timing_chunks):
+        raise ValueError("MTP CUDA Graph manifest lacks per-iteration substages")
+    template = _target_collective_template(source)
+    rank = int(timing_manifest.get("rank", 0))
+    transferred = []
+    accounting = []
+
+    def selected(
+        rows: list[dict[str, Any]], bounds: list[float]
+    ) -> list[dict[str, Any]]:
+        start, stop = map(float, bounds)
+        return [row for row in rows if start <= float(row["ts_us"]) < stop]
+
+    for step_index, (chunk, stage) in enumerate(
+        zip(timing_chunks, substages), start=1
+    ):
+        target_bounds = stage["target_verify_us"]
+        extend_bounds = stage["mtp_draft_extend_us"]
+        draft_bounds = stage["draft_select_us"]
+        _iter_start, iter_stop = _bounds(timing_manifest)[step_index - 1]
+        target_events = selected(chunk, target_bounds)
+        draft_graph_events = selected(chunk, extend_bounds)
+        accept_events = [
+            event
+            for event in chunk
+            if float(target_bounds[1]) <= float(event["ts_us"]) < float(extend_bounds[0])
+        ]
+        proposal_commit_events = [
+            event
+            for event in chunk
+            if float(extend_bounds[1]) <= float(event["ts_us"]) < float(draft_bounds[0])
+        ]
+        draft_select_events = [
+            event
+            for event in chunk
+            if float(draft_bounds[0]) <= float(event["ts_us"]) < iter_stop
+        ]
+        mapped_target = map_decode_step(
+            kernels=_timing_as_graph_kernels(target_events),
+            config_name="tp4_flashinfer_gdn",
+            collective_template=template,
+            rank=rank,
+            step_index=step_index,
+        )
+        mapped_draft = _map_mtp_draft_graph(
+            draft_graph_events, rank=rank, step_index=step_index
+        )
+        rows = [
+            *mapped_target,
+            *_runtime_stage_rows(
+                accept_events,
+                rank=rank,
+                step_index=step_index,
+                node="mtp_generation.accept_commit",
+                label="accept path and commit target model state",
+                substage="accept_commit",
+            ),
+            *mapped_draft,
+            *_runtime_stage_rows(
+                proposal_commit_events,
+                rank=rank,
+                step_index=step_index,
+                node="mtp_generation.proposal_update",
+                label="commit next MTP proposal state",
+                substage="proposal_update",
+            ),
+            *_runtime_stage_rows(
+                draft_select_events,
+                rank=rank,
+                step_index=step_index,
+                node="mtp_generation.draft_select",
+                label="build candidate tree and prepare next target verification",
+                substage="draft_select",
+            ),
+        ]
+        if len(rows) != len(chunk):
+            raise ValueError(
+                f"MTP CUDA Graph step {step_index} attributed {len(rows)} of "
+                f"{len(chunk)} kernels"
+            )
+        rows.sort(key=lambda event: float(event["ts_us"]))
+        _attach_semantic_stack_evidence(rows, source)
+        transferred.extend(rows)
+        accounting.append(
+            {
+                "target_graph_kernel_count": len(mapped_target),
+                "accept_commit_kernel_count": len(accept_events),
+                "mtp_draft_graph_kernel_count": len(mapped_draft),
+                "proposal_commit_kernel_count": len(proposal_commit_events),
+                "draft_select_kernel_count": len(draft_select_events),
+                "attributed_kernel_count": len(rows),
+            }
+        )
+    return transferred, accounting
 
 
 def transfer_timing(
@@ -568,6 +1338,8 @@ def transfer_timing(
     semantic_manifest: dict[str, Any],
     timing_manifest: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, int]]]:
+    if "cudagraph" in str(timing_manifest.get("phase", "")):
+        return _transfer_cudagraph_timing(source, timing, timing_manifest)
     source_chunks = _split_events(source, semantic_manifest)
     if len(source_chunks) != 1:
         raise ValueError("semantic mapping must select exactly one MTP iteration")
@@ -717,6 +1489,26 @@ def _resolve_mtp_generation_boundary_insert(
     }
     left_node = str(left.get("node"))
     right_node = str(right.get("node"))
+    if (
+        "cudagraph" in phase
+        and str(timing_event.get("kernel_name")) == "memcpy32_post"
+        and right.get("node")
+    ):
+        # Graph replay inserts this 32-byte setup copy immediately before its
+        # consumer. It is absent from eager execution and repeats at the same
+        # consumer boundary in all 48 target layers and the one-layer MTP
+        # model. Charge it to that structurally proven successor rather than
+        # inferring ownership from the generic kernel name.
+        return {
+            "kernel_label": f"CUDA Graph setup for {right.get('kernel_label') or right_node}",
+            "node": right_node,
+            "layer_id": right.get("layer_id"),
+            "layer_kind": right.get("layer_kind"),
+            "invocation_id": right.get("invocation_id"),
+            "substage": right.get("substage"),
+            "attribution_method": "cudagraph_successor_boundary_context",
+            "confidence": "high",
+        }
     if (
         left_node.endswith("qsa_attention.metadata")
         and right_node.endswith("qsa_attention.indexer")
@@ -944,7 +1736,7 @@ def build_metrics(events: list[dict[str, Any]], *, phase: str, n_iters: int) -> 
             rows,
             n_iters=n_iters,
             metric_kind="inclusive_rollup",
-            aggregation="interval union on the MTP eager timing reference rank",
+            aggregation="interval union on the selected MTP timing reference rank",
             all_events=events,
             elapsed_scope="step",
         )
@@ -1074,7 +1866,13 @@ def mtp_node_states(phase: str) -> dict[str, dict[str, str]]:
         }
     )
     inactive = (
-        ("mtp_generation.draft_select", "mtp_generation.target_verify", "mtp_generation.accept_commit", "mtp_generation.mtp_draft_extend")
+        (
+            "mtp_generation.draft_select",
+            "mtp_generation.target_verify",
+            "mtp_generation.accept_commit",
+            "mtp_generation.mtp_draft_extend",
+            "mtp_generation.proposal_update",
+        )
         if phase == "prefill"
         else ("mtp_generation.prompt", "mtp_generation.target_prefill", "mtp_generation.mtp_prefill")
     )
@@ -1185,11 +1983,22 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         raise ValueError("semantic MTP trace must use normal asynchronous execution")
     if timing_protocol.get("cuda_launch_blocking") is not False:
         raise ValueError("timing MTP trace must use normal asynchronous execution")
+    if semantic_protocol.get("mode") != "eager":
+        raise ValueError("MTP semantic trace must use eager execution")
+    timing_mode = str(timing_protocol.get("mode"))
+    if args.phase == "prefill" and timing_mode != "eager":
+        raise ValueError("MTP prefill timing must use eager execution")
+    if args.phase == "decode" and timing_mode not in {"eager", "cudagraph"}:
+        raise ValueError("MTP decode timing must use eager or CUDA Graph execution")
+    if timing_mode == "cudagraph" and (
+        timing_protocol.get("cuda_graph_decode_backend"),
+        timing_protocol.get("cuda_graph_prefill_backend"),
+        timing_protocol.get("cuda_graph_batch_sizes"),
+    ) != ("full", "disabled", [args.batch_size]):
+        raise ValueError("MTP timing trace does not use the exact decode-only graph bucket")
     for protocol in (semantic_protocol, timing_protocol):
         if protocol.get("catalog_evidence") is not True:
             raise ValueError("MTP trace is diagnostic-only, not catalog evidence")
-        if protocol.get("mode") != "eager":
-            raise ValueError("MTP catalog trace must use eager execution")
         if protocol.get("capture_phase") != args.phase:
             raise ValueError("MTP trace phase does not match requested profile")
         if protocol.get("global_batch_sizes") != [args.batch_size]:
@@ -1237,9 +2046,36 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             raise ValueError("MTP protocol source patch components mismatch")
     if semantic_protocol.get("formal_profile_steps") != 1:
         raise ValueError("MTP semantic trace must capture one scheduler iteration")
-    expected_timing_steps = 1 if args.phase == "prefill" else 8
+    expected_timing_steps = (
+        1 if args.phase == "prefill" else (7 if timing_mode == "cudagraph" else 8)
+    )
     if timing_protocol.get("formal_profile_steps") != expected_timing_steps:
         raise ValueError("MTP timing trace step count mismatch")
+    formal_round = (
+        validate_cudagraph_round(
+            args.timing_rounds,
+            batch_size=args.batch_size,
+            profile_steps=expected_timing_steps,
+        )
+        if timing_mode == "cudagraph"
+        else None
+    )
+    cross_rank = None
+    if timing_mode == "cudagraph":
+        if args.cross_rank_summary is None:
+            raise ValueError("CUDA Graph timing requires --cross-rank-summary")
+        cross_rank = json.loads(args.cross_rank_summary.read_text())
+        if (
+            cross_rank.get("schema_version") != "mtp_cross_rank_timing.v1"
+            or cross_rank.get("sample_count_per_rank") != 5
+            or [row.get("rank") for row in cross_rank.get("ranks", [])]
+            != [0, 1, 2, 3]
+        ):
+            raise ValueError("invalid MTP cross-rank timing summary")
+        if int(cross_rank.get("reference_rank", -1)) != int(
+            timing_manifest.get("rank", -2)
+        ):
+            raise ValueError("timing manifest is not the selected critical TP rank")
 
     source = semantic_events(args)
     timing_raw = load_jsonl(args.timing_events)
@@ -1253,22 +2089,38 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
     states = mtp_node_states(args.phase)
     timing = _average_step_timing(attributed, timing_manifest)
     phase_label = "prefill" if args.phase == "prefill" else "decode"
+    timing_label = "CUDA Graph" if timing_mode == "cudagraph" else "eager"
+    transfer_policy = (
+        "CUDA Graph GPU annotations split each scheduler iteration into target verify, "
+        "accept/commit, one-layer MTP replay, proposal update, and next-verify preparation; "
+        "the 96 target HC combines, fixed 3-linear/1-QSA schedule, two MTP HC combines, "
+        "unique kernel anchors, eager-proven collective order, and the exact post-collective "
+        "proposal sequence provide complete contract-level IR ownership; eager stacks supply "
+        "source symbols without overriding replay structure"
+        if timing_mode == "cudagraph"
+        else "same-shape per-step exact kernel-name sequence alignment partitioned at every "
+        "HC combine delimiter; timing-only kernels require a direct signature, identical "
+        "left/right IR semantics, or an explicitly classified generation-runtime boundary"
+    )
     profile_id = (
         "qwen40_tp4_mtp_eager_prefill_gbs1_8k"
         if args.phase == "prefill"
-        else f"qwen40_tp4_mtp_eager_decode_gbs{args.batch_size:03d}_8k1k"
+        else f"qwen40_tp4_mtp_{'cg' if timing_mode == 'cudagraph' else 'eager'}_decode_gbs{args.batch_size:03d}_8k1k"
     )
     variant_id = profile_id.removeprefix("qwen40_")
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
-        "label": f"GB300 · pure TP4 · FlashInfer GDN · MTP on · eager {phase_label} · default overlap · global BS{args.batch_size} · 8k/1k",
+        "label": f"GB300 · pure TP4 · FlashInfer GDN · MTP on · {timing_label} {phase_label} · default overlap · global BS{args.batch_size} · 8k/1k",
         "model_id": "qwen40",
         "execution_path_id": "tp_only",
         "implementation_id": IMPLEMENTATION_ID,
         "variant_id": variant_id,
         "phase": args.phase,
         "generation_mode": "eagle_mtp",
+        # MTP keeps the same Architecture tab as autoregressive profiles, but
+        # owns a distinct root that composes the target model, proposal state,
+        # verification loop, and the shared one-layer auxiliary model.
         "entry_view": "mtp_generation",
         "execution_parameters": {"tp_size": 4, "dp_size": 1, "cp_size": 1, "ep_size": 1},
         "hardware": {"gpu": "GB300", "gpus_per_node": 4, "nodes": 1, "cluster": "CMH"},
@@ -1283,7 +2135,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "prompt_seed": 20260819,
             "cache_policy": "radix-disabled",
             "request_state_reset": "once before warmup-1; natural request release thereafter",
-            "scheduler_path": "eager_default_overlap",
+            "scheduler_path": f"{timing_mode}_default_overlap",
             "server_context_length": 9218,
             "max_prefill_tokens": 8192,
             "chunked_prefill_size": 8192,
@@ -1295,7 +2147,8 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "type": "torch",
             "rank": int(timing_manifest.get("rank", 0)),
             "activities": ["CPU", "GPU"],
-            "cuda_graph_enabled": False,
+            "cuda_graph_enabled": timing_mode == "cudagraph",
+            "captured_steps": expected_timing_steps,
             "overlap_schedule_enabled": True,
             "captured_phase": f"eagle_mtp_{args.phase}",
             "selected_iterations": n_iters,
@@ -1303,7 +2156,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "record_shapes": False,
             "semantic_trace_with_stack": True,
             "semantic_trace_cuda_launch_blocking": False,
-            "gpu_metric_semantics": "GPU kernel-interval union across streams; overlap counted once and PDL resident-wait intervals remain active; stack semantics transferred by exact HC-delimited kernel sequence",
+            "gpu_metric_semantics": "GPU kernel-interval union across streams; overlap counted once and PDL resident-wait intervals remain active",
         },
         "evidence": {
             "job_id": int(args.timing_job_id) if args.timing_job_id.isdigit() else args.timing_job_id,
@@ -1313,7 +2166,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "base_source_commit": BASE_SOURCE_COMMIT,
             "source_delta": "qwen4-main 32e9cb5 rollback plus QSA lifecycle/capacity hardening; model math and profile-window scheduling are unchanged",
             "source_patch_components": SOURCE_PATCH_COMPONENTS,
-            "scheduler_path": "eager_default_overlap",
+            "scheduler_path": f"{timing_mode}_default_overlap",
             "model_revision": MODEL_REVISION,
             "gdn_backend": "flashinfer_bf16",
             "trace_file": Path(timing_manifest["trace_path"]).name,
@@ -1326,8 +2179,24 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "mapping_sha256": sha256_file(args.semantic_mapping),
             "window": timing_manifest["window"],
             "stack_mapping_window": semantic_manifest["window"],
-            "timing_transfer": "same-shape per-step exact kernel-name sequence alignment partitioned at every HC combine delimiter; timing-only kernels require a direct signature, identical left/right IR semantics, or an explicitly classified generation-runtime boundary",
+            "timing_transfer": transfer_policy,
             "timing_alignment_steps": alignment,
+            "validated_tp_rank_count": (
+                len(formal_round.get("trace_step_summary") or {})
+                if formal_round is not None
+                else 1
+            ),
+            "reference_rank_policy": (
+                cross_rank.get("reference_policy")
+                if cross_rank is not None
+                else "selected eager timing reference rank"
+            ),
+            "cross_rank_timing": cross_rank,
+            "cross_rank_summary_sha256": (
+                sha256_file(args.cross_rank_summary)
+                if args.cross_rank_summary is not None
+                else None
+            ),
             "original_stack_rule_mapped_duration_ratio": validation.get("mapped_duration_ratio"),
             "attributed_kernel_duration_ratio": 1.0,
             "accounting": {
@@ -1347,10 +2216,10 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "timing_coverage": "100% of kernels in the selected MTP scheduler iterations",
             "reference_rank": int(timing_manifest.get("rank", 0)),
             "node_time": "GPU kernel-active interval union; overlap counted once; PDL resident-wait intervals remain active",
-            "kernel_detail": "GPU residency from a stack-disabled MTP eager timing trace",
-            "provenance": "Python-stack IR attribution from the MTP semantic trace, transferred by exact HC-delimited per-step sequence alignment",
+            "kernel_detail": f"GPU residency from a stack-disabled MTP {timing_label} timing trace",
+            "provenance": transfer_policy,
             "request_shape": f"global BS{args.batch_size}, ISL/OSL 8192/1024, EAGLE steps1/topk1/draft-width2",
-            "scheduler_path": "eager default overlap; CUDA kernel execution remains asynchronous",
+            "scheduler_path": f"{timing_label} default overlap; CUDA kernel execution remains asynchronous",
             "timing": timing,
             "gap_note": "device gap is step elapsed minus the union of all GPU kernel intervals on the reference rank; the reported gap reason classifies interval morphology only and does not assert a CPU root cause",
         },
@@ -1381,11 +2250,11 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             "rank": int(timing_manifest.get("rank", 0)),
         },
         stack_source={
-            "source": "eager_mtp_trace",
+            "source": "eager_mtp_semantic_trace",
             "stack_trace_file": Path(semantic_manifest["trace_path"]).name,
             "stack_events_file": args.semantic_events.name,
             "stack_events_sha256": sha256_file(args.semantic_events),
-            "policy": "full eager Python stack transferred to stack-disabled timing by exact HC-delimited kernel sequence",
+            "policy": transfer_policy,
         },
     )
     timeline_sha256 = write_timeline_artifact(timeline_path, timeline)
@@ -1406,6 +2275,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "timing_job_id": args.timing_job_id,
         "timing": timing,
         "alignment": alignment,
+        "cross_rank_timing": cross_rank,
         "node_active_ms": {
             target: metric["active_gpu_ms"]
             for target, metric in metrics.items()

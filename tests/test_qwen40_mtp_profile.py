@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 
@@ -15,13 +16,16 @@ from models.qwen40.build.build_qwen40_mtp_eager_profile import (  # noqa: E402
     SOURCE_PATCH_COMPONENTS,
     SOURCE_PATCH_SHA256,
     _append_source_reviewed_mtp_decode_runtime_tail,
+    _layer_context,
     _reconcile_hyperconnection_structure,
     _reconcile_mtp_input_fusion,
     _reconcile_mtp_moe_structure,
     _resolve_mtp_generation_boundary_insert,
     _restore_mtp_scope_for_timing_inserts,
+    _validated_mtp_proposal_update_indices,
     build_metrics,
     mtp_node_states,
+    validate_cudagraph_round,
 )
 
 
@@ -34,11 +38,125 @@ def test_mtp_profile_source_is_qwen4_main_with_qsa_hardening() -> None:
     ]
 
 
+def test_mtp_eager_stack_converts_class_local_layer_ids_to_global_schedule() -> None:
+    linear = {
+        "python_stack": [
+            {"raw": "nn.Module: Qwen4ExpLinearDecoderLayer_3"},
+        ]
+    }
+    attention = {
+        "python_stack": [
+            {"raw": "nn.Module: Qwen4ExpAttentionDecoderLayer_2"},
+        ]
+    }
+
+    assert _layer_context(linear, "linear_attention.delta_rule") == (4, "linear")
+    assert _layer_context(attention, "qsa_attention.attention_core") == (11, "full")
+
+
+def test_mtp_cudagraph_round_requires_four_complete_rank_replays(
+    tmp_path: Path,
+) -> None:
+    expected = ["step[TARGET_VERIFY bs=16]"] * 7
+    record = {
+        "round": "formal-1",
+        "global_batch_size": 16,
+        "profile_trigger": {
+            "trigger": {
+                "global_running_reqs": 16,
+                "global_waiting_reqs": 0,
+                "global_waiting_uncached_tokens": 0,
+                "local_running_min": 16,
+                "local_running_max": 16,
+            }
+        },
+        "trace_files": [f"rank-{rank}.trace.json.gz" for rank in range(4)],
+        "trace_step_summary": {
+            f"rank-{rank}.trace.json.gz": {
+                "cpu_step_names": expected,
+                "primary_gpu_step_names": expected,
+                "cuda_graph_launch_count": 14,
+                "cuda_graph_launch_step_counts": {
+                    "step[TARGET_VERIFY bs=16]": 7,
+                },
+                "cuda_graph_launch_iteration_counts": [2] * 7,
+            }
+            for rank in range(4)
+        },
+    }
+    rounds = tmp_path / "rounds.jsonl"
+    rounds.write_text(json.dumps(record) + "\n")
+
+    assert validate_cudagraph_round(rounds, batch_size=16, profile_steps=7) == record
+
+
+def test_mtp_cudagraph_memcpy32_setup_belongs_to_proven_successor() -> None:
+    resolved = _resolve_mtp_generation_boundary_insert(
+        {"kernel_name": "memcpy32_post"},
+        {
+            "node": "hyperconnection.mix",
+            "layer_id": 4,
+            "layer_kind": "linear",
+            "substage": "mlp_hc_mix",
+        },
+        {
+            "node": "moe.shared_expert",
+            "kernel_label": "shared expert projection",
+            "layer_id": 4,
+            "layer_kind": "linear",
+            "invocation_id": 4,
+            "substage": "moe",
+        },
+        phase="eagle_mtp_cudagraph_decode",
+    )
+
+    assert resolved == {
+        "kernel_label": "CUDA Graph setup for shared expert projection",
+        "node": "moe.shared_expert",
+        "layer_id": 4,
+        "layer_kind": "linear",
+        "invocation_id": 4,
+        "substage": "moe",
+        "attribution_method": "cudagraph_successor_boundary_context",
+        "confidence": "high",
+    }
+
+
 def test_mtp_prefill_marks_decode_only_qsa_metadata_inactive() -> None:
     assert mtp_node_states("prefill")["mtp_qsa_attention.metadata"] == {
         "status": "not_in_selected_stage",
         "label": "decode-only QSA layout / valid-count metadata",
     }
+    assert mtp_node_states("prefill")["mtp_generation.proposal_update"] == {
+        "status": "not_in_selected_stage",
+        "label": "not in selected prefill stage",
+    }
+
+
+def test_mtp_proposal_update_requires_the_reviewed_contract_sequence() -> None:
+    events = [
+        {
+            "cpu_op_name": "aten::index",
+            "kernel_name": "index_elementwise_kernel OpaqueType<4>",
+        },
+        {
+            "cpu_op_name": "aten::index",
+            "kernel_name": "index_elementwise_kernel OpaqueType<2>",
+        },
+        {"cpu_op_name": "aten::argmax", "kernel_name": "reduce ArgMaxOps<float>"},
+        {"cpu_op_name": "aten::fill_", "kernel_name": "FillFunctor<float>"},
+    ]
+
+    assert _validated_mtp_proposal_update_indices(events, 0, len(events)) == [
+        0,
+        1,
+        2,
+        3,
+    ]
+
+    events[1]["kernel_name"] = "unrelated generic kernel"
+    with pytest.raises(ValueError, match="proposal-update contract sequence changed"):
+        _validated_mtp_proposal_update_indices(events, 0, len(events))
 
 
 def test_generic_routed_expert_between_mtp_topk_and_combine_gets_mtp_scope() -> None:
@@ -203,6 +321,11 @@ def test_prefill_hc_mix_groups_pair_to_combine_and_leave_two_final_mixes() -> No
                 },
                 {"kernel_name": "lm_head_kernel", "node": "wrong.runtime.node"},
                 {"kernel_name": "_all_gather_kernel_inner", "node": "wrong.collective"},
+                {
+                    "kernel_name": "direct_copy_kernel_cuda logits materialization",
+                    "cpu_op_name": "aten::copy_",
+                    "node": "wrong.runtime.node",
+                },
             ]
         )
 
@@ -227,8 +350,10 @@ def test_prefill_hc_mix_groups_pair_to_combine_and_leave_two_final_mixes() -> No
     ]
     assert sum(event.get("node") == "top.final_hc_mix" for event in events) == 2
     assert sum(event.get("node") == "mtp_head.final_hc_mix" for event in events) == 2
-    assert sum(event.get("node") == "top.tp_logits_collective" for event in events) == 1
-    assert sum(event.get("node") == "mtp_head.tp_logits_collective" for event in events) == 1
+    assert sum(event.get("node") == "top.lm_head" for event in events) == 1
+    assert sum(event.get("node") == "mtp_head.lm_head" for event in events) == 1
+    assert sum(event.get("node") == "top.tp_logits_collective" for event in events) == 2
+    assert sum(event.get("node") == "mtp_head.tp_logits_collective" for event in events) == 2
 
 
 def test_mtp_input_fusion_splits_two_projection_pairs_and_residual_add() -> None:

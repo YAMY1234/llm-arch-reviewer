@@ -95,6 +95,12 @@ python3 scripts/build_v2.py --model qwen40
 
 # serve docs/ locally; the allowlisted trace endpoint enables exact Perfetto jumps
 python3 scripts/serve_viewer.py --port 8765
+
+# persistent background server (defaults to 127.0.0.1:8766)
+scripts/viewer_server.sh
+scripts/viewer_server.sh status
+scripts/viewer_server.sh restart
+scripts/viewer_server.sh stop
 open http://localhost:8765/                              # landing
 open 'http://localhost:8765/viewer.html?model=dsv4'      # one model
 open 'http://localhost:8765/viewer.html?model=qwen35'    # pipeline-generated Qwen3.5
@@ -105,10 +111,21 @@ open 'http://localhost:8765/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
 For a viewer-only session, `python3 -m http.server -d docs 8765` still works.
 `scripts/serve_viewer.py` additionally exposes only exact
 `*.trace.json.gz` filename+SHA256 matches under its allowlisted `--trace-root`
-directories. The viewer transfers that buffer directly to `ui.perfetto.dev`
+directories. By default it recursively indexes the `current/qwen40-*` task
+directories, including validated layouts such as `final/cg/raw/<job>/`. The
+viewer transfers that buffer directly to `ui.perfetto.dev`
 using Perfetto's browser `postMessage` interface; the raw trace remains in the
 browser. If the endpoint is unavailable, the viewer asks for the matching local
 trace file instead.
+
+`scripts/viewer_server.sh` launches `serve_viewer.py` through `nohup`, so the
+server survives the terminal that started it. When invoked by Codex on macOS,
+the script automatically asks Terminal to own that same `nohup` launch; this
+places the server outside Codex's disposable child-process tree while retaining
+access to the project and trace directories. Its PID and log live under
+`${TMPDIR:-/tmp}/llm-arch-reviewer-viewer-<uid>/`; use the script's `status` and
+`logs` actions instead of relying on a foreground terminal. Override the default
+bind with `VIEWER_HOST` or `VIEWER_PORT` when needed.
 
 ## IR-first V2
 

@@ -184,6 +184,13 @@ def find_step_annotation_windows(
         return find_eagle_mtp_prefill_windows(trace_events, signature=signature)
     if phase_lower in {"eagle_mtp_decode", "mtp_decode"}:
         return find_eagle_mtp_decode_windows(trace_events, signature=signature)
+    if phase_lower in {
+        "eagle_mtp_cudagraph_decode",
+        "mtp_cudagraph_decode",
+    }:
+        return find_eagle_mtp_cudagraph_decode_windows(
+            trace_events, signature=signature
+        )
     if "decode" in phase_lower:
         step_kind = "DECODE"
     elif "extend" in phase_lower or "prefill" in phase_lower:
@@ -238,6 +245,26 @@ def _primary_gpu_annotations(
         key=lambda item: sum(float(event.get("dur", 0.0)) for event in item[1]),
     )
     return sorted(annotations, key=lambda event: float(event.get("ts", 0.0))), track_key
+
+
+def _primary_gpu_annotations_exact(
+    trace_events: list[dict[str, Any]], *, name: str
+) -> list[dict[str, Any]]:
+    tracks: dict[tuple[Any, Any], list[dict[str, Any]]] = {}
+    for event in trace_events:
+        if (
+            event.get("cat") == "gpu_user_annotation"
+            and event.get("ph") == "X"
+            and str(event.get("name", "")) == name
+        ):
+            tracks.setdefault((event.get("pid"), event.get("tid")), []).append(event)
+    if not tracks:
+        return []
+    _track, annotations = max(
+        tracks.items(),
+        key=lambda item: sum(float(event.get("dur", 0.0)) for event in item[1]),
+    )
+    return sorted(annotations, key=lambda event: float(event.get("ts", 0.0)))
 
 
 def _anchor_count(
@@ -341,6 +368,100 @@ def find_eagle_mtp_decode_windows(
             )
         )
     return windows
+
+
+def find_eagle_mtp_cudagraph_decode_windows(
+    trace_events: list[dict[str, Any]], *, signature: str | None = None
+) -> list[ForwardWindow]:
+    """Build complete EAGLE CUDA-Graph iterations between target replays.
+
+    Eager execution emits separate target-verify and draft-extend GPU ranges.
+    CUDA-Graph replay instead exposes one target range per scheduler iteration,
+    while the draft graph launch occurs after that range and before the next
+    target range.  Adjacent target starts are therefore the only closed,
+    scheduler-level boundary that contains both graph launches.
+    """
+
+    targets, _track = _primary_gpu_annotations(
+        trace_events, name_prefix="step[TARGET_VERIFY"
+    )
+    kernels = [event for event in trace_events if event.get("cat") == "kernel"]
+    windows = []
+    for target, next_target in zip(targets, targets[1:]):
+        start = float(target.get("ts", 0.0))
+        end = float(next_target.get("ts", 0.0))
+        if end <= start:
+            continue
+        windows.append(
+            ForwardWindow(
+                start_us=start,
+                end_us=end,
+                iter_bounds_us=[(start, end)],
+                anchor_kernel_count=_anchor_count(
+                    kernels, signature=signature, start=start, end=end
+                ),
+            )
+        )
+    return windows
+
+
+def find_eagle_mtp_cudagraph_substages(
+    trace_events: list[dict[str, Any]], window: ForwardWindow
+) -> list[dict[str, Any]]:
+    """Recover target, MTP-draft, and proposal-selection GPU boundaries."""
+
+    targets, _track = _primary_gpu_annotations(
+        trace_events, name_prefix="step[TARGET_VERIFY"
+    )
+    draft_extends = _primary_gpu_annotations_exact(
+        trace_events, name="draft_extend"
+    )
+    drafts = _primary_gpu_annotations_exact(trace_events, name="draft")
+
+    def in_bound(rows: list[dict[str, Any]], start: float, stop: float) -> list[dict[str, Any]]:
+        return [
+            event
+            for event in rows
+            if start <= float(event.get("ts", 0.0)) < stop
+        ]
+
+    result = []
+    for index, (start, stop) in enumerate(window.iter_bounds_us, start=1):
+        target_rows = in_bound(targets, start, stop)
+        extend_rows = in_bound(draft_extends, start, stop)
+        draft_rows = in_bound(drafts, start, stop)
+        if not (len(target_rows) == len(extend_rows) == len(draft_rows) == 1):
+            raise ValueError(
+                "MTP CUDA Graph iteration lacks unique target/draft annotations: "
+                f"step={index} target={len(target_rows)} "
+                f"draft_extend={len(extend_rows)} draft={len(draft_rows)}"
+            )
+        target = target_rows[0]
+        extend = extend_rows[0]
+        draft = draft_rows[0]
+        target_bounds = (float(target["ts"]), _event_end_us(target))
+        extend_bounds = (float(extend["ts"]), _event_end_us(extend))
+        draft_bounds = (float(draft["ts"]), _event_end_us(draft))
+        if not (
+            abs(target_bounds[0] - start) < 0.01
+            and target_bounds[1] <= extend_bounds[0]
+            and extend_bounds[1] <= draft_bounds[0]
+            and draft_bounds[1] <= stop
+        ):
+            raise ValueError(
+                "MTP CUDA Graph substage boundaries overlap or are out of order: "
+                f"step={index} target={target_bounds} extend={extend_bounds} "
+                f"draft={draft_bounds} iteration={(start, stop)}"
+            )
+        result.append(
+            {
+                "step_index": index,
+                "target_verify_us": list(target_bounds),
+                "mtp_draft_extend_us": list(extend_bounds),
+                "draft_select_us": list(draft_bounds),
+            }
+        )
+    return result
 
 
 def choose_forward_window(
@@ -889,6 +1010,13 @@ def build_trace_mapping(
             1 for event in trace_events if event.get("cat") == "kernel"
         ),
     }
+    if phase.lower() in {
+        "eagle_mtp_cudagraph_decode",
+        "mtp_cudagraph_decode",
+    }:
+        manifest["mtp_cudagraph_substages"] = find_eagle_mtp_cudagraph_substages(
+            trace_events, window
+        )
     return BuildResult(
         manifest=manifest,
         events=events,

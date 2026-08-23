@@ -59,6 +59,7 @@ def direct_kernel_mapping(name: str) -> tuple[str | None, str | None]:
         ("gdn_decode_bf16state", "linear_attention.delta_rule", "FlashInfer GDN recurrence"),
         ("gdn_wide_vec_kernel", "linear_attention.delta_rule", "FlashInfer GDN recurrence"),
         ("fused_gdn_gating", "linear_attention.gating", "GDN beta/decay gating"),
+        ("fused_qkv_split_gdn_prefill", "linear_attention.gating", "GDN beta/decay gating"),
         ("_layer_norm_fwd_1pass_kernel", "linear_attention.gated_norm", "GDN gated RMSNorm"),
         ("_hc_mix_persistent_kernel", "hyperconnection.mix", "hyper-connection fused gate + mix"),
         ("hc_combine_kernel", "hyperconnection.combine", "hyper-connection combine"),
@@ -224,7 +225,13 @@ def _map_linear_attention(
         elif index < conv:
             node, label = "linear_attention.split_pack", "GDN split/reshape support"
         elif index < delta:
-            node, label = "linear_attention.gating", "GDN recurrence preparation"
+            if _is_gemm(name):
+                node, label = (
+                    "linear_attention.qkvz_projection",
+                    "beta/alpha projection (shared projection rollup)",
+                )
+            else:
+                node, label = "linear_attention.gating", "GDN recurrence preparation"
         elif index <= norm:
             node, label = "linear_attention.delta_rule", "GDN recurrence support"
         else:
@@ -241,6 +248,8 @@ def _map_qsa_attention(rows: list[dict[str, Any]], start: int, stop: int) -> Non
         raise ValueError("QSA segment is missing a decode anchor")
     assert qk is not None and first_indexer is not None and last_indexer is not None
     assert last_core is not None
+    indexer_stream = rows[first_indexer].get("stream")
+    qk_stream = rows[qk].get("stream")
 
     output_gemm = next(
         (
@@ -255,7 +264,14 @@ def _map_qsa_attention(rows: list[dict[str, Any]], start: int, stop: int) -> Non
             continue
         name = rows[index]["kernel_name"]
         if index < qk:
-            node, label = "qsa_attention.qkv_gate_projection", "Q/K/V + output-gate projection"
+            if (
+                indexer_stream is not None
+                and indexer_stream != qk_stream
+                and rows[index].get("stream") == indexer_stream
+            ):
+                node, label = "qsa_attention.indexer", "QSA index projection/support"
+            else:
+                node, label = "qsa_attention.qkv_gate_projection", "Q/K/V + output-gate projection"
         elif index <= last_indexer:
             node, label = "qsa_attention.indexer", "QSA index projection/support"
         elif index <= last_core:

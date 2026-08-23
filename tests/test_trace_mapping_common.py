@@ -15,6 +15,8 @@ from models.common.trace_mapping import (  # noqa: E402
     StackFrameRules,
     TraceMappingRules,
     build_trace_mapping,
+    find_eagle_mtp_cudagraph_decode_windows,
+    find_eagle_mtp_cudagraph_substages,
     find_eagle_mtp_decode_windows,
     find_eagle_mtp_prefill_windows,
 )
@@ -125,6 +127,71 @@ class CommonTraceMappingTest(unittest.TestCase):
         self.assertEqual(
             [(window.start_us, window.end_us) for window in windows],
             [(10, 60), (60, 102)],
+        )
+
+    def test_eagle_mtp_cudagraph_decode_uses_adjacent_target_boundaries(self):
+        def annotation(name, ts, dur, tid=23):
+            return {
+                "ph": "X",
+                "cat": "gpu_user_annotation",
+                "name": name,
+                "pid": 0,
+                "tid": tid,
+                "ts": ts,
+                "dur": dur,
+            }
+
+        events = [
+            annotation("step[TARGET_VERIFY bs=16]", 10, 20),
+            annotation("step[TARGET_VERIFY bs=16]", 12, 3, tid=7),
+            {"ph": "X", "cat": "kernel", "name": "draft graph kernel", "ts": 35, "dur": 4},
+            annotation("step[TARGET_VERIFY bs=16]", 50, 18),
+            {"ph": "X", "cat": "kernel", "name": "draft graph kernel", "ts": 72, "dur": 3},
+            annotation("step[TARGET_VERIFY bs=16]", 90, 19),
+        ]
+
+        windows = find_eagle_mtp_cudagraph_decode_windows(events)
+
+        self.assertEqual(
+            [(window.start_us, window.end_us) for window in windows],
+            [(10, 50), (50, 90)],
+        )
+
+    def test_eagle_mtp_cudagraph_substages_use_primary_gpu_tracks(self):
+        def annotation(name, ts, dur, tid=23):
+            return {
+                "ph": "X",
+                "cat": "gpu_user_annotation",
+                "name": name,
+                "pid": 0,
+                "tid": tid,
+                "ts": ts,
+                "dur": dur,
+            }
+
+        events = [
+            annotation("step[TARGET_VERIFY bs=16]", 10, 20),
+            annotation("step[TARGET_VERIFY bs=16]", 12, 3, tid=7),
+            annotation("draft_extend", 32, 8),
+            annotation("draft_extend", 34, 2, tid=8),
+            annotation("draft", 43, 4),
+        ]
+        window = find_eagle_mtp_cudagraph_decode_windows(
+            events + [annotation("step[TARGET_VERIFY bs=16]", 50, 18)]
+        )[0]
+
+        substages = find_eagle_mtp_cudagraph_substages(events, window)
+
+        self.assertEqual(
+            substages,
+            [
+                {
+                    "step_index": 1,
+                    "target_verify_us": [10.0, 30.0],
+                    "mtp_draft_extend_us": [32.0, 40.0],
+                    "draft_select_us": [43.0, 47.0],
+                }
+            ],
         )
 
     def test_gpu_step_annotation_defines_complete_forward_without_anchor(self):

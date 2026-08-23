@@ -82,18 +82,19 @@ views:
       - {from: lm_head, to: logits, shape: "[B,T,V]", dtype: bf16}
 
   mtp_generation:
-    title: EAGLE MTP generation flow (steps 1, top-k 1, draft width 2)
+    title: Qwen 4.0 target model + EAGLE MTP inference architecture
     nodes:
       - id: prompt
         label: "prompt token ids\n[B,8192]"
         shape: io
         semantic_op: generation.mtp.prompt
       - id: target_prefill
-        label: "target-model prefill\n48-layer target + next-token logits"
+        label: "initialize target state (prefill)\nfull 48-layer target · once per request"
         shape: block
         semantic_op: generation.mtp.target_prefill
+        drill: top
       - id: mtp_prefill
-        label: "MTP seed prefill (draft_extend)\nshifted prompt + target HC states"
+        label: "initialize MTP state + first proposal\nsame one-layer auxiliary model · once after target prefill"
         shape: block
         semantic_op: generation.mtp.seed_prefill
         drill: mtp_head
@@ -102,22 +103,27 @@ views:
         shape: cache
         semantic_op: generation.mtp.proposal_cache
       - id: draft_select
-        label: "select cached proposal\nsteps=1: no inner MTP forward"
+        label: "load cached proposal for verification\nsteps=1: no auxiliary forward in this stage"
         shape: elem
         semantic_op: generation.mtp.draft_select
       - id: target_verify
-        label: "target-model tree verify\n[B,2 candidate tokens]"
+        label: "target-model tree verify\nfull 48-layer target · [B,2] candidate tree"
         shape: block
         semantic_op: generation.mtp.target_verify
+        drill: top
       - id: accept_commit
         label: "accept path + commit target state\nKV, GDN, PLE and sequence state"
         shape: elem
         semantic_op: generation.mtp.accept_commit
       - id: mtp_draft_extend
-        label: "one-layer MTP draft-extend\naccepted target HC states → next proposal"
+        label: "one-layer MTP draft forward\naccepted target HC → draft logits + next HC state"
         shape: block
         semantic_op: generation.mtp.draft_extend
         drill: mtp_head
+      - id: proposal_update
+        label: "finalize next MTP proposal\nfull logits + next HC state → cached proposal"
+        shape: elem
+        semantic_op: generation.mtp.proposal_update
       - id: emitted_tokens
         label: "accepted output tokens\n1–2 tokens/request/iteration"
         shape: io
@@ -131,7 +137,8 @@ views:
       - {from: target_verify, to: accept_commit, shape: "target logits + hidden/state updates", dtype: bf16}
       - {from: accept_commit, to: emitted_tokens, shape: "accepted token ids", dtype: int64}
       - {from: accept_commit, to: mtp_draft_extend, shape: "accepted ids + target HC [B,2,4,H]", dtype: bf16}
-      - {from: mtp_draft_extend, to: proposal_cache, kind: dashed, label: "update proposal state for next iteration"}
+      - {from: mtp_draft_extend, to: proposal_update, shape: "full draft logits + next HC hidden", dtype: bf16}
+      - {from: proposal_update, to: proposal_cache, kind: dashed, label: "commit proposal state for next iteration"}
 
   mtp_head:
     title: Qwen 4.0 one-layer MTP auxiliary head

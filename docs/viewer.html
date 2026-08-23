@@ -134,9 +134,14 @@
   body.split-resizing { cursor: col-resize; user-select: none; }
   #svg-host {
     width: 100%; height: 100%;
-    cursor: grab;
+    cursor: grab; touch-action: none;
   }
-  #svg-host:active { cursor: grabbing; }
+  #svg-host.panning { cursor: grabbing; }
+  .architecture-snapshot {
+    position: absolute; inset: 0; z-index: 4;
+    width: 100%; height: 100%; pointer-events: none;
+    background: var(--bg);
+  }
 
   #timeline-pane { display: flex; flex-direction: column; background: var(--panel); }
   .timeline-toolbar {
@@ -168,6 +173,13 @@
   }
   .timeline-legend { display: inline-flex; gap: 7px; align-items: center; margin-left: auto; }
   .timeline-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 2px; }
+  .timeline-legend i.palette {
+    width: 24px;
+    background: linear-gradient(90deg, #8250df, #0969da, #1a7f37, #bc4c00, #cf222e);
+  }
+  .timeline-legend i.kernel-palette {
+    background: linear-gradient(90deg, #5e35b1, #1e88e5, #00acc1, #43a047, #fdd835, #fb8c00, #d81b60);
+  }
   .timeline-status { color: var(--muted); }
   .detail-action {
     display: inline-block; margin: 4px 4px 4px 0; padding: 5px 9px; cursor: pointer;
@@ -421,10 +433,8 @@
       <input id="timeline-trace-file" type="file" accept=".json,.gz,.trace" hidden />
       <span class="timeline-status" id="timeline-status"></span>
       <span class="timeline-legend">
-        <span><i style="background:#8250df"></i>attention</span>
-        <span><i style="background:#cf222e"></i>MoE</span>
-        <span><i style="background:#0969da"></i>collective</span>
-        <span><i style="background:#9a6700"></i>HC/PLE</span>
+        <span title="Stable colors for the decoder layer and its major IR modules"><i class="palette"></i>layer / major module</span>
+        <span title="Stable color per exact CUDA kernel signature"><i class="palette kernel-palette"></i>kernel signature</span>
         <span><i style="background:#d0d7de"></i>idle</span>
       </span>
     </div>
@@ -463,6 +473,7 @@ let CURRENT_VIEW_MODE = "architecture";
 let CURRENT_IR_LAYER = "execution";
 let SPLIT_RATIO = 0.44;
 let SPLIT_RENDER_FRAME = 0;
+let ARCHITECTURE_NAVIGATION_TOKEN = 0;
 
 let TIMELINE_DATA = null;
 let TIMELINE_PROFILE_ID = "";
@@ -474,6 +485,7 @@ let TIMELINE_SELECTED_EVENT = null;
 let TIMELINE_CURSOR_US = null;
 let TIMELINE_RANGE = {startUs: 0, endUs: 1};
 let TIMELINE_HIT_RECTS = [];
+let TIMELINE_OWNER_HIT_RECTS = [];
 let TIMELINE_LOAD_TOKEN = 0;
 let PERFETTO_TRACE_BUFFER = null;
 let PERFETTO_TRACE_FILE = "";
@@ -632,11 +644,32 @@ function activateV2Selection(executionId, implementationId = "") {
   PARENT = DATA.parent;
 }
 
-function defaultViewName() {
+function profileEntryViewName() {
   const views = DATA?.views || {};
+  const entryView = DATA?.profiles?.[CURRENT_PROFILE]?.meta?.entry_view;
+  if (entryView && entryView in views) return entryView;
   if (DATA?.default_view && DATA.default_view in views) return DATA.default_view;
   if ("top" in views) return "top";
   return Object.keys(views)[0] || "top";
+}
+
+function defaultViewName() {
+  return profileEntryViewName();
+}
+
+function navigationMatchesCurrentProfile() {
+  return VIEW_STACK.length > 0 && VIEW_STACK[0] === profileEntryViewName();
+}
+
+function ensureNavigationForCurrentProfile() {
+  // During initial load parseHash() has not replayed the requested drill path
+  // yet. Leave an empty stack untouched so valid deep links survive startup.
+  if (!VIEW_STACK.length) return false;
+  if (navigationMatchesCurrentProfile()) return false;
+  VIEW_STACK = [profileEntryViewName()];
+  DRILL_FROM = [null];
+  SELECTED = null;
+  return true;
 }
 
 function variantSortRank(v) {
@@ -850,8 +883,6 @@ function refreshProfileOptions(preferred = "") {
     : (profileIds.find(p => p.includes("prefill")) || profileIds[0]);
   psel.value = pref;
   CURRENT_PROFILE = pref;
-  const entryView = DATA.profiles[pref]?.meta?.entry_view;
-  if (entryView && entryView in (DATA.views || {})) DATA.default_view = entryView;
   refreshVariantOptions(false);
   updateProfileSummary();
 }
@@ -1026,19 +1057,27 @@ function parseHash() {
   // 支持 #views=top,stack,hca_layer&from=,decoder_stack,linear_layer (栈)
   // from 记录每一层是从父 view 的哪个 node 进入，防止共享 view 刷新后丢失上下文。
   const h = location.hash || "";
-  let stack = [defaultViewName()];
+  const entryView = profileEntryViewName();
+  let stack = [entryView];
   let from = [null];
   const m1 = h.match(/views=([\w,]+)/);
   const m2 = h.match(/view=([\w]+)/);
   if (m1) {
     const arr = m1[1].split(",").filter(v => v in (DATA?.views || {}));
-    if (arr.length) stack = arr;
+    // A profile owns its Architecture root. In particular, an EAGLE-MTP
+    // profile must never be restored into the autoregressive `top` root by a
+    // stale hash left behind by another profile or by the Timeline tab.
+    if (arr.length && arr[0] === entryView) stack = arr;
   } else if (m2 && m2[1] in (DATA?.views || {})) {
-    // 单 view 时, 把它的 PARENT 链补全成 stack
-    const trail = [];
-    let cur = m2[1];
-    while (cur) { trail.unshift(cur); cur = PARENT[cur]; }
-    stack = trail;
+    // Legacy single-view hashes are accepted only when their parent chain
+    // reaches the current profile's root. This also handles `top` as the
+    // target-model child of the MTP architecture without changing the
+    // autoregressive root.
+    const trail = [m2[1]];
+    while (trail[0] !== entryView && PARENT[trail[0]]) {
+      trail.unshift(PARENT[trail[0]]);
+    }
+    if (trail[0] === entryView) stack = trail;
   }
   // 新 hash 优先使用显式 drill origin；老 hash 仍可用第一个匹配 node 回放。
   const encodedFrom = h.match(/(?:^|[&#])from=([\w,]*)/);
@@ -1125,7 +1164,9 @@ function renderCrumbs() {
     const span = document.createElement("span");
     const isLast = i === VIEW_STACK.length - 1;
     span.className = "crumb" + (isLast ? " current" : "");
-    span.textContent = v;
+    span.textContent = v === "mtp_generation"
+      ? "mtp architecture"
+      : (v === "top" && VIEW_STACK[0] === "mtp_generation" ? "target model" : v);
     if (!isLast) {
       span.onclick = () => {
         VIEW_STACK = VIEW_STACK.slice(0, i + 1);
@@ -1524,6 +1565,7 @@ function drawNode(root, n, c, viewName) {
   g.addEventListener("click", (ev) => {
     ev.stopPropagation();
     SELECTED = {view: viewName, nodeId: n.id};
+    highlightNodeOnTimeline(viewName, n.id);
     // 总是先显示 detail (block aggregate 也需要看), drill 通过 detail 里
     // 的大 button 或者下面的双击 / shift+click 触发.
     renderView();
@@ -1590,6 +1632,10 @@ function currentTimelineMeta() {
 function setViewMode(mode, sync = true, shouldRender = true) {
   const hasTimeline = !!currentTimelineMeta();
   if (!hasTimeline && mode !== "architecture") mode = "architecture";
+  if (mode !== "timeline") {
+    const reset = ensureNavigationForCurrentProfile();
+    if (reset) syncHash(true);
+  }
   CURRENT_VIEW_MODE = mode;
   const workspace = document.getElementById("workspace");
   workspace.className = `mode-${mode}`;
@@ -1882,6 +1928,21 @@ function focusNearestTimelineEvent() {
   return nearest;
 }
 
+function centerTimelineEventVertically(event) {
+  if (!event) return false;
+  const viewport = document.getElementById("timeline-viewport");
+  const hit = TIMELINE_HIT_RECTS.find(candidate => candidate.event === event);
+  if (!viewport || !hit) return false;
+  const eventCenter = hit.y + hit.height / 2;
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const targetScrollTop = Math.max(
+    0,
+    Math.min(maxScrollTop, eventCenter - viewport.clientHeight / 2),
+  );
+  viewport.scrollTo({top: targetScrollTop, left: viewport.scrollLeft, behavior: "auto"});
+  return true;
+}
+
 function timelineEventMatches(event) {
   if (TIMELINE_LAYER && String(event.layer_id) !== TIMELINE_LAYER) return false;
   if (TIMELINE_IR_TARGET && !event._irTargets.includes(TIMELINE_IR_TARGET)) return false;
@@ -1892,16 +1953,45 @@ function timelineEventMatches(event) {
   return true;
 }
 
-function timelineColor(kind) {
-  return ({
-    attention: "#8250df",
-    moe: "#cf222e",
-    communication: "#0969da",
-    hyperconnection: "#9a6700",
-    ple: "#bc4c00",
-    memory: "#57606a",
-    compute: "#1a7f37",
-  })[kind] || "#57606a";
+const TIMELINE_KERNEL_PALETTE = [
+  "#5e35b1", "#3949ab", "#1e88e5", "#039be5", "#00acc1", "#00897b",
+  "#43a047", "#7cb342", "#c0ca33", "#fdd835", "#ffb300", "#fb8c00",
+  "#f4511e", "#e53935", "#d81b60", "#8e24aa", "#6d4c41", "#546e7a",
+  "#7e57c2", "#26a69a", "#66bb6a", "#ec407a", "#ab47bc", "#29b6f6",
+];
+
+function timelineStableHash(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index++) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function timelineModuleColor(target, kind) {
+  // The exact IR target, rather than the current kernel category, owns the
+  // color.  A module therefore stays the same color across streams/profiles.
+  const hash = timelineStableHash(target || kind || "unmapped");
+  const hue = hash % 360;
+  const saturation = 62 + ((hash >>> 8) % 18);
+  const lightness = 39 + ((hash >>> 16) % 9);
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+}
+
+function timelineKernelColor(event) {
+  const signature = event?._kernelName || event?._kernelLabel || event?._irNode || "unmapped";
+  return TIMELINE_KERNEL_PALETTE[timelineStableHash(signature) % TIMELINE_KERNEL_PALETTE.length];
+}
+
+function timelineReadableTextColor(hex) {
+  const value = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(value)) return "#ffffff";
+  const red = parseInt(value.slice(0, 2), 16);
+  const green = parseInt(value.slice(2, 4), 16);
+  const blue = parseInt(value.slice(4, 6), 16);
+  return (red * 299 + green * 587 + blue * 114) / 1000 >= 150 ? "#1f2328" : "#ffffff";
 }
 
 function fitTimelineText(ctx, value, maxWidth) {
@@ -1917,6 +2007,202 @@ function fitTimelineText(ctx, value, maxWidth) {
   return low ? text.slice(0, low) + "…" : "";
 }
 
+function timelineResolvedIrNode(target) {
+  const value = String(target || "");
+  const dot = value.indexOf(".");
+  if (dot < 1) return null;
+  const viewName = value.slice(0, dot);
+  const nodeId = value.slice(dot + 1);
+  const node = (DATA?.views?.[viewName]?.nodes || []).find(candidate => candidate.id === nodeId);
+  return node ? {target: value, viewName, nodeId, node} : null;
+}
+
+function timelineResolvedTargets(event) {
+  return Array.from(new Set([
+    event._irNode,
+    ...(event._irTargets || []),
+  ].filter(Boolean))).map(timelineResolvedIrNode).filter(Boolean);
+}
+
+function timelineDisplayLabel(value) {
+  const label = String(value || "unmapped").split("\n")[0];
+  return label ? label[0].toUpperCase() + label.slice(1) : "Unmapped";
+}
+
+function timelineLayerOwner(event) {
+  const resolvedTargets = timelineResolvedTargets(event);
+  const resolved = resolvedTargets.find(candidate => {
+    const semanticOp = String(candidate.node?.semantic_op || "");
+    return Boolean(candidate.node?.drill) && (
+      String(candidate.nodeId || "").endsWith("_layer") ||
+      semanticOp.endsWith("_layer") ||
+      semanticOp.endsWith(".layer")
+    );
+  });
+  if (!resolved) {
+    const fallback = resolvedTargets[0];
+    const label = timelineDisplayLabel(fallback?.node?.label || fallback?.nodeId || event._irNode);
+    const layer = event.layer_id == null ? "" : `L${event.layer_id} · `;
+    return {
+      key: `${event.layer_id ?? "none"}:${fallback?.target || event._irNode || "unmapped"}`,
+      label: `${layer}${label}`,
+      target: fallback?.target || event._irNode || "",
+      drillView: "",
+    };
+  }
+  const semanticOp = String(resolved.node?.semantic_op || "");
+  let label = timelineDisplayLabel(resolved.node?.label || resolved.nodeId);
+  if (semanticOp.endsWith("linear_attention_layer")) label = "Linear Attention Decode Layer";
+  if (semanticOp.endsWith("full_attention_layer")) label = "QSA Full-Attention Decode Layer";
+  const layer = event.layer_id == null ? "" : `L${event.layer_id} · `;
+  return {
+    key: `${event.layer_id ?? "none"}:${resolved.target}`,
+    label: `${layer}${label}`,
+    target: resolved.target,
+    drillView: resolved.node?.drill || "",
+  };
+}
+
+function timelineMajorOwner(event, layerOwner = null, resolvedTargets = null) {
+  const candidates = resolvedTargets || timelineResolvedTargets(event);
+  const layer = layerOwner || timelineLayerOwner(event);
+  // A decoder-layer node drills into a view whose top-level nodes are the
+  // stable architecture contracts we want on the timeline: HC mix, attention,
+  // collectives, routed + shared MoE, and HC combine.  Skip their internal
+  // projection/norm/gate leaves; those remain visible as colored kernels.
+  const resolved = layer?.drillView
+    ? candidates.find(candidate => candidate.viewName === layer.drillView)
+    : null;
+  const fallback = resolved || candidates[0];
+  let label = timelineDisplayLabel(fallback?.node?.label || fallback?.nodeId || event._irNode);
+  if (/gated deltanet attention/i.test(label)) label = "GDN / Linear Attention";
+  const layerPrefix = event.layer_id == null ? "" : `L${event.layer_id} · `;
+  return {
+    key: `${event.layer_id ?? "none"}:${fallback?.target || event._irNode || "unmapped"}`,
+    label: `${layerPrefix}${label}`,
+    target: fallback?.target || event._irNode || "",
+  };
+}
+
+function packTimelineIntervals(items, startOf, endOf) {
+  const laneEnds = [];
+  const lanes = new Map();
+  const ordered = [...items].sort((left, right) => {
+    const startDelta = startOf(left) - startOf(right);
+    if (startDelta) return startDelta;
+    return endOf(right) - endOf(left);
+  });
+  for (const item of ordered) {
+    const start = startOf(item);
+    const end = Math.max(start, endOf(item));
+    let lane = laneEnds.findIndex(laneEnd => start >= laneEnd - 1e-9);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(end);
+    } else {
+      laneEnds[lane] = end;
+    }
+    lanes.set(item, lane);
+  }
+  return {lanes, laneCount: laneEnds.length};
+}
+
+function timelineOwnerSpans(events, ownerResolver) {
+  // Form semantic runs in launch order.  This keeps a layer/module together
+  // across its internal kernel gaps, but splits it if execution transitions to
+  // another owner and later comes back (for example a later scheduler phase).
+  const ordered = [...events].sort((left, right) => Number(left.start_us) - Number(right.start_us));
+  const spans = [];
+  let span = null;
+  for (const event of ordered) {
+    const owner = ownerResolver(event);
+    const start = Number(event.start_us);
+    const end = start + Number(event.duration_us);
+    if (!span || owner.key !== span.owner.key) {
+      span = {owner, start_us: start, end_us: end, events: [], kindDurations: new Map()};
+      spans.push(span);
+    } else {
+      span.end_us = Math.max(span.end_us, end);
+    }
+    span.events.push(event);
+    const kind = event._kernelKind || "compute";
+    span.kindDurations.set(kind, (span.kindDurations.get(kind) || 0) + Number(event.duration_us));
+  }
+  for (const span of spans) {
+    span.kind = [...span.kindDurations.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || "compute";
+  }
+  return spans;
+}
+
+function buildTimelineTrackLayouts(step, tracks) {
+  const eventsByStream = new Map();
+  for (const event of step.events || []) {
+    const stream = String(event.stream_id);
+    if (!eventsByStream.has(stream)) eventsByStream.set(stream, []);
+    eventsByStream.get(stream).push(event);
+  }
+
+  const ownerHeight = 15;
+  const kernelHeight = 15;
+  const laneGap = 2;
+  const layouts = [];
+  for (const track of tracks) {
+    const events = eventsByStream.get(String(track.stream_id)) || [];
+    const layerSpans = timelineOwnerSpans(events, timelineLayerOwner);
+    const layerPacking = packTimelineIntervals(
+      layerSpans,
+      span => span.start_us,
+      span => span.end_us,
+    );
+    const moduleSpans = timelineOwnerSpans(events, event => {
+      const layerOwner = timelineLayerOwner(event);
+      return timelineMajorOwner(event, layerOwner);
+    });
+    const modulePacking = packTimelineIntervals(
+      moduleSpans,
+      span => span.start_us,
+      span => span.end_us,
+    );
+    const kernelPacking = packTimelineIntervals(
+      events,
+      event => Number(event.start_us),
+      event => Number(event.start_us) + Number(event.duration_us),
+    );
+    const layerLaneCount = Math.max(1, layerPacking.laneCount);
+    const moduleLaneCount = Math.max(1, modulePacking.laneCount);
+    // Two visible kernel lanes match profiler conventions and make PDL overlap
+    // obvious.  If a future trace has deeper overlap, grow instead of painting
+    // intervals on top of each other.
+    const kernelLaneCount = Math.max(2, kernelPacking.laneCount);
+    const layerTop = 4;
+    const moduleTop = layerTop + layerLaneCount * (ownerHeight + laneGap);
+    const kernelTop = moduleTop + moduleLaneCount * (ownerHeight + laneGap) + 4;
+    const height = kernelTop + kernelLaneCount * (kernelHeight + laneGap) + 3;
+    layouts.push({
+      track,
+      events,
+      layerSpans,
+      layerPacking,
+      moduleSpans,
+      modulePacking,
+      kernelPacking,
+      layerLaneCount,
+      moduleLaneCount,
+      kernelLaneCount,
+      actualKernelLaneCount: kernelPacking.laneCount,
+      layerTop,
+      moduleTop,
+      kernelTop,
+      ownerHeight,
+      kernelHeight,
+      laneGap,
+      height,
+      y: 0,
+    });
+  }
+  return layouts;
+}
+
 function renderTimeline() {
   if (!TIMELINE_DATA || CURRENT_VIEW_MODE === "architecture") return;
   const step = currentTimelineStep();
@@ -1927,8 +2213,15 @@ function renderTimeline() {
   const dpr = window.devicePixelRatio || 1;
   const cssWidth = Math.max(600, viewport.clientWidth);
   const top = 36;
-  const rowHeight = 38;
-  const cssHeight = Math.max(viewport.clientHeight, top + (tracks.length + 1) * rowHeight + 24);
+  const idleRowHeight = 38;
+  const trackLayouts = buildTimelineTrackLayouts(step, tracks);
+  let nextTrackY = top;
+  for (const layout of trackLayouts) {
+    layout.y = nextTrackY;
+    nextTrackY += layout.height;
+  }
+  const idleY = nextTrackY;
+  const cssHeight = Math.max(viewport.clientHeight, idleY + idleRowHeight + 24);
   canvas.style.width = `${cssWidth}px`;
   canvas.style.height = `${cssHeight}px`;
   canvas.width = Math.round(cssWidth * dpr);
@@ -1957,63 +2250,109 @@ function renderTimeline() {
     ctx.fillText(`${(timestamp / 1000).toFixed(span < 100 ? 3 : 2)} ms`, x, 15);
   }
 
-  const trackIndex = new Map();
-  for (const [index, track] of tracks.entries()) {
-    trackIndex.set(String(track.stream_id), index);
-    const y = top + index * rowHeight;
+  const trackLayoutByStream = new Map();
+  for (const [index, layout] of trackLayouts.entries()) {
+    const {track, y, height} = layout;
+    trackLayoutByStream.set(String(track.stream_id), layout);
     ctx.fillStyle = index % 2 ? "#ffffff" : "#f8fafc";
-    ctx.fillRect(labelWidth, y, plotWidth, rowHeight);
+    ctx.fillRect(labelWidth, y, plotWidth, height);
     ctx.strokeStyle = "#e4e7eb";
-    ctx.beginPath(); ctx.moveTo(0, y + rowHeight); ctx.lineTo(cssWidth, y + rowHeight); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y + height); ctx.lineTo(cssWidth, y + height); ctx.stroke();
     ctx.fillStyle = "#1f2328"; ctx.textAlign = "left";
-    ctx.fillText(shorten(track.role || "CUDA stream", Math.max(16, Math.floor(labelWidth / 6.5))), 8, y + 15);
+    ctx.fillText(shorten(track.role || "CUDA stream", Math.max(16, Math.floor(labelWidth / 6.5))), 8, y + 13);
     ctx.fillStyle = "#656d76";
-    ctx.fillText(`stream ${track.stream_id} · ${(track.gpu_residency_us / 1000).toFixed(3)} ms`, 8, y + 28);
+    ctx.fillText(`stream ${track.stream_id} · ${(track.gpu_residency_us / 1000).toFixed(3)} ms`, 8, y + 27);
+    ctx.fillText(
+      `${layout.layerLaneCount} layer · ${layout.moduleLaneCount} module · ` +
+      `${layout.actualKernelLaneCount || 0} kernel lane${layout.actualKernelLaneCount === 1 ? "" : "s"}`,
+      8,
+      y + 42,
+    );
+
+    const separatorY = y + layout.kernelTop - 2;
+    ctx.strokeStyle = "#d8dee4";
+    ctx.beginPath(); ctx.moveTo(labelWidth, separatorY); ctx.lineTo(labelWidth + plotWidth, separatorY); ctx.stroke();
   }
 
   TIMELINE_HIT_RECTS = [];
-  for (const event of step.events || []) {
-    const eventStart = Number(event.start_us);
-    const eventEnd = eventStart + Number(event.duration_us);
-    if (eventEnd < TIMELINE_RANGE.startUs || eventStart > TIMELINE_RANGE.endUs) continue;
-    const index = trackIndex.get(String(event.stream_id));
-    if (index == null) continue;
-    const x1 = Math.max(plotLeft, toX(eventStart));
-    const x2 = Math.min(plotLeft + plotWidth, toX(eventEnd));
-    const width = Math.max(0.8, x2 - x1);
-    const y = top + index * rowHeight + 5;
-    const matches = timelineEventMatches(event);
-    ctx.globalAlpha = matches ? 0.9 : 0.09;
-    ctx.fillStyle = timelineColor(event._kernelKind);
-    ctx.fillRect(x1, y, width, rowHeight - 10);
-    if (matches && width >= 28) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(x1, y, width, rowHeight - 10);
-      ctx.clip();
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "9px ui-monospace, monospace";
-      ctx.textAlign = "left";
-      const label = fitTimelineText(
-        ctx,
-        event._kernelLabel || event._irNode || event._kernelName,
-        width - 7,
-      );
-      if (label) ctx.fillText(label, x1 + 4, y + (rowHeight - 10) / 2);
-      ctx.restore();
+  TIMELINE_OWNER_HIT_RECTS = [];
+  for (const layout of trackLayouts) {
+    const ownershipTiers = [
+      {name: "layer", spans: layout.layerSpans, packing: layout.layerPacking, top: layout.layerTop, alpha: 0.9},
+      {name: "major module", spans: layout.moduleSpans, packing: layout.modulePacking, top: layout.moduleTop, alpha: 0.78},
+    ];
+    for (const tier of ownershipTiers) {
+      for (const ownerSpan of tier.spans) {
+        if (ownerSpan.end_us < TIMELINE_RANGE.startUs || ownerSpan.start_us > TIMELINE_RANGE.endUs) continue;
+        const x1 = Math.max(plotLeft, toX(ownerSpan.start_us));
+        const x2 = Math.min(plotLeft + plotWidth, toX(ownerSpan.end_us));
+        const width = Math.max(0.8, x2 - x1);
+        const lane = tier.packing.lanes.get(ownerSpan) || 0;
+        const y = layout.y + tier.top + lane * (layout.ownerHeight + layout.laneGap);
+        const matches = ownerSpan.events.some(timelineEventMatches);
+        ctx.globalAlpha = matches ? tier.alpha : 0.07;
+        ctx.fillStyle = timelineModuleColor(ownerSpan.owner.key, ownerSpan.kind);
+        ctx.fillRect(x1, y, width, layout.ownerHeight);
+        if (matches && width >= 28) {
+          ctx.save();
+          ctx.beginPath(); ctx.rect(x1, y, width, layout.ownerHeight); ctx.clip();
+          ctx.globalAlpha = 1; ctx.fillStyle = "#ffffff";
+          ctx.font = "9px ui-monospace, monospace"; ctx.textAlign = "left";
+          const label = fitTimelineText(ctx, ownerSpan.owner.label, width - 7);
+          if (label) ctx.fillText(label, x1 + 4, y + layout.ownerHeight / 2);
+          ctx.restore();
+        }
+        ctx.globalAlpha = 1;
+        TIMELINE_OWNER_HIT_RECTS.push({
+          x: x1,
+          y,
+          width,
+          height: layout.ownerHeight,
+          ownerSpan,
+          tier: tier.name,
+          track: layout.track,
+        });
+      }
     }
-    if (event === TIMELINE_SELECTED_EVENT) {
+
+    for (const event of layout.events) {
+      const eventStart = Number(event.start_us);
+      const eventEnd = eventStart + Number(event.duration_us);
+      if (eventEnd < TIMELINE_RANGE.startUs || eventStart > TIMELINE_RANGE.endUs) continue;
+      const x1 = Math.max(plotLeft, toX(eventStart));
+      const x2 = Math.min(plotLeft + plotWidth, toX(eventEnd));
+      const width = Math.max(0.8, x2 - x1);
+      const lane = layout.kernelPacking.lanes.get(event) || 0;
+      const y = layout.y + layout.kernelTop + lane * (layout.kernelHeight + layout.laneGap);
+      const matches = timelineEventMatches(event);
+      ctx.globalAlpha = matches ? 0.9 : 0.09;
+      const kernelColor = timelineKernelColor(event);
+      ctx.fillStyle = kernelColor;
+      ctx.fillRect(x1, y, width, layout.kernelHeight);
+      if (matches && width >= 28) {
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x1, y, width, layout.kernelHeight); ctx.clip();
+        ctx.globalAlpha = 1; ctx.fillStyle = timelineReadableTextColor(kernelColor);
+        ctx.font = "9px ui-monospace, monospace"; ctx.textAlign = "left";
+        const label = fitTimelineText(
+          ctx,
+          event._kernelLabel || event._irNode || event._kernelName,
+          width - 7,
+        );
+        if (label) ctx.fillText(label, x1 + 4, y + layout.kernelHeight / 2);
+        ctx.restore();
+      }
+      if (event === TIMELINE_SELECTED_EVENT) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+        ctx.strokeRect(x1 - 1, y - 1, width + 2, layout.kernelHeight + 2);
+      }
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
-      ctx.strokeRect(x1 - 1, y - 1, width + 2, rowHeight - 8);
+      TIMELINE_HIT_RECTS.push({x: x1, y, width, height: layout.kernelHeight, event});
     }
-    ctx.globalAlpha = 1;
-    TIMELINE_HIT_RECTS.push({x: x1, y, width, height: rowHeight - 10, event});
   }
 
-  const idleY = top + tracks.length * rowHeight;
-  ctx.fillStyle = "#eef1f4"; ctx.fillRect(labelWidth, idleY, plotWidth, rowHeight);
+  ctx.fillStyle = "#eef1f4"; ctx.fillRect(labelWidth, idleY, plotWidth, idleRowHeight);
   ctx.fillStyle = "#1f2328"; ctx.textAlign = "left";
   ctx.fillText("device idle · all streams", 8, idleY + 15);
   ctx.fillStyle = "#656d76";
@@ -2023,14 +2362,19 @@ function renderTimeline() {
     if (end < TIMELINE_RANGE.startUs || start > TIMELINE_RANGE.endUs) continue;
     ctx.fillStyle = "#b8bfc8";
     ctx.fillRect(Math.max(plotLeft, toX(start)), idleY + 7,
-      Math.max(1, Math.min(plotLeft + plotWidth, toX(end)) - Math.max(plotLeft, toX(start))), rowHeight - 14);
+      Math.max(1, Math.min(plotLeft + plotWidth, toX(end)) - Math.max(plotLeft, toX(start))), idleRowHeight - 14);
   }
 
   const matching = (step.events || []).filter(timelineEventMatches).length;
+  const maxLayerLanes = Math.max(0, ...trackLayouts.map(layout => layout.layerLaneCount));
+  const maxModuleLanes = Math.max(0, ...trackLayouts.map(layout => layout.moduleLaneCount));
+  const maxKernelLanes = Math.max(0, ...trackLayouts.map(layout => layout.actualKernelLaneCount));
   document.getElementById("timeline-summary").textContent =
     `elapsed ${(step.duration_us / 1000).toFixed(3)} ms · active ${(step.active_gpu_us / 1000).toFixed(3)} ms · ` +
     `device idle/gap ${(step.device_gap_us / 1000).toFixed(3)} ms · residency ${(step.gpu_residency_us / 1000).toFixed(3)} ms · ` +
-    `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${matching}/${step.events.length} kernels visible`;
+    `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${tracks.length} streams · ` +
+    `max ${maxLayerLanes} layer / ${maxModuleLanes} module / ${maxKernelLanes} kernel lanes per stream · ` +
+    `${matching}/${step.events.length} kernels visible`;
 }
 
 function timelineEventAt(x, y) {
@@ -2039,6 +2383,36 @@ function timelineEventAt(x, y) {
     if (x >= hit.x && x <= hit.x + hit.width && y >= hit.y && y <= hit.y + hit.height) return hit.event;
   }
   return null;
+}
+
+function timelineOwnerAt(x, y) {
+  for (let index = TIMELINE_OWNER_HIT_RECTS.length - 1; index >= 0; index--) {
+    const hit = TIMELINE_OWNER_HIT_RECTS[index];
+    if (x >= hit.x && x <= hit.x + hit.width && y >= hit.y && y <= hit.y + hit.height) return hit;
+  }
+  return null;
+}
+
+function timelineEventForOwner(hit) {
+  if (!hit?.ownerSpan?.events?.length) return null;
+  const target = hit.ownerSpan.owner.target;
+  const representative = hit.ownerSpan.events.find(event =>
+    event._irNode === target || (event._irTargets || []).includes(target)
+  ) || hit.ownerSpan.events[0];
+  return {
+    ...representative,
+    _irNode: target || representative._irNode,
+    _irTargets: Array.from(new Set([target, ...(representative._irTargets || [])].filter(Boolean))),
+  };
+}
+
+function timelineOwnerTooltip(hit) {
+  const span = hit.ownerSpan;
+  const elapsedUs = Math.max(0, Number(span.end_us) - Number(span.start_us));
+  const residencyUs = span.events.reduce((total, event) => total + Number(event.duration_us), 0);
+  return `${hit.tier} · ${span.owner.label}\n${span.owner.target || "unmapped"} · ` +
+    `${elapsedUs.toFixed(3)} µs span · ${residencyUs.toFixed(3)} µs residency · ` +
+    `${span.events.length} kernels · stream ${hit.track.stream_id}\nclick to show in architecture`;
 }
 
 function timelineTrackForEvent(event) {
@@ -2098,8 +2472,12 @@ function showTimelineEventDetail(event) {
 function architectureRouteForEvent(event) {
   const direct = event._irNode || "";
   const [view, nodeId] = direct.split(".", 2);
+  const mtpProfile = profileGenerationMode(DATA?.profiles?.[CURRENT_PROFILE]) === "eagle_mtp";
   const mtpOrigin = String(event._substage || "").includes("prefill")
     ? "mtp_prefill" : "mtp_draft_extend";
+  const targetOrigin = CURRENT_PHASE === "prefill" ? "target_prefill" : "target_verify";
+  const targetRootViews = mtpProfile ? ["mtp_generation", "top"] : ["top"];
+  const targetRootFrom = mtpProfile ? [null, targetOrigin] : [null];
   if (view === "mtp_generation") {
     return {views: ["mtp_generation"], from: [null], view, nodeId};
   }
@@ -2118,12 +2496,22 @@ function architectureRouteForEvent(event) {
       nodeId,
     };
   }
-  if (view === "top") return {views: ["top"], from: [null], view, nodeId};
-  if (view === "stack") return {views: ["top", "stack"], from: [null, "decoder_stack"], view, nodeId};
-  if (view === "ple") return {views: ["top", "stack", "ple"], from: [null, "decoder_stack", "ple_injection"], view, nodeId};
+  if (view === "top") return {views: targetRootViews, from: targetRootFrom, view, nodeId};
+  if (view === "stack") return {
+    views: [...targetRootViews, "stack"],
+    from: [...targetRootFrom, "decoder_stack"],
+    view,
+    nodeId,
+  };
+  if (view === "ple") return {
+    views: [...targetRootViews, "stack", "ple"],
+    from: [...targetRootFrom, "decoder_stack", "ple_injection"],
+    view,
+    nodeId,
+  };
   const layerView = event._layerKind === "full" ? "full_layer" : "linear_layer";
-  const baseViews = ["top", "stack", layerView];
-  const baseFrom = [null, "decoder_stack", layerView];
+  const baseViews = [...targetRootViews, "stack", layerView];
+  const baseFrom = [...targetRootFrom, "decoder_stack", layerView];
   if (view === "linear_attention" || view === "qsa_attention" || view === "moe") {
     return {views: [...baseViews, view], from: [...baseFrom, view], view, nodeId};
   }
@@ -2151,48 +2539,136 @@ function architectureRouteForEvent(event) {
   return {views: [view], from: [null], view, nodeId};
 }
 
-async function showTimelineEventInArchitecture() {
-  const event = TIMELINE_SELECTED_EVENT;
-  if (!event) return;
-  const [directView, directNodeId] = String(event._irNode || "").split(".", 2);
-  const directVisible = (DATA.views?.[directView]?.nodes || []).some(
-    candidate => candidate.id === directNodeId
-  );
-  // A topology-only communication node does not exist in canonical Model IR.
-  // Switch layers explicitly instead of routing the user to a missing leaf.
-  if (!directVisible && CURRENT_IR_LAYER === "model" && isV2Bundle()) {
-    CURRENT_IR_LAYER = "execution";
-    document.getElementById("ir-layer-select").value = CURRENT_IR_LAYER;
-    activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
-    syncV2SelectionQuery();
-  }
-  const route = architectureRouteForEvent(event);
-  VIEW_STACK = route.views.filter(view => DATA.views[view]);
-  DRILL_FROM = route.from.slice(0, VIEW_STACK.length);
-  SELECTED = {view: route.view, nodeId: route.nodeId};
-  // This is an explicit context switch: use the full Architecture pane and
-  // discard any pan/zoom transform retained from an earlier top-level view.
-  // Replacing the hash avoids a competing hashchange render that can briefly
-  // restore only the root view.
-  setViewMode("architecture", true, false);
-  syncHash(true);
-  PAN = {x: 0, y: 0, scale: 1};
-  applyPan();
-  await renderView();
-  fitToSvg();
-  const node = (DATA.views[route.view]?.nodes || []).find(candidate => candidate.id === route.nodeId);
-  if (node) showDetail(node, route.view);
+function captureArchitectureSnapshot() {
+  const pane = document.getElementById("architecture-pane");
+  const svg = document.getElementById("svg-host");
+  pane.querySelectorAll(".architecture-snapshot").forEach(snapshot => snapshot.remove());
+  const snapshot = svg.cloneNode(true);
+  snapshot.removeAttribute("id");
+  snapshot.classList.remove("panning");
+  snapshot.classList.add("architecture-snapshot");
+  snapshot.setAttribute("aria-hidden", "true");
+  pane.appendChild(snapshot);
+  return snapshot;
 }
 
-function openNodeOnTimeline(viewName, nodeId) {
-  if (!TIMELINE_DATA) return;
+function releaseArchitectureSnapshot(snapshot) {
+  if (!snapshot) return;
+  requestAnimationFrame(() => snapshot.remove());
+}
+
+function centerArchitectureElement(element) {
+  const svg = document.getElementById("svg-host");
+  if (!element) return false;
+  const svgRect = svg.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const viewportCenter = architectureSvgPoint(
+    svg,
+    svgRect.left + svgRect.width / 2,
+    svgRect.top + svgRect.height / 2,
+  );
+  const elementCenter = architectureSvgPoint(
+    svg,
+    elementRect.left + elementRect.width / 2,
+    elementRect.top + elementRect.height / 2,
+  );
+  PAN.x += viewportCenter.x - elementCenter.x;
+  PAN.y += viewportCenter.y - elementCenter.y;
+  applyPan();
+  return true;
+}
+
+function focusArchitectureSelection(viewName, nodeId) {
+  const svg = document.getElementById("svg-host");
+  const viewGroup = Array.from(svg.querySelectorAll("g.view-group"))
+    .find(group => group.dataset.view === viewName);
+  const node = Array.from(viewGroup?.querySelectorAll("g.node") || [])
+    .find(candidate => candidate.dataset.id === nodeId);
+  if (!viewGroup || !node) return false;
+  const svgRect = svg.getBoundingClientRect();
+  const viewRect = viewGroup.getBoundingClientRect();
+  if (viewRect.width > 0 && viewRect.height > 0) {
+    const fitScale = Math.min(
+      svgRect.width * 0.86 / viewRect.width,
+      svgRect.height * 0.86 / viewRect.height,
+    );
+    PAN.scale = Math.max(1, Math.min(4, PAN.scale * fitScale));
+    applyPan();
+  }
+  // Fit and center the selected submodule view, retaining its surrounding
+  // architecture context; the selected leaf remains marked with a blue ring.
+  centerArchitectureElement(viewGroup);
+  return true;
+}
+
+async function showTimelineEventInArchitecture(options = {}) {
+  const event = options.event || TIMELINE_SELECTED_EVENT;
+  if (!event) return;
+  const navigationToken = ++ARCHITECTURE_NAVIGATION_TOKEN;
+  const snapshot = captureArchitectureSnapshot();
+  try {
+    const [directView, directNodeId] = String(event._irNode || "").split(".", 2);
+    const directVisible = (DATA.views?.[directView]?.nodes || []).some(
+      candidate => candidate.id === directNodeId
+    );
+    // A topology-only communication node does not exist in canonical Model IR.
+    // Switch layers explicitly instead of routing the user to a missing leaf.
+    if (!directVisible && CURRENT_IR_LAYER === "model" && isV2Bundle()) {
+      CURRENT_IR_LAYER = "execution";
+      document.getElementById("ir-layer-select").value = CURRENT_IR_LAYER;
+      activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+      syncV2SelectionQuery();
+    }
+    const route = architectureRouteForEvent(event);
+    VIEW_STACK = route.views.filter(view => DATA.views[view]);
+    DRILL_FROM = route.from.slice(0, VIEW_STACK.length);
+    SELECTED = {view: route.view, nodeId: route.nodeId};
+    // Explicit button use keeps the original full-Architecture behavior. Direct
+    // timeline selection keeps Split visible (or opens it from Timeline-only)
+    // so both linked selections remain on screen.
+    const nextViewMode = options.preserveViewMode
+      ? (CURRENT_VIEW_MODE === "timeline" ? "split" : CURRENT_VIEW_MODE)
+      : "architecture";
+    setViewMode(nextViewMode, true, false);
+    syncHash(true);
+    PAN = {x: 0, y: 0, scale: 1};
+    applyPan();
+    await renderView();
+    if (navigationToken !== ARCHITECTURE_NAVIGATION_TOKEN) return;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    focusArchitectureSelection(route.view, route.nodeId);
+    const node = (DATA.views[route.view]?.nodes || []).find(candidate => candidate.id === route.nodeId);
+    if (node && !options.preserveDetail) showDetail(node, route.view);
+  } finally {
+    if (navigationToken === ARCHITECTURE_NAVIGATION_TOKEN) releaseArchitectureSnapshot(snapshot);
+    else snapshot.remove();
+  }
+}
+
+function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
   TIMELINE_IR_TARGET = `${viewName}.${nodeId}`;
   document.getElementById("timeline-search").value = "";
   TIMELINE_SEARCH = "";
+  TIMELINE_LAYER = "";
+  document.getElementById("timeline-layer").value = "";
+  TIMELINE_SELECTED_EVENT = null;
+  if (shouldRender && TIMELINE_DATA) renderTimeline();
+}
+
+function centerNodeOnTimeline(viewName, nodeId) {
+  highlightNodeOnTimeline(viewName, nodeId, false);
+  if (!TIMELINE_DATA) return;
   const nearest = focusNearestTimelineEvent();
-  setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE);
-  if (nearest) showTimelineEventDetail(nearest);
-  else renderTimeline();
+  setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE, true, false);
+  renderTimeline();
+  // The range update above centers the event on the time axis. Center its
+  // packed kernel lane on the stream axis as well. A second frame covers the
+  // Architecture -> Split layout transition, whose viewport height changes.
+  centerTimelineEventVertically(nearest);
+  requestAnimationFrame(() => {
+    renderTimeline();
+    centerTimelineEventVertically(nearest);
+  });
 }
 
 async function chooseRawTraceFile(expectedName) {
@@ -2339,24 +2815,51 @@ function initTimelineUI() {
     drag = null;
     if (wasMoved) return;
     const rect = canvas.getBoundingClientRect();
-    const selected = timelineEventAt(event.clientX - rect.left, event.clientY - rect.top);
-    if (selected) showTimelineEventDetail(selected);
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const selected = timelineEventAt(x, y);
+    if (selected) {
+      showTimelineEventDetail(selected);
+      showTimelineEventInArchitecture({
+        event: selected,
+        preserveViewMode: true,
+        preserveDetail: true,
+      });
+      return;
+    }
+    const ownerHit = timelineOwnerAt(x, y);
+    const ownerEvent = timelineEventForOwner(ownerHit);
+    if (ownerEvent) {
+      TIMELINE_SELECTED_EVENT = null;
+      renderTimeline();
+      showTimelineEventInArchitecture({event: ownerEvent, preserveViewMode: true});
+    }
   });
   canvas.addEventListener("mousemove", event => {
     const cursorTime = timelineTimeAtCanvasX(event.offsetX);
     if (cursorTime != null) TIMELINE_CURSOR_US = cursorTime;
-    if (drag) { tooltip.style.display = "none"; return; }
+    if (drag) { tooltip.style.display = "none"; canvas.style.cursor = "grabbing"; return; }
     const hit = timelineEventAt(event.offsetX, event.offsetY);
-    if (!hit) { tooltip.style.display = "none"; return; }
+    const ownerHit = hit ? null : timelineOwnerAt(event.offsetX, event.offsetY);
+    canvas.style.cursor = hit || ownerHit ? "pointer" : "crosshair";
+    if (!hit && !ownerHit) { tooltip.style.display = "none"; return; }
     tooltip.style.display = "block";
     tooltip.style.left = `${Math.min(window.innerWidth - 455, event.clientX + 14)}px`;
     tooltip.style.top = `${Math.min(window.innerHeight - 80, event.clientY + 14)}px`;
-    tooltip.textContent = `${hit._irNode} · ${hit.duration_us.toFixed(3)} µs · stream ${hit.stream_id}\n${shorten(hit._kernelName, 100)}`;
+    tooltip.textContent = hit
+      ? `${hit._irNode} · ${hit.duration_us.toFixed(3)} µs · stream ${hit.stream_id}\n${shorten(hit._kernelName, 100)}\nclick to show in architecture`
+      : timelineOwnerTooltip(ownerHit);
   });
-  canvas.addEventListener("mouseleave", () => tooltip.style.display = "none");
+  canvas.addEventListener("mouseleave", () => {
+    tooltip.style.display = "none";
+    canvas.style.cursor = "crosshair";
+  });
   canvas.addEventListener("dblclick", event => {
     const hit = timelineEventAt(event.offsetX, event.offsetY);
-    if (hit) { TIMELINE_SELECTED_EVENT = hit; showTimelineEventInArchitecture(); }
+    if (hit) {
+      TIMELINE_SELECTED_EVENT = hit;
+      showTimelineEventInArchitecture({event: hit, preserveViewMode: true, preserveDetail: true});
+    }
   });
   canvas.addEventListener("wheel", event => {
     if (!TIMELINE_DATA) return;
@@ -2392,7 +2895,8 @@ function initTimelineUI() {
   });
 }
 
-window.openNodeOnTimeline = openNodeOnTimeline;
+window.highlightNodeOnTimeline = highlightNodeOnTimeline;
+window.centerNodeOnTimeline = centerNodeOnTimeline;
 window.showTimelineEventInArchitecture = showTimelineEventInArchitecture;
 window.openSelectedRangeInPerfetto = openSelectedRangeInPerfetto;
 
@@ -2716,8 +3220,9 @@ function showDetail(n, viewName) {
     : "";
   const timelineBtn = currentTimelineMeta()
     ? `<div style="margin: 6px 0 10px;">
-         <button class="detail-action primary" onclick="openNodeOnTimeline('${viewName}', '${n.id}')">
-           Show measured kernels on timeline →
+         <button class="detail-action primary" onclick="centerNodeOnTimeline('${viewName}', '${n.id}')"
+                 title="Center the matching kernel nearest the current timeline cursor">
+           Center nearest measured kernel on timeline →
          </button>
        </div>`
     : "";
@@ -2775,28 +3280,66 @@ function fitToSvg() {
   // 不需做更多, viewBox 已经在 drawAllViews 里按总宽度算好了.
 }
 
+function architectureSvgPoint(svg, clientX, clientY) {
+  const point = svg.createSVGPoint();
+  point.x = clientX;
+  point.y = clientY;
+  const screenMatrix = svg.getScreenCTM();
+  return screenMatrix ? point.matrixTransform(screenMatrix.inverse()) : point;
+}
+
 function enablePanZoom() {
   const svg = document.getElementById("svg-host");
-  let dragging = false; let last = null;
-  svg.addEventListener("mousedown", (e) => {
-    if (e.target === svg || e.target.id === "svg-root") {
-      dragging = true; last = {x: e.clientX, y: e.clientY};
-    }
+  let drag = null;
+
+  svg.addEventListener("pointerdown", (event) => {
+    const onNode = event.target.closest?.(".node");
+    const canPan = event.button === 1 || (event.button === 0 && !onNode);
+    if (!canPan) return;
+    event.preventDefault();
+    drag = {
+      pointerId: event.pointerId,
+      last: architectureSvgPoint(svg, event.clientX, event.clientY),
+    };
+    svg.setPointerCapture?.(event.pointerId);
+    svg.classList.add("panning");
   });
-  window.addEventListener("mouseup", () => dragging = false);
-  window.addEventListener("mousemove", (e) => {
-    if (!dragging) return;
-    PAN.x += (e.clientX - last.x) / PAN.scale;
-    PAN.y += (e.clientY - last.y) / PAN.scale;
-    last = {x: e.clientX, y: e.clientY};
+
+  svg.addEventListener("pointermove", (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const next = architectureSvgPoint(svg, event.clientX, event.clientY);
+    PAN.x += next.x - drag.last.x;
+    PAN.y += next.y - drag.last.y;
+    drag.last = next;
     applyPan();
   });
+
+  const stopDragging = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (svg.hasPointerCapture?.(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+    drag = null;
+    svg.classList.remove("panning");
+  };
+  svg.addEventListener("pointerup", stopDragging);
+  svg.addEventListener("pointercancel", stopDragging);
+
   svg.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const old = PAN.scale;
-    const factor = e.deltaY < 0 ? 1.12 : 1/1.12;
-    PAN.scale = Math.max(0.3, Math.min(3, PAN.scale * factor));
-    // 简单缩放, 不做 around-cursor
+    const anchor = architectureSvgPoint(svg, e.clientX, e.clientY);
+    const oldScale = PAN.scale;
+    const pixelDelta = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 16 : e.deltaY;
+    const zoomStep = Math.min(0.14, Math.max(0.025, Math.abs(pixelDelta) * 0.0025));
+    const factor = Math.exp(pixelDelta < 0 ? zoomStep : -zoomStep);
+    const nextScale = Math.max(0.15, Math.min(8, oldScale * factor));
+
+    // Preserve the content point underneath the mouse/trackpad gesture.  PAN
+    // is expressed in the parent SVG coordinate system, not CSS pixels, so
+    // this remains stable when the Split divider changes the pane width.
+    const contentX = (anchor.x - PAN.x) / oldScale;
+    const contentY = (anchor.y - PAN.y) / oldScale;
+    PAN.x = anchor.x - contentX * nextScale;
+    PAN.y = anchor.y - contentY * nextScale;
+    PAN.scale = nextScale;
     applyPan();
   }, {passive: false});
 }
