@@ -32,6 +32,7 @@ from models.qwen40.build.build_qwen40_cudagraph_profile import (
 from models.qwen40.build.qwen40_decode_attribution import (
     collective_kind as canonical_collective_kind,
     default_node_states,
+    direct_kernel_mapping as canonical_direct_kernel_mapping,
     interval_union_us,
     map_decode_step,
     metrics_for_rank as attributed_metrics_for_rank,
@@ -108,6 +109,15 @@ def parse_args() -> argparse.Namespace:
         default="stock",
     )
     parser.add_argument("--source-patch-sha256", default=None)
+    parser.add_argument("--source-commit", default=SOURCE_COMMIT)
+    parser.add_argument(
+        "--profile-tag",
+        default="",
+        help="Optional stable suffix used to install paired implementation overlays.",
+    )
+    parser.add_argument("--implementation-id", default=None)
+    parser.add_argument("--implementation-label", default=None)
+    parser.add_argument("--reference-rank", type=int, choices=(0, 1, 2, 3))
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-analysis", type=Path, required=True)
     parser.add_argument("--node", default="")
@@ -149,6 +159,21 @@ def load_formal_round(path: Path, batch_size: int) -> dict[str, Any]:
             f"expected one formal row for global bs={batch_size}, got {len(matches)}"
         )
     return matches[0]
+
+
+def select_reference_rank(
+    rank_steps_ms: dict[int, list[float]], requested: int | None
+) -> int:
+    """Select one coherent rank, with an explicit override for paired A/B data."""
+
+    if requested is not None:
+        if requested not in rank_steps_ms:
+            raise ValueError(f"reference rank {requested} is absent from the traces")
+        return requested
+    return max(
+        rank_steps_ms,
+        key=lambda rank: statistics.fmean(rank_steps_ms[rank]),
+    )
 
 
 def merged_gpu_steps(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -264,6 +289,9 @@ def direct_kernel_mapping(name: str) -> tuple[str | None, str | None]:
         return "moe.routed_experts", "DeepGEMM expert GEMM"
     if "gdn_decode_bf16state" in lowered or "gdn_wide_vec_kernel" in lowered:
         return "linear_attention.delta_rule", "FlashInfer GDN recurrence"
+    node, label = canonical_direct_kernel_mapping(name)
+    if node is not None:
+        return node, label
     return common_direct_kernel_mapping(name)
 
 
@@ -590,10 +618,7 @@ def build_profile(
         max(rank_steps_ms[rank][index] for rank in rank_steps_ms)
         for index in range(SELECTED_STEPS)
     ]
-    reference_rank = max(
-        rank_steps_ms,
-        key=lambda rank: statistics.fmean(rank_steps_ms[rank]),
-    )
+    reference_rank = select_reference_rank(rank_steps_ms, args.reference_rank)
     rank_events[reference_rank] = attach_eager_stack_evidence(
         rank_events[reference_rank], mapping_path=args.eager_mapping
     )
@@ -652,13 +677,21 @@ def build_profile(
     else:
         profile_id = f"qwen40_{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
         variant_id = f"{args.config_name}_cg_decode_gbs{args.batch_size}_8k1k"
+    if args.profile_tag:
+        safe_tag = re.sub(r"[^a-z0-9_]+", "_", args.profile_tag.lower()).strip("_")
+        if not safe_tag:
+            raise ValueError("profile tag must contain at least one letter or digit")
+        profile_id = f"{profile_id}_{safe_tag}"
+        variant_id = f"{variant_id}_{safe_tag}"
+    implementation_id = args.implementation_id or config["implementation_id"]
+    implementation_label = args.implementation_label or config["label"]
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
-        "label": f"GB300 · {config['label']} · CUDA Graph decode · global BS{args.batch_size} · 8k→1k",
+        "label": f"GB300 · {implementation_label} · CUDA Graph decode · global BS{args.batch_size} · 8k→1k",
         "model_id": "qwen40",
         "execution_path_id": config["execution_path_id"],
-        "implementation_id": config["implementation_id"],
+        "implementation_id": implementation_id,
         "variant_id": variant_id,
         "phase": "decode",
         "execution_parameters": {
@@ -723,7 +756,7 @@ def build_profile(
         },
         "evidence": {
             "job_id": int(args.job_id) if args.job_id.isdigit() else args.job_id,
-            "source_commit": SOURCE_COMMIT,
+            "source_commit": getattr(args, "source_commit", SOURCE_COMMIT),
             "source_patch_sha256": args.source_patch_sha256,
             "protocol_file": args.protocol.name if args.protocol is not None else None,
             "protocol_sha256": (

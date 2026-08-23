@@ -15,6 +15,7 @@ from models.qwen40.build.build_qwen40_topology_cudagraph_profile import (  # noq
     direct_kernel_mapping,
     eager_collective_template,
     merged_gpu_steps,
+    select_reference_rank,
 )
 
 
@@ -71,6 +72,16 @@ def test_flashinfer_wide_gdn_kernel_maps_to_delta_rule() -> None:
     node, label = direct_kernel_mapping("kernel_cutlass_gdn_wide_vec_kernel_t1")
     assert node == "linear_attention.delta_rule"
     assert label == "FlashInfer GDN recurrence"
+
+
+def test_qwen4_ple_hash_fusion_keeps_stable_ir_ownership() -> None:
+    assert direct_kernel_mapping("_qwen4_ngram_hash_kernel")[0] == "ple.ngram_hash"
+
+
+def test_paired_profiles_can_force_the_same_reference_rank() -> None:
+    rank_steps = {0: [1.0, 1.1], 1: [1.3, 1.4], 2: [1.1, 1.2], 3: [1.2, 1.3]}
+    assert select_reference_rank(rank_steps, None) == 1
+    assert select_reference_rank(rank_steps, 2) == 2
 
 
 def test_rank_metrics_take_maximum_not_parallel_sum() -> None:

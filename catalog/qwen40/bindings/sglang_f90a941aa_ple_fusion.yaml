@@ -1,0 +1,19 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f90a941aa_ple_fusion
+label: SGLang 263c6dda8 · pure TP4 · FlashInfer BF16 GDN · exact PLE hash fusion
+model_id: qwen40
+execution_path_id: tp_only
+source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+source_commit: 263c6dda80baa7775ecd2aa477bf6620ffa145ad
+optimization_base_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+binding_compatible_base_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+container: lmsysorg/sglang:nightly-dev-cu13-20260818-c0b6474b
+backend: sglang
+extends: sglang_f90a941aa_flashinfer_gdn
+
+node_bindings:
+  ple.ngram_hash:
+    symbols: [fused_qwen4_ngram_hash, _qwen4_ngram_hash_kernel]
+    kernel_signatures: [_qwen4_ngram_hash_kernel]
+    links:
+      - {file: python/sglang/kernels/ops/qwen4_ple.py, symbol: fused_qwen4_ngram_hash, display: qwen4_ple.py — fused int64 N-gram hash}

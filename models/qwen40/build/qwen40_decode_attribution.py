@@ -48,6 +48,11 @@ def direct_kernel_mapping(name: str) -> tuple[str | None, str | None]:
 
     lowered = name.lower()
     rules = (
+        (
+            "_qwen4_ngram_hash_kernel",
+            "ple.ngram_hash",
+            "fused Qwen4 PLE N-gram hash",
+        ),
         ("fused_qkvzba_split", "linear_attention.split_pack", "GDN split + pack"),
         ("causal_conv1d_update", "linear_attention.causal_conv", "GDN causal Conv1D"),
         ("_causal_conv1d_update", "linear_attention.causal_conv", "GDN causal Conv1D"),
