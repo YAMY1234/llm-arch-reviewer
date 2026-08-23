@@ -358,6 +358,8 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "function comparisonAggregate(cell)" in viewer
     assert "function prepareComparisonTarget(target, summary = false)" in viewer
     assert "function exportComparisonCsv()" in viewer
+    assert 'RAW_DATA?.meta?.model_id || "model"' in viewer
+    assert "qwen35-sglang-vs-trtllm" not in viewer
     assert "do not read the columns as a direct engine speedup" in viewer
     assert "GPU Σ is summed kernel residency" in viewer
     assert "concrete kernel name and time come verbatim from the profiler timeline" in viewer
