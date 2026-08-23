@@ -359,6 +359,16 @@ def test_sglang_nsys_uses_scheduler_wall_and_proves_three_graph_roles(tmp_path):
         kernel_rows.append(
             (start, start + 500, 0, 1, 7, 0, process, 44, 0, 3)
         )
+    # Nsight can stop after the next logical step's three CPU launches but
+    # while only the first node of one GPU graph has landed. The parser must
+    # trim this capture edge, not shift that partial replay into step 1.
+    runtime_rows.extend(
+        (2_100_000 + offset, 2_100_100 + offset, 100 + offset, 1, global_tid)
+        for offset in (0, 300_000, 600_000)
+    )
+    kernel_rows.append(
+        (2_400_000, 2_400_500, 0, 1, 7, 0, process, 23, 0, 3)
+    )
     connection.executemany(
         "insert into CUPTI_ACTIVITY_KIND_RUNTIME values (?,?,?,?,?)", runtime_rows
     )
@@ -372,6 +382,10 @@ def test_sglang_nsys_uses_scheduler_wall_and_proves_three_graph_roles(tmp_path):
     steps, evidence = load_sglang_nsys_steps(path, rank=0)
     assert len(steps) == 2
     assert evidence["marker_source"] == "scheduler.run_batch"
+    assert evidence["unpaired_launch_count"] == 3
+    assert evidence["leading_unpaired_launch_count"] == 0
+    assert evidence["trailing_unpaired_launch_count"] == 3
+    assert evidence["boundary_trim_by_graph"][23] == "drop_trailing"
     assert all(step.cpu_wall_us == 1000.0 for step in steps)
     assert all(step.graph_launch_count == 3 for step in steps)
     assert sglang_graph_roles(steps[0].kernels) == {
