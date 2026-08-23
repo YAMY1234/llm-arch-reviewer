@@ -53,6 +53,16 @@ def direct_kernel_mapping(name: str) -> tuple[str | None, str | None]:
             "ple.ngram_hash",
             "fused Qwen4 PLE N-gram hash",
         ),
+        (
+            "_qwen4_gate_value_kernel",
+            "ple.grouped_norm_gate",
+            "fused Qwen4 PLE post-reduction gate + value broadcast",
+        ),
+        (
+            "_qwen4_short_conv_state_kernel",
+            "ple.short_conv",
+            "fused Qwen4 PLE short-conv state movement",
+        ),
         ("fused_qkvzba_split", "linear_attention.split_pack", "GDN split + pack"),
         ("causal_conv1d_update", "linear_attention.causal_conv", "GDN causal Conv1D"),
         ("_causal_conv1d_update", "linear_attention.causal_conv", "GDN causal Conv1D"),

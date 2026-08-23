@@ -76,6 +76,8 @@ def test_flashinfer_wide_gdn_kernel_maps_to_delta_rule() -> None:
 
 def test_qwen4_ple_hash_fusion_keeps_stable_ir_ownership() -> None:
     assert direct_kernel_mapping("_qwen4_ngram_hash_kernel")[0] == "ple.ngram_hash"
+    assert direct_kernel_mapping("_qwen4_gate_value_kernel")[0] == "ple.grouped_norm_gate"
+    assert direct_kernel_mapping("_qwen4_short_conv_state_kernel")[0] == "ple.short_conv"
 
 
 def test_paired_profiles_can_force_the_same_reference_rank() -> None:
