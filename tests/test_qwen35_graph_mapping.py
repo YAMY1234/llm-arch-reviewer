@@ -26,6 +26,7 @@ from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
 )
 from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
     _source_coordinates,
+    _validate_nsys_capture_contract,
 )
 
 
@@ -59,6 +60,31 @@ def test_sglang_nsys_source_coordinates_are_strict():
     assert _source_coordinates("w1/r3") == (1, 3)
     with pytest.raises(ValueError, match="invalid worker/rank source"):
         _source_coordinates("worker1/rank3")
+
+
+def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
+    profiling = {
+        "type": "nsys",
+        "extra_nsys_args": [
+            "-c",
+            "nvtx",
+            "-p",
+            "agentx_decode_capture",
+            "--kill",
+            "none",
+        ],
+    }
+    environment = {
+        "SGLANG_NSYS_NVTX_CAPTURE_RANGE": "agentx_decode_capture",
+    }
+    assert (
+        _validate_nsys_capture_contract(profiling, environment)
+        == "agentx_decode_capture"
+    )
+
+    profiling["extra_nsys_args"] = ["-c", "cudaProfilerApi"]
+    with pytest.raises(ValueError, match="matching '-c nvtx'"):
+        _validate_nsys_capture_contract(profiling, environment)
 
 
 def test_target_and_draft_collectives_remain_separate():

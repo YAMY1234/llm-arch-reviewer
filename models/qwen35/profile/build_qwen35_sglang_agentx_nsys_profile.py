@@ -55,6 +55,11 @@ from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
+PROFILING_OVERLAY_COMMIT = "45764d936f022c73b86cda215b2acdc346516a3f"
+SRT_SLURM_CAPTURE_COMMIT = "227fdf5f2850df2ef4dcb068ac6f09f7c623e61a"
+PROFILER_MANAGER_SHA256 = (
+    "02e19720a334a1184c5bf3ce9ec32ca097e8cac865d89225a056a51f69761d4e"
+)
 SOURCE_RE = re.compile(r"^w(?P<worker>[01])/r(?P<rank>[0-3])$")
 
 
@@ -86,6 +91,40 @@ def _source_coordinates(source: str) -> tuple[int, int]:
     if not match:
         raise ValueError(f"invalid worker/rank source: {source}")
     return int(match.group("worker")), int(match.group("rank"))
+
+
+def _validate_nsys_capture_contract(
+    profiling: dict[str, Any], decode_environment: dict[str, Any]
+) -> str:
+    capture_range = str(
+        decode_environment.get("SGLANG_NSYS_NVTX_CAPTURE_RANGE") or ""
+    ).strip()
+    if not capture_range:
+        raise ValueError(
+            "formal SGLang NSYS profile requires an NVTX capture range"
+        )
+
+    extra_args = [str(arg) for arg in (profiling.get("extra_nsys_args") or [])]
+    capture_mode = None
+    capture_selector = None
+    for index, arg in enumerate(extra_args):
+        if arg in {"-c", "--capture-range"} and index + 1 < len(extra_args):
+            capture_mode = extra_args[index + 1]
+        elif arg.startswith("-c=") or arg.startswith("--capture-range="):
+            capture_mode = arg.split("=", 1)[1]
+        if arg in {"-p", "--nvtx-capture"} and index + 1 < len(extra_args):
+            capture_selector = extra_args[index + 1]
+        elif arg.startswith("-p=") or arg.startswith("--nvtx-capture="):
+            capture_selector = arg.split("=", 1)[1]
+
+    if capture_mode != "nvtx" or capture_selector != capture_range:
+        raise ValueError(
+            "formal SGLang NSYS profile requires matching '-c nvtx' and "
+            "NVTX capture-range selector arguments"
+        )
+    if "cudaProfilerApi" in extra_args:
+        raise ValueError("formal SGLang NSYS profile cannot use cudaProfilerApi")
+    return capture_range
 
 
 def _align_steps_and_logs(
@@ -166,6 +205,7 @@ def build(args: argparse.Namespace):
         raise ValueError("formal SGLang matched profile requires profiling.type=nsys")
     if str(decode_environment.get("SGLANG_ENABLE_NVTX_SCHEDULER")) not in {"1", "true", "True"}:
         raise ValueError("formal SGLang NSYS profile requires scheduler NVTX")
+    capture_range = _validate_nsys_capture_contract(profiling, decode_environment)
 
     eager_signatures = load_unique_eager_kernel_signatures(args.eager_mapping)
     contextual_signatures = load_contextual_eager_signatures(
@@ -463,6 +503,8 @@ def build(args: argparse.Namespace):
             "type": "nsight_systems_worker_local",
             "rank": "both decode workers, all four DEP ranks",
             "trace": ["cuda", "nvtx"],
+            "capture_trigger": "nvtx",
+            "capture_range": capture_range,
             "cuda_graph_enabled": True,
             "gpu_metric_semantics": (
                 "maximum worker/rank residency; parallel workers/ranks are not summed"
@@ -473,6 +515,9 @@ def build(args: argparse.Namespace):
             "job_id": args.job_id,
             "source_commit": SOURCE_COMMIT,
             "runtime_source_commit": RUNTIME_SOURCE_COMMIT,
+            "profiling_overlay_commit": PROFILING_OVERLAY_COMMIT,
+            "profiling_harness_commit": SRT_SLURM_CAPTURE_COMMIT,
+            "profiler_manager_sha256": PROFILER_MANAGER_SHA256,
             "model_revision": MODEL_REVISION,
             "model_config_sha256": MODEL_CONFIG_SHA256,
             "container_sha256": CONTAINER_SHA256,
