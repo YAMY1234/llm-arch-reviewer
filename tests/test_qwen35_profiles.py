@@ -47,7 +47,7 @@ def _timeline_targets(timeline: dict) -> set[str]:
 
 def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
     profiles = list(_profiles())
-    assert len(profiles) == 7
+    assert len(profiles) == 8
     for path, profile in profiles:
         assert profile["generation_mode"] == "mtp"
         assert profile["execution_parameters"] == EXPECTED_EXECUTION_PARAMETERS
@@ -130,6 +130,128 @@ def test_trt_decode_comparison_profile_uses_exact_bs32_nsys_subset():
     assert profile["evidence"]["selection_policy"] == (
         "exact generation_reqs=32 events only"
     )
+    assert profile["evidence"]["nsys_export"] == {
+        "product": "NVIDIA Nsight Systems",
+        "version": "2026.2.1.210",
+        "schema_version": "3.25.0",
+    }
+    assert all(
+        report["nsys_export"] == profile["evidence"]["nsys_export"]
+        for report in profile["evidence"]["report_files"]
+    )
+
+
+def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
+    sglang_paths = sorted(
+        (
+            PROFILE_ROOT
+            / "sglang_85c23c62_attention_dp4_moe_ep4_mtp"
+        ).glob("agentx_nsys_bs*.yaml")
+    )
+    assert len(sglang_paths) == 1
+    sglang = yaml.safe_load(sglang_paths[0].read_text())
+    trt = yaml.safe_load(
+        (
+            PROFILE_ROOT
+            / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
+            / "decode_bs32.yaml"
+        ).read_text()
+    )
+
+    selected_batch = sglang["workload"]["selected_exact_target_verify_batch"]
+    assert selected_batch == trt["workload"]["measured_shape"][
+        "selected_exact_generation_requests"
+    ]
+    assert sglang["profiler"]["type"] == trt["profiler"]["type"] == (
+        "nsight_systems_worker_local"
+    )
+    assert sglang["profiler"]["capture_trigger"] == "nvtx"
+    assert sglang["profiler"]["capture_range"] == "agentx_decode_capture"
+    assert sglang["profiler"]["capture_range_end"] == "repeat:1:async"
+    assert sglang["profiler"]["capture_range_api"] == (
+        "torch.cuda.nvtx.range_start/range_end"
+    )
+    assert sglang["profiler"]["capture_finalize_gpu_synchronize"] is True
+    assert sglang["profiler"]["capture_completion"] == (
+        "natural_scheduler_forward_count_boundary"
+    )
+    assert sglang["profiler"]["nvtx_registered_strings_only"] is False
+    assert sglang["workload"]["selected_samples"] == sum(
+        sglang["workload"]["selected_samples_by_source"].values()
+    )
+    assert sglang["workload"]["selected_samples"] == 2
+    expected_sglang_sources = {
+        f"w{worker}/r{rank}" for worker in range(2) for rank in range(4)
+    }
+    assert set(
+        sglang["workload"]["structurally_validated_worker_rank_sources"]
+    ) == expected_sglang_sources
+    evidence = sglang["evidence"]
+    assert evidence["job_id"] == 3256437
+    assert evidence["profiling_source_commit"] == (
+        "9d7f6d73b632076002329cd7c19dac5af9c6f76b"
+    )
+    assert evidence["profiling_overlay_commit"] == (
+        "29e068d852a789a297da9cb53376fdeeca6a336c"
+    )
+    assert evidence["profiling_harness_commit"] == (
+        "ebf9b696269c484713bd25b58feead000ca120d1"
+    )
+    assert evidence["profiler_manager_sha256"] == (
+        "a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657"
+    )
+    assert evidence["scheduler_nvtx_sha256"] == (
+        "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
+    )
+    assert evidence["runtime_manifest_sha256"] == (
+        "8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974"
+    )
+    assert evidence["symm_mem_gather_sha256"] == (
+        "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
+    )
+    assert sglang["profiler"]["scheduler_capture_steps"] == {
+        "start_inclusive": 10000,
+        "stop_exclusive": 10002,
+    }
+    assert sglang["profiler"]["exact_capture_stop_policy"] == {
+        "rebased_forward_count_width": 2,
+        "minimum_completed_decode_batches": 2,
+        "condition": (
+            "both rebased forward-count width reached and at least two real "
+            "decode batches completed"
+        ),
+        "external_stop_required": False,
+    }
+    assert len(evidence["report_files"]) == 2
+    assert evidence["nsys_export"]["product"] == "NVIDIA Nsight Systems"
+    assert evidence["nsys_export"]["version"]
+    assert evidence["nsys_export"]["schema_version"]
+    assert all(
+        report["nsys_export"] == evidence["nsys_export"]
+        for report in evidence["report_files"]
+    )
+    assert len(evidence["nsys_report_files"]) == 2
+    assert len(evidence["worker_logs"]) == 2
+    assert set(evidence["instrumented_worker_rank_sources"]) == expected_sglang_sources
+    assert evidence["four_rank_validation"] is True
+    assert set(evidence["all_rank_capture_integrity"]) == {0, 1}
+    for integrity in evidence["all_rank_capture_integrity"].values():
+        assert integrity["capture_device"] == 0
+        assert integrity["rank_count"] == 4
+        assert integrity["consistent_graph_bearing_scheduler_marker_count"] == 1
+        assert set(integrity["ranks"]) == {"r0", "r1", "r2", "r3"}
+        assert all(
+            rank["kernel_count"] > 0
+            and rank["cuda_graph_launch_count"] > 0
+            and rank["graph_bearing_scheduler_marker_count"] == 1
+            for rank in integrity["ranks"].values()
+        )
+    assert evidence["worker_count"] == 2
+    assert evidence["semantic_attribution_gate"] == {
+        "metric": "mapped_or_fusion_active_union_ratio",
+        "threshold": 0.95,
+        "passed": True,
+    }
 
 
 def test_trt_prefill_profile_uses_only_exact_one_by_8k_nsys_subset():
@@ -255,6 +377,13 @@ def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
 def test_architecture_exposes_timeline_rollups_on_drill_modules():
     bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
     profile_id = bundle["default_profile"]
+    assert profile_id == (
+        "qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_nsys_bs32"
+    )
+    variant_id = bundle["profiles"][profile_id]["meta"]["variant_id"]
+    assert variant_id == (
+        "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_nsys_bs32"
+    )
     expected_targets = {
         "top.decoder_stack",
         "stack.gdn_layer",
@@ -267,7 +396,7 @@ def test_architecture_exposes_timeline_rollups_on_drill_modules():
     for target in expected_targets:
         view_id, node_id = target.split(".", 1)
         cell = bundle["enriched"][view_id]["nodes_profile"][node_id][profile_id][
-            "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_steady"
+            variant_id
         ]
         assert cell["attribution_status"] == "inclusive_rollup"
         assert cell["active_gpu_ms"] > 0

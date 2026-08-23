@@ -560,7 +560,40 @@ def compile_profile(
         profile, source=source, node_targets=node_targets
     )
     for target, metric in timeline_rollups.items():
-        effective_metrics.setdefault(target, metric)
+        if target not in effective_metrics:
+            effective_metrics[target] = metric
+            continue
+
+        # Direct attribution owns kernel residency and its concrete breakdown,
+        # while the timeline owns overlap-safe interval union and descendant
+        # wall. Attach those orthogonal interval fields to measured leaves too;
+        # otherwise Compare can show GPU Σ but not active ∪ / wall for the most
+        # detailed Module IR rows.
+        authored = effective_metrics[target]
+        authored.setdefault(
+            "gpu_residency_ms", float(authored.get("ms_per_iter") or 0.0)
+        )
+        for field in (
+            "gpu_elapsed_ms",
+            "active_gpu_ms",
+            "gpu_overlap_ms",
+            "module_gap_ms",
+            "other_gpu_work_ms",
+            "device_idle_ms",
+            "occurrence_count_per_iter",
+            "module_active_pct",
+            "device_busy_pct",
+            "elapsed_scope",
+            "timeline_reference_rank",
+            "timeline_step_count",
+            "timeline_observed_step_count",
+        ):
+            if field in metric:
+                authored.setdefault(field, metric[field])
+        authored.setdefault(
+            "interval_aggregation", metric.get("aggregation")
+        )
+        authored["timeline_rollup_attached"] = True
 
     if profile.get("generation_mode", "autoregressive") not in {"eagle_mtp", "mtp"}:
         for target in node_targets:

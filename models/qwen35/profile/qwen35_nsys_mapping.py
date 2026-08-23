@@ -8,11 +8,13 @@ stable identity is ``graphNodeId``: each kernel-bearing node occurs exactly
 once per launch.  We therefore split overlapping graph executions by the
 occurrence index of each graph node and pair those executions with the ordered
 ``cudaGraphLaunch`` calls.  Direct launches remain associated by correlation
-id. SGLang reports instead use one ``scheduler.run_batch`` NVTX range per
-rank-local decode step. Within that wall-time boundary, the 60-layer target
-graph and the four-plus-one MTP graphs are identified by their complete
-kernel-bearing node sequences. The parser fails closed if a required invariant
-does not hold.
+id. SGLang reports normally use one ``scheduler.run_batch`` NVTX range per
+rank-local decode step. A capture started from inside ``run_batch`` cannot
+record that outer marker, so exact-batch captures synthesize the first step's
+wall boundary from the capture-range start to the next scheduler marker. Within
+each wall-time boundary, the 60-layer target graph and the four-plus-one MTP
+graphs are identified by their complete kernel-bearing node sequences. The
+parser fails closed if a required invariant does not hold.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ STEP_RE = re.compile(
 )
 RANK_RE = re.compile(r"rank(?P<rank>\d+)")
 SGLANG_STEP_LABEL = "scheduler.run_batch"
+SGLANG_CAPTURE_LABEL = "agentx_decode_capture"
 SGLANG_GDN_ANCHOR = "fused_qkvzba_split"
 SGLANG_ATTENTION_ANCHOR = "_fused_qk_rmsnorm_rope_gate_kernel"
 TARGET_PATTERN = tuple(
@@ -95,6 +98,177 @@ class NsysAttribution:
     ir_targets: tuple[str, ...] = ()
     attribution_method: str = "unique_kernel_signature"
     confidence: str = "high"
+
+
+def read_nsys_export_metadata(path: Path) -> dict[str, str]:
+    """Read only the non-sensitive Nsight exporter identity from an export."""
+
+    connection = sqlite3.connect(path)
+    try:
+        rows = dict(
+            connection.execute(
+                "select name, value from META_DATA_EXPORT "
+                "where name in (?, ?, ?)",
+                (
+                    "EXPORT_PRODUCT_NAME",
+                    "EXPORT_PRODUCT_VERSION",
+                    "EXPORT_SCHEMA_VERSION",
+                ),
+            )
+        )
+    except sqlite3.DatabaseError as error:
+        raise ValueError(f"{path}: missing Nsight export metadata: {error}") from error
+    finally:
+        connection.close()
+
+    expected = {
+        "EXPORT_PRODUCT_NAME": "product",
+        "EXPORT_PRODUCT_VERSION": "version",
+        "EXPORT_SCHEMA_VERSION": "schema_version",
+    }
+    missing = sorted(
+        name for name in expected if not str(rows.get(name) or "").strip()
+    )
+    if missing:
+        raise ValueError(f"{path}: incomplete Nsight export metadata: {missing}")
+    metadata = {field: str(rows[name]) for name, field in expected.items()}
+    if metadata["product"] != "NVIDIA Nsight Systems":
+        raise ValueError(f"{path}: unexpected trace exporter {metadata['product']!r}")
+    return metadata
+
+
+def validate_sglang_all_rank_capture_integrity(
+    path: Path,
+    *,
+    capture_range_label: str,
+    expected_ranks: tuple[int, ...] = (0, 1, 2, 3),
+) -> dict[str, Any]:
+    """Validate CUDA tables and complete scheduler markers for every DEP rank.
+
+    The exact-BS32 timing row is selected on DP0, while the worker-local Nsys
+    process records all four CUDA devices.  This check keeps those two claims
+    separate: it proves all-rank trace integrity without summing rank residency
+    or pretending every rank had the same dynamic batch size.
+    """
+
+    connection = sqlite3.connect(path)
+    try:
+        strings = _strings(connection)
+        process_by_device = _sglang_process_by_device(connection)
+        expected = set(expected_ranks)
+        if set(process_by_device) != expected:
+            raise ValueError(
+                f"{path}: expected SGLang devices {sorted(expected)}, "
+                f"found {sorted(process_by_device)}"
+            )
+
+        captures: list[tuple[int, tuple[int, int]]] = []
+        for device, process in sorted(process_by_device.items()):
+            captures.extend(
+                (device, capture)
+                for capture in _sglang_nvtx_ranges(
+                    connection,
+                    strings,
+                    global_pid=process,
+                    label=capture_range_label,
+                )
+            )
+        if len(captures) != 1:
+            raise ValueError(
+                f"{path}: expected one all-process {capture_range_label!r} range, "
+                f"found {len(captures)}"
+            )
+        capture_device, capture_window = captures[0]
+        capture_start, capture_end = capture_window
+
+        ranks: dict[str, dict[str, int]] = {}
+        graph_marker_counts: set[int] = set()
+        for device, process in sorted(process_by_device.items()):
+            kernels = [
+                kernel
+                for kernel in _kernel_rows(
+                    connection, strings, global_pid=process
+                )
+                if capture_start <= kernel.start_ns < capture_end
+            ]
+            if not kernels:
+                raise ValueError(f"{path}: device/rank {device} has no captured kernels")
+            if any(kernel.device_id != device for kernel in kernels):
+                raise ValueError(
+                    f"{path}: process {process} contains kernels from another device"
+                )
+            scheduler_ranges = [
+                boundary
+                for boundary in _sglang_nvtx_ranges(
+                    connection,
+                    strings,
+                    global_pid=process,
+                    label=SGLANG_STEP_LABEL,
+                )
+                if capture_start < boundary[0] < capture_end
+                and boundary[0] < boundary[1] <= capture_end
+            ]
+            if not scheduler_ranges:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no complete scheduler marker"
+                )
+            graph_launches = [
+                launch
+                for launch in _sglang_graph_launches(
+                    connection, strings, global_pid=process
+                )
+                if capture_start <= launch < capture_end
+            ]
+            if not graph_launches:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no captured CUDA Graph launch"
+                )
+            graph_scheduler_ranges = [
+                boundary
+                for boundary in scheduler_ranges
+                if any(boundary[0] <= launch < boundary[1] for launch in graph_launches)
+            ]
+            if not graph_scheduler_ranges:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no graph-bearing scheduler marker"
+                )
+            graph_marker_counts.add(len(graph_scheduler_ranges))
+            ranks[f"r{device}"] = {
+                "device_id": device,
+                "global_pid": process,
+                "kernel_count": len(kernels),
+                "cuda_graph_launch_count": len(graph_launches),
+                "complete_scheduler_marker_count": len(scheduler_ranges),
+                "graph_bearing_scheduler_marker_count": len(graph_scheduler_ranges),
+                "boundary_tail_marker_count": (
+                    len(scheduler_ranges) - len(graph_scheduler_ranges)
+                ),
+            }
+    finally:
+        connection.close()
+
+    if len(graph_marker_counts) != 1:
+        raise ValueError(
+            f"{path}: SGLang all-rank graph-bearing scheduler marker counts differ: "
+            f"{sorted(graph_marker_counts)}"
+        )
+    return {
+        "capture_device": capture_device,
+        "capture_range": {
+            "label": capture_range_label,
+            "start_ns": capture_start,
+            "end_ns": capture_end,
+        },
+        "rank_count": len(ranks),
+        "consistent_graph_bearing_scheduler_marker_count": next(
+            iter(graph_marker_counts)
+        ),
+        "boundary_marker_policy": (
+            "complete positive-duration scheduler ranges without a CUDA Graph launch "
+            "are capture-finalization tail markers and are reported, not counted as steps"
+        ),
+        "ranks": ranks,
+    }
 
 
 def _strings(connection: sqlite3.Connection) -> dict[int, str]:
@@ -397,20 +571,9 @@ def _sglang_step_boundaries(
     global_pid: int,
     allow_cuda_sync_fallback: bool,
 ) -> tuple[str, list[tuple[int, int]]]:
-    ranges: list[tuple[int, int]] = []
-    for start, end, text_value, text_id, global_tid in connection.execute(
-        "select start, end, text, textId, globalTid from NVTX_EVENTS "
-        "where end is not null order by start"
-    ):
-        if global_tid is None or _global_pid(int(global_tid)) != global_pid:
-            continue
-        label = (
-            str(text_value)
-            if text_value is not None
-            else strings.get(int(text_id), "") if text_id is not None else ""
-        )
-        if label == SGLANG_STEP_LABEL:
-            ranges.append((int(start), int(end)))
+    ranges = _sglang_nvtx_ranges(
+        connection, strings, global_pid=global_pid, label=SGLANG_STEP_LABEL
+    )
     if len(ranges) >= 2:
         return SGLANG_STEP_LABEL, ranges
     if not allow_cuda_sync_fallback:
@@ -436,6 +599,68 @@ def _sglang_step_boundaries(
     if len(fallback) < 2:
         raise ValueError("SGLang Nsight report has no complete legacy CUDA-sync boundaries")
     return "cudaEventSynchronize_v3020 (legacy fallback)", fallback
+
+
+def _sglang_nvtx_ranges(
+    connection: sqlite3.Connection,
+    strings: dict[int, str],
+    *,
+    global_pid: int,
+    label: str,
+) -> list[tuple[int, int]]:
+    """Return complete process-local NVTX ranges with one exact label."""
+
+    ranges: list[tuple[int, int]] = []
+    for start, end, text_value, text_id, global_tid in connection.execute(
+        "select start, end, text, textId, globalTid from NVTX_EVENTS "
+        "where end is not null order by start"
+    ):
+        if global_tid is None or _global_pid(int(global_tid)) != global_pid:
+            continue
+        current_label = (
+            str(text_value)
+            if text_value is not None
+            else strings.get(int(text_id), "") if text_id is not None else ""
+        )
+        if current_label == label:
+            ranges.append((int(start), int(end)))
+    return ranges
+
+
+def _sglang_capture_step_boundaries(
+    connection: sqlite3.Connection,
+    strings: dict[int, str],
+    *,
+    global_pid: int,
+    capture_label: str,
+) -> tuple[tuple[int, int], list[tuple[int, int]], int]:
+    """Recover the first in-flight step and following scheduler boundaries."""
+
+    captures = _sglang_nvtx_ranges(
+        connection, strings, global_pid=global_pid, label=capture_label
+    )
+    if len(captures) != 1:
+        raise ValueError(
+            f"SGLang formal report requires one complete {capture_label!r} range; "
+            f"found {len(captures)}"
+        )
+    capture = captures[0]
+    scheduler_ranges = [
+        boundary
+        for boundary in _sglang_nvtx_ranges(
+            connection, strings, global_pid=global_pid, label=SGLANG_STEP_LABEL
+        )
+        if capture[0] < boundary[0] < capture[1]
+    ]
+    if not scheduler_ranges:
+        raise ValueError(
+            f"SGLang {capture_label!r} range contains no following "
+            f"{SGLANG_STEP_LABEL} marker; capture width is too short"
+        )
+    first_step = (capture[0], scheduler_ranges[0][0])
+    if first_step[1] <= first_step[0]:
+        raise ValueError("SGLang exact-batch first-step boundary is empty")
+    return capture, [first_step, *scheduler_ranges], len(scheduler_ranges)
 
 
 def _sglang_graph_launches(
@@ -663,13 +888,15 @@ def load_sglang_nsys_steps(
     *,
     rank: int,
     allow_cuda_sync_fallback: bool = False,
+    capture_range_label: str | None = None,
 ) -> tuple[list[NsysStep], dict[str, Any]]:
     """Load complete rank-local SGLang steps from a worker-local NSYS report.
 
-    Formal traces require ``scheduler.run_batch`` NVTX. The optional CUDA-sync
-    fallback exists only to validate the parser against older local reports and
-    is recorded in the returned evidence; it must not be used for a delivered
-    matched profile.
+    Formal exact-batch traces pass ``capture_range_label`` so the step already
+    in flight when Nsight starts is recovered from the capture-range start and
+    the next ``scheduler.run_batch`` marker. The optional CUDA-sync fallback
+    exists only to validate the parser against older local reports and is
+    recorded in the returned evidence; it must not be used for delivery.
     """
 
     connection = sqlite3.connect(path)
@@ -681,12 +908,25 @@ def load_sglang_nsys_steps(
                 f"SGLang rank/device {rank} is absent; present devices={sorted(process_by_device)}"
             )
         process = process_by_device[rank]
-        marker_source, boundaries = _sglang_step_boundaries(
-            connection,
-            strings,
-            global_pid=process,
-            allow_cuda_sync_fallback=allow_cuda_sync_fallback,
-        )
+        capture_window: tuple[int, int] | None = None
+        scheduler_marker_count: int | None = None
+        if capture_range_label is not None:
+            capture_window, boundaries, scheduler_marker_count = (
+                _sglang_capture_step_boundaries(
+                    connection,
+                    strings,
+                    global_pid=process,
+                    capture_label=capture_range_label,
+                )
+            )
+            marker_source = capture_range_label
+        else:
+            marker_source, boundaries = _sglang_step_boundaries(
+                connection,
+                strings,
+                global_pid=process,
+                allow_cuda_sync_fallback=allow_cuda_sync_fallback,
+            )
         kernels = _kernel_rows(connection, strings, global_pid=process)
         graph_launches = _sglang_graph_launches(
             connection, strings, global_pid=process
@@ -695,7 +935,23 @@ def load_sglang_nsys_steps(
     finally:
         connection.close()
 
-    if marker_source == SGLANG_STEP_LABEL:
+    if capture_window is not None:
+        capture_start, capture_end = capture_window
+        kernels = [
+            kernel
+            for kernel in kernels
+            if capture_start <= kernel.start_ns < capture_end
+        ]
+        graph_launches = [
+            launch
+            for launch in graph_launches
+            if capture_start <= launch < capture_end
+        ]
+        runtime = [
+            row for row in runtime if capture_start <= row[0] < capture_end
+        ]
+
+    if marker_source == SGLANG_STEP_LABEL or capture_window is not None:
         paired, pairing_evidence = _pair_sglang_graph_executions(
             kernels, graph_launches, boundaries
         )
@@ -757,7 +1013,11 @@ def load_sglang_nsys_steps(
                 NsysStep(
                     step_id=step_index,
                     rank=rank,
-                    label=SGLANG_STEP_LABEL,
+                    label=(
+                        f"{marker_source}:first_exact_step"
+                        if capture_window is not None and step_index == 0
+                        else SGLANG_STEP_LABEL
+                    ),
                     cpu_start_ns=start,
                     cpu_end_ns=wall_end,
                     context_reqs=0,
@@ -769,7 +1029,7 @@ def load_sglang_nsys_steps(
             )
         if not steps:
             raise ValueError(f"{path}: no complete SGLang rank {rank} graph steps")
-        return steps, {
+        evidence = {
             "rank": rank,
             "device_id": rank,
             "global_pid": process,
@@ -779,6 +1039,21 @@ def load_sglang_nsys_steps(
             "crossing_kernel_count": crossing_kernel_count,
             **pairing_evidence,
         }
+        if capture_window is not None:
+            evidence.update(
+                {
+                    "capture_range": {
+                        "label": marker_source,
+                        "start_ns": capture_window[0],
+                        "end_ns": capture_window[1],
+                    },
+                    "scheduler_marker_count": scheduler_marker_count,
+                    "first_step_boundary": (
+                        "capture-range start to next scheduler.run_batch start"
+                    ),
+                }
+            )
+        return steps, evidence
 
     # Legacy reports without scheduler NVTX can only be sliced by the next
     # blocking CUDA synchronization. Keep this path explicit and excluded from

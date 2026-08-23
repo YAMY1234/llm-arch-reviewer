@@ -18,11 +18,15 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     load_sglang_nsys_steps,
     map_decode_step,
     map_prefill_step,
+    read_nsys_export_metadata,
     sglang_graph_roles,
     sglang_nsys_trace_events,
     validate_sglang_graph_node_stability,
 )
 from models.qwen35.profile.qwen35_graph_mapping import map_graph_window
+from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
+    parse_exact_batch_capture_observation,
+)
 
 
 def _kernel(name: str, index: int) -> NsysKernel:
@@ -35,6 +39,29 @@ def _kernel(name: str, index: int) -> NsysKernel:
         graph_id=1,
         graph_node_id=index,
     )
+
+
+def test_sglang_nsys_export_metadata_is_auditable_and_narrow(tmp_path):
+    path = tmp_path / "report.sqlite"
+    connection = sqlite3.connect(path)
+    connection.execute("create table META_DATA_EXPORT(name text, value text)")
+    connection.executemany(
+        "insert into META_DATA_EXPORT values (?, ?)",
+        [
+            ("EXPORT_PRODUCT_NAME", "NVIDIA Nsight Systems"),
+            ("EXPORT_PRODUCT_VERSION", "2026.4.1.191"),
+            ("EXPORT_SCHEMA_VERSION", "3.28.0"),
+            ("SENSITIVE_OR_UNRELATED", "must not be returned"),
+        ],
+    )
+    connection.commit()
+    connection.close()
+
+    assert read_nsys_export_metadata(path) == {
+        "product": "NVIDIA Nsight Systems",
+        "version": "2026.4.1.191",
+        "schema_version": "3.28.0",
+    }
 
 
 def test_sglang_nsys_rejects_graph_metadata_without_cuda_activity(tmp_path):
@@ -497,3 +524,169 @@ def test_sglang_nsys_uses_scheduler_wall_and_proves_three_graph_roles(tmp_path):
         "draft",
         "draft_extend",
     }
+
+
+def test_sglang_nsys_recovers_first_exact_step_from_capture_range(tmp_path):
+    path = tmp_path / "sglang-exact-capture.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(
+          start integer, end integer, text text, textId integer, globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_RUNTIME(
+          start integer, end integer, correlationId integer, nameId integer,
+          globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_KERNEL(
+          start integer, end integer, deviceId integer, contextId integer,
+          streamId integer, correlationId integer, globalPid integer,
+          graphId integer, graphNodeId integer, demangledName integer
+        );
+        """
+    )
+    names = {
+        1: "cudaGraphLaunch_v10000",
+        2: "fused_qkvzba_split",
+        3: "_fused_qk_rmsnorm_rope_gate_kernel",
+    }
+    connection.executemany("insert into StringIds values (?,?)", names.items())
+    process = 101 << 24
+    global_tid = process + 19
+    connection.executemany(
+        "insert into NVTX_EVENTS values (?,?,?,null,?)",
+        [
+            (50_000, 2_950_000, "agentx_decode_capture", global_tid),
+            # Capture starts inside the exact step's outer run_batch range, so
+            # only the following scheduler ranges are present in the report.
+            (1_000_000, 1_900_000, "scheduler.run_batch", global_tid),
+            (2_000_000, 2_900_000, "scheduler.run_batch", global_tid),
+        ],
+    )
+    runtime_rows = []
+    kernel_rows = []
+    for step in range(2):
+        base = step * 1_000_000 + 100_000
+        runtime_rows.extend(
+            (base + offset, base + offset + 100, 10 + offset, 1, global_tid)
+            for offset in (0, 300_000, 600_000)
+        )
+        for layer_id, kind in enumerate(TARGET_PATTERN):
+            name_id = 2 if kind == "gdn" else 3
+            start = base + layer_id * 2_000
+            kernel_rows.append(
+                (start, start + 500, 0, 1, 7, 0, process, 2, layer_id, name_id)
+            )
+        for round_id in range(4):
+            start = base + 300_000 + round_id * 2_000
+            kernel_rows.append(
+                (start, start + 500, 0, 1, 7, 0, process, 23, round_id, 3)
+            )
+        start = base + 600_000
+        kernel_rows.append(
+            (start, start + 500, 0, 1, 7, 0, process, 44, 0, 3)
+        )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_RUNTIME values (?,?,?,?,?)", runtime_rows
+    )
+    connection.executemany(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values (?,?,?,?,?,?,?,?,?,?)",
+        kernel_rows,
+    )
+    connection.commit()
+    connection.close()
+
+    steps, evidence = load_sglang_nsys_steps(
+        path, rank=0, capture_range_label="agentx_decode_capture"
+    )
+    assert len(steps) == 2
+    assert steps[0].label == "agentx_decode_capture:first_exact_step"
+    assert steps[0].cpu_start_ns == 50_000
+    assert steps[0].cpu_end_ns == 1_000_000
+    assert steps[0].graph_launch_count == 3
+    assert evidence["marker_source"] == "agentx_decode_capture"
+    assert evidence["scheduler_marker_count"] == 2
+    assert evidence["first_step_boundary"] == (
+        "capture-range start to next scheduler.run_batch start"
+    )
+    assert sglang_graph_roles(steps[0].kernels) == {
+        "target_verify": 2,
+        "draft": 23,
+        "draft_extend": 44,
+    }
+
+
+def test_sglang_exact_capture_rejects_idle_truncation_without_next_scheduler_marker(
+    tmp_path,
+):
+    path = tmp_path / "idle-truncated.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(
+          start integer, end integer, text text, textId integer, globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_KERNEL(
+          start integer, end integer, deviceId integer, contextId integer,
+          streamId integer, correlationId integer, globalPid integer,
+          graphId integer, graphNodeId integer, demangledName integer
+        );
+        """
+    )
+    process = 101 << 24
+    connection.execute(
+        "insert into NVTX_EVENTS values (100,200,'agentx_decode_capture',null,?)",
+        (process + 7,),
+    )
+    connection.execute(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values "
+        "(110,120,0,1,7,0,?,1,1,null)",
+        (process,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="contains no following scheduler.run_batch"):
+        load_sglang_nsys_steps(
+            path, rank=0, capture_range_label="agentx_decode_capture"
+        )
+
+
+def test_sglang_exact_batch_log_selects_gate_step_after_delayed_previous_row(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    worker_log.write_text(
+        "[x DP0 TP0 EP0] Exact running-batch Nsight gate matched: "
+        "batch=32 forward_ct=30123\n"
+        "[x DP0 TP0 EP0] Profiling starts. Traces will be saved to: /tmp\n"
+        "[x DP1 TP1 EP1] Decode batch [77], #running-req: 41, #full token: 99, "
+        "accept len: 4.8, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Decode batch [30122], #running-req: 31, #full token: 6300, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP1 TP1 EP1] Decode batch [30123], #running-req: 29, #full token: 6200, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP2 TP2 EP2] Decode batch [30123], #running-req: 34, #full token: 6500, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP3 TP3 EP3] Decode batch [30123], #running-req: 33, #full token: 6450, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Decode batch [30123], #running-req: 32, #full token: 6400, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Decode batch [30124], #running-req: 35, #full token: 7000, "
+        "accept len: 4.80, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Stop profiling...\n"
+        "[x DP0 TP0 EP0] Profiling done. Traces are saved to: /tmp\n"
+    )
+    observation = parse_exact_batch_capture_observation(
+        worker_log, selected_batch=32
+    )
+    assert observation["gate_forward_ct"] == 30123
+    assert observation["scheduler_step"] == 30123
+    assert observation["running_requests"] == 32
+    assert observation["logged_rows_before_exact"] == 1
+    assert observation["capture_dp0_observation_count"] == 3
+    assert {
+        rank: row["running_requests"]
+        for rank, row in observation["rank_local_batches_at_exact_step"].items()
+    } == {"r0": 32, "r1": 29, "r2": 34, "r3": 33}
+    assert observation["profiler_completed"] is True

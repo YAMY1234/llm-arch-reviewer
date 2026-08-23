@@ -1817,6 +1817,18 @@ function comparisonExactBatch(profileId) {
   return Number.isFinite(batch) ? batch : null;
 }
 
+function comparisonProfileProvenance(profileId) {
+  const profile = RAW_DATA?.profiles?.[profileId] || {};
+  return {
+    profileId,
+    variantId: profile.meta?.variant_id || "",
+    profilerType: profile.meta?.profiler?.type || "",
+    exactBatch: comparisonExactBatch(profileId),
+    rankCoverage: profile.meta?.profiler?.rank || "",
+    nsysVersion: profile.meta?.evidence?.nsys_export?.version || "",
+  };
+}
+
 function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId) {
   const sglangBatch = comparisonExactBatch(sglangProfileId);
   const trtllmBatch = comparisonExactBatch(trtllmProfileId);
@@ -2255,6 +2267,8 @@ function comparisonCaveat() {
   const trtllm = RAW_DATA?.profiles?.[COMPARE_TRTLLM_PROFILE];
   const sWorkload = sglang?.meta?.workload || {};
   const tWorkload = trtllm?.meta?.workload || {};
+  const sEvidence = sglang?.meta?.evidence || {};
+  const tEvidence = trtllm?.meta?.evidence || {};
   const sameConcurrency = sWorkload.concurrency != null
     && Number(sWorkload.concurrency) === Number(tWorkload.concurrency);
   const sBatch = comparisonExactBatch(COMPARE_SGLANG_PROFILE);
@@ -2273,7 +2287,19 @@ function comparisonCaveat() {
   const attributionOnly = [sWorkload, tWorkload].some(workload =>
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
+  const rankCoverage = [
+    sglang?.meta?.profiler?.rank ? `SGLang rank coverage: ${sglang.meta.profiler.rank}.` : "",
+    trtllm?.meta?.profiler?.rank ? `TRT-LLM rank coverage: ${trtllm.meta.profiler.rank}.` : "",
+  ].filter(Boolean).join(" ");
+  const exporterVersions = [
+    sEvidence.nsys_export?.version
+      ? `SGLang NSYS ${sEvidence.nsys_export.version}` : "",
+    tEvidence.nsys_export?.version
+      ? `TRT-LLM NSYS ${tEvidence.nsys_export.version}` : "",
+  ].filter(Boolean).join("; ");
   return `${CURRENT_PHASE || "selected phase"}: ${context} `
+    + (rankCoverage ? `${rankCoverage} ` : "")
+    + (exporterVersions ? `Exporter provenance: ${exporterVersions}. ` : "")
     + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
     + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
     + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
@@ -2319,6 +2345,8 @@ function renderComparisonTable() {
 
   const sglangLabel = RAW_DATA.profiles[COMPARE_SGLANG_PROFILE]?.meta?.label || COMPARE_SGLANG_PROFILE;
   const trtllmLabel = RAW_DATA.profiles[COMPARE_TRTLLM_PROFILE]?.meta?.label || COMPARE_TRTLLM_PROFILE;
+  const sglangProvenance = comparisonProfileProvenance(COMPARE_SGLANG_PROFILE);
+  const trtllmProvenance = comparisonProfileProvenance(COMPARE_TRTLLM_PROFILE);
   let rows = "";
   COMPARE_EXPORT_ROWS = [];
   const appendTimingRow = ({targetData, leftCells, classes, labels, rowKind}) => {
@@ -2348,6 +2376,12 @@ function renderComparisonTable() {
         submodule: labels.submodule,
         operation: labels.operation,
         ir_target: targetData.target,
+        sglang_profile_id: sglangProvenance.profileId,
+        sglang_variant_id: sglangProvenance.variantId,
+        sglang_profiler_type: sglangProvenance.profilerType,
+        sglang_exact_batch: sglangProvenance.exactBatch,
+        sglang_rank_coverage: sglangProvenance.rankCoverage,
+        sglang_nsys_version: sglangProvenance.nsysVersion,
         sglang_semantic_kernel: sglangKernel.semanticName,
         sglang_semantic_kernel_ms: sglangKernel.semanticTimeMs,
         sglang_concrete_kernel_name: sglangKernel.concreteName,
@@ -2356,6 +2390,12 @@ function renderComparisonTable() {
         sglang_residency_ms: targetData.sglangAggregate.residencyMs,
         sglang_active_union_ms: targetData.sglangAggregate.activeMs,
         sglang_wall_elapsed_ms: targetData.sglangAggregate.wallMs,
+        trtllm_profile_id: trtllmProvenance.profileId,
+        trtllm_variant_id: trtllmProvenance.variantId,
+        trtllm_profiler_type: trtllmProvenance.profilerType,
+        trtllm_exact_batch: trtllmProvenance.exactBatch,
+        trtllm_rank_coverage: trtllmProvenance.rankCoverage,
+        trtllm_nsys_version: trtllmProvenance.nsysVersion,
         trtllm_semantic_kernel: trtllmKernel.semanticName,
         trtllm_semantic_kernel_ms: trtllmKernel.semanticTimeMs,
         trtllm_concrete_kernel_name: trtllmKernel.concreteName,
@@ -2440,10 +2480,14 @@ function exportComparisonCsv() {
   if (!COMPARE_EXPORT_ROWS.length) return;
   const headers = [
     "row_kind", "module", "submodule", "operation", "ir_target",
+    "sglang_profile_id", "sglang_variant_id", "sglang_profiler_type",
+    "sglang_exact_batch", "sglang_rank_coverage", "sglang_nsys_version",
     "sglang_semantic_kernel", "sglang_semantic_kernel_ms",
     "sglang_concrete_kernel_name", "sglang_concrete_kernel_ms",
     "sglang_concrete_kernel_calls_per_iter", "sglang_residency_ms",
     "sglang_active_union_ms", "sglang_wall_elapsed_ms",
+    "trtllm_profile_id", "trtllm_variant_id", "trtllm_profiler_type",
+    "trtllm_exact_batch", "trtllm_rank_coverage", "trtllm_nsys_version",
     "trtllm_semantic_kernel", "trtllm_semantic_kernel_ms",
     "trtllm_concrete_kernel_name", "trtllm_concrete_kernel_ms",
     "trtllm_concrete_kernel_calls_per_iter", "trtllm_residency_ms",
