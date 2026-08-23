@@ -63,6 +63,54 @@ NON_LEAF_EAGER_NODES = {
 }
 
 
+def interval_union_duration_us(events: list[dict[str, Any]]) -> float:
+    """Return the overlap-safe union of GPU intervals in microseconds."""
+
+    intervals = sorted(
+        (
+            float(event["ts_us"]),
+            float(event["ts_us"]) + float(event["dur_us"]),
+        )
+        for event in events
+        if float(event.get("dur_us", 0.0)) > 0.0
+    )
+    if not intervals:
+        return 0.0
+    merged = [list(intervals[0])]
+    for start, end in intervals[1:]:
+        if start > merged[-1][1]:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    return sum(end - start for start, end in merged)
+
+
+def attribution_active_union_ratio(events: list[dict[str, Any]]) -> float:
+    """Measure attributed active time without mixing independent rank clocks.
+
+    Kernel residency is still reported separately. The semantic attribution
+    gate is based on the union of mapped/fusion intervals divided by the union
+    of all GPU intervals, summed independently per worker/rank/step.
+    """
+
+    groups: dict[tuple[Any, Any, Any], list[dict[str, Any]]] = {}
+    for event in events:
+        key = (event.get("worker"), event.get("rank"), event.get("step_index"))
+        groups.setdefault(key, []).append(event)
+    total_active_us = 0.0
+    attributed_active_us = 0.0
+    for rows in groups.values():
+        total_active_us += interval_union_duration_us(rows)
+        attributed_active_us += interval_union_duration_us(
+            [
+                row
+                for row in rows
+                if row.get("mapping_status") in {"mapped", "fusion"}
+            ]
+        )
+    return attributed_active_us / total_active_us if total_active_us else 0.0
+
+
 @dataclass(frozen=True)
 class GraphMapping:
     node: str | None

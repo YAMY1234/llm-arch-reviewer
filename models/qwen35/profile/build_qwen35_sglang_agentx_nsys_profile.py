@@ -39,6 +39,7 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     sha256_file,
 )
 from models.qwen35.profile.qwen35_graph_mapping import (
+    attribution_active_union_ratio,
     attach_graph_stack_evidence,
     load_contextual_eager_signatures,
     load_unique_eager_kernel_signatures,
@@ -298,7 +299,10 @@ def build(args: argparse.Namespace):
     status_us: Counter[str] = Counter()
     for row in all_mappings:
         status_us[str(row["mapping_status"])] += float(row["dur_us"])
-    attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
+    attributed_residency_ratio = (
+        status_us["mapped"] + status_us["fusion"]
+    ) / total_us
+    attributed_active_ratio = attribution_active_union_ratio(all_mappings)
     strict_signature_us = sum(
         float(row["dur_us"])
         for row in all_mappings
@@ -323,7 +327,8 @@ def build(args: argparse.Namespace):
             "mode": "eager_stack_calibration_plus_nsys_graph_node_replay",
             "file": args.eager_mapping.name,
             "sha256": sha256_file(args.eager_mapping),
-            "mapped_residency_ratio": round(attributed_ratio, 6),
+            "mapped_residency_ratio": round(attributed_residency_ratio, 6),
+            "mapped_active_union_ratio": round(attributed_active_ratio, 6),
             "unmapped_residency_ratio": round(status_us["unmapped"] / total_us, 6),
             "policy": (
                 "unique eager signature or validated graph role/layer/round slot; "
@@ -420,13 +425,18 @@ def build(args: argparse.Namespace):
                 "exact GGGA/MTP5 order + eager stack leaf calibration"
             ),
             "selection_policy": "exact running_requests=32 events only",
-            "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
+            "mapped_or_fusion_duration_ratio": round(attributed_residency_ratio, 6),
+            "mapped_or_fusion_active_union_ratio": round(attributed_active_ratio, 6),
             "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
             "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
             "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
             "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
             "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
-            "semantic_attribution_gate": {"threshold": 0.95, "passed": attributed_ratio >= 0.95},
+            "semantic_attribution_gate": {
+                "metric": "mapped_or_fusion_active_union_ratio",
+                "threshold": 0.95,
+                "passed": attributed_active_ratio >= 0.95,
+            },
             "critical_gpu_span_ms": timing_summary["critical_gpu_span_ms"],
             "critical_logical_period_ms": timing_summary["critical_logical_period_ms"],
             "four_rank_validation": True,
@@ -443,7 +453,8 @@ def build(args: argparse.Namespace):
         "selected_observations": selected_observations,
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),
-        "mapped_or_fusion_duration_ratio": attributed_ratio,
+        "mapped_or_fusion_duration_ratio": attributed_residency_ratio,
+        "mapped_or_fusion_active_union_ratio": attributed_active_ratio,
         "strict_signature_duration_ratio": strict_signature_us / total_us,
         "node_metrics": node_metrics,
     }
@@ -477,7 +488,10 @@ def main() -> int:
     print(f"wrote {args.output_profile.resolve()}")
     print(
         f"exact BS32 samples={profile['workload']['selected_samples']} "
-        f"attributed={profile['evidence']['mapped_or_fusion_duration_ratio']:.3f}"
+        "attributed-active="
+        f"{profile['evidence']['mapped_or_fusion_active_union_ratio']:.3f} "
+        "attributed-residency="
+        f"{profile['evidence']['mapped_or_fusion_duration_ratio']:.3f}"
     )
     return 0
 

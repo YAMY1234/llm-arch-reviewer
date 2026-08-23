@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -9,8 +10,10 @@ if str(REPO_ROOT) not in sys.path:
 from models.common.trace_mapping import ForwardWindow
 from models.qwen35.profile.qwen35_graph_mapping import (
     TARGET_PATTERN,
+    attribution_active_union_ratio,
     complete_eager_decode_window,
     direct_graph_mapping,
+    interval_union_duration_us,
     map_graph_window,
     map_prefill_window,
     transfer_occurrence_stack_mapping,
@@ -56,6 +59,31 @@ def test_target_and_draft_collectives_remain_separate():
     assert target.node == "moe_block.target_ep4_dispatch"
     assert draft.node == "mtp_moe_block.draft_ep4_dispatch"
     assert target.status == draft.status == "mapped"
+
+
+def test_attribution_gate_uses_per_source_active_union_not_residency_sum():
+    def event(worker, rank, step, start, duration, status):
+        return {
+            "worker": worker,
+            "rank": rank,
+            "step_index": step,
+            "ts_us": start,
+            "dur_us": duration,
+            "mapping_status": status,
+        }
+
+    rows = [
+        event(0, 0, 1, 0.0, 10.0, "mapped"),
+        event(0, 0, 1, 5.0, 10.0, "fusion"),
+        event(0, 0, 1, 14.0, 6.0, "unmapped"),
+        event(0, 0, 2, 100.0, 10.0, "mapped"),
+        event(0, 0, 2, 110.0, 10.0, "unmapped"),
+        # Same timestamps on another rank are an independent clock/source and
+        # must contribute another 10 us, not be unioned with rank 0.
+        event(0, 1, 1, 0.0, 10.0, "mapped"),
+    ]
+    assert math.isclose(interval_union_duration_us(rows[:3]), 20.0)
+    assert math.isclose(attribution_active_union_ratio(rows), 0.7)
 
 
 def test_generation_lifecycle_signatures_are_not_left_in_a_generic_scope():

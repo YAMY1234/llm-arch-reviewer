@@ -56,10 +56,10 @@ def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
         assert len(evidence["model_config_sha256"]) == 64
         assert len(evidence["container_sha256"]) == 64
         threshold = 0.95 if profile["implementation_id"].startswith("sglang_") else 0.90
-        assert evidence["semantic_attribution_gate"] == {
-            "threshold": threshold,
-            "passed": evidence["mapped_or_fusion_duration_ratio"] >= threshold,
-        }
+        gate = evidence["semantic_attribution_gate"]
+        metric = gate.get("metric", "mapped_or_fusion_duration_ratio")
+        assert gate["threshold"] == threshold
+        assert gate["passed"] == (evidence[metric] >= threshold)
         assert math.isclose(
             evidence["mapped_duration_ratio"]
             + evidence["fusion_duration_ratio"]
@@ -129,6 +129,26 @@ def test_trt_decode_comparison_profile_uses_exact_bs32_nsys_subset():
     }
     assert profile["evidence"]["selection_policy"] == (
         "exact generation_reqs=32 events only"
+    )
+
+
+def test_trt_prefill_profile_uses_only_exact_one_by_8k_nsys_subset():
+    path = (
+        PROFILE_ROOT
+        / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
+        / "prefill_8k.yaml"
+    )
+    profile = yaml.safe_load(path.read_text())
+    shape = profile["workload"]["measured_shape"]
+    assert shape["selected_exact_context_shape"] == {
+        "requests": 1,
+        "tokens": 8192,
+    }
+    assert shape["selected_samples"] == sum(
+        shape["selected_samples_by_source"].values()
+    )
+    assert profile["evidence"]["selection_policy"] == (
+        "exact one-request/8192-token owner events only"
     )
 
 

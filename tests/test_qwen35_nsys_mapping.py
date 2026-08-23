@@ -199,6 +199,52 @@ def test_trt_prefill_mapping_recognizes_sm103_and_context_causal_conv_signatures
     assert sum(event["node"] == "full_attention.causal_gqa" for event in mapped) == 15
 
 
+def test_trt_prefill_maps_repeated_gemm_only_with_complete_layer_slot_proof():
+    projection = "nvjet_sm103_qqtst_128x256_128x6_2x1_2cta_v_bz_TNT"
+    kernels: list[NsysKernel] = []
+    for layer_id, kind in enumerate(TARGET_PATTERN):
+        kernels.append(_kernel(projection, len(kernels)))
+        kernels.append(
+            _kernel(
+                "causal_conv1d_fwd_kernel<128>"
+                if kind == "gdn"
+                else "fmhaSm103aKernel_Context",
+                len(kernels),
+            )
+        )
+        kernels.append(_kernel(projection, len(kernels)))
+        kernels.append(_kernel("fused_add_rmsnorm_attention", len(kernels)))
+        _moe(kernels, layer_id, draft=False)
+        kernels.append(_kernel("silu_and_mul_kernel", len(kernels)))
+        kernels.append(_kernel(projection, len(kernels)))
+        kernels.append(_kernel("sigmoid_gate_mul_add_kernel", len(kernels)))
+        kernels.append(_kernel("fused_add_rmsnorm_layer", len(kernels)))
+    step = NsysStep(
+        step_id=10000,
+        rank=0,
+        label="[Executor] _forward_step 10000: 1 ctx reqs, 8192 ctx tokens, 0 gen reqs",
+        cpu_start_ns=0,
+        cpu_end_ns=1_000_000,
+        context_reqs=1,
+        context_tokens=8192,
+        generation_reqs=0,
+        kernels=tuple(kernels),
+        graph_launch_count=61,
+    )
+    mapped, validation = map_prefill_step(step)
+    slot_events = [
+        event
+        for event in mapped
+        if event["attribution_method"] == "validated_prefill_layer_sequence"
+    ]
+    assert validation["validated_prefill_projection_slots"] == 180
+    assert sum(event["node"] == "gdn_attention.qkvz_projection" for event in slot_events) == 45
+    assert sum(event["node"] == "full_attention.qkv_projection" for event in slot_events) == 15
+    assert sum(event["node"] == "gdn_attention.output_projection" for event in slot_events) == 45
+    assert sum(event["node"] == "full_attention.output_projection" for event in slot_events) == 15
+    assert sum(event["node"] == "moe_block.shared_expert" for event in slot_events) == 60
+
+
 def test_nsys_parser_splits_overlapping_graph_executions_by_node_occurrence(tmp_path):
     path = tmp_path / "worker-decode-rank0.sqlite"
     connection = sqlite3.connect(path)

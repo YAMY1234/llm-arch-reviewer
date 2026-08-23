@@ -1215,6 +1215,113 @@ def _union_duration_ns(kernels: Iterable[NsysKernel]) -> int:
     return total + end - start
 
 
+PREFILL_PROJECTION_GEMM = "nvjet_sm103_qqtst_128x256_128x6_2x1_2cta_v_bz_tnt"
+
+
+def _prefill_projection_slots(
+    kernels: list[NsysKernel],
+    *,
+    prepare: list[int],
+    anchor_pairs: list[tuple[int, str | None]],
+) -> dict[int, NsysAttribution]:
+    """Prove the three repeated projection GEMM slots in each prefill layer.
+
+    The generated kernel symbol is identical for three different projections,
+    so the name alone is insufficient.  Formal owner-rank traces have a stable
+    60-layer sequence in which the three occurrences are separated by a unique
+    GDN/FMHA anchor, the attention residual, the EP4 MoE lifecycle, shared-
+    expert activation, and the layer residual.  Fail closed unless every layer
+    satisfies the complete ordering.
+    """
+
+    if not any(PREFILL_PROJECTION_GEMM in kernel.name.lower() for kernel in kernels):
+        return {}
+    if len(prepare) != 60 or len(anchor_pairs) != 60:
+        raise ValueError("prefill projection-slot proof requires 60 owner layers")
+
+    result: dict[int, NsysAttribution] = {}
+    layer_start = 0
+    for layer_id, (anchor, kind) in enumerate(anchor_pairs):
+        prepare_index = prepare[layer_id]
+        next_prepare = prepare[layer_id + 1] if layer_id + 1 < 60 else len(kernels)
+        post_moe_residuals = [
+            index
+            for index in range(prepare_index + 1, next_prepare)
+            if "fused_add_rmsnorm" in kernels[index].name.lower()
+        ]
+        if not post_moe_residuals:
+            raise ValueError(
+                f"prefill layer {layer_id}: missing post-MoE residual boundary"
+            )
+        layer_end = post_moe_residuals[0]
+        attention_residuals = [
+            index
+            for index in range(layer_start, prepare_index)
+            if "fused_add_rmsnorm" in kernels[index].name.lower()
+        ]
+        projection_slots = [
+            index
+            for index in range(layer_start, layer_end + 1)
+            if PREFILL_PROJECTION_GEMM in kernels[index].name.lower()
+        ]
+        shared_activations = [
+            index
+            for index in range(prepare_index + 1, layer_end)
+            if "silu_and_mul_kernel" in kernels[index].name.lower()
+        ]
+        weighted_combines = [
+            index
+            for index in range(prepare_index + 1, layer_end)
+            if "sigmoid_gate_mul_add_kernel" in kernels[index].name.lower()
+        ]
+        if (
+            len(attention_residuals) != 1
+            or len(projection_slots) != 3
+            or len(shared_activations) != 1
+            or len(weighted_combines) != 1
+        ):
+            raise ValueError(
+                f"prefill layer {layer_id}: projection-slot cardinality mismatch"
+            )
+        input_projection, output_projection, shared_projection = projection_slots
+        attention_residual = attention_residuals[0]
+        if not (
+            layer_start <= input_projection < anchor < output_projection
+            < attention_residual < prepare_index < shared_activations[0]
+            < shared_projection < weighted_combines[0] < layer_end
+        ):
+            raise ValueError(
+                f"prefill layer {layer_id}: projection-slot ordering mismatch"
+            )
+
+        attention_prefix = "gdn_attention" if kind == "gdn" else "full_attention"
+        input_label = (
+            "GDN Q/K/V/Z projection"
+            if kind == "gdn"
+            else "full-attention gated Q/K/V projection"
+        )
+        result[input_projection] = NsysAttribution(
+            f"{attention_prefix}.{'qkvz_projection' if kind == 'gdn' else 'qkv_projection'}",
+            input_label,
+            attribution_method="validated_prefill_layer_sequence",
+        )
+        result[output_projection] = NsysAttribution(
+            f"{attention_prefix}.output_projection",
+            "attention output projection",
+            attribution_method="validated_prefill_layer_sequence",
+        )
+        result[shared_projection] = NsysAttribution(
+            "moe_block.shared_expert",
+            "shared-expert output projection",
+            attribution_method="validated_prefill_layer_sequence",
+        )
+        layer_start = layer_end + 1
+
+    if len(result) != 180:
+        raise ValueError(f"prefill projection-slot proof produced {len(result)} slots")
+    return result
+
+
 def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Attribute one MTP6 CUDA-Graph decode execution to Qwen3.5 IR nodes."""
 
@@ -1481,12 +1588,22 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         layer_anchors = prepare
         layer_kinds = list(TARGET_PATTERN)
 
+    projection_slots = (
+        _prefill_projection_slots(
+            kernels,
+            prepare=prepare,
+            anchor_pairs=anchor_pairs,
+        )
+        if owner_compute
+        else {}
+    )
+
     mapped: list[dict[str, Any]] = []
     status_ns: Counter[str] = Counter()
     for event_index, kernel in enumerate(kernels):
         layer_id = max(0, bisect_right(layer_anchors, event_index) - 1)
         layer_kind = layer_kinds[layer_id]
-        direct = _direct_node(
+        direct = projection_slots.get(event_index) or _direct_node(
             kernel.name,
             section="target",
             layer_kind=layer_kind,
@@ -1578,6 +1695,7 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         "target_ep4_combine": sum(
             "moea2acombinekernel" in kernel.name.lower() for kernel in kernels
         ),
+        "validated_prefill_projection_slots": len(projection_slots),
         "cpu_wall_us": step.cpu_wall_us,
         "gpu_span_us": (step.gpu_end_ns - step.gpu_start_ns) / 1000.0,
         "gpu_busy_union_us": _union_duration_ns(kernels) / 1000.0,

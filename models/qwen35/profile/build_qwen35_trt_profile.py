@@ -25,6 +25,7 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     _metrics_for_rank,
     sha256_file,
 )
+from models.qwen35.profile.qwen35_graph_mapping import attribution_active_union_ratio
 from models.qwen35.profile.qwen35_nsys_mapping import (
     load_nsys_steps,
     map_decode_step,
@@ -249,6 +250,11 @@ def build(args: argparse.Namespace):
             source: _metrics_for_rank(events, exact_step_counts[source])
             for source, events in sorted(exact_events_by_source.items())
         }
+        all_mappings = [
+            event
+            for row in exact_8k
+            for event in row["timeline_step"]["events"]
+        ]
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
         for row in exact_8k:
             exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
@@ -357,7 +363,10 @@ def build(args: argparse.Namespace):
     status_us: Counter[str] = Counter()
     for row in all_mappings:
         status_us[str(row["mapping_status"])] += float(row["dur_us"])
-    attributed_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
+    attributed_residency_ratio = (
+        status_us["mapped"] + status_us["fusion"]
+    ) / total_us
+    attributed_active_ratio = attribution_active_union_ratio(all_mappings)
     strict_signature_us = sum(
         float(event["dur_us"])
         for event in all_mappings
@@ -382,7 +391,8 @@ def build(args: argparse.Namespace):
             "mode": "nsight_nvtx_and_cuda_graph_node_identity",
             "file": reference_path.name,
             "sha256": sha256_file(reference_path),
-            "mapped_residency_ratio": round(attributed_ratio, 6),
+            "mapped_residency_ratio": round(attributed_residency_ratio, 6),
+            "mapped_active_union_ratio": round(attributed_active_ratio, 6),
             "unmapped_residency_ratio": round(status_us["unmapped"] / total_us, 6),
             "policy": "unique kernel signatures remain mapped; unresolved graph occurrences remain explicit unmapped events with candidates",
         },
@@ -411,6 +421,12 @@ def build(args: argparse.Namespace):
                 row["context_reqs"] == 1 and row["context_tokens"] == 8192
                 for row in owner_shapes
             ),
+            "selected_exact_context_shape": {
+                "requests": 1,
+                "tokens": 8192,
+            },
+            "selected_samples": len(exact_8k),
+            "selected_samples_by_source": dict(sorted(exact_counts.items())),
         }
 
     node_states = {}
@@ -513,13 +529,18 @@ def build(args: argparse.Namespace):
                 if args.phase == "decode"
                 else "exact one-request/8192-token owner events only"
             ),
-            "mapped_or_fusion_duration_ratio": round(attributed_ratio, 6),
+            "mapped_or_fusion_duration_ratio": round(attributed_residency_ratio, 6),
+            "mapped_or_fusion_active_union_ratio": round(attributed_active_ratio, 6),
             "strict_signature_duration_ratio": round(strict_signature_us / total_us, 6),
             "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
             "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
             "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
             "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
-            "semantic_attribution_gate": {"threshold": 0.90, "passed": attributed_ratio >= 0.90},
+            "semantic_attribution_gate": {
+                "metric": "mapped_or_fusion_active_union_ratio",
+                "threshold": 0.90,
+                "passed": attributed_active_ratio >= 0.90,
+            },
             "critical_step_wall_ms": timing_summary["critical_step_wall_ms"],
             "critical_cpu_launch_wall_ms": timing_summary[
                 "critical_cpu_launch_wall_ms"
@@ -542,7 +563,8 @@ def build(args: argparse.Namespace):
         "reference_source": reference_source,
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),
-        "mapped_or_fusion_duration_ratio": attributed_ratio,
+        "mapped_or_fusion_duration_ratio": attributed_residency_ratio,
+        "mapped_or_fusion_active_union_ratio": attributed_active_ratio,
         "strict_signature_duration_ratio": strict_signature_us / total_us,
         "node_metrics": profile["node_metrics"],
     }
@@ -572,7 +594,11 @@ def main() -> int:
             output.write(json.dumps(row, separators=(",", ":")) + "\n")
     print(f"wrote {args.output_profile.resolve()}")
     print(
-        f"phase={args.phase} attributed={profile['evidence']['mapped_or_fusion_duration_ratio']:.3f} "
+        f"phase={args.phase} "
+        "attributed-active="
+        f"{profile['evidence']['mapped_or_fusion_active_union_ratio']:.3f} "
+        "attributed-residency="
+        f"{profile['evidence']['mapped_or_fusion_duration_ratio']:.3f} "
         f"strict={profile['evidence']['strict_signature_duration_ratio']:.3f}"
     )
     return 0

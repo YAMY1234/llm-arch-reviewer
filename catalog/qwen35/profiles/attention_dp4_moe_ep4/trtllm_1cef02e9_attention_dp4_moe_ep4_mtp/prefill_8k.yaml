@@ -197,6 +197,14 @@ workload:
       generation_reqs: 0
       owner_compute: true
     one_chunk_8k_owner_samples: 4
+    selected_exact_context_shape:
+      requests: 1
+      tokens: 8192
+    selected_samples: 4
+    selected_samples_by_source:
+      nvl72d150-T03/rank0: 2
+      nvl72d150-T03/rank1: 1
+      nvl72d150-T03/rank3: 1
 profiler:
   type: nsight_systems_worker_local
   rank: all four DEP ranks on every worker
@@ -270,13 +278,16 @@ evidence:
     sha256: 0a6a58c8ebed942dbc7adf4b6de1ed7173be108afc898c49b50cc66cbbb7a801
   mapping_policy: NVTX step + runtime correlation + CUDA Graph node occurrence + exact
     GGGA/MTP6 order
-  mapped_or_fusion_duration_ratio: 0.901381
-  strict_signature_duration_ratio: 0.858054
-  mapped_duration_ratio: 0.858054
-  fusion_duration_ratio: 0.043327
-  unmapped_duration_ratio: 0.098619
+  selection_policy: exact one-request/8192-token owner events only
+  mapped_or_fusion_duration_ratio: 0.968124
+  mapped_or_fusion_active_union_ratio: 0.960421
+  strict_signature_duration_ratio: 0.851307
+  mapped_duration_ratio: 0.917828
+  fusion_duration_ratio: 0.050296
+  unmapped_duration_ratio: 0.031876
   timeline_interval_coverage_ratio: 1.0
   semantic_attribution_gate:
+    metric: mapped_or_fusion_active_union_ratio
     threshold: 0.9
     passed: true
   critical_step_wall_ms:
@@ -300,7 +311,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: prefill_8k.timeline.json.gz
-  sha256: 4238ebfee6090aa9c7edf8e198aa048be323df18f089d2604ff066a273ddf1cb
+  sha256: 1aaacfee44ceccdd1fbd0c2ab03ea20ce5a5b31264ba7648679f3d484ba59df7
   reference_rank: 0
   step_count: 2
   event_count: 4012
@@ -339,28 +350,51 @@ node_metrics:
     worker_rank_range_ms:
     - 56.461984
     - 201.005212
-  full_attention.qkv_projection:
-    ms_per_iter: 5.234304
+  full_attention.output_projection:
+    ms_per_iter: 2.20928
     mapping_status_duration_pct:
-      fusion: 100.0
+      mapped: 100.0
     kernels:
+    - name: attention output projection
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 147.285
+      total_us_per_iter: 2209.28
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 2.126816
+    - 2.20928
+  full_attention.qkv_projection:
+    ms_per_iter: 10.01536
+    mapping_status_duration_pct:
+      fusion: 52.2628
+      mapped: 47.7372
+    kernels:
+    - name: full-attention gated Q/K/V projection
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 318.737
+      total_us_per_iter: 4781.056
+      share_in_node_pct: 47.737
     - name: QKV projection + Q/K norm + RoPE + output-gate projection
       count: 15
       count_per_iter: 15.0
       avg_us: 270.071
       total_us_per_iter: 4051.072
-      share_in_node_pct: 77.395
+      share_in_node_pct: 40.449
     - name: QKV projection epilogue + RoPE + KV-cache write
       count: 15
       count_per_iter: 15.0
       avg_us: 78.882
       total_us_per_iter: 1183.232
-      share_in_node_pct: 22.605
+      share_in_node_pct: 11.814
     aggregation: maximum per worker/rank kernel residency
     source_worker_rank: nvl72d150-T03/rank1
     worker_rank_range_ms:
-    - 4.848
-    - 5.234304
+    - 9.494944
+    - 10.01536
   full_attention_moe_block.attention_residual:
     ms_per_iter: 0.702096
     mapping_status_duration_pct:
@@ -448,6 +482,38 @@ node_metrics:
     worker_rank_range_ms:
     - 4.742144
     - 5.21008
+  gdn_attention.output_projection:
+    ms_per_iter: 6.9472
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output projection
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 154.382
+      total_us_per_iter: 6947.2
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 6.508832
+    - 6.9472
+  gdn_attention.qkvz_projection:
+    ms_per_iter: 16.826944
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN Q/K/V/Z projection
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 373.932
+      total_us_per_iter: 16826.944
+      share_in_node_pct: 100.0
+    aggregation: maximum per worker/rank kernel residency
+    source_worker_rank: nvl72d150-T03/rank1
+    worker_rank_range_ms:
+    - 16.38784
+    - 16.826944
   gdn_attention.recurrent_state_read:
     ms_per_iter: 0.148224
     mapping_status_duration_pct:
@@ -577,21 +643,27 @@ node_metrics:
     - 0.841184
     - 0.919424
   moe_block.shared_expert:
-    ms_per_iter: 0.600064
+    ms_per_iter: 2.096704
     mapping_status_duration_pct:
       mapped: 100.0
     kernels:
+    - name: shared-expert output projection
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 24.944
+      total_us_per_iter: 1496.64
+      share_in_node_pct: 71.381
     - name: shared expert activation
       count: 60
       count_per_iter: 60.0
       avg_us: 10.001
       total_us_per_iter: 600.064
-      share_in_node_pct: 100.0
+      share_in_node_pct: 28.619
     aggregation: maximum per worker/rank kernel residency
     source_worker_rank: nvl72d150-T03/rank1
     worker_rank_range_ms:
-    - 0.523168
-    - 0.600064
+    - 1.826976
+    - 2.096704
   moe_block.target_ep4_combine:
     ms_per_iter: 30.05792
     mapping_status_duration_pct:
