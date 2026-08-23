@@ -72,6 +72,7 @@ SOURCE_RE = re.compile(r"^w(?P<worker>[01])/r(?P<rank>[0-3])$")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sqlites", type=Path, nargs=2, required=True)
+    parser.add_argument("--nsys-reports", type=Path, nargs=2, required=True)
     parser.add_argument("--worker-logs", type=Path, nargs=2, required=True)
     parser.add_argument("--fingerprints", type=Path, nargs=2, required=True)
     parser.add_argument("--benchmark-log", type=Path, required=True)
@@ -97,6 +98,17 @@ def _source_coordinates(source: str) -> tuple[int, int]:
     if not match:
         raise ValueError(f"invalid worker/rank source: {source}")
     return int(match.group("worker")), int(match.group("rank"))
+
+
+def _validate_nsys_report_files(paths: list[Path]) -> dict[int, Path]:
+    reports = {_report_worker(path): path.resolve() for path in paths}
+    if set(reports) != {0, 1}:
+        raise ValueError(f"incomplete SGLang raw NSYS reports: {sorted(reports)}")
+    if any(
+        not path.is_file() or path.stat().st_size <= 0 for path in reports.values()
+    ):
+        raise ValueError("formal SGLang raw NSYS report is missing or empty")
+    return reports
 
 
 def _validate_nsys_capture_contract(
@@ -252,6 +264,7 @@ def build(args: argparse.Namespace):
     reports = {_report_worker(path): path.resolve() for path in args.sqlites}
     if set(reports) != {0, 1}:
         raise ValueError(f"incomplete SGLang NSYS reports: {sorted(reports)}")
+    nsys_reports = _validate_nsys_report_files(args.nsys_reports)
 
     source_metrics: dict[str, dict[str, Any]] = {}
     source_validation: dict[str, dict[str, Any]] = {}
@@ -572,6 +585,14 @@ def build(args: argparse.Namespace):
                     "sha256": sha256_file(path),
                 }
                 for worker, path in sorted(reports.items())
+            ],
+            "nsys_report_files": [
+                {
+                    "worker": worker,
+                    "file": path.name,
+                    "sha256": sha256_file(path),
+                }
+                for worker, path in sorted(nsys_reports.items())
             ],
             "worker_logs": [
                 {

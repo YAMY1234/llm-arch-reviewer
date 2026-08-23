@@ -27,6 +27,7 @@ from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
 from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
     _source_coordinates,
     _validate_nsys_capture_contract,
+    _validate_nsys_report_files,
 )
 
 
@@ -60,6 +61,25 @@ def test_sglang_nsys_source_coordinates_are_strict():
     assert _source_coordinates("w1/r3") == (1, 3)
     with pytest.raises(ValueError, match="invalid worker/rank source"):
         _source_coordinates("worker1/rank3")
+
+
+def test_sglang_nsys_raw_reports_require_two_nonempty_worker_files(tmp_path):
+    reports = [
+        tmp_path / "node-a_decode_w0_profile_gpu0-1-2-3.nsys-rep",
+        tmp_path / "node-b_decode_w1_profile_gpu0-1-2-3.nsys-rep",
+    ]
+    for path in reports:
+        path.write_bytes(b"nsys")
+    assert _validate_nsys_report_files(reports) == {
+        0: reports[0].resolve(),
+        1: reports[1].resolve(),
+    }
+
+    reports[1].write_bytes(b"")
+    with pytest.raises(ValueError, match="missing or empty"):
+        _validate_nsys_report_files(reports)
+    with pytest.raises(ValueError, match="incomplete"):
+        _validate_nsys_report_files(reports[:1])
 
 
 def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
