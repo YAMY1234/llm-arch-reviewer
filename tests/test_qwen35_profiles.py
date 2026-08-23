@@ -204,6 +204,14 @@ def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
         "start_inclusive": 28500,
         "stop_exclusive": 28900,
     }
+    assert sglang["profiler"]["exact_capture_stop_policy"] == {
+        "rebased_forward_count_width": 400,
+        "minimum_completed_decode_batches": 2,
+        "condition": (
+            "both rebased forward-count width reached and at least two real "
+            "decode batches completed"
+        ),
+    }
     assert len(evidence["report_files"]) == 2
     assert evidence["nsys_export"]["product"] == "NVIDIA Nsight Systems"
     assert evidence["nsys_export"]["version"]

@@ -622,6 +622,15 @@ def build(args: argparse.Namespace):
                 "start_inclusive": capture_start_step,
                 "stop_exclusive": capture_stop_step,
             },
+            "exact_capture_stop_policy": {
+                "rebased_forward_count_width": capture_stop_step
+                - capture_start_step,
+                "minimum_completed_decode_batches": 2,
+                "condition": (
+                    "both rebased forward-count width reached and at least two "
+                    "real decode batches completed"
+                ),
+            },
             "cuda_graph_enabled": True,
             "gpu_metric_semantics": (
                 "maximum of the two worker-local DP0 samples; parallel workers "

@@ -617,6 +617,43 @@ def test_sglang_nsys_recovers_first_exact_step_from_capture_range(tmp_path):
     }
 
 
+def test_sglang_exact_capture_rejects_idle_truncation_without_next_scheduler_marker(
+    tmp_path,
+):
+    path = tmp_path / "idle-truncated.sqlite"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        create table StringIds(id integer primary key, value text);
+        create table NVTX_EVENTS(
+          start integer, end integer, text text, textId integer, globalTid integer
+        );
+        create table CUPTI_ACTIVITY_KIND_KERNEL(
+          start integer, end integer, deviceId integer, contextId integer,
+          streamId integer, correlationId integer, globalPid integer,
+          graphId integer, graphNodeId integer, demangledName integer
+        );
+        """
+    )
+    process = 101 << 24
+    connection.execute(
+        "insert into NVTX_EVENTS values (100,200,'agentx_decode_capture',null,?)",
+        (process + 7,),
+    )
+    connection.execute(
+        "insert into CUPTI_ACTIVITY_KIND_KERNEL values "
+        "(110,120,0,1,7,0,?,1,1,null)",
+        (process,),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="contains no following scheduler.run_batch"):
+        load_sglang_nsys_steps(
+            path, rank=0, capture_range_label="agentx_decode_capture"
+        )
+
+
 def test_sglang_exact_batch_log_proves_first_dp0_capture_observation(tmp_path):
     worker_log = tmp_path / "node_decode_w0.out"
     worker_log.write_text(
