@@ -1753,6 +1753,53 @@ function comparisonProfileScore(profileId) {
   return score;
 }
 
+function comparisonProfileIsNsys(profileId) {
+  const profilerType = String(
+    RAW_DATA?.profiles?.[profileId]?.meta?.profiler?.type || ""
+  ).toLowerCase();
+  return profilerType.includes("nsight") || profilerType.includes("nsys");
+}
+
+function comparisonExactBatch(profileId) {
+  const workload = RAW_DATA?.profiles?.[profileId]?.meta?.workload || {};
+  const rawBatch = workload.selected_exact_target_verify_batch
+    ?? workload.measured_shape?.selected_exact_generation_requests
+    ?? workload.selected_exact_generation_requests;
+  if (rawBatch == null || rawBatch === "") return null;
+  const batch = Number(rawBatch);
+  return Number.isFinite(batch) ? batch : null;
+}
+
+function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId) {
+  const sglangBatch = comparisonExactBatch(sglangProfileId);
+  const trtllmBatch = comparisonExactBatch(trtllmProfileId);
+  return comparisonProfileIsNsys(sglangProfileId)
+    && comparisonProfileIsNsys(trtllmProfileId)
+    && sglangBatch != null
+    && trtllmBatch != null
+    && sglangBatch === trtllmBatch;
+}
+
+function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds) {
+  const pairs = [];
+  for (const sglangProfileId of sglangProfileIds) {
+    for (const trtllmProfileId of trtllmProfileIds) {
+      pairs.push({
+        sglang: sglangProfileId,
+        trtllm: trtllmProfileId,
+        compatible: comparisonProfilesCompatible(sglangProfileId, trtllmProfileId),
+        score: comparisonProfileScore(sglangProfileId) + comparisonProfileScore(trtllmProfileId),
+      });
+    }
+  }
+  pairs.sort((left, right) =>
+    Number(right.compatible) - Number(left.compatible)
+    || right.score - left.score
+    || `${left.sglang}|${left.trtllm}`.localeCompare(`${right.sglang}|${right.trtllm}`)
+  );
+  return pairs[0] || {sglang: "", trtllm: "", compatible: false, score: 0};
+}
+
 function comparisonProfileIds(engine) {
   return Object.entries(RAW_DATA?.profiles || {})
     .filter(([_profileId, profile]) =>
@@ -1810,21 +1857,31 @@ function refreshComparisonProfileOptions(keepCurrent = true) {
   const trtllmSelect = document.getElementById("compare-trtllm-profile");
   if (!sglangSelect || !trtllmSelect || !RAW_DATA) return;
   const query = new URLSearchParams(location.search);
-  const sglangPreferred = keepCurrent
+  const sglangProfileIds = comparisonProfileIds("sglang");
+  const trtllmProfileIds = comparisonProfileIds("trtllm");
+  let sglangPreferred = keepCurrent
     ? COMPARE_SGLANG_PROFILE
     : (query.get("compareSglang") || "");
-  const trtllmPreferred = keepCurrent
+  let trtllmPreferred = keepCurrent
     ? COMPARE_TRTLLM_PROFILE
     : (query.get("compareTrtllm") || "");
+  const sglangPreferredValid = sglangProfileIds.includes(sglangPreferred);
+  const trtllmPreferredValid = trtllmProfileIds.includes(trtllmPreferred);
+  const pair = comparisonBestProfilePair(
+    sglangPreferredValid ? [sglangPreferred] : sglangProfileIds,
+    trtllmPreferredValid ? [trtllmPreferred] : trtllmProfileIds,
+  );
+  if (!sglangPreferredValid) sglangPreferred = pair.sglang;
+  if (!trtllmPreferredValid) trtllmPreferred = pair.trtllm;
   COMPARE_SGLANG_PROFILE = populateComparisonProfileSelect(
     sglangSelect,
-    comparisonProfileIds("sglang"),
+    sglangProfileIds,
     sglangPreferred,
     "sglang",
   );
   COMPARE_TRTLLM_PROFILE = populateComparisonProfileSelect(
     trtllmSelect,
-    comparisonProfileIds("trtllm"),
+    trtllmProfileIds,
     trtllmPreferred,
     "trtllm",
   );
@@ -2153,15 +2210,13 @@ function comparisonCaveat() {
   const tWorkload = trtllm?.meta?.workload || {};
   const sameConcurrency = sWorkload.concurrency != null
     && Number(sWorkload.concurrency) === Number(tWorkload.concurrency);
-  const sProfiler = String(sglang?.meta?.profiler?.type || "").toLowerCase();
-  const tProfiler = String(trtllm?.meta?.profiler?.type || "").toLowerCase();
-  const bothNsys = [sProfiler, tProfiler].every(value =>
-    value.includes("nsight") || value.includes("nsys")
+  const sBatch = comparisonExactBatch(COMPARE_SGLANG_PROFILE);
+  const tBatch = comparisonExactBatch(COMPARE_TRTLLM_PROFILE);
+  const matchedProfilePair = comparisonProfilesCompatible(
+    COMPARE_SGLANG_PROFILE,
+    COMPARE_TRTLLM_PROFILE,
   );
-  const sBatch = sWorkload.selected_exact_target_verify_batch;
-  const tBatch = tWorkload.measured_shape?.selected_exact_generation_requests;
-  const sameExactBatch = sBatch != null && tBatch != null && Number(sBatch) === Number(tBatch);
-  const context = bothNsys && sameExactBatch
+  const context = matchedProfilePair
     ? `Matched timing axes: worker-local NSYS on both engines and exact rank-local BS${sBatch}`
       + (sameConcurrency ? ` at concurrency ${sWorkload.concurrency}.` : ".")
       + " Context/KV shape, accepted-length distribution, graph policy, and backend remain separate provenance dimensions."

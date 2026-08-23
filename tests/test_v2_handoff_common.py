@@ -342,6 +342,13 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert 'id="module-compare-table"' in viewer
     assert "function comparisonHierarchy()" in viewer
     assert "function comparisonProfileScore(profileId)" in viewer
+    assert "function comparisonProfileIsNsys(profileId)" in viewer
+    assert "function comparisonExactBatch(profileId)" in viewer
+    assert "function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId)" in viewer
+    assert "function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds)" in viewer
+    assert "Number(right.compatible) - Number(left.compatible)" in viewer
+    assert "sglangPreferredValid ? [sglangPreferred] : sglangProfileIds" in viewer
+    assert "trtllmPreferredValid ? [trtllmPreferred] : trtllmProfileIds" in viewer
     assert 'profilerType.includes("nsight") || profilerType.includes("nsys")' in viewer
     assert 'selection.includes("exact")' in viewer
     assert "node.drill && Number(node.layer_count) > 0" in viewer
