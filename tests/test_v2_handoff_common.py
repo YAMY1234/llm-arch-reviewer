@@ -189,6 +189,7 @@ def test_plan_v2_requires_payload_and_result_but_v1_remains_compatible() -> None
         apply_execution_plan(model, strict_plan, source=Path("strict-plan.yaml"))
 
     legacy_plan = copy.deepcopy(strict_plan)
+    legacy_plan["schema_version"] = "execution-plan.v1"
     legacy_plan["plan_version"] = 1
     views = apply_execution_plan(model, legacy_plan, source=Path("legacy-plan.yaml"))
     assert any(node["id"] == "exchange" for node in views["top"]["nodes"])

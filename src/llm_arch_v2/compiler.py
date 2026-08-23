@@ -244,8 +244,7 @@ def apply_execution_plan(
                 transform,
                 source=source,
                 require_payload_result=(
-                    int(plan.get("plan_version", 1)) >= 2
-                    or bool(plan.get("strict_execution_io"))
+                    plan.get("schema_version") == "execution-plan.v2"
                 ),
             )
         else:
