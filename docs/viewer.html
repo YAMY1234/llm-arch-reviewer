@@ -1731,6 +1731,49 @@ function timelineString(index) {
   return index == null ? "" : (TIMELINE_DATA?.strings?.[index] || "");
 }
 
+function timelineTargetView(target) {
+  const value = String(target || "");
+  const dot = value.indexOf(".");
+  return dot > 0 ? value.slice(0, dot) : "";
+}
+
+function timelineUniqueDrillParentTarget(childView) {
+  const parents = [];
+  for (const [viewName, view] of Object.entries(DATA?.views || {})) {
+    for (const node of (view.nodes || [])) {
+      if (node.drill === childView) parents.push(`${viewName}.${node.id}`);
+    }
+  }
+  return parents.length === 1 ? parents[0] : "";
+}
+
+function normalizeTimelineIrTargets(event) {
+  // timeline.v1 artifacts store roll-ups alongside the direct leaf target.
+  // Reconstruct every unambiguous drill ancestor from the active IR so old
+  // artifacts remain correct after hierarchy fixes.  When the direct child
+  // has exactly one parent, any different target in that parent view is a
+  // stale sibling roll-up and must not keep matching the wrong module.
+  const targets = new Set(event._irTargets || []);
+  let cursor = event._irNode || "";
+  const visitedViews = new Set();
+  while (cursor) {
+    const childView = timelineTargetView(cursor);
+    if (!childView || visitedViews.has(childView)) break;
+    visitedViews.add(childView);
+    const parentTarget = timelineUniqueDrillParentTarget(childView);
+    if (!parentTarget) break; // Shared drill views need artifact context.
+    const parentView = timelineTargetView(parentTarget);
+    for (const target of [...targets]) {
+      if (timelineTargetView(target) === parentView && target !== parentTarget) {
+        targets.delete(target);
+      }
+    }
+    targets.add(parentTarget);
+    cursor = parentTarget;
+  }
+  return [...targets];
+}
+
 function decodeTimelineArtifact(artifact) {
   for (const stack of (artifact.stacks || [])) {
     stack._frames = (stack.frames || []).map(frame => ({
@@ -1752,6 +1795,7 @@ function decodeTimelineArtifact(artifact) {
       event._kernelLabel = timelineStringFrom(artifact, event.kernel_label);
       event._irNode = timelineStringFrom(artifact, event.ir_node);
       event._irTargets = (event.ir_targets || []).map(index => timelineStringFrom(artifact, index));
+      event._irTargets = normalizeTimelineIrTargets(event);
       event._fusionGroupIds = [];
       for (const [groupId, group] of Object.entries(currentFusionGroups())) {
         const covered = group.ir_nodes || [];

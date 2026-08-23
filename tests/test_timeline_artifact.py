@@ -78,6 +78,24 @@ def test_targets_include_direct_node_and_architecture_rollups() -> None:
     ]
 
 
+def test_ple_scope_takes_precedence_over_enclosing_decoder_layer() -> None:
+    targets = timeline_targets(
+        _event(
+            "ple.ngram_hash",
+            timestamp=0.0,
+            duration=1.0,
+            stream=1,
+            substage="attention",
+        )
+    )
+
+    assert targets == [
+        "ple.ngram_hash",
+        "stack.ple_injection",
+        "top.decoder_stack",
+    ]
+
+
 def test_external_moe_collective_is_not_rolled_back_into_moe_compute() -> None:
     targets = timeline_targets(
         _event(

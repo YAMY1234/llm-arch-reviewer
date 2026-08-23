@@ -140,7 +140,16 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
                 )
             )
 
-    if layer_view:
+    # A direct semantic scope is more specific than the decoder layer that
+    # happened to be executing when the kernel was launched.  In particular,
+    # PLE runs at a configured decoder layer, so those events legitimately
+    # carry ``layer_kind=linear``.  Resolve the direct scope first; otherwise
+    # the generic layer roll-up incorrectly makes PLE a child of
+    # ``stack.linear_layer`` and leaves ``stack.ple_injection`` with only the
+    # layer-less token-history preparation kernels.
+    if node.startswith("ple."):
+        targets.extend(("stack.ple_injection", "top.decoder_stack"))
+    elif layer_view:
         targets.extend((f"stack.{layer_view}", "top.decoder_stack"))
         if substage in {
             "attn_hc_mix",
@@ -154,8 +163,6 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
             targets.append(f"{layer_view}.{child}")
         elif substage == "moe" and node.startswith("moe."):
             targets.append(f"{layer_view}.moe")
-    elif node.startswith("ple."):
-        targets.extend(("stack.ple_injection", "top.decoder_stack"))
     elif node.startswith("stack."):
         targets.append("top.decoder_stack")
 
