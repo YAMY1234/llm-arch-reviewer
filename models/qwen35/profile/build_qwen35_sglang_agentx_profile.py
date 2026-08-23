@@ -49,7 +49,8 @@ SELECTED_WINDOW_INDICES = (4, 5, 6, 7)
 WORKER_RE = re.compile(r"decode_w([01])")
 LOG_ROW_RE = re.compile(
     r"DP(?P<rank>\d+) TP\d+ EP\d+\] Decode batch \[(?P<step>\d+)\], "
-    r"#running-req: (?P<running>\d+),.*?accept len: (?P<accept>[0-9.]+),.*?"
+    r"#running-req: (?P<running>\d+),.*?#full token: (?P<full_tokens>\d+),.*?"
+    r"accept len: (?P<accept>[0-9.]+),.*?#retracted-req: (?P<retracted>\d+),.*?"
     r"cuda graph: (?P<graph>True|False),.*?#queue-req: (?P<queue>\d+)"
 )
 BENCHMARK_RE = re.compile(
@@ -119,15 +120,24 @@ def parse_worker_profile_observations(path: Path) -> list[dict[str, Any]]:
                 "dp_rank": int(match.group("rank")),
                 "scheduler_step": int(match.group("step")),
                 "running_requests": int(match.group("running")),
+                "full_tokens": int(match.group("full_tokens")),
                 "accepted_length": float(match.group("accept")),
+                "retracted_requests": int(match.group("retracted")),
                 "cuda_graph": match.group("graph") == "True",
                 "queued_requests": int(match.group("queue")),
             }
         )
     if set(row["dp_rank"] for row in rows) != {0, 1, 2, 3}:
         raise ValueError(f"{path}: profile window does not observe all four DP ranks")
-    if any(not row["cuda_graph"] or row["queued_requests"] for row in rows):
-        raise ValueError(f"{path}: capture is not queue-free CUDA-Graph steady state")
+    if any(
+        not row["cuda_graph"]
+        or row["queued_requests"]
+        or row["retracted_requests"]
+        for row in rows
+    ):
+        raise ValueError(
+            f"{path}: capture is not queue/retraction-free CUDA-Graph steady state"
+        )
     return rows
 
 

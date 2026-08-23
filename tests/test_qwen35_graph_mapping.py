@@ -2,6 +2,8 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -21,6 +23,9 @@ from models.qwen35.profile.qwen35_graph_mapping import (
 from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
     parse_benchmark_snapshot,
     parse_worker_profile_observations,
+)
+from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
+    _source_coordinates,
 )
 
 
@@ -47,6 +52,13 @@ def _kernel(name: str, ts: float, dur: float = 1.0):
         "tid": 10,
         "args": {"stream": 10, "device": 0},
     }
+
+
+def test_sglang_nsys_source_coordinates_are_strict():
+    assert _source_coordinates("w0/r0") == (0, 0)
+    assert _source_coordinates("w1/r3") == (1, 3)
+    with pytest.raises(ValueError, match="invalid worker/rank source"):
+        _source_coordinates("worker1/rank3")
 
 
 def test_target_and_draft_collectives_remain_separate():
@@ -282,7 +294,8 @@ def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):
         "[x DP0 TP0 EP0] Profiling starts.\n"
         + "".join(
             f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{10 + rank}], "
-            f"#running-req: {31 + rank}, other, accept len: 4.{7 + rank}, other, "
+            f"#running-req: {31 + rank}, #full token: {6200000 + rank}, other, "
+            f"accept len: 4.{7 + rank}, #retracted-req: 0, other, "
             "cuda graph: True, other, #queue-req: 0\n"
             for rank in range(4)
         )
@@ -292,7 +305,13 @@ def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):
     )
     rows = parse_worker_profile_observations(worker_log)
     assert [row["running_requests"] for row in rows] == [31, 32, 33, 34]
-    assert all(row["cuda_graph"] and row["queued_requests"] == 0 for row in rows)
+    assert [row["full_tokens"] for row in rows] == [6200000, 6200001, 6200002, 6200003]
+    assert all(
+        row["cuda_graph"]
+        and row["queued_requests"] == 0
+        and row["retracted_requests"] == 0
+        for row in rows
+    )
 
     benchmark = tmp_path / "benchmark.out"
     benchmark.write_text(
@@ -307,3 +326,20 @@ def test_agentx_log_parsers_keep_only_the_measured_steady_window(tmp_path):
         "ok": 29567,
         "errors": 0,
     }
+
+
+def test_agentx_log_parser_rejects_retracted_profile_rows(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    worker_log.write_text(
+        "[x DP0 TP0 EP0] Profiling starts.\n"
+        + "".join(
+            f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{10 + rank}], "
+            f"#running-req: 32, #full token: 6200000, accept len: 4.8, "
+            f"#retracted-req: {1 if rank == 2 else 0}, cuda graph: True, "
+            "#queue-req: 0\n"
+            for rank in range(4)
+        )
+        + "[x DP0 TP0 EP0] Stop profiling...\n"
+    )
+    with pytest.raises(ValueError, match="queue/retraction-free"):
+        parse_worker_profile_observations(worker_log)

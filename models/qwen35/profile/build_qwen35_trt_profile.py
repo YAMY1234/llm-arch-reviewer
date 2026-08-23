@@ -48,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
     parser.add_argument("--sqlites", type=Path, nargs="+", required=True)
     parser.add_argument("--job-id", type=int, default=532540)
+    parser.add_argument("--decode-batch", type=int, default=32)
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-timeline", type=Path, required=True)
     parser.add_argument("--output-analysis", type=Path, required=True)
@@ -114,6 +115,9 @@ def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, A
 
 
 def build(args: argparse.Namespace):
+    decode_batch = int(getattr(args, "decode_batch", 32))
+    if decode_batch < 1 or decode_batch > 32:
+        raise ValueError(f"TRT decode batch must be in 1..32, got {decode_batch}")
     expected_workers = 3 if args.phase == "prefill" else 2
     # The worker-local launcher treats stop_step as exclusive, matching the
     # validated smoke range 10:12 -> steps 10 and 11.
@@ -273,21 +277,25 @@ def build(args: argparse.Namespace):
         reference_rank = int(reference_observations[0]["rank"])
         reference_worker = str(reference_observations[0]["worker"])
     else:
-        exact_bs32 = [row for row in observed_steps if row["generation_reqs"] == 32]
-        if not exact_bs32:
-            raise ValueError("TRT decode capture has no exact BS32 generation step")
-        exact_counts = Counter(str(row["source"]) for row in exact_bs32)
+        exact_decode = [
+            row for row in observed_steps if row["generation_reqs"] == decode_batch
+        ]
+        if not exact_decode:
+            raise ValueError(
+                f"TRT decode capture has no exact BS{decode_batch} generation step"
+            )
+        exact_counts = Counter(str(row["source"]) for row in exact_decode)
         reference_source = min(
             exact_counts,
             key=lambda source: (-exact_counts[source], source),
         )
         reference_observations = [
-            row for row in exact_bs32 if row["source"] == reference_source
+            row for row in exact_decode if row["source"] == reference_source
         ]
         reference_steps = [row["timeline_step"] for row in reference_observations]
         exact_events_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
         exact_step_counts: Counter[str] = Counter()
-        for row in exact_bs32:
+        for row in exact_decode:
             source = str(row["source"])
             exact_events_by_source[source].extend(row["timeline_step"]["events"])
             exact_step_counts[source] += 1
@@ -297,18 +305,18 @@ def build(args: argparse.Namespace):
         }
         all_mappings = [
             event
-            for row in exact_bs32
+            for row in exact_decode
             for event in row["timeline_step"]["events"]
         ]
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
-        for row in exact_bs32:
+        for row in exact_decode:
             exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
         timing_by_step = {
             step_id: [
                 row
                 for row in rows
                 if row["source"] in exact_sources_by_step.get(step_id, set())
-                and row["generation_reqs"] == 32
+                and row["generation_reqs"] == decode_batch
             ]
             for step_id, rows in timing_by_step.items()
             if exact_sources_by_step.get(step_id)
@@ -374,6 +382,8 @@ def build(args: argparse.Namespace):
     )
 
     profile_id = f"qwen35_trtllm_attention_dp4_moe_ep4_agentx_{args.phase}"
+    if args.phase == "decode" and decode_batch != 32:
+        profile_id += f"_bs{decode_batch}"
     timeline = build_timeline_artifact(
         profile_id=profile_id,
         phase=args.phase,
@@ -409,8 +419,8 @@ def build(args: argparse.Namespace):
                 ),
                 "max": max(row["generation_reqs"] for row in shape_observations),
             },
-            "selected_exact_generation_requests": 32,
-            "selected_samples": len(exact_bs32),
+            "selected_exact_generation_requests": decode_batch,
+            "selected_samples": len(exact_decode),
             "selected_samples_by_source": dict(sorted(exact_counts.items())),
         }
     else:
@@ -466,14 +476,22 @@ def build(args: argparse.Namespace):
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": (
-            "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · exact BS32 decode"
+            "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · "
+            f"exact BS{decode_batch} decode"
             if args.phase == "decode"
             else "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · prefill"
         ),
         "model_id": "qwen35_397b_a17b",
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
-        "variant_id": f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97",
+        "variant_id": (
+            f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97"
+            + (
+                f"_bs{decode_batch}"
+                if args.phase == "decode" and decode_batch != 32
+                else ""
+            )
+        ),
         "phase": args.phase,
         "generation_mode": "mtp",
         "entry_view": "top",
@@ -525,7 +543,7 @@ def build(args: argparse.Namespace):
             ],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "selection_policy": (
-                "exact generation_reqs=32 events only"
+                f"exact generation_reqs={decode_batch} events only"
                 if args.phase == "decode"
                 else "exact one-request/8192-token owner events only"
             ),
