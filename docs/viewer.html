@@ -210,14 +210,15 @@
   }
   #compare-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
   table.module-compare {
-    width: 100%; min-width: 1640px; border-collapse: separate; border-spacing: 0;
+    width: 100%; min-width: 2360px; border-collapse: separate; border-spacing: 0;
     table-layout: fixed; font-size: 11px;
   }
   table.module-compare col.module-l1 { width: 180px; }
   table.module-compare col.module-l2 { width: 190px; }
   table.module-compare col.module-l3 { width: 230px; }
-  table.module-compare col.kernel-name { width: 265px; }
-  table.module-compare col.kernel-time { width: 105px; }
+  table.module-compare col.semantic-kernel { width: 215px; }
+  table.module-compare col.concrete-kernel { width: 430px; }
+  table.module-compare col.kernel-time { width: 95px; }
   table.module-compare col.aggregate-time { width: 145px; }
   table.module-compare th, table.module-compare td {
     border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -240,6 +241,10 @@
   table.module-compare td.kernel {
     font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
     overflow-wrap: anywhere; color: var(--text);
+  }
+  table.module-compare td.concrete-kernel .raw-kernel-name {
+    max-height: 76px; overflow: auto; white-space: normal; overflow-wrap: anywhere;
+    font-size: 9px; line-height: 1.35;
   }
   table.module-compare td.kernel.empty { color: var(--muted); font-style: italic; text-align: left; }
   table.module-compare td.numeric {
@@ -578,6 +583,9 @@ let CURRENT_IR_LAYER = "execution";
 let COMPARE_SGLANG_PROFILE = "";
 let COMPARE_TRTLLM_PROFILE = "";
 let COMPARE_EXPORT_ROWS = [];
+const COMPARE_TIMELINE_CACHE = new Map();
+const COMPARE_TIMELINE_PENDING = new Map();
+const COMPARE_TIMELINE_ERRORS = new Map();
 let SPLIT_RATIO = 0.44;
 let SPLIT_RENDER_FRAME = 0;
 
@@ -1842,34 +1850,169 @@ function comparisonKernelTimeMs(kernel) {
   return null;
 }
 
-function comparisonKernelEntries(cell) {
-  const kernels = (cell?.kernels || []).map(kernel => ({
-    name: kernel.name || kernel.label || "unnamed kernel",
-    timeMs: comparisonKernelTimeMs(kernel),
-    countPerIter: kernel.count_per_iter,
-    empty: false,
-  }));
+function decodeComparisonTimelineArtifact(artifact) {
+  for (const step of (artifact.steps || [])) {
+    for (const event of (step.events || [])) {
+      event._compareKernelName = timelineStringFrom(artifact, event.kernel_name);
+      event._compareKernelLabel = timelineStringFrom(artifact, event.kernel_label);
+      event._compareIrNode = timelineStringFrom(artifact, event.ir_node);
+    }
+  }
+  return artifact;
+}
+
+function loadComparisonTimelineArtifact(profileId) {
+  if (COMPARE_TIMELINE_CACHE.has(profileId)) {
+    return Promise.resolve(COMPARE_TIMELINE_CACHE.get(profileId));
+  }
+  if (COMPARE_TIMELINE_ERRORS.has(profileId)) return Promise.resolve(null);
+  if (COMPARE_TIMELINE_PENDING.has(profileId)) return COMPARE_TIMELINE_PENDING.get(profileId);
+  const meta = RAW_DATA?.profiles?.[profileId]?.meta?.timeline;
+  if (!meta?.url) {
+    COMPARE_TIMELINE_ERRORS.set(profileId, "profile has no timeline artifact");
+    return Promise.resolve(null);
+  }
+  const pending = fetchTimelineArtifact(`${MODEL_ID}/${meta.url}?t=${Date.now()}`)
+    .then(artifact => {
+      if (artifact.schema_version !== "timeline.v1" || artifact.profile_id !== profileId) {
+        throw new Error(`timeline identity does not match ${profileId}`);
+      }
+      const decoded = decodeComparisonTimelineArtifact(artifact);
+      COMPARE_TIMELINE_CACHE.set(profileId, decoded);
+      return decoded;
+    })
+    .catch(error => {
+      COMPARE_TIMELINE_ERRORS.set(profileId, error.message);
+      return null;
+    })
+    .finally(() => COMPARE_TIMELINE_PENDING.delete(profileId));
+  COMPARE_TIMELINE_PENDING.set(profileId, pending);
+  return pending;
+}
+
+function ensureComparisonTimelines() {
+  const profileIds = [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE].filter(Boolean);
+  const missing = profileIds.filter(profileId =>
+    !COMPARE_TIMELINE_CACHE.has(profileId)
+    && !COMPARE_TIMELINE_PENDING.has(profileId)
+    && !COMPARE_TIMELINE_ERRORS.has(profileId)
+  );
+  if (!missing.length) return;
+  const selectionKey = profileIds.join("|");
+  Promise.all(profileIds.map(loadComparisonTimelineArtifact)).then(() => {
+    if (CURRENT_VIEW_MODE === "compare"
+        && selectionKey === [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE].join("|")) {
+      renderComparisonTable();
+    }
+  });
+}
+
+function comparisonConcreteKernelIndex(profileId) {
+  const artifact = COMPARE_TIMELINE_CACHE.get(profileId);
+  if (!artifact) return null;
+  if (artifact._comparisonConcreteKernelIndex) return artifact._comparisonConcreteKernelIndex;
+  const stepCount = Math.max((artifact.steps || []).length, 1);
+  const groups = new Map();
+  for (const step of (artifact.steps || [])) {
+    for (const event of (step.events || [])) {
+      const target = event._compareIrNode;
+      const semanticName = event._compareKernelLabel;
+      const concreteName = event._compareKernelName;
+      if (!target || !semanticName || !concreteName) continue;
+      const groupKey = `${target}\u0000${semanticName}`;
+      if (!groups.has(groupKey)) groups.set(groupKey, new Map());
+      const concrete = groups.get(groupKey);
+      const aggregate = concrete.get(concreteName) || {count: 0, durationUs: 0};
+      aggregate.count += 1;
+      aggregate.durationUs += Number(event.duration_us || 0);
+      concrete.set(concreteName, aggregate);
+    }
+  }
+  const index = new Map();
+  for (const [groupKey, concrete] of groups.entries()) {
+    index.set(groupKey, Array.from(concrete.entries())
+      .map(([name, aggregate]) => ({
+        name,
+        timeMs: aggregate.durationUs / stepCount / 1000,
+        countPerIter: aggregate.count / stepCount,
+      }))
+      .sort((left, right) => right.timeMs - left.timeMs || left.name.localeCompare(right.name)));
+  }
+  artifact._comparisonConcreteKernelIndex = index;
+  return index;
+}
+
+function comparisonConcreteKernelEntries(profileId, target, kernel) {
+  const semanticName = kernel.name || kernel.label || "unnamed attributed operation";
+  const semanticTimeMs = comparisonKernelTimeMs(kernel);
+  const index = comparisonConcreteKernelIndex(profileId);
+  const concrete = index?.get(`${target}\u0000${semanticName}`) || [];
+  if (concrete.length) {
+    return concrete.map(entry => ({
+      semanticName,
+      semanticTimeMs,
+      concreteName: entry.name,
+      timeMs: entry.timeMs,
+      countPerIter: entry.countPerIter,
+      empty: false,
+    }));
+  }
+  const error = COMPARE_TIMELINE_ERRORS.get(profileId);
+  return [{
+    semanticName,
+    semanticTimeMs,
+    concreteName: error
+      ? `concrete symbol unavailable: ${error}`
+      : (index ? "no exact symbol on the reference-rank timeline" : "loading profiler kernel symbol…"),
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  }];
+}
+
+function comparisonKernelEntries(cell, profileId, target) {
+  const kernels = (cell?.kernels || []).flatMap(kernel =>
+    comparisonConcreteKernelEntries(profileId, target, kernel)
+  );
   if (kernels.length) return kernels;
   if (cell?.status === "fused") {
     return [{
-      name: `fused into ${cell.included_in || "shared interval"}`,
+      semanticName: `fused into ${cell.included_in || "shared interval"}`,
+      semanticTimeMs: null,
+      concreteName: "shared concrete symbol; see fusion owner",
       timeMs: null,
       countPerIter: null,
       empty: true,
     }];
   }
   if (cell?.status === "unobserved") {
-    return [{name: "unobserved in this capture", timeMs: null, countPerIter: null, empty: true}];
-  }
-  if (cell?.ms_per_iter != null || cell?.gpu_residency_ms != null) {
     return [{
-      name: "measured interval; no unique kernel breakdown",
+      semanticName: "unobserved in this capture",
+      semanticTimeMs: null,
+      concreteName: "no profiler kernel symbol",
       timeMs: null,
       countPerIter: null,
       empty: true,
     }];
   }
-  return [{name: "no attributed kernel", timeMs: null, countPerIter: null, empty: true}];
+  if (cell?.ms_per_iter != null || cell?.gpu_residency_ms != null) {
+    return [{
+      semanticName: "measured interval; no unique kernel breakdown",
+      semanticTimeMs: null,
+      concreteName: "multiple descendant kernel symbols",
+      timeMs: null,
+      countPerIter: null,
+      empty: true,
+    }];
+  }
+  return [{
+    semanticName: "no attributed kernel",
+    semanticTimeMs: null,
+    concreteName: "no profiler kernel symbol",
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  }];
 }
 
 function comparisonAggregate(cell) {
@@ -1919,11 +2062,18 @@ function comparisonAggregate(cell) {
   };
 }
 
-function comparisonKernelHtml(entry) {
-  const detail = entry.countPerIter != null
-    ? `<span class="subvalue">${escapeHtml(entry.countPerIter)} calls / iter</span>`
+function comparisonSemanticKernelHtml(entry) {
+  const detail = entry.semanticTimeMs != null
+    ? `<span class="subvalue">semantic Σ ${formatMs(entry.semanticTimeMs)} ms / iter</span>`
     : "";
-  return `${escapeHtml(entry.name)}${detail}`;
+  return `${escapeHtml(entry.semanticName || "")}${detail}`;
+}
+
+function comparisonConcreteKernelHtml(entry) {
+  const detail = entry.countPerIter != null
+    ? `<span class="subvalue">${escapeHtml(entry.countPerIter)} calls / iter · timeline reference rank</span>`
+    : "";
+  return `<div class="raw-kernel-name">${escapeHtml(entry.concreteName || "")}</div>${detail}`;
 }
 
 function comparisonKernelTimeHtml(entry) {
@@ -1941,13 +2091,19 @@ function prepareComparisonTarget(target, summary = false) {
   const sglangCell = comparisonProfileCell(COMPARE_SGLANG_PROFILE, target);
   const trtllmCell = comparisonProfileCell(COMPARE_TRTLLM_PROFILE, target);
   const summaryEntry = {
-    name: "inclusive descendant intervals",
+    semanticName: "inclusive descendant intervals",
+    semanticTimeMs: null,
+    concreteName: "multiple descendant kernel symbols",
     timeMs: null,
     countPerIter: null,
     empty: true,
   };
-  const sglangKernels = summary ? [summaryEntry] : comparisonKernelEntries(sglangCell);
-  const trtllmKernels = summary ? [summaryEntry] : comparisonKernelEntries(trtllmCell);
+  const sglangKernels = summary
+    ? [summaryEntry]
+    : comparisonKernelEntries(sglangCell, COMPARE_SGLANG_PROFILE, target);
+  const trtllmKernels = summary
+    ? [summaryEntry]
+    : comparisonKernelEntries(trtllmCell, COMPARE_TRTLLM_PROFILE, target);
   return {
     target,
     sglangKernels,
@@ -1972,6 +2128,7 @@ function comparisonCaveat() {
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
   return `${CURRENT_PHASE || "selected phase"}: ${context} `
+    + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
     + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
     + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
     + (attributionOnly ? " An attribution-only profile is selected and is not a performance baseline." : "");
@@ -2021,15 +2178,19 @@ function renderComparisonTable() {
   const appendTimingRow = ({targetData, leftCells, classes, labels, rowKind}) => {
     for (let rowIndex = 0; rowIndex < targetData.rowCount; rowIndex += 1) {
       const firstTargetRow = rowIndex === 0;
-      const sglangKernel = targetData.sglangKernels[rowIndex] || {name: "", timeMs: null, empty: true};
-      const trtllmKernel = targetData.trtllmKernels[rowIndex] || {name: "", timeMs: null, empty: true};
+      const sglangKernel = targetData.sglangKernels[rowIndex]
+        || {semanticName: "", concreteName: "", timeMs: null, empty: true};
+      const trtllmKernel = targetData.trtllmKernels[rowIndex]
+        || {semanticName: "", concreteName: "", timeMs: null, empty: true};
       rows += `<tr class="${firstTargetRow ? classes : ""}">${firstTargetRow ? leftCells : ""}`;
-      rows += `<td class="kernel${sglangKernel.empty ? " empty" : ""}">${comparisonKernelHtml(sglangKernel)}</td>`;
+      rows += `<td class="kernel${sglangKernel.empty ? " empty" : ""}">${comparisonSemanticKernelHtml(sglangKernel)}</td>`;
+      rows += `<td class="kernel concrete-kernel${sglangKernel.empty ? " empty" : ""}">${comparisonConcreteKernelHtml(sglangKernel)}</td>`;
       rows += `<td class="numeric">${comparisonKernelTimeHtml(sglangKernel)}</td>`;
       if (firstTargetRow) {
         rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.sglangAggregate)}</td>`;
       }
-      rows += `<td class="kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonKernelHtml(trtllmKernel)}</td>`;
+      rows += `<td class="kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonSemanticKernelHtml(trtllmKernel)}</td>`;
+      rows += `<td class="kernel concrete-kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonConcreteKernelHtml(trtllmKernel)}</td>`;
       rows += `<td class="numeric">${comparisonKernelTimeHtml(trtllmKernel)}</td>`;
       if (firstTargetRow) {
         rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.trtllmAggregate)}</td>`;
@@ -2041,13 +2202,19 @@ function renderComparisonTable() {
         submodule: labels.submodule,
         operation: labels.operation,
         ir_target: targetData.target,
-        sglang_kernel: sglangKernel.name,
-        sglang_kernel_ms: sglangKernel.timeMs,
+        sglang_semantic_kernel: sglangKernel.semanticName,
+        sglang_semantic_kernel_ms: sglangKernel.semanticTimeMs,
+        sglang_concrete_kernel_name: sglangKernel.concreteName,
+        sglang_concrete_kernel_ms: sglangKernel.timeMs,
+        sglang_concrete_kernel_calls_per_iter: sglangKernel.countPerIter,
         sglang_residency_ms: targetData.sglangAggregate.residencyMs,
         sglang_active_union_ms: targetData.sglangAggregate.activeMs,
         sglang_wall_elapsed_ms: targetData.sglangAggregate.wallMs,
-        trtllm_kernel: trtllmKernel.name,
-        trtllm_kernel_ms: trtllmKernel.timeMs,
+        trtllm_semantic_kernel: trtllmKernel.semanticName,
+        trtllm_semantic_kernel_ms: trtllmKernel.semanticTimeMs,
+        trtllm_concrete_kernel_name: trtllmKernel.concreteName,
+        trtllm_concrete_kernel_ms: trtllmKernel.timeMs,
+        trtllm_concrete_kernel_calls_per_iter: trtllmKernel.countPerIter,
         trtllm_residency_ms: targetData.trtllmAggregate.residencyMs,
         trtllm_active_union_ms: targetData.trtllmAggregate.activeMs,
         trtllm_wall_elapsed_ms: targetData.trtllmAggregate.wallMs,
@@ -2093,25 +2260,29 @@ function renderComparisonTable() {
   });
   table.innerHTML = `<colgroup>
       <col class="module-l1"><col class="module-l2"><col class="module-l3">
-      <col class="kernel-name"><col class="kernel-time"><col class="aggregate-time">
-      <col class="kernel-name"><col class="kernel-time"><col class="aggregate-time">
+      <col class="semantic-kernel"><col class="concrete-kernel"><col class="kernel-time"><col class="aggregate-time">
+      <col class="semantic-kernel"><col class="concrete-kernel"><col class="kernel-time"><col class="aggregate-time">
     </colgroup>
     <thead>
       <tr>
         <th colspan="3">Normalized Module IR hierarchy</th>
-        <th class="engine-group sglang" colspan="3">SGLang<span class="compare-profile-name" title="${escapeHtml(sglangLabel)}">${escapeHtml(sglangLabel)}</span></th>
-        <th class="engine-group trtllm" colspan="3">TensorRT-LLM<span class="compare-profile-name" title="${escapeHtml(trtllmLabel)}">${escapeHtml(trtllmLabel)}</span></th>
+        <th class="engine-group sglang" colspan="4">SGLang<span class="compare-profile-name" title="${escapeHtml(sglangLabel)}">${escapeHtml(sglangLabel)}</span></th>
+        <th class="engine-group trtllm" colspan="4">TensorRT-LLM<span class="compare-profile-name" title="${escapeHtml(trtllmLabel)}">${escapeHtml(trtllmLabel)}</span></th>
       </tr>
       <tr>
         <th class="sticky-l1">Layer family</th>
         <th class="sticky-l2">Submodule</th>
         <th class="sticky-l3">Leaf operation</th>
-        <th>Attributed kernel</th><th>kernel / iter</th><th>GPU Σ · active ∪ · wall</th>
-        <th>Attributed kernel</th><th>kernel / iter</th><th>GPU Σ · active ∪ · wall</th>
+        <th>Semantic kernel</th><th>Concrete kernel name</th><th>concrete / iter</th><th>GPU Σ · active ∪ · wall</th>
+        <th>Semantic kernel</th><th>Concrete kernel name</th><th>concrete / iter</th><th>GPU Σ · active ∪ · wall</th>
       </tr>
     </thead><tbody>${rows}</tbody>`;
   document.getElementById("compare-caveat").textContent = comparisonCaveat();
   document.getElementById("view-title").textContent = "Normalized Module IR × engine kernel comparison";
+  const concreteReady = [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE]
+    .every(profileId => COMPARE_TIMELINE_CACHE.has(profileId));
+  document.getElementById("compare-export-csv").disabled = !concreteReady;
+  ensureComparisonTimelines();
 }
 
 function csvValue(value) {
@@ -2123,9 +2294,13 @@ function exportComparisonCsv() {
   if (!COMPARE_EXPORT_ROWS.length) return;
   const headers = [
     "row_kind", "module", "submodule", "operation", "ir_target",
-    "sglang_kernel", "sglang_kernel_ms", "sglang_residency_ms",
+    "sglang_semantic_kernel", "sglang_semantic_kernel_ms",
+    "sglang_concrete_kernel_name", "sglang_concrete_kernel_ms",
+    "sglang_concrete_kernel_calls_per_iter", "sglang_residency_ms",
     "sglang_active_union_ms", "sglang_wall_elapsed_ms",
-    "trtllm_kernel", "trtllm_kernel_ms", "trtllm_residency_ms",
+    "trtllm_semantic_kernel", "trtllm_semantic_kernel_ms",
+    "trtllm_concrete_kernel_name", "trtllm_concrete_kernel_ms",
+    "trtllm_concrete_kernel_calls_per_iter", "trtllm_residency_ms",
     "trtllm_active_union_ms", "trtllm_wall_elapsed_ms",
   ];
   const lines = [headers.map(csvValue).join(",")];

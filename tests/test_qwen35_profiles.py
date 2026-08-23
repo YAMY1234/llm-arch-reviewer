@@ -81,6 +81,29 @@ def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
         ]["event_count"]
 
 
+def test_semantic_kernel_aggregates_retain_concrete_profiler_symbols():
+    for path, profile in _profiles():
+        timeline = json.loads(
+            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+        )
+        strings = timeline["strings"]
+        concrete_by_semantic: dict[tuple[str, str], set[str]] = {}
+        for step in timeline["steps"]:
+            for event in step["events"]:
+                if event["ir_node"] is None or event["kernel_label"] is None:
+                    continue
+                key = (strings[event["ir_node"]], strings[event["kernel_label"]])
+                concrete_by_semantic.setdefault(key, set()).add(
+                    strings[event["kernel_name"]]
+                )
+
+        for target, metric in profile.get("node_metrics", {}).items():
+            for kernel in metric.get("kernels", []):
+                concrete = concrete_by_semantic.get((target, kernel["name"]), set())
+                assert concrete, (profile["profile_id"], target, kernel["name"])
+                assert all(name.strip() for name in concrete)
+
+
 def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
     bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
     variant = next(iter(bundle["execution_variants"].values()))
