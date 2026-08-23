@@ -130,6 +130,7 @@ def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> Non
     assert compiled["execution_variant"] == fingerprint
     assert compiled["meta"]["generation_mode"] == "eagle_mtp"
     assert compiled["meta"]["entry_view"] == "mtp_generation"
+    assert list(compiled["data"]) == sorted(compiled["data"])
 
 
 def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
