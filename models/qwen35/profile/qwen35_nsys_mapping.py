@@ -1223,7 +1223,7 @@ def _prefill_projection_slots(
     *,
     prepare: list[int],
     anchor_pairs: list[tuple[int, str | None]],
-) -> dict[int, NsysAttribution]:
+) -> tuple[dict[int, NsysAttribution], dict[int, int]]:
     """Prove the three repeated projection GEMM slots in each prefill layer.
 
     The generated kernel symbol is identical for three different projections,
@@ -1235,11 +1235,12 @@ def _prefill_projection_slots(
     """
 
     if not any(PREFILL_PROJECTION_GEMM in kernel.name.lower() for kernel in kernels):
-        return {}
+        return {}, {}
     if len(prepare) != 60 or len(anchor_pairs) != 60:
         raise ValueError("prefill projection-slot proof requires 60 owner layers")
 
     result: dict[int, NsysAttribution] = {}
+    event_layers: dict[int, int] = {}
     layer_start = 0
     for layer_id, (anchor, kind) in enumerate(anchor_pairs):
         prepare_index = prepare[layer_id]
@@ -1294,6 +1295,9 @@ def _prefill_projection_slots(
                 f"prefill layer {layer_id}: projection-slot ordering mismatch"
             )
 
+        for event_index in range(layer_start, layer_end + 1):
+            event_layers[event_index] = layer_id
+
         attention_prefix = "gdn_attention" if kind == "gdn" else "full_attention"
         input_label = (
             "GDN Q/K/V/Z projection"
@@ -1319,7 +1323,7 @@ def _prefill_projection_slots(
 
     if len(result) != 180:
         raise ValueError(f"prefill projection-slot proof produced {len(result)} slots")
-    return result
+    return result, event_layers
 
 
 def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -1588,20 +1592,23 @@ def map_prefill_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, An
         layer_anchors = prepare
         layer_kinds = list(TARGET_PATTERN)
 
-    projection_slots = (
+    projection_slots, proven_event_layers = (
         _prefill_projection_slots(
             kernels,
             prepare=prepare,
             anchor_pairs=anchor_pairs,
         )
         if owner_compute
-        else {}
+        else ({}, {})
     )
 
     mapped: list[dict[str, Any]] = []
     status_ns: Counter[str] = Counter()
     for event_index, kernel in enumerate(kernels):
-        layer_id = max(0, bisect_right(layer_anchors, event_index) - 1)
+        layer_id = proven_event_layers.get(
+            event_index,
+            max(0, bisect_right(layer_anchors, event_index) - 1),
+        )
         layer_kind = layer_kinds[layer_id]
         direct = projection_slots.get(event_index) or _direct_node(
             kernel.name,

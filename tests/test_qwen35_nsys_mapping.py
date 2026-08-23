@@ -243,6 +243,17 @@ def test_trt_prefill_maps_repeated_gemm_only_with_complete_layer_slot_proof():
     assert sum(event["node"] == "gdn_attention.output_projection" for event in slot_events) == 45
     assert sum(event["node"] == "full_attention.output_projection" for event in slot_events) == 15
     assert sum(event["node"] == "moe_block.shared_expert" for event in slot_events) == 60
+    input_slots = [
+        event
+        for event in slot_events
+        if event["node"]
+        in {"gdn_attention.qkvz_projection", "full_attention.qkv_projection"}
+    ]
+    assert [event["layer_id"] for event in input_slots] == list(range(60))
+    assert all(
+        event["layer_kind"] == TARGET_PATTERN[event["layer_id"]]
+        for event in slot_events
+    )
 
 
 def test_nsys_parser_splits_overlapping_graph_executions_by_node_occurrence(tmp_path):
