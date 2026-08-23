@@ -386,6 +386,10 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "do not read the columns as a direct engine speedup" in viewer
     assert "GPU Σ is summed kernel residency" in viewer
     assert "concrete kernel name and time come verbatim from the profiler timeline" in viewer
+    assert '"sglang_profile_id", "sglang_variant_id", "sglang_profiler_type"' in viewer
+    assert '"trtllm_profile_id", "trtllm_variant_id", "trtllm_profiler_type"' in viewer
+    assert "sglang_nsys_version: sglangProvenance.nsysVersion" in viewer
+    assert "trtllm_nsys_version: trtllmProvenance.nsysVersion" in viewer
     assert "Matched timing axes: worker-local NSYS on both engines" in viewer
     assert "Context/KV shape, accepted-length distribution" in viewer
     assert "Concrete kernel name" in viewer
