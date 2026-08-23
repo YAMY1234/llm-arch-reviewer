@@ -313,6 +313,27 @@ def test_timeline_node_timings_fill_missing_architecture_rollups(
     assert cell["timeline_reference_rank"] == 3
     assert cell["timeline_step_count"] == 2
 
+    profile["node_metrics"] = {
+        "top.compute": {
+            "ms_per_iter": 0.2,
+            "kernels": [{"name": "concrete", "total_us_per_iter": 200}],
+        }
+    }
+    compiled = compile_profile(
+        profile,
+        plan=plan,
+        fingerprint=fingerprint,
+        node_targets=node_targets,
+        source=source,
+    )
+    cell = compiled["data"]["top.compute"]["formal_decode"]
+    assert cell["ms_per_iter"] == pytest.approx(0.2)
+    assert cell["gpu_residency_ms"] == pytest.approx(0.2)
+    assert cell["active_gpu_ms"] == pytest.approx(0.115)
+    assert cell["gpu_elapsed_ms"] == pytest.approx(0.2)
+    assert cell["kernels"][0]["name"] == "concrete"
+    assert cell["timeline_rollup_attached"] is True
+
 
 def test_viewer_contains_bidirectional_architecture_timeline_navigation() -> None:
     viewer = (REPO_ROOT / "docs" / "viewer.html").read_text()

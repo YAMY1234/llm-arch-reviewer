@@ -159,7 +159,10 @@ def parse_benchmark_snapshot(path: Path) -> dict[str, Any]:
 
 
 def validate_run_inputs(
-    args: argparse.Namespace, *, expected_job_id: int = JOB_ID
+    args: argparse.Namespace,
+    *,
+    expected_job_id: int = JOB_ID,
+    expected_runtime_source: str = RUNTIME_SOURCE_COMMIT,
 ) -> dict[str, Any]:
     config = yaml.safe_load(args.config.read_text())
     job = json.loads(args.job_metadata.read_text())
@@ -180,7 +183,7 @@ def validate_run_inputs(
     }
     required = {
         "model revision": MODEL_REVISION,
-        "runtime source": RUNTIME_SOURCE_COMMIT,
+        "runtime source": expected_runtime_source,
         "prefill workers": 3,
         "decode workers": 2,
         "concurrency": "704",
