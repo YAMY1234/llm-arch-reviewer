@@ -63,8 +63,17 @@
     background: var(--panel);
     border-bottom: 1px solid var(--border);
   }
-  header h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
-  header .controls { display: flex; gap: 8px; align-items: center; min-width: 0; overflow-x: auto; }
+  header h1 {
+    flex: 0 0 auto; font-size: 14px; margin: 0; font-weight: 600;
+    white-space: nowrap;
+  }
+  header .controls {
+    display: flex; flex: 1 1 auto; gap: 8px; align-items: center;
+    min-width: 0; overflow-x: auto;
+  }
+  header .controls > label,
+  header .controls > button,
+  header .controls > .view-switch { flex: 0 0 auto; }
   header label { color: var(--muted); }
   header select, header button {
     background: var(--panel); color: var(--text);
@@ -132,6 +141,23 @@
     background: #ddebff; outline: none;
   }
   body.split-resizing { cursor: col-resize; user-select: none; }
+  main.mode-compare #architecture-pane,
+  main.mode-compare #timeline-pane,
+  main.mode-compare #split-resizer { display: none; }
+  body.compare-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "crumbs"
+      "main";
+  }
+  body.compare-layout aside.right { display: none; }
+  body.compare-layout #implementation-control,
+  body.compare-layout #profile-control,
+  body.compare-layout #variant-control,
+  body.compare-layout #metric-control { display: none !important; }
+  body.compare-layout #crumbs-list,
+  body.compare-layout #profile-summary { display: none !important; }
   #svg-host {
     width: 100%; height: 100%;
     cursor: grab; touch-action: none;
@@ -190,6 +216,94 @@
   .stack-frames { margin: 5px 0 0; padding-left: 20px; font: 10px ui-monospace, monospace; }
   .stack-frames li { margin-bottom: 4px; word-break: break-all; }
 
+  #compare-pane {
+    display: none; width: 100%; height: 100%; min-width: 0; min-height: 0;
+    flex-direction: column; background: var(--panel);
+  }
+  main.mode-compare #compare-pane { display: flex; }
+  .compare-toolbar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel2);
+    font-size: 11px;
+  }
+  .compare-toolbar label { color: var(--muted); }
+  .compare-toolbar select, .compare-toolbar button {
+    border: 1px solid var(--border); border-radius: 4px; background: var(--panel);
+    color: var(--text); padding: 4px 7px; font: inherit;
+  }
+  .compare-toolbar select { max-width: 360px; }
+  .compare-toolbar button { cursor: pointer; margin-left: auto; }
+  .compare-toolbar button:hover { border-color: var(--link); }
+  #compare-caveat {
+    flex: 0 0 auto; padding: 7px 12px; border-bottom: 1px solid #d4a72c;
+    background: #fff8c5; color: #633c01; font-size: 11px;
+  }
+  #compare-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  table.module-compare {
+    width: 100%; min-width: 2360px; border-collapse: separate; border-spacing: 0;
+    table-layout: fixed; font-size: 11px;
+  }
+  table.module-compare col.module-l1 { width: 180px; }
+  table.module-compare col.module-l2 { width: 190px; }
+  table.module-compare col.module-l3 { width: 230px; }
+  table.module-compare col.semantic-kernel { width: 215px; }
+  table.module-compare col.concrete-kernel { width: 430px; }
+  table.module-compare col.kernel-time { width: 95px; }
+  table.module-compare col.aggregate-time { width: 145px; }
+  table.module-compare th, table.module-compare td {
+    border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    padding: 6px 8px; vertical-align: top; background: var(--panel);
+  }
+  table.module-compare thead th {
+    position: sticky; top: 0; z-index: 8; background: var(--panel2);
+    color: var(--muted); font-weight: 600; text-align: left;
+  }
+  table.module-compare thead tr:first-child th { height: 34px; vertical-align: middle; }
+  table.module-compare thead tr:nth-child(2) th { top: 34px; }
+  table.module-compare th.engine-group { text-align: center; font-size: 12px; color: var(--text); }
+  table.module-compare th.engine-group.sglang { border-top: 3px solid var(--link); }
+  table.module-compare th.engine-group.trtllm { border-top: 3px solid var(--nextn); }
+  table.module-compare td.module-cell { font-weight: 600; color: var(--text); }
+  table.module-compare td.module-cell.level-1 { background: #f0f6ff; }
+  table.module-compare td.module-cell.level-2 { background: #f6f8fa; }
+  table.module-compare td.module-cell.level-3 { font-weight: 500; }
+  table.module-compare td.module-cell.empty-detail { color: var(--muted); font-weight: 400; }
+  table.module-compare td.kernel {
+    font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    overflow-wrap: anywhere; color: var(--text);
+  }
+  table.module-compare td.concrete-kernel .raw-kernel-name {
+    max-height: 76px; overflow: auto; white-space: normal; overflow-wrap: anywhere;
+    font-size: 9px; line-height: 1.35;
+  }
+  table.module-compare td.kernel.empty { color: var(--muted); font-style: italic; text-align: left; }
+  table.module-compare td.numeric {
+    text-align: right; white-space: nowrap; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  }
+  table.module-compare td.aggregate {
+    text-align: right; white-space: nowrap; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    font-weight: 600; background: #fbfcfe;
+  }
+  table.module-compare td.aggregate .subvalue,
+  table.module-compare td.kernel .subvalue {
+    display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 400;
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  }
+  table.module-compare tr.summary-row td { background: #f6f8fa; }
+  table.module-compare tr.summary-row td.aggregate { background: #eef4ff; }
+  table.module-compare td.summary-label { color: var(--muted); font-style: italic; font-weight: 500; }
+  table.module-compare tr.leaf-start td { border-top: 1px solid var(--border2); }
+  table.module-compare tr.module-start td { border-top: 2px solid var(--border2); }
+  table.module-compare .sticky-l1 { position: sticky; left: 0; z-index: 4; }
+  table.module-compare .sticky-l2 { position: sticky; left: 180px; z-index: 4; }
+  table.module-compare .sticky-l3 { position: sticky; left: 370px; z-index: 4; }
+  table.module-compare thead .sticky-l1,
+  table.module-compare thead .sticky-l2,
+  table.module-compare thead .sticky-l3 { z-index: 10; }
+  .compare-profile-name {
+    display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 400;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   aside.right {
     grid-area: right;
     background: var(--panel);
@@ -355,6 +469,7 @@
       <button data-view-mode="architecture">Architecture</button>
       <button data-view-mode="timeline">Timeline</button>
       <button data-view-mode="split">Split</button>
+      <button data-view-mode="compare">Compare</button>
     </span>
     <label id="ir-layer-control" style="display:none" title="Model IR is the framework-independent semantic graph; Execution IR adds topology-specific placement and communication.">IR:
       <select id="ir-layer-select">
@@ -374,13 +489,13 @@
     <label id="phase-control" style="display:none">phase:
       <select id="phase-select"></select>
     </label>
-    <label>profile:
+    <label id="profile-control">profile:
       <select id="profile-select"></select>
     </label>
-    <label>variant:
+    <label id="variant-control">variant:
       <select id="variant-select"></select>
     </label>
-    <label>heat:
+    <label id="metric-control">heat:
       <select id="metric-select">
         <option value="active">active GPU</option>
         <option value="elapsed">elapsed</option>
@@ -445,6 +560,19 @@
     </div>
     <div id="timeline-tooltip"></div>
   </section>
+  <section id="compare-pane" aria-label="SGLang and TensorRT-LLM module comparison">
+    <div class="compare-toolbar">
+      <label>SGLang profile <select id="compare-sglang-profile"></select></label>
+      <label>TRT-LLM profile <select id="compare-trtllm-profile"></select></label>
+      <button id="compare-export-csv" type="button">Export CSV</button>
+    </div>
+    <div id="compare-caveat"></div>
+    <div id="compare-table-wrap">
+      <table class="module-compare" id="module-compare-table">
+        <tbody><tr><td>Loading comparison…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
 <aside class="right">
@@ -471,6 +599,12 @@ let CURRENT_PHASE = "";
 let CURRENT_METRIC = "active";
 let CURRENT_VIEW_MODE = "architecture";
 let CURRENT_IR_LAYER = "execution";
+let COMPARE_SGLANG_PROFILE = "";
+let COMPARE_TRTLLM_PROFILE = "";
+let COMPARE_EXPORT_ROWS = [];
+const COMPARE_TIMELINE_CACHE = new Map();
+const COMPARE_TIMELINE_PENDING = new Map();
+const COMPARE_TIMELINE_ERRORS = new Map();
 let SPLIT_RATIO = 0.44;
 let SPLIT_RENDER_FRAME = 0;
 let ARCHITECTURE_NAVIGATION_TOKEN = 0;
@@ -883,6 +1017,8 @@ function refreshProfileOptions(preferred = "") {
     : (profileIds.find(p => p.includes("prefill")) || profileIds[0]);
   psel.value = pref;
   CURRENT_PROFILE = pref;
+  const entryView = DATA.profiles[pref]?.meta?.entry_view;
+  if (entryView && entryView in (DATA.views || {})) DATA.default_view = entryView;
   refreshVariantOptions(false);
   updateProfileSummary();
 }
@@ -922,6 +1058,8 @@ function syncV2SelectionQuery() {
   if (CURRENT_METRIC) url.searchParams.set("metric", CURRENT_METRIC);
   if (CURRENT_VIEW_MODE) url.searchParams.set("viewMode", CURRENT_VIEW_MODE);
   if (CURRENT_IR_LAYER) url.searchParams.set("irLayer", CURRENT_IR_LAYER);
+  if (COMPARE_SGLANG_PROFILE) url.searchParams.set("compareSglang", COMPARE_SGLANG_PROFILE);
+  if (COMPARE_TRTLLM_PROFILE) url.searchParams.set("compareTrtllm", COMPARE_TRTLLM_PROFILE);
   history.replaceState(null, "", url);
 }
 
@@ -967,6 +1105,7 @@ function initUI() {
       refreshGenerationOptions("autoregressive");
       refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
+      refreshComparisonProfileOptions(false);
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -979,6 +1118,7 @@ function initUI() {
       refreshGenerationOptions(CURRENT_GENERATION);
       refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
+      refreshComparisonProfileOptions(true);
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -993,6 +1133,7 @@ function initUI() {
       CURRENT_GENERATION = generationSelect.value;
       refreshPhaseOptions("decode");
       refreshProfileOptions("");
+      refreshComparisonProfileOptions(false);
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -1004,8 +1145,10 @@ function initUI() {
     phaseSelect.onchange = () => {
       CURRENT_PHASE = phaseSelect.value;
       refreshProfileOptions("");
+      refreshComparisonProfileOptions(false);
       syncV2SelectionQuery();
-      renderView();
+      if (CURRENT_VIEW_MODE === "compare") renderComparisonTable();
+      else renderView();
       loadTimelineForCurrentProfile();
     };
   }
@@ -1044,8 +1187,9 @@ function initUI() {
 
   initTimelineUI();
   initSplitResizer();
+  initComparisonUI();
   const requestedViewMode = new URLSearchParams(location.search).get("viewMode");
-  setViewMode(["architecture", "timeline", "split"].includes(requestedViewMode)
+  setViewMode(["architecture", "timeline", "split", "compare"].includes(requestedViewMode)
     ? requestedViewMode : "architecture", false);
   loadTimelineForCurrentProfile();
 
@@ -1628,30 +1772,748 @@ function drawShape(g, kind, w, h) {
 function currentTimelineMeta() {
   return DATA?.profiles?.[CURRENT_PROFILE]?.meta?.timeline || null;
 }
+function comparisonEngine(profile) {
+  const implementationId = String(profile?.implementation_id || "").toLowerCase();
+  if (implementationId.startsWith("sglang_")) return "sglang";
+  if (implementationId.startsWith("trtllm_")) return "trtllm";
+  const implementation = RAW_DATA?.implementations?.[profile?.implementation_id] || {};
+  const backend = String(implementation.backend || "").toLowerCase();
+  if (backend.includes("sglang")) return "sglang";
+  if (backend.includes("tensorrt") || backend.includes("trt")) return "trtllm";
+  return "";
+}
+
+function comparisonProfileScore(profileId) {
+  const profile = RAW_DATA?.profiles?.[profileId] || {};
+  const profilerType = String(profile.meta?.profiler?.type || "").toLowerCase();
+  const workload = profile.meta?.workload || {};
+  const evidence = profile.meta?.evidence || {};
+  const purpose = String(workload.purpose || "").toLowerCase();
+  const selection = String(evidence.selection_policy || "").toLowerCase();
+  let score = 0;
+  if (profilerType.includes("nsight") || profilerType.includes("nsys")) score += 100;
+  if (selection.includes("exact")) score += 50;
+  if (workload.selected_exact_target_verify_batch != null) score += 25;
+  if (workload.measured_shape?.selected_exact_generation_requests != null) score += 25;
+  if (profile.meta?.profiler?.cuda_graph_enabled) score += 5;
+  if (purpose.includes("attribution")) score -= 1000;
+  return score;
+}
+
+function comparisonProfileIsNsys(profileId) {
+  const profilerType = String(
+    RAW_DATA?.profiles?.[profileId]?.meta?.profiler?.type || ""
+  ).toLowerCase();
+  return profilerType.includes("nsight") || profilerType.includes("nsys");
+}
+
+function comparisonExactBatch(profileId) {
+  const workload = RAW_DATA?.profiles?.[profileId]?.meta?.workload || {};
+  const rawBatch = workload.selected_exact_target_verify_batch
+    ?? workload.measured_shape?.selected_exact_generation_requests
+    ?? workload.selected_exact_generation_requests;
+  if (rawBatch == null || rawBatch === "") return null;
+  const batch = Number(rawBatch);
+  return Number.isFinite(batch) ? batch : null;
+}
+
+function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId) {
+  const sglangBatch = comparisonExactBatch(sglangProfileId);
+  const trtllmBatch = comparisonExactBatch(trtllmProfileId);
+  return comparisonProfileIsNsys(sglangProfileId)
+    && comparisonProfileIsNsys(trtllmProfileId)
+    && sglangBatch != null
+    && trtllmBatch != null
+    && sglangBatch === trtllmBatch;
+}
+
+function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds) {
+  const pairs = [];
+  for (const sglangProfileId of sglangProfileIds) {
+    for (const trtllmProfileId of trtllmProfileIds) {
+      pairs.push({
+        sglang: sglangProfileId,
+        trtllm: trtllmProfileId,
+        compatible: comparisonProfilesCompatible(sglangProfileId, trtllmProfileId),
+        score: comparisonProfileScore(sglangProfileId) + comparisonProfileScore(trtllmProfileId),
+      });
+    }
+  }
+  pairs.sort((left, right) =>
+    Number(right.compatible) - Number(left.compatible)
+    || right.score - left.score
+    || `${left.sglang}|${left.trtllm}`.localeCompare(`${right.sglang}|${right.trtllm}`)
+  );
+  return pairs[0] || {sglang: "", trtllm: "", compatible: false, score: 0};
+}
+
+function comparisonProfileIds(engine) {
+  return Object.entries(RAW_DATA?.profiles || {})
+    .filter(([_profileId, profile]) =>
+      comparisonEngine(profile) === engine
+      && profile.execution_variant === CURRENT_EXECUTION
+      && (!CURRENT_GENERATION || profileGenerationMode(profile) === CURRENT_GENERATION)
+      && (!CURRENT_PHASE || profile.meta?.phase === CURRENT_PHASE)
+    )
+    .map(([profileId]) => profileId)
+    .sort((left, right) =>
+      comparisonProfileScore(right) - comparisonProfileScore(left)
+      || String(RAW_DATA.profiles[left]?.meta?.label || left)
+        .localeCompare(String(RAW_DATA.profiles[right]?.meta?.label || right))
+    );
+}
+
+function comparisonAvailable() {
+  return isV2Bundle()
+    && comparisonProfileIds("sglang").length > 0
+    && comparisonProfileIds("trtllm").length > 0;
+}
+
+function comparisonProfileCell(profileId, target) {
+  const variants = RAW_DATA?.profiles?.[profileId]?.data?.[target] || {};
+  return Object.values(variants).find(value => value && typeof value === "object") || null;
+}
+
+function populateComparisonProfileSelect(select, profileIds, preferred, engine) {
+  select.innerHTML = "";
+  for (const profileId of profileIds) {
+    const option = document.createElement("option");
+    option.value = profileId;
+    option.textContent = RAW_DATA.profiles[profileId]?.meta?.label || profileId;
+    select.appendChild(option);
+  }
+  let selected = profileIds.includes(preferred) ? preferred : "";
+  const currentPurpose = String(
+    RAW_DATA?.profiles?.[CURRENT_PROFILE]?.meta?.workload?.purpose || ""
+  ).toLowerCase();
+  if (!selected && engine === "sglang" && profileIds.includes(CURRENT_PROFILE)
+      && !currentPurpose.includes("attribution")
+      && comparisonProfileScore(CURRENT_PROFILE) >= comparisonProfileScore(profileIds[0])) {
+    selected = CURRENT_PROFILE;
+  }
+  if (!selected) {
+    selected = profileIds.find(profileId => !profileId.includes("attribution")) || profileIds[0] || "";
+  }
+  select.value = selected;
+  select.disabled = !profileIds.length;
+  return selected;
+}
+
+function refreshComparisonProfileOptions(keepCurrent = true) {
+  const sglangSelect = document.getElementById("compare-sglang-profile");
+  const trtllmSelect = document.getElementById("compare-trtllm-profile");
+  if (!sglangSelect || !trtllmSelect || !RAW_DATA) return;
+  const query = new URLSearchParams(location.search);
+  const sglangProfileIds = comparisonProfileIds("sglang");
+  const trtllmProfileIds = comparisonProfileIds("trtllm");
+  let sglangPreferred = keepCurrent
+    ? COMPARE_SGLANG_PROFILE
+    : (query.get("compareSglang") || "");
+  let trtllmPreferred = keepCurrent
+    ? COMPARE_TRTLLM_PROFILE
+    : (query.get("compareTrtllm") || "");
+  const sglangPreferredValid = sglangProfileIds.includes(sglangPreferred);
+  const trtllmPreferredValid = trtllmProfileIds.includes(trtllmPreferred);
+  const pair = comparisonBestProfilePair(
+    sglangPreferredValid ? [sglangPreferred] : sglangProfileIds,
+    trtllmPreferredValid ? [trtllmPreferred] : trtllmProfileIds,
+  );
+  if (!sglangPreferredValid) sglangPreferred = pair.sglang;
+  if (!trtllmPreferredValid) trtllmPreferred = pair.trtllm;
+  COMPARE_SGLANG_PROFILE = populateComparisonProfileSelect(
+    sglangSelect,
+    sglangProfileIds,
+    sglangPreferred,
+    "sglang",
+  );
+  COMPARE_TRTLLM_PROFILE = populateComparisonProfileSelect(
+    trtllmSelect,
+    trtllmProfileIds,
+    trtllmPreferred,
+    "trtllm",
+  );
+}
+
+function comparisonViews() {
+  return RAW_DATA?.execution_variants?.[CURRENT_EXECUTION]?.views || DATA?.views || {};
+}
+
+function comparisonLabel(value) {
+  return String(value || "").split("\n").map(part => part.trim()).filter(Boolean).join(" · ");
+}
+
+function comparisonHierarchy() {
+  const views = comparisonViews();
+  const roots = (views.stack?.nodes || []).filter(node => node.drill && Number(node.layer_count) > 0);
+  return roots.map(root => {
+    const childViewId = root.drill;
+    const children = (views[childViewId]?.nodes || [])
+      .filter(node => node.shape !== "io")
+      .map(child => {
+        const detailViewId = child.drill;
+        const detailNodes = detailViewId
+          ? (views[detailViewId]?.nodes || []).filter(node => node.shape !== "io")
+          : [];
+        const leaves = detailNodes.length
+          ? detailNodes.map(detail => ({
+              label: comparisonLabel(detail.label || detail.id),
+              target: `${detailViewId}.${detail.id}`,
+            }))
+          : [{label: "—", target: `${childViewId}.${child.id}`}];
+        return {
+          label: comparisonLabel(child.label || child.id),
+          target: `${childViewId}.${child.id}`,
+          hasDetail: detailNodes.length > 0,
+          leaves,
+        };
+      });
+    return {
+      label: comparisonLabel(root.label || root.id),
+      target: `stack.${root.id}`,
+      children,
+    };
+  });
+}
+
+function comparisonKernelTimeMs(kernel) {
+  if (kernel?.gpu_residency_ms_per_iter != null) {
+    return Number(kernel.gpu_residency_ms_per_iter);
+  }
+  if (kernel?.total_us_per_iter != null) return Number(kernel.total_us_per_iter) / 1000;
+  if (kernel?.avg_us != null && kernel?.count_per_iter != null) {
+    return Number(kernel.avg_us) * Number(kernel.count_per_iter) / 1000;
+  }
+  return null;
+}
+
+function decodeComparisonTimelineArtifact(artifact) {
+  for (const step of (artifact.steps || [])) {
+    for (const event of (step.events || [])) {
+      event._compareKernelName = timelineStringFrom(artifact, event.kernel_name);
+      event._compareKernelLabel = timelineStringFrom(artifact, event.kernel_label);
+      event._compareIrNode = timelineStringFrom(artifact, event.ir_node);
+    }
+  }
+  return artifact;
+}
+
+function loadComparisonTimelineArtifact(profileId) {
+  if (COMPARE_TIMELINE_CACHE.has(profileId)) {
+    return Promise.resolve(COMPARE_TIMELINE_CACHE.get(profileId));
+  }
+  if (COMPARE_TIMELINE_ERRORS.has(profileId)) return Promise.resolve(null);
+  if (COMPARE_TIMELINE_PENDING.has(profileId)) return COMPARE_TIMELINE_PENDING.get(profileId);
+  const meta = RAW_DATA?.profiles?.[profileId]?.meta?.timeline;
+  if (!meta?.url) {
+    COMPARE_TIMELINE_ERRORS.set(profileId, "profile has no timeline artifact");
+    return Promise.resolve(null);
+  }
+  const pending = fetchTimelineArtifact(`${MODEL_ID}/${meta.url}?t=${Date.now()}`)
+    .then(artifact => {
+      if (artifact.schema_version !== "timeline.v1" || artifact.profile_id !== profileId) {
+        throw new Error(`timeline identity does not match ${profileId}`);
+      }
+      const decoded = decodeComparisonTimelineArtifact(artifact);
+      COMPARE_TIMELINE_CACHE.set(profileId, decoded);
+      return decoded;
+    })
+    .catch(error => {
+      COMPARE_TIMELINE_ERRORS.set(profileId, error.message);
+      return null;
+    })
+    .finally(() => COMPARE_TIMELINE_PENDING.delete(profileId));
+  COMPARE_TIMELINE_PENDING.set(profileId, pending);
+  return pending;
+}
+
+function ensureComparisonTimelines() {
+  const profileIds = [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE].filter(Boolean);
+  const missing = profileIds.filter(profileId =>
+    !COMPARE_TIMELINE_CACHE.has(profileId)
+    && !COMPARE_TIMELINE_PENDING.has(profileId)
+    && !COMPARE_TIMELINE_ERRORS.has(profileId)
+  );
+  if (!missing.length) return;
+  const selectionKey = profileIds.join("|");
+  Promise.all(profileIds.map(loadComparisonTimelineArtifact)).then(() => {
+    if (CURRENT_VIEW_MODE === "compare"
+        && selectionKey === [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE].join("|")) {
+      renderComparisonTable();
+    }
+  });
+}
+
+function comparisonConcreteKernelIndex(profileId) {
+  const artifact = COMPARE_TIMELINE_CACHE.get(profileId);
+  if (!artifact) return null;
+  if (artifact._comparisonConcreteKernelIndex) return artifact._comparisonConcreteKernelIndex;
+  const stepCount = Math.max((artifact.steps || []).length, 1);
+  const groups = new Map();
+  for (const step of (artifact.steps || [])) {
+    for (const event of (step.events || [])) {
+      const target = event._compareIrNode;
+      const semanticName = event._compareKernelLabel;
+      const concreteName = event._compareKernelName;
+      if (!target || !semanticName || !concreteName) continue;
+      const groupKey = `${target}\u0000${semanticName}`;
+      if (!groups.has(groupKey)) groups.set(groupKey, new Map());
+      const concrete = groups.get(groupKey);
+      const aggregate = concrete.get(concreteName) || {count: 0, durationUs: 0};
+      aggregate.count += 1;
+      aggregate.durationUs += Number(event.duration_us || 0);
+      concrete.set(concreteName, aggregate);
+    }
+  }
+  const index = new Map();
+  for (const [groupKey, concrete] of groups.entries()) {
+    index.set(groupKey, Array.from(concrete.entries())
+      .map(([name, aggregate]) => ({
+        name,
+        timeMs: aggregate.durationUs / stepCount / 1000,
+        countPerIter: aggregate.count / stepCount,
+      }))
+      .sort((left, right) => right.timeMs - left.timeMs || left.name.localeCompare(right.name)));
+  }
+  artifact._comparisonConcreteKernelIndex = index;
+  return index;
+}
+
+function comparisonConcreteKernelEntries(profileId, target, kernel) {
+  const semanticName = kernel.name || kernel.label || "unnamed attributed operation";
+  const semanticTimeMs = comparisonKernelTimeMs(kernel);
+  const index = comparisonConcreteKernelIndex(profileId);
+  const concrete = index?.get(`${target}\u0000${semanticName}`) || [];
+  if (concrete.length) {
+    return concrete.map(entry => ({
+      semanticName,
+      semanticTimeMs,
+      concreteName: entry.name,
+      timeMs: entry.timeMs,
+      countPerIter: entry.countPerIter,
+      empty: false,
+    }));
+  }
+  const error = COMPARE_TIMELINE_ERRORS.get(profileId);
+  return [{
+    semanticName,
+    semanticTimeMs,
+    concreteName: error
+      ? `concrete symbol unavailable: ${error}`
+      : (index ? "no exact symbol on the reference-rank timeline" : "loading profiler kernel symbol…"),
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  }];
+}
+
+function comparisonKernelEntries(cell, profileId, target) {
+  const kernels = (cell?.kernels || []).flatMap(kernel =>
+    comparisonConcreteKernelEntries(profileId, target, kernel)
+  );
+  if (kernels.length) return kernels;
+  if (cell?.status === "fused") {
+    return [{
+      semanticName: `fused into ${cell.included_in || "shared interval"}`,
+      semanticTimeMs: null,
+      concreteName: "shared concrete symbol; see fusion owner",
+      timeMs: null,
+      countPerIter: null,
+      empty: true,
+    }];
+  }
+  if (cell?.status === "unobserved") {
+    return [{
+      semanticName: "unobserved in this capture",
+      semanticTimeMs: null,
+      concreteName: "no profiler kernel symbol",
+      timeMs: null,
+      countPerIter: null,
+      empty: true,
+    }];
+  }
+  if (cell?.ms_per_iter != null || cell?.gpu_residency_ms != null) {
+    return [{
+      semanticName: "measured interval; no unique kernel breakdown",
+      semanticTimeMs: null,
+      concreteName: "multiple descendant kernel symbols",
+      timeMs: null,
+      countPerIter: null,
+      empty: true,
+    }];
+  }
+  return [{
+    semanticName: "no attributed kernel",
+    semanticTimeMs: null,
+    concreteName: "no profiler kernel symbol",
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  }];
+}
+
+function comparisonAggregate(cell) {
+  if (cell?.status === "fused") {
+    return {
+      valueMs: null,
+      residencyMs: null,
+      activeMs: null,
+      wallMs: null,
+      text: "shared",
+      details: [`owner: ${cell.included_in || "fusion group"}`],
+    };
+  }
+  const residency = cell?.gpu_residency_ms ?? cell?.ms_per_iter;
+  if (residency != null) {
+    const active = cell?.active_gpu_ms;
+    const wall = cell?.gpu_elapsed_ms;
+    return {
+      valueMs: Number(residency),
+      residencyMs: Number(residency),
+      activeMs: active == null ? null : Number(active),
+      wallMs: wall == null ? null : Number(wall),
+      text: `GPU Σ ${formatMs(residency)} ms`,
+      details: [
+        active != null ? `active ∪ ${formatMs(active)} ms` : null,
+        wall != null ? `wall ${formatMs(wall)} ms` : "wall —",
+      ].filter(Boolean),
+    };
+  }
+  if (cell?.status === "unobserved") {
+    return {
+      valueMs: null,
+      residencyMs: null,
+      activeMs: null,
+      wallMs: null,
+      text: "—",
+      details: ["unobserved"],
+    };
+  }
+  return {
+    valueMs: null,
+    residencyMs: null,
+    activeMs: null,
+    wallMs: null,
+    text: "—",
+    details: ["not attributed"],
+  };
+}
+
+function comparisonSemanticKernelHtml(entry) {
+  const detail = entry.semanticTimeMs != null
+    ? `<span class="subvalue">semantic Σ ${formatMs(entry.semanticTimeMs)} ms / iter</span>`
+    : "";
+  return `${escapeHtml(entry.semanticName || "")}${detail}`;
+}
+
+function comparisonConcreteKernelHtml(entry) {
+  const detail = entry.countPerIter != null
+    ? `<span class="subvalue">${escapeHtml(entry.countPerIter)} calls / iter · timeline reference rank</span>`
+    : "";
+  return `<div class="raw-kernel-name">${escapeHtml(entry.concreteName || "")}</div>${detail}`;
+}
+
+function comparisonKernelTimeHtml(entry) {
+  return entry.timeMs == null ? "—" : `${formatMs(entry.timeMs)} ms`;
+}
+
+function comparisonAggregateHtml(aggregate) {
+  const details = (aggregate.details || [])
+    .map(detail => `<span class="subvalue">${escapeHtml(detail)}</span>`)
+    .join("");
+  return `${escapeHtml(aggregate.text)}${details}`;
+}
+
+function prepareComparisonTarget(target, summary = false) {
+  const sglangCell = comparisonProfileCell(COMPARE_SGLANG_PROFILE, target);
+  const trtllmCell = comparisonProfileCell(COMPARE_TRTLLM_PROFILE, target);
+  const summaryEntry = {
+    semanticName: "inclusive descendant intervals",
+    semanticTimeMs: null,
+    concreteName: "multiple descendant kernel symbols",
+    timeMs: null,
+    countPerIter: null,
+    empty: true,
+  };
+  const sglangKernels = summary
+    ? [summaryEntry]
+    : comparisonKernelEntries(sglangCell, COMPARE_SGLANG_PROFILE, target);
+  const trtllmKernels = summary
+    ? [summaryEntry]
+    : comparisonKernelEntries(trtllmCell, COMPARE_TRTLLM_PROFILE, target);
+  return {
+    target,
+    sglangKernels,
+    trtllmKernels,
+    sglangAggregate: comparisonAggregate(sglangCell),
+    trtllmAggregate: comparisonAggregate(trtllmCell),
+    rowCount: Math.max(sglangKernels.length, trtllmKernels.length, 1),
+  };
+}
+
+function comparisonCaveat() {
+  const sglang = RAW_DATA?.profiles?.[COMPARE_SGLANG_PROFILE];
+  const trtllm = RAW_DATA?.profiles?.[COMPARE_TRTLLM_PROFILE];
+  const sWorkload = sglang?.meta?.workload || {};
+  const tWorkload = trtllm?.meta?.workload || {};
+  const sameConcurrency = sWorkload.concurrency != null
+    && Number(sWorkload.concurrency) === Number(tWorkload.concurrency);
+  const sBatch = comparisonExactBatch(COMPARE_SGLANG_PROFILE);
+  const tBatch = comparisonExactBatch(COMPARE_TRTLLM_PROFILE);
+  const matchedProfilePair = comparisonProfilesCompatible(
+    COMPARE_SGLANG_PROFILE,
+    COMPARE_TRTLLM_PROFILE,
+  );
+  const context = matchedProfilePair
+    ? `Matched timing axes: worker-local NSYS on both engines and exact rank-local BS${sBatch}`
+      + (sameConcurrency ? ` at concurrency ${sWorkload.concurrency}.` : ".")
+      + " Context/KV shape, accepted-length distribution, graph policy, and backend remain separate provenance dimensions."
+    : sameConcurrency
+      ? `Both profiles report concurrency ${sWorkload.concurrency}, but profiler type, worker-local batch distribution, or capture boundary may differ.`
+      : "The selected workloads are not profiler- and shape-normalized.";
+  const attributionOnly = [sWorkload, tWorkload].some(workload =>
+    String(workload.purpose || "").toLowerCase().includes("attribution")
+  );
+  return `${CURRENT_PHASE || "selected phase"}: ${context} `
+    + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
+    + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
+    + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
+    + (attributionOnly ? " An attribution-only profile is selected and is not a performance baseline." : "");
+}
+
+function renderComparisonTable() {
+  const table = document.getElementById("module-compare-table");
+  if (!table) return;
+  if (!comparisonAvailable()) {
+    table.innerHTML = "<tbody><tr><td>No SGLang/TRT-LLM profile pair is available for this phase.</td></tr></tbody>";
+    return;
+  }
+  if (!comparisonProfileIds("sglang").includes(COMPARE_SGLANG_PROFILE)
+      || !comparisonProfileIds("trtllm").includes(COMPARE_TRTLLM_PROFILE)) {
+    refreshComparisonProfileOptions(false);
+  }
+  const hierarchy = comparisonHierarchy();
+  const prepared = hierarchy.map(root => {
+    const children = root.children.map(child => {
+      const leaves = child.leaves.map(leaf => {
+        return {
+          ...leaf,
+          ...prepareComparisonTarget(leaf.target),
+        };
+      });
+      const summary = child.hasDetail ? prepareComparisonTarget(child.target, true) : null;
+      return {
+        ...child,
+        leaves,
+        summary,
+        rowCount: (summary?.rowCount || 0) + leaves.reduce((sum, leaf) => sum + leaf.rowCount, 0),
+      };
+    });
+    const summary = prepareComparisonTarget(root.target, true);
+    return {
+      ...root,
+      children,
+      summary,
+      rowCount: summary.rowCount + children.reduce((sum, child) => sum + child.rowCount, 0),
+    };
+  });
+
+  const sglangLabel = RAW_DATA.profiles[COMPARE_SGLANG_PROFILE]?.meta?.label || COMPARE_SGLANG_PROFILE;
+  const trtllmLabel = RAW_DATA.profiles[COMPARE_TRTLLM_PROFILE]?.meta?.label || COMPARE_TRTLLM_PROFILE;
+  let rows = "";
+  COMPARE_EXPORT_ROWS = [];
+  const appendTimingRow = ({targetData, leftCells, classes, labels, rowKind}) => {
+    for (let rowIndex = 0; rowIndex < targetData.rowCount; rowIndex += 1) {
+      const firstTargetRow = rowIndex === 0;
+      const sglangKernel = targetData.sglangKernels[rowIndex]
+        || {semanticName: "", concreteName: "", timeMs: null, empty: true};
+      const trtllmKernel = targetData.trtllmKernels[rowIndex]
+        || {semanticName: "", concreteName: "", timeMs: null, empty: true};
+      rows += `<tr class="${firstTargetRow ? classes : ""}">${firstTargetRow ? leftCells : ""}`;
+      rows += `<td class="kernel${sglangKernel.empty ? " empty" : ""}">${comparisonSemanticKernelHtml(sglangKernel)}</td>`;
+      rows += `<td class="kernel concrete-kernel${sglangKernel.empty ? " empty" : ""}">${comparisonConcreteKernelHtml(sglangKernel)}</td>`;
+      rows += `<td class="numeric">${comparisonKernelTimeHtml(sglangKernel)}</td>`;
+      if (firstTargetRow) {
+        rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.sglangAggregate)}</td>`;
+      }
+      rows += `<td class="kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonSemanticKernelHtml(trtllmKernel)}</td>`;
+      rows += `<td class="kernel concrete-kernel${trtllmKernel.empty ? " empty" : ""}">${comparisonConcreteKernelHtml(trtllmKernel)}</td>`;
+      rows += `<td class="numeric">${comparisonKernelTimeHtml(trtllmKernel)}</td>`;
+      if (firstTargetRow) {
+        rows += `<td class="aggregate" rowspan="${targetData.rowCount}">${comparisonAggregateHtml(targetData.trtllmAggregate)}</td>`;
+      }
+      rows += "</tr>";
+      COMPARE_EXPORT_ROWS.push({
+        row_kind: rowKind,
+        module: labels.module,
+        submodule: labels.submodule,
+        operation: labels.operation,
+        ir_target: targetData.target,
+        sglang_semantic_kernel: sglangKernel.semanticName,
+        sglang_semantic_kernel_ms: sglangKernel.semanticTimeMs,
+        sglang_concrete_kernel_name: sglangKernel.concreteName,
+        sglang_concrete_kernel_ms: sglangKernel.timeMs,
+        sglang_concrete_kernel_calls_per_iter: sglangKernel.countPerIter,
+        sglang_residency_ms: targetData.sglangAggregate.residencyMs,
+        sglang_active_union_ms: targetData.sglangAggregate.activeMs,
+        sglang_wall_elapsed_ms: targetData.sglangAggregate.wallMs,
+        trtllm_semantic_kernel: trtllmKernel.semanticName,
+        trtllm_semantic_kernel_ms: trtllmKernel.semanticTimeMs,
+        trtllm_concrete_kernel_name: trtllmKernel.concreteName,
+        trtllm_concrete_kernel_ms: trtllmKernel.timeMs,
+        trtllm_concrete_kernel_calls_per_iter: trtllmKernel.countPerIter,
+        trtllm_residency_ms: targetData.trtllmAggregate.residencyMs,
+        trtllm_active_union_ms: targetData.trtllmAggregate.activeMs,
+        trtllm_wall_elapsed_ms: targetData.trtllmAggregate.wallMs,
+      });
+    }
+  };
+  prepared.forEach(root => {
+    appendTimingRow({
+      targetData: root.summary,
+      leftCells: `<td class="module-cell level-1 sticky-l1" rowspan="${root.rowCount}">${escapeHtml(root.label)}</td>`
+        + `<td class="module-cell level-2 sticky-l2 summary-label">∑ layer family</td>`
+        + `<td class="module-cell level-3 sticky-l3 summary-label">all descendants</td>`,
+      classes: "module-start summary-row",
+      labels: {module: root.label, submodule: "∑ layer family", operation: "all descendants"},
+      rowKind: "module_summary",
+    });
+    root.children.forEach(child => {
+      if (child.summary) {
+        appendTimingRow({
+          targetData: child.summary,
+          leftCells: `<td class="module-cell level-2 sticky-l2" rowspan="${child.rowCount}">${escapeHtml(child.label)}</td>`
+            + `<td class="module-cell level-3 sticky-l3 summary-label">∑ submodule</td>`,
+          classes: "leaf-start summary-row",
+          labels: {module: root.label, submodule: child.label, operation: "∑ submodule"},
+          rowKind: "module_summary",
+        });
+      }
+      child.leaves.forEach((leaf, leafIndex) => {
+        const firstLeaf = leafIndex === 0;
+        const leftCells = (!child.summary && firstLeaf
+          ? `<td class="module-cell level-2 sticky-l2" rowspan="${child.rowCount}">${escapeHtml(child.label)}</td>`
+          : "")
+          + `<td class="module-cell level-3 sticky-l3${leaf.label === "—" ? " empty-detail" : ""}" rowspan="${leaf.rowCount}">${escapeHtml(leaf.label)}</td>`;
+        appendTimingRow({
+          targetData: leaf,
+          leftCells,
+          classes: "leaf-start",
+          labels: {module: root.label, submodule: child.label, operation: leaf.label},
+          rowKind: "kernel_detail",
+        });
+      });
+    });
+  });
+  table.innerHTML = `<colgroup>
+      <col class="module-l1"><col class="module-l2"><col class="module-l3">
+      <col class="semantic-kernel"><col class="concrete-kernel"><col class="kernel-time"><col class="aggregate-time">
+      <col class="semantic-kernel"><col class="concrete-kernel"><col class="kernel-time"><col class="aggregate-time">
+    </colgroup>
+    <thead>
+      <tr>
+        <th colspan="3">Normalized Module IR hierarchy</th>
+        <th class="engine-group sglang" colspan="4">SGLang<span class="compare-profile-name" title="${escapeHtml(sglangLabel)}">${escapeHtml(sglangLabel)}</span></th>
+        <th class="engine-group trtllm" colspan="4">TensorRT-LLM<span class="compare-profile-name" title="${escapeHtml(trtllmLabel)}">${escapeHtml(trtllmLabel)}</span></th>
+      </tr>
+      <tr>
+        <th class="sticky-l1">Layer family</th>
+        <th class="sticky-l2">Submodule</th>
+        <th class="sticky-l3">Leaf operation</th>
+        <th>Semantic kernel</th><th>Concrete kernel name</th><th>concrete / iter</th><th>GPU Σ · active ∪ · wall</th>
+        <th>Semantic kernel</th><th>Concrete kernel name</th><th>concrete / iter</th><th>GPU Σ · active ∪ · wall</th>
+      </tr>
+    </thead><tbody>${rows}</tbody>`;
+  document.getElementById("compare-caveat").textContent = comparisonCaveat();
+  document.getElementById("view-title").textContent = "Normalized Module IR × engine kernel comparison";
+  const concreteReady = [COMPARE_SGLANG_PROFILE, COMPARE_TRTLLM_PROFILE]
+    .every(profileId => COMPARE_TIMELINE_CACHE.has(profileId));
+  document.getElementById("compare-export-csv").disabled = !concreteReady;
+  ensureComparisonTimelines();
+}
+
+function csvValue(value) {
+  const text = value == null ? "" : String(value);
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportComparisonCsv() {
+  if (!COMPARE_EXPORT_ROWS.length) return;
+  const headers = [
+    "row_kind", "module", "submodule", "operation", "ir_target",
+    "sglang_semantic_kernel", "sglang_semantic_kernel_ms",
+    "sglang_concrete_kernel_name", "sglang_concrete_kernel_ms",
+    "sglang_concrete_kernel_calls_per_iter", "sglang_residency_ms",
+    "sglang_active_union_ms", "sglang_wall_elapsed_ms",
+    "trtllm_semantic_kernel", "trtllm_semantic_kernel_ms",
+    "trtllm_concrete_kernel_name", "trtllm_concrete_kernel_ms",
+    "trtllm_concrete_kernel_calls_per_iter", "trtllm_residency_ms",
+    "trtllm_active_union_ms", "trtllm_wall_elapsed_ms",
+  ];
+  const lines = [headers.map(csvValue).join(",")];
+  for (const row of COMPARE_EXPORT_ROWS) {
+    lines.push(headers.map(header => csvValue(row[header])).join(","));
+  }
+  const blob = new Blob([lines.join("\n") + "\n"], {type: "text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  const modelSlug = String(RAW_DATA?.meta?.model_id || "model")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "model";
+  anchor.download = `${modelSlug}-sglang-vs-trtllm-${CURRENT_PHASE || "profile"}-modules.csv`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function initComparisonUI() {
+  refreshComparisonProfileOptions(false);
+  document.getElementById("compare-sglang-profile").onchange = event => {
+    COMPARE_SGLANG_PROFILE = event.target.value;
+    syncV2SelectionQuery();
+    renderComparisonTable();
+  };
+  document.getElementById("compare-trtllm-profile").onchange = event => {
+    COMPARE_TRTLLM_PROFILE = event.target.value;
+    syncV2SelectionQuery();
+    renderComparisonTable();
+  };
+  document.getElementById("compare-export-csv").onclick = exportComparisonCsv;
+}
+
 
 function setViewMode(mode, sync = true, shouldRender = true) {
   const hasTimeline = !!currentTimelineMeta();
-  if (!hasTimeline && mode !== "architecture") mode = "architecture";
-  if (mode !== "timeline") {
+  const hasComparison = comparisonAvailable();
+  if (!hasTimeline && (mode === "timeline" || mode === "split")) mode = "architecture";
+  if (!hasComparison && mode === "compare") mode = "architecture";
+  if (mode !== "timeline" && mode !== "compare") {
     const reset = ensureNavigationForCurrentProfile();
     if (reset) syncHash(true);
   }
   CURRENT_VIEW_MODE = mode;
   const workspace = document.getElementById("workspace");
   workspace.className = `mode-${mode}`;
+  document.body.classList.toggle("compare-layout", mode === "compare");
   const switcher = document.getElementById("view-switch");
-  switcher.style.display = hasTimeline ? "inline-flex" : "none";
+  switcher.style.display = hasTimeline || hasComparison ? "inline-flex" : "none";
   for (const button of switcher.querySelectorAll("button")) {
+    const buttonMode = button.dataset.viewMode;
+    button.style.display = (buttonMode === "compare" && !hasComparison)
+      || ((buttonMode === "timeline" || buttonMode === "split") && !hasTimeline)
+      ? "none" : "";
     button.classList.toggle("active", button.dataset.viewMode === mode);
   }
-  document.getElementById("btn-fit").style.display = mode === "timeline" ? "none" : "";
-  document.getElementById("btn-up").style.display = mode === "timeline" ? "none" : "";
+  document.getElementById("btn-fit").style.display = mode === "timeline" || mode === "compare" ? "none" : "";
+  document.getElementById("btn-up").style.display = mode === "timeline" || mode === "compare" ? "none" : "";
   if (mode === "split") requestAnimationFrame(() => applySplitRatio(SPLIT_RATIO));
+  if (mode === "compare") refreshComparisonProfileOptions(true);
   if (sync) syncV2SelectionQuery();
   if (shouldRender) {
     requestAnimationFrame(() => {
-      if (mode !== "timeline") renderView();
-      if (mode !== "architecture") renderTimeline();
+      if (mode === "architecture" || mode === "split") renderView();
+      if (mode === "timeline" || mode === "split") renderTimeline();
+      if (mode === "compare") renderComparisonTable();
     });
   }
 }
@@ -1660,7 +2522,7 @@ function scheduleSplitRender() {
   if (SPLIT_RENDER_FRAME) return;
   SPLIT_RENDER_FRAME = requestAnimationFrame(() => {
     SPLIT_RENDER_FRAME = 0;
-    if (CURRENT_VIEW_MODE !== "architecture") renderTimeline();
+    if (CURRENT_VIEW_MODE === "timeline" || CURRENT_VIEW_MODE === "split") renderTimeline();
   });
 }
 
@@ -1793,15 +2655,21 @@ function decodeTimelineArtifact(artifact) {
     for (const event of (step.events || [])) {
       event._kernelName = timelineStringFrom(artifact, event.kernel_name);
       event._kernelLabel = timelineStringFrom(artifact, event.kernel_label);
+      event._engine = timelineStringFrom(artifact, event.engine);
       event._irNode = timelineStringFrom(artifact, event.ir_node);
       event._irTargets = (event.ir_targets || []).map(index => timelineStringFrom(artifact, index));
       event._irTargets = normalizeTimelineIrTargets(event);
+      event._mappingStatus = timelineStringFrom(artifact, event.mapping_status);
       event._fusionGroupIds = [];
-      for (const [groupId, group] of Object.entries(currentFusionGroups())) {
-        const covered = group.ir_nodes || [];
-        if (covered.some(target => event._irTargets.includes(target))) {
-          event._fusionGroupIds.push(groupId);
-          event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+      const directFusionGroup = timelineStringFrom(artifact, event.fusion_group);
+      if (directFusionGroup) event._fusionGroupIds.push(directFusionGroup);
+      if (event._mappingStatus === "fusion") {
+        for (const [groupId, group] of Object.entries(currentFusionGroups())) {
+          const covered = group.ir_nodes || [];
+          if (covered.some(target => event._irTargets.includes(target))) {
+            event._fusionGroupIds.push(groupId);
+            event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+          }
         }
       }
       event._layerKind = timelineStringFrom(artifact, event.layer_kind);
@@ -1809,6 +2677,10 @@ function decodeTimelineArtifact(artifact) {
       event._kernelKind = timelineStringFrom(artifact, event.kernel_kind);
       event._attributionMethod = timelineStringFrom(artifact, event.attribution_method);
       event._confidence = timelineStringFrom(artifact, event.confidence);
+      event._unmappedReason = timelineStringFrom(artifact, event.unmapped_reason);
+      event._candidateNodes = (event.candidate_nodes || []).map(
+        index => timelineStringFrom(artifact, index)
+      );
       event._cpuOpName = timelineStringFrom(artifact, event.cpu_op_name);
       event._stack = event.stack_id == null ? null : artifact.stacks?.[event.stack_id];
     }
@@ -1842,7 +2714,7 @@ async function loadTimelineForCurrentProfile() {
   const token = ++TIMELINE_LOAD_TOKEN;
   const meta = currentTimelineMeta();
   const switcher = document.getElementById("view-switch");
-  switcher.style.display = meta ? "inline-flex" : "none";
+  switcher.style.display = meta || comparisonAvailable() ? "inline-flex" : "none";
   TIMELINE_SELECTED_EVENT = null;
   TIMELINE_IR_TARGET = "";
   TIMELINE_CURSOR_US = null;
@@ -1854,7 +2726,9 @@ async function loadTimelineForCurrentProfile() {
     document.getElementById("timeline-empty").style.display = "block";
     document.getElementById("timeline-canvas").style.display = "none";
     document.getElementById("timeline-status").textContent = "no timeline for this profile";
-    if (CURRENT_VIEW_MODE !== "architecture") setViewMode("architecture");
+    if (CURRENT_VIEW_MODE === "timeline" || CURRENT_VIEW_MODE === "split") {
+      setViewMode("architecture");
+    }
     return;
   }
   document.getElementById("timeline-status").textContent = "loading measured kernels…";
@@ -1995,6 +2869,17 @@ function timelineEventMatches(event) {
     if (!haystack.includes(TIMELINE_SEARCH.toLowerCase())) return false;
   }
   return true;
+}
+
+function timelineMatchesForTarget(target) {
+  if (!TIMELINE_DATA || TIMELINE_PROFILE_ID !== CURRENT_PROFILE) return [];
+  const matches = [];
+  for (const [stepIndex, step] of (TIMELINE_DATA.steps || []).entries()) {
+    for (const event of (step.events || [])) {
+      if (event._irTargets.includes(target)) matches.push({stepIndex, event});
+    }
+  }
+  return matches;
 }
 
 const TIMELINE_KERNEL_PALETTE = [
@@ -2488,14 +3373,18 @@ function showTimelineEventDetail(event) {
   const stackNote = stack
     ? `${evidence.source || "unknown"} · ${evidence.match || "unknown match"} · ${evidence.kind || "stack"}`
     : "not available for this timing-only/support kernel";
+  const architectureAction = event._irNode
+    ? `<button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>`
+    : `<button class="detail-action" disabled title="No leaf attribution is supported by current evidence">No exact Architecture leaf</button>`;
   document.getElementById("detail").innerHTML = `
     <h2>${escapeHtml(event._kernelLabel || event._irNode || "kernel")}</h2>
     <div>
-      <button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>
+      ${architectureAction}
       <button class="detail-action" onclick="openSelectedRangeInPerfetto()">Open exact slice in Perfetto ↗</button>
     </div>
     <div class="kv">
       <div class="k">IR node</div><div>${escapeHtml(event._irNode)}</div>
+      <div class="k">engine / rank / device</div><div>${escapeHtml(event._engine || "—")} / ${TIMELINE_DATA?.reference_rank ?? "—"} / ${event.device ?? "—"}</div>
       <div class="k">IR targets</div><div>${escapeHtml(event._irTargets.join(", "))}</div>
       ${event._fusionGroupIds?.length ? `<div class="k">fusion</div><div>${escapeHtml(event._fusionGroupIds.join(", "))} · one shared kernel interval</div>` : ""}
       <div class="k">kernel</div><div style="word-break:break-all">${escapeHtml(event._kernelName)}</div>
@@ -2504,8 +3393,12 @@ function showTimelineEventDetail(event) {
       <div class="k">stream</div><div>${escapeHtml(track?.label || event.stream_id)}</div>
       <div class="k">layer</div><div>${event.layer_id == null ? "—" : event.layer_id} · ${escapeHtml(event._layerKind || "")}</div>
       <div class="k">substage</div><div>${escapeHtml(event._substage || "—")}</div>
+      <div class="k">MTP round</div><div>${event.mtp_round == null ? "—" : event.mtp_round}</div>
       <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
       <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
+      <div class="k">mapping status</div><div>${escapeHtml(event._mappingStatus || "—")}</div>
+      ${event._unmappedReason ? `<div class="k">unmapped reason</div><div>${escapeHtml(event._unmappedReason)}</div>` : ""}
+      ${event._candidateNodes?.length ? `<div class="k">candidate nodes</div><div>${escapeHtml(event._candidateNodes.join(", "))}</div>` : ""}
       <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>
     </div>
     ${frames ? `<h3>mapped Python stack</h3><ol class="stack-frames">${frames}</ol>` : ""}
@@ -2516,6 +3409,30 @@ function showTimelineEventDetail(event) {
 function architectureRouteForEvent(event) {
   const direct = event._irNode || "";
   const [view, nodeId] = direct.split(".", 2);
+  if (view && DATA.views?.[view]) {
+    const root = DATA.views?.top ? "top" : defaultViewName();
+    const paths = [];
+    function visit(currentView, views, from, visited) {
+      if (currentView === view) {
+        paths.push({views, from, view, nodeId});
+        return;
+      }
+      for (const node of (DATA.views?.[currentView]?.nodes || [])) {
+        if (!node.drill || visited.has(node.drill) || !DATA.views?.[node.drill]) continue;
+        visit(
+          node.drill,
+          [...views, node.drill],
+          [...from, node.id],
+          new Set([...visited, node.drill]),
+        );
+      }
+    }
+    visit(root, [root], [null], new Set([root]));
+    if (paths.length) {
+      paths.sort((left, right) => left.views.length - right.views.length);
+      return paths[0];
+    }
+  }
   const mtpProfile = profileGenerationMode(DATA?.profiles?.[CURRENT_PROFILE]) === "eagle_mtp";
   const mtpOrigin = String(event._substage || "").includes("prefill")
     ? "mtp_prefill" : "mtp_draft_extend";
@@ -2703,7 +3620,11 @@ function centerNodeOnTimeline(viewName, nodeId) {
   highlightNodeOnTimeline(viewName, nodeId, false);
   if (!TIMELINE_DATA) return;
   const nearest = focusNearestTimelineEvent();
-  setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE, true, false);
+  setViewMode(
+    CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE,
+    true,
+    false,
+  );
   renderTimeline();
   // The range update above centers the event on the time axis. Center its
   // packed kernel lane on the stream axis as well. A second frame covers the
@@ -2713,6 +3634,20 @@ function centerNodeOnTimeline(viewName, nodeId) {
     renderTimeline();
     centerTimelineEventVertically(nearest);
   });
+}
+
+function openNodeOnTimeline(viewName, nodeId) {
+  const target = `${viewName}.${nodeId}`;
+  const matches = timelineMatchesForTarget(target);
+  if (!matches.length) {
+    document.getElementById("timeline-status").textContent =
+      `No measured kernel occurrence for ${target} in this profile`;
+    return;
+  }
+  TIMELINE_STEP_INDEX = matches[0].stepIndex;
+  document.getElementById("timeline-step").value = String(TIMELINE_STEP_INDEX);
+  centerNodeOnTimeline(viewName, nodeId);
+  if (TIMELINE_SELECTED_EVENT) showTimelineEventDetail(TIMELINE_SELECTED_EVENT);
 }
 
 async function chooseRawTraceFile(expectedName) {
@@ -2935,12 +3870,13 @@ function initTimelineUI() {
     }
   }, {passive: false});
   window.addEventListener("resize", () => {
-    if (CURRENT_VIEW_MODE !== "architecture") renderTimeline();
+    if (CURRENT_VIEW_MODE === "timeline" || CURRENT_VIEW_MODE === "split") renderTimeline();
   });
 }
 
 window.highlightNodeOnTimeline = highlightNodeOnTimeline;
 window.centerNodeOnTimeline = centerNodeOnTimeline;
+window.openNodeOnTimeline = openNodeOnTimeline;
 window.showTimelineEventInArchitecture = showTimelineEventInArchitecture;
 window.openSelectedRangeInPerfetto = openSelectedRangeInPerfetto;
 
@@ -3262,9 +4198,11 @@ function showDetail(n, viewName) {
          </a>
        </div>`
     : "";
-  const timelineBtn = currentTimelineMeta()
+  const timelineMeta = currentTimelineMeta();
+  const timelineMatches = timelineMatchesForTarget(target);
+  const timelineBtn = timelineMeta && timelineMatches.length
     ? `<div style="margin: 6px 0 10px;">
-         <button class="detail-action primary" onclick="centerNodeOnTimeline('${viewName}', '${n.id}')"
+         <button class="detail-action primary" onclick="openNodeOnTimeline('${viewName}', '${n.id}')"
                  title="Center the matching kernel nearest the current timeline cursor">
            Center nearest measured kernel on timeline →
          </button>

@@ -1,0 +1,224 @@
+schema_version: implementation-binding.v2
+implementation_id: trtllm_1cef02e9_attention_dp4_moe_ep4_mtp
+label: TensorRT-LLM 1cef02e9 · AgentX Attention-DP4 + MoE-EP4 + MTP6
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+source_repo: https://github.com/NVIDIA/TensorRT-LLM
+source_commit: 1cef02e901be43081b1ba6d4981e94ed3bd9c1e8
+container: nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc24
+container_sha256: 1cb820b92bd7ab56ab69457500adf3b7f2928bfefe7f2920951fe7286552dcf7
+model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+backend: tensorrt_llm
+node_bindings:
+  top.embedding:
+    symbols: [Qwen3NextModel.embed_tokens]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextModel
+  gdn_attention.qkvz_projection:
+    symbols: [Qwen3NextGatedDeltaNet.forward]
+    links:
+    - file: tensorrt_llm/_torch/modules/mamba/gdn_mixer.py
+      symbol: Qwen3NextGatedDeltaNet.forward
+  gdn_attention.ba_projection:
+    symbols: [Qwen3NextGatedDeltaNet.forward]
+    links:
+    - file: tensorrt_llm/_torch/modules/mamba/gdn_mixer.py
+      symbol: Qwen3NextGatedDeltaNet.forward
+  gdn_attention.causal_conv:
+    symbols: [Qwen3NextGatedDeltaNet.forward]
+    kernel_signatures: [causal_conv1d]
+    links:
+    - file: tensorrt_llm/_torch/modules/mamba/gdn_mixer.py
+      symbol: Qwen3NextGatedDeltaNet.forward
+  gdn_attention.gated_delta_recurrence:
+    symbols: [Qwen3NextGatedDeltaNet.forward]
+    kernel_signatures: [gated_delta_net, gdn]
+    links:
+    - file: tensorrt_llm/_torch/modules/mamba/gdn_mixer.py
+      symbol: Qwen3NextGatedDeltaNet.forward
+  full_attention.qkv_projection:
+    symbols: [Qwen3NextAttention.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextAttention.forward
+  full_attention.causal_gqa:
+    symbols: [Qwen3NextAttention.forward]
+    kernel_signatures: [fmha, attention]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextAttention.forward
+  moe_block.router:
+    symbols: [Qwen3NextGate.forward, Qwen3NextSparseMoeBlock.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextGate.forward
+  moe_block.target_ep4_pack:
+    symbols: [Qwen3NextSparseMoeBlock.forward, ConfigurableMoE.forward]
+    wire_contract:
+      backend: TensorRT-LLM CUTEDSL MoE EP4
+      hidden: BF16 rank-local activation padded to max(all_rank_num_tokens)
+      metadata: top-10 expert IDs and normalized routing weights
+      expert_weights: NVFP4 group size 16
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock.forward
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  moe_block.target_ep4_dispatch:
+    symbols: [ConfigurableMoE.forward]
+    kernel_signatures: [alltoall, all_to_all, moe_dispatch]
+    wire_contract:
+      backend: TensorRT-LLM CUTEDSL MoE EP4
+      hidden: BF16 padded activation; target expert compute consumes NVFP4 weights
+      group: four-rank attention-DP/MoE-EP process group
+      result: 128-expert owner-local routed activation
+    links:
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  moe_block.routed_experts:
+    symbols: [Qwen3NextSparseMoeBlock.experts, ConfigurableMoE.forward]
+    kernel_signatures: [cutedsl, nvfp4, moe]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock.forward
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  moe_block.target_ep4_combine:
+    symbols: [ConfigurableMoE.forward]
+    kernel_signatures: [alltoall, all_to_all, moe_combine]
+    wire_contract:
+      backend: TensorRT-LLM CUTEDSL MoE EP4
+      hidden: low-precision combine enabled in the decode profile and disabled in prefill
+      result: BF16 origin-rank routed output before shared-expert fusion
+    links:
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  moe_block.target_ep4_restore:
+    symbols: [Qwen3NextSparseMoeBlock.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock.forward
+  moe_block.shared_expert:
+    symbols: [Qwen3NextSparseMoeBlock._compute_shared_output]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock.forward
+  mtp_draft_head.fc_projection:
+    symbols: [Qwen3NextMTPHead.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTPHead.forward
+  mtp_draft_head.draft_decoder_layer:
+    symbols: [Qwen3NextMTP.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTP.forward
+  mtp_full_attention.causal_gqa:
+    symbols: [Qwen3NextMTP.forward, Qwen3NextAttention.forward]
+    kernel_signatures: [fmha, attention]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTP.forward
+  mtp_moe_block.router:
+    symbols: [Qwen3NextGate.forward, Qwen3NextMTP.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextGate.forward
+  mtp_moe_block.draft_ep4_pack:
+    symbols: [Qwen3NextSparseMoeBlock.forward, ConfigurableMoE.forward]
+    wire_contract:
+      backend: TensorRT-LLM CUTLASS fallback selected for quantization-excluded MTP experts
+      hidden: BF16 rank-local draft activation padded to max(all_rank_num_tokens)
+      metadata: top-10 expert IDs and normalized routing weights
+      expert_weights: BF16 because mtp.* is excluded by the checkpoint quantization manifest
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: _experts_excluded_from_quant
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  mtp_moe_block.draft_ep4_dispatch:
+    symbols: [ConfigurableMoE.forward]
+    kernel_signatures: [alltoall, all_to_all, moe_dispatch]
+    wire_contract:
+      backend: TensorRT-LLM CUTLASS BF16 MoE EP4
+      hidden: BF16 draft activation
+      group: four-rank attention-DP/MoE-EP process group
+      result: 128-expert owner-local routed activation
+    links:
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  mtp_moe_block.routed_experts:
+    symbols: [Qwen3NextMTP.forward, ConfigurableMoE.forward]
+    kernel_signatures: [cutlass, moe]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTP.forward
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  mtp_moe_block.draft_ep4_combine:
+    symbols: [ConfigurableMoE.forward]
+    kernel_signatures: [alltoall, all_to_all, moe_combine]
+    wire_contract:
+      backend: TensorRT-LLM CUTLASS BF16 MoE EP4
+      hidden: BF16 expert output
+      result: BF16 origin-rank draft output
+    links:
+    - file: tensorrt_llm/_torch/modules/fused_moe.py
+      symbol: ConfigurableMoE.forward
+  mtp_moe_block.draft_ep4_restore:
+    symbols: [Qwen3NextMTP.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTP.forward
+  mtp_moe_block.shared_expert:
+    symbols: [Qwen3NextSparseMoeBlock._compute_shared_output]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock.forward
+  generation_loop.draft_propose:
+    symbols: [SpecDecOneEngineForCausalLM, Qwen3NextMTP.forward]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+    - file: tensorrt_llm/_torch/models/modeling_qwen3_next.py
+      symbol: Qwen3NextMTP.forward
+  generation_loop.target_verify:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+  generation_loop.accept_prefix:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+  generation_loop.replay_gdn:
+    symbols: [SpecDecOneEngineForCausalLM, Qwen3NextGatedDeltaNet.forward]
+    kernel_signatures: [gdn, mamba]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+    - file: tensorrt_llm/_torch/modules/mamba/gdn_mixer.py
+      symbol: Qwen3NextGatedDeltaNet.forward
+  generation_loop.commit_kv:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+  generation_loop.commit_gdn:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+  generation_loop.commit_tokens:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM
+  generation_loop.next_iteration:
+    symbols: [SpecDecOneEngineForCausalLM]
+    links:
+    - file: tensorrt_llm/_torch/models/modeling_speculative.py
+      symbol: SpecDecOneEngineForCausalLM

@@ -180,16 +180,25 @@ def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
     assert group_id in profile["fusion_groups"]
 
 
-def test_qwen35_collective_adapters_live_on_layer_boundaries() -> None:
+def test_qwen35_collective_adapters_live_on_module_boundaries() -> None:
     bundle = compile_catalog(QWEN35_ROOT)
 
-    assert "tp_output_collective" not in _node_ids(bundle, "linear_attention")
-    assert "tp_output_collective" not in _node_ids(bundle, "full_attention")
-    assert "tp_output_collective" not in _node_ids(bundle, "moe")
-    assert "tp_attention_output_collective" in _node_ids(bundle, "linear_layer")
-    assert "tp_moe_output_collective" in _node_ids(bundle, "linear_layer")
-    assert "tp_attention_output_collective" in _node_ids(bundle, "full_layer")
-    assert "tp_moe_output_collective" in _node_ids(bundle, "full_layer")
+    assert not any("collective" in node for node in _node_ids(bundle, "gdn_attention"))
+    assert not any("collective" in node for node in _node_ids(bundle, "full_attention"))
+    assert "dp4_request_partition" in _node_ids(bundle, "top")
+    assert "dp4_output_commit" in _node_ids(bundle, "generation_loop")
+    assert {
+        "target_ep4_pack",
+        "target_ep4_dispatch",
+        "target_ep4_combine",
+        "target_ep4_restore",
+    }.issubset(_node_ids(bundle, "moe_block"))
+    assert {
+        "draft_ep4_pack",
+        "draft_ep4_dispatch",
+        "draft_ep4_combine",
+        "draft_ep4_restore",
+    }.issubset(_node_ids(bundle, "mtp_moe_block"))
 
 
 def test_compile_qwen40_pure_tp_layout() -> None:

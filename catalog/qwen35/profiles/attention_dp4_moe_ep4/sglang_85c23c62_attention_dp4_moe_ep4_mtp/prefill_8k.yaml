@@ -1,0 +1,512 @@
+schema_version: profile.v2
+profile_id: qwen35_sglang_attention_dp4_moe_ep4_target_prefill_8k
+label: "Qwen3.5 397B \xB7 SGLang \xB7 DEP4 target-only one-chunk 8K prefill"
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+variant_id: sglang_dep4_target_prefill_8192_cgoff
+phase: prefill
+generation_mode: mtp
+entry_view: top
+execution_parameters:
+  tp_size: 1
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+workload:
+  isl: 8192
+  osl: 1
+  global_batch_size: 4
+  per_rank_batch_size: 1
+  chunk_tokens_per_rank: 8192
+  one_chunk: true
+  speculative_generation: false
+profiler:
+  type: torch
+  rank: all four DEP ranks
+  activities:
+  - CPU
+  - GPU
+  cuda_graph_enabled: false
+  gpu_metric_semantics: maximum per-rank kernel residency; parallel ranks are not
+    summed
+  runtime_launch_parallelism:
+    framework_tp_size: 4
+    attention_dp_size: 4
+    moe_ep_size: 4
+    normalization: the framework TP process group carries replicated attention DP
+      and sharded MoE EP; it is not semantic TP4
+evidence:
+  job_id: 3207938
+  source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
+  runtime_source_commit: a31c1e52e947bcbdd0d551c5e2323e96a9bf303b
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container_sha256: 87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a
+  protocol_file: protocol.json
+  protocol_sha256: 37f671767494f99d9dc02ac7e2adf19ca1736da07ff8137a22779e3839e64419
+  trace_files:
+  - rank: 0
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 9e82ec29018e214d448bc0f92694d508a18bc8f9bbbeb5ed677cb9bdd2271216
+  - rank: 1
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-1-DP-1-EP-1.trace.json.gz
+    sha256: 36dc80f38f3de911d764e0b98d8542ba7cf536378f828fdddfbefea32c706700
+  - rank: 2
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-2-DP-2-EP-2.trace.json.gz
+    sha256: 4031516a249d900256e1af2a9e0c8bea9cb1d114157f57735a0e914668cb4109
+  - rank: 3
+    file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-3-DP-3-EP-3.trace.json.gz
+    sha256: 6c6f80edf5232d027fb7705c009754c37ca22c476f17b47471701bf6cb28cb4e
+  mapping_policy: occurrence-local Python stacks transferred only across an exact
+    contiguous kernel-name sequence, plus narrowly validated kernel/sequence slots;
+    low-confidence generic occurrences remain unmapped
+  mapped_or_fusion_duration_ratio: 0.986336
+  strict_signature_duration_ratio: 0.59062
+  mapped_duration_ratio: 0.861089
+  fusion_duration_ratio: 0.125246
+  unmapped_duration_ratio: 0.013664
+  timeline_interval_coverage_ratio: 1.0
+  semantic_attribution_gate:
+    threshold: 0.95
+    passed: true
+  eager_stack_transfer_duration_ratio: 0.995982
+  occurrence_stack_files:
+  - rank: 0
+    file: kernel_mapping.tp0.jsonl
+    sha256: 9cc1c5ee3501295deb112d2fcffcbed56125a126338aeddb95a2d2f416adab7f
+  - rank: 1
+    file: kernel_mapping.tp1.jsonl
+    sha256: 2117250f94b9d4edbbdf1b69dacef5850fdd74d79f0664e006a777ae6d337de6
+  - rank: 2
+    file: kernel_mapping.tp2.jsonl
+    sha256: 5699a24ef5640b8b869fb4a881bd8957c22cd8b384f169533db02df1a055852f
+  - rank: 3
+    file: kernel_mapping.tp3.jsonl
+    sha256: e5c9c6fff12e2dcdb3f53fa8cc3a5a220ad9464dea61fa46402ad7d8676e4ca5
+  attribution_job_id: 536378
+  critical_prefill_wall_ms: 367.889348
+timeline:
+  schema_version: timeline.v1
+  artifact: prefill_8k.timeline.json.gz
+  sha256: c80a542e7fb8c75a3808f97b6e9f99111bb9a402220f094605e62132ce272b05
+  reference_rank: 0
+  step_count: 1
+  event_count: 2376
+  raw_trace_file: qwen35-dep4-prefill8k-cgoff-qwen35-dep4-prefill8k-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+node_states:
+  gdn_attention.ba_projection:
+    status: fused
+    included_in: gdn_attention.qkvz_projection
+  gdn_attention.state_write:
+    status: fused
+    included_in: gdn_attention.gated_delta_recurrence
+  full_attention.partial_rope:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.attention_output_gate:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.kv_state_write:
+    status: fused
+    included_in: full_attention.qkv_projection
+  mtp_full_attention.partial_rope:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.attention_output_gate:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.kv_state_write:
+    status: fused
+    included_in: mtp_full_attention.qkv_projection
+node_metrics:
+  full_attention.causal_gqa:
+    ms_per_iter: 5.935026
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 31
+      count_per_iter: 31.0
+      avg_us: 191.452
+      total_us_per_iter: 5935.026
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 5.810255
+    - 5.935026
+  full_attention.output_projection:
+    ms_per_iter: 7.489183
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 99.856
+      total_us_per_iter: 7489.183
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 6.135312
+    - 7.489183
+  full_attention.qk_norm:
+    ms_per_iter: 4.267842
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 284.523
+      total_us_per_iter: 4267.842
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 4.239682
+    - 4.267842
+  full_attention.qkv_projection:
+    ms_per_iter: 0.534212
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 35.614
+      total_us_per_iter: 534.212
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 0.529541
+    - 0.534212
+  full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.68343
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 45.562
+      total_us_per_iter: 683.43
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.619207
+    - 0.68343
+  full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.5994
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + next-layer input RMSNorm
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 39.96
+      total_us_per_iter: 599.4
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.585702
+    - 0.5994
+  gdn_attention.causal_conv:
+    ms_per_iter: 6.830071
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 151.779
+      total_us_per_iter: 6830.071
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 6.820796
+    - 6.830071
+  gdn_attention.gated_delta_recurrence:
+    ms_per_iter: 24.387565
+    mapping_status_duration_pct:
+      fusion: 55.9767
+      mapped: 44.0233
+    kernels:
+    - name: chunked GDN recurrence + final-state write
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 303.363
+      total_us_per_iter: 13651.344
+      share_in_node_pct: 55.977
+    - name: GDN recurrence input preparation
+      count: 180
+      count_per_iter: 180.0
+      avg_us: 54.903
+      total_us_per_iter: 9882.613
+      share_in_node_pct: 40.523
+    - name: Occurrence-local Python stack
+      count: 90
+      count_per_iter: 90.0
+      avg_us: 9.485
+      total_us_per_iter: 853.608
+      share_in_node_pct: 3.5
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 24.280327
+    - 24.387565
+  gdn_attention.output_gate_norm:
+    ms_per_iter: 7.716539
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output gate norm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 134.856
+      total_us_per_iter: 6068.529
+      share_in_node_pct: 78.643
+    - name: Occurrence-local Python stack
+      count: 50
+      count_per_iter: 50.0
+      avg_us: 32.96
+      total_us_per_iter: 1648.01
+      share_in_node_pct: 21.357
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 7.597438
+    - 7.716539
+  gdn_attention.output_projection:
+    ms_per_iter: 5.885136
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output projection
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 130.781
+      total_us_per_iter: 5885.136
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 5.720719
+    - 5.885136
+  gdn_attention.qkvz_projection:
+    ms_per_iter: 20.553704
+    mapping_status_duration_pct:
+      fusion: 25.3962
+      mapped: 74.6038
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 132
+      count_per_iter: 132.0
+      avg_us: 116.166
+      total_us_per_iter: 15333.852
+      share_in_node_pct: 74.604
+    - name: GDN QKVZBA split/reshape
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 115.997
+      total_us_per_iter: 5219.852
+      share_in_node_pct: 25.396
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 19.576064
+    - 20.553704
+  gdn_moe_block.attention_residual:
+    ms_per_iter: 2.011374
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 44.697
+      total_us_per_iter: 2011.374
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 1.694243
+    - 2.011374
+  gdn_moe_block.layer_residual:
+    ms_per_iter: 1.770092
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + next-layer input RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 39.335
+      total_us_per_iter: 1770.092
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 1.758001
+    - 1.770092
+  moe_block.routed_experts:
+    ms_per_iter: 34.90722
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 290.894
+      total_us_per_iter: 34907.22
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 11.437281
+    - 34.90722
+  moe_block.router:
+    ms_per_iter: 3.637691
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE router projection
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 29.579
+      total_us_per_iter: 1774.733
+      share_in_node_pct: 48.787
+    - name: MoE top-k router
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 21.211
+      total_us_per_iter: 1272.679
+      share_in_node_pct: 34.986
+    - name: Occurrence-local Python stack
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 4.919
+      total_us_per_iter: 590.279
+      share_in_node_pct: 16.227
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 3.553653
+    - 3.637691
+  moe_block.shared_expert:
+    ms_per_iter: 6.474586
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 253
+      count_per_iter: 253.0
+      avg_us: 23.19
+      total_us_per_iter: 5867.192
+      share_in_node_pct: 90.619
+    - name: shared expert activation
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 10.123
+      total_us_per_iter: 607.394
+      share_in_node_pct: 9.381
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 5.672273
+    - 6.474586
+  moe_block.target_ep4_combine:
+    ms_per_iter: 62.162903
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 combine
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 518.024
+      total_us_per_iter: 62162.903
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 16.594022
+    - 62.162903
+  moe_block.target_ep4_dispatch:
+    ms_per_iter: 127.144871
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 1053.475
+      total_us_per_iter: 126417.055
+      share_in_node_pct: 99.428
+    - name: Occurrence-local Python stack
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 12.13
+      total_us_per_iter: 727.816
+      share_in_node_pct: 0.572
+    aggregation: maximum per-rank kernel residency
+    source_rank: 2
+    rank_range_ms:
+    - 6.361517
+    - 127.144871
+  moe_block.target_ep4_pack:
+    ms_per_iter: 0.113665
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch pack
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 1.894
+      total_us_per_iter: 113.665
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 1
+    rank_range_ms:
+    - 0.103394
+    - 0.113665
+  moe_block.weighted_combine:
+    ms_per_iter: 2.366993
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE weighted combine
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 39.45
+      total_us_per_iter: 2366.993
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 0
+    rank_range_ms:
+    - 2.266126
+    - 2.366993
+  top.lm_head:
+    ms_per_iter: 0.322722
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: Occurrence-local Python stack
+      count: 7
+      count_per_iter: 7.0
+      avg_us: 46.103
+      total_us_per_iter: 322.722
+      share_in_node_pct: 100.0
+    aggregation: maximum per-rank kernel residency
+    source_rank: 3
+    rank_range_ms:
+    - 0.31789
+    - 0.322722

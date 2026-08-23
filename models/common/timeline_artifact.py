@@ -15,7 +15,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 
 TIMELINE_SCHEMA_VERSION = "timeline.v1"
@@ -170,6 +170,55 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(target for target in targets if target))
 
 
+def build_ancestor_target_resolver(
+    views: dict[str, dict[str, Any]],
+) -> Callable[[dict[str, Any]], list[str]]:
+    """Return a resolver that closes event targets over every drill ancestor.
+
+    A view may have more than one parent. Keeping all parents makes the same
+    measured event reachable from every Architecture entry point without
+    requiring each profile producer to maintain a second hierarchy table.
+    """
+
+    parents_by_view: dict[str, list[str]] = defaultdict(list)
+    for parent_view, view in views.items():
+        for node in view.get("nodes") or []:
+            child_view = node.get("drill")
+            if child_view and node.get("timeline_rollup", True):
+                parents_by_view[str(child_view)].append(
+                    f"{parent_view}.{node['id']}"
+                )
+
+    def resolve(event: dict[str, Any]) -> list[str]:
+        authored = event.get("ir_targets") or []
+        if isinstance(authored, str):
+            authored = [authored]
+        direct = str(event.get("node") or "")
+        resolved = list(
+            dict.fromkeys(
+                target
+                for target in (direct, *(str(value) for value in authored))
+                if target
+            )
+        )
+        seen = set(resolved)
+        queue = list(resolved)
+        while queue:
+            target = queue.pop(0)
+            view_id, separator, _node_id = target.partition(".")
+            if not separator:
+                continue
+            for parent in parents_by_view.get(view_id, ()):
+                if parent in seen:
+                    continue
+                seen.add(parent)
+                resolved.append(parent)
+                queue.append(parent)
+        return resolved
+
+    return resolve
+
+
 def _events_path_for_mapping(mapping_path: Path) -> Path | None:
     name = mapping_path.name
     if not name.startswith("kernel_mapping."):
@@ -276,15 +325,22 @@ def attach_eager_stack_evidence(
 
 
 def _kernel_kind(event: dict[str, Any]) -> str:
+    authored = event.get("kernel_kind")
+    if authored:
+        return str(authored)
     node = str(event.get("node") or "").lower()
     name = str(event.get("kernel_name") or "").lower()
     if (
         "collective" in node
+        or "dispatch_collective" in node
+        or "combine_collective" in node
         or "deepep_dispatch" in node
         or "deepep_combine" in node
         or "nccl" in name
         or "allreduce" in name
         or "allgather" in name
+        or "alltoall" in name
+        or "all_to_all" in name
         or "reduce_scatter" in name
     ):
         return "communication"
@@ -312,7 +368,11 @@ def _stream_key(event: dict[str, Any]) -> str:
     return str(stream if stream is not None else "unknown")
 
 
-def _stream_tracks(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _stream_tracks(
+    events: list[dict[str, Any]],
+    *,
+    kernel_kind_resolver: Callable[[dict[str, Any]], str] = _kernel_kind,
+) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         grouped[_stream_key(event)].append(event)
@@ -330,7 +390,10 @@ def _stream_tracks(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for event in stream_events:
             duration = float(event["dur_us"])
             node = str(event.get("node") or "")
-            kind = _kernel_kind(event)
+            authored_role = event.get("stream_role")
+            if authored_role:
+                by_role[str(authored_role)] += duration
+            kind = kernel_kind_resolver(event)
             if kind == "communication":
                 by_role["communication"] += duration
             else:
@@ -424,6 +487,8 @@ def build_timeline_artifact(
     timing_summary: dict[str, Any],
     raw_trace: dict[str, Any],
     stack_source: dict[str, Any],
+    target_resolver: Callable[[dict[str, Any]], list[str]] = timeline_targets,
+    kernel_kind_resolver: Callable[[dict[str, Any]], str] = _kernel_kind,
 ) -> dict[str, Any]:
     """Build a compact artifact from already-attributed measured events."""
 
@@ -483,11 +548,14 @@ def build_timeline_artifact(
         start_us = float(raw_step["trace_start_us"])
         duration_us = float(raw_step["duration_us"])
         encoded_events = []
+        resolved_targets_by_event: list[tuple[dict[str, Any], list[str]]] = []
         for index, event in enumerate(step_events):
-            targets = timeline_targets(event)
+            targets = target_resolver(event)
+            resolved_targets_by_event.append((event, targets))
             encoded_events.append(
                 {
                     "event_id": f"r{reference_rank}-s{raw_step['step_index']}-k{index}",
+                    "engine": strings.add(event.get("engine")),
                     "start_us": round(float(event["ts_us"]) - start_us, 6),
                     "duration_us": round(float(event["dur_us"]), 6),
                     "stream_id": _stream_key(event),
@@ -501,11 +569,19 @@ def build_timeline_artifact(
                     "layer_id": event.get("layer_id"),
                     "layer_kind": strings.add(event.get("layer_kind")),
                     "substage": strings.add(event.get("substage")),
-                    "kernel_kind": strings.add(_kernel_kind(event)),
+                    "mtp_round": event.get("mtp_round"),
+                    "kernel_kind": strings.add(kernel_kind_resolver(event)),
                     "attribution_method": strings.add(
                         event.get("attribution_method")
                     ),
+                    "mapping_status": strings.add(event.get("mapping_status")),
                     "confidence": strings.add(event.get("confidence")),
+                    "fusion_group": strings.add(event.get("fusion_group")),
+                    "unmapped_reason": strings.add(event.get("unmapped_reason")),
+                    "candidate_nodes": [
+                        strings.add(candidate)
+                        for candidate in (event.get("candidate_nodes") or [])
+                    ],
                     "cpu_op_name": strings.add(event.get("cpu_op_name")),
                     "stack_id": encode_stack(event),
                 }
@@ -522,6 +598,57 @@ def build_timeline_artifact(
         )
         active_us = sum(stop - start for start, stop in active_intervals)
         residency_us = sum(float(event["dur_us"]) for event in step_events)
+        events_by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event, targets in resolved_targets_by_event:
+            for target in targets:
+                events_by_node[target].append(event)
+        node_timings = []
+        for node, node_events in events_by_node.items():
+            node_start = min(float(event["ts_us"]) for event in node_events)
+            node_stop = max(
+                float(event["ts_us"]) + float(event["dur_us"])
+                for event in node_events
+            )
+            node_active = sum(
+                stop - start
+                for start, stop in _interval_union(
+                    (
+                        float(event["ts_us"]),
+                        float(event["ts_us"]) + float(event["dur_us"]),
+                    )
+                    for event in node_events
+                )
+            )
+            node_residency = sum(float(event["dur_us"]) for event in node_events)
+            all_active_in_span = sum(
+                stop - start
+                for start, stop in _interval_union(
+                    (
+                        max(node_start, float(event["ts_us"])),
+                        min(
+                            node_stop,
+                            float(event["ts_us"]) + float(event["dur_us"]),
+                        ),
+                    )
+                    for event in step_events
+                )
+            )
+            node_elapsed = node_stop - node_start
+            node_timings.append(
+                {
+                    "ir_node": strings.add(node),
+                    "occurrence_count": len(node_events),
+                    "elapsed_us": round(node_elapsed, 6),
+                    "active_gpu_us": round(node_active, 6),
+                    "gpu_residency_us": round(node_residency, 6),
+                    "gpu_overlap_us": round(max(0.0, node_residency - node_active), 6),
+                    "module_gap_us": round(max(0.0, node_elapsed - node_active), 6),
+                    "other_gpu_work_us": round(
+                        max(0.0, all_active_in_span - node_active), 6
+                    ),
+                }
+            )
+        node_timings.sort(key=lambda item: -float(item["gpu_residency_us"]))
         encoded_steps.append(
             {
                 "step_index": raw_step["step_index"],
@@ -532,7 +659,10 @@ def build_timeline_artifact(
                 "gpu_residency_us": round(residency_us, 6),
                 "device_gap_us": round(max(0.0, duration_us - active_us), 6),
                 "gpu_overlap_us": round(max(0.0, residency_us - active_us), 6),
-                "tracks": _stream_tracks(step_events),
+                "node_timings": node_timings,
+                "tracks": _stream_tracks(
+                    step_events, kernel_kind_resolver=kernel_kind_resolver
+                ),
                 "idle_intervals": _idle_intervals(
                     step_events, start_us=start_us, duration_us=duration_us
                 ),
