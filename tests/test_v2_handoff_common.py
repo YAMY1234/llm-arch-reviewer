@@ -341,6 +341,9 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert 'id="compare-trtllm-profile"' in viewer
     assert 'id="module-compare-table"' in viewer
     assert "function comparisonHierarchy()" in viewer
+    assert "function comparisonProfileScore(profileId)" in viewer
+    assert 'profilerType.includes("nsight") || profilerType.includes("nsys")' in viewer
+    assert 'selection.includes("exact")' in viewer
     assert "node.drill && Number(node.layer_count) > 0" in viewer
     assert "function comparisonKernelEntries(cell, profileId, target)" in viewer
     assert "function comparisonConcreteKernelIndex(profileId)" in viewer
@@ -351,6 +354,8 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "do not read the columns as a direct engine speedup" in viewer
     assert "GPU Σ is summed kernel residency" in viewer
     assert "concrete kernel name and time come verbatim from the profiler timeline" in viewer
+    assert "Matched timing axes: worker-local NSYS on both engines" in viewer
+    assert "Context/KV shape, accepted-length distribution" in viewer
     assert "Concrete kernel name" in viewer
     assert 'rowKind: "module_summary"' in viewer
     assert '"sglang_concrete_kernel_name", "sglang_concrete_kernel_ms"' in viewer

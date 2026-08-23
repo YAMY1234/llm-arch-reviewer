@@ -1727,6 +1727,23 @@ function comparisonEngine(profile) {
   return "";
 }
 
+function comparisonProfileScore(profileId) {
+  const profile = RAW_DATA?.profiles?.[profileId] || {};
+  const profilerType = String(profile.meta?.profiler?.type || "").toLowerCase();
+  const workload = profile.meta?.workload || {};
+  const evidence = profile.meta?.evidence || {};
+  const purpose = String(workload.purpose || "").toLowerCase();
+  const selection = String(evidence.selection_policy || "").toLowerCase();
+  let score = 0;
+  if (profilerType.includes("nsight") || profilerType.includes("nsys")) score += 100;
+  if (selection.includes("exact")) score += 50;
+  if (workload.selected_exact_target_verify_batch != null) score += 25;
+  if (workload.measured_shape?.selected_exact_generation_requests != null) score += 25;
+  if (profile.meta?.profiler?.cuda_graph_enabled) score += 5;
+  if (purpose.includes("attribution")) score -= 1000;
+  return score;
+}
+
 function comparisonProfileIds(engine) {
   return Object.entries(RAW_DATA?.profiles || {})
     .filter(([_profileId, profile]) =>
@@ -1735,7 +1752,12 @@ function comparisonProfileIds(engine) {
       && (!CURRENT_GENERATION || profileGenerationMode(profile) === CURRENT_GENERATION)
       && (!CURRENT_PHASE || profile.meta?.phase === CURRENT_PHASE)
     )
-    .map(([profileId]) => profileId);
+    .map(([profileId]) => profileId)
+    .sort((left, right) =>
+      comparisonProfileScore(right) - comparisonProfileScore(left)
+      || String(RAW_DATA.profiles[left]?.meta?.label || left)
+        .localeCompare(String(RAW_DATA.profiles[right]?.meta?.label || right))
+    );
 }
 
 function comparisonAvailable() {
@@ -1762,7 +1784,8 @@ function populateComparisonProfileSelect(select, profileIds, preferred, engine) 
     RAW_DATA?.profiles?.[CURRENT_PROFILE]?.meta?.workload?.purpose || ""
   ).toLowerCase();
   if (!selected && engine === "sglang" && profileIds.includes(CURRENT_PROFILE)
-      && !currentPurpose.includes("attribution")) {
+      && !currentPurpose.includes("attribution")
+      && comparisonProfileScore(CURRENT_PROFILE) >= comparisonProfileScore(profileIds[0])) {
     selected = CURRENT_PROFILE;
   }
   if (!selected) {
@@ -2121,9 +2144,21 @@ function comparisonCaveat() {
   const tWorkload = trtllm?.meta?.workload || {};
   const sameConcurrency = sWorkload.concurrency != null
     && Number(sWorkload.concurrency) === Number(tWorkload.concurrency);
-  const context = sameConcurrency
-    ? `Both profiles report concurrency ${sWorkload.concurrency}, but worker-local batch distributions and capture boundaries may differ.`
-    : "The selected workloads are not shape-normalized.";
+  const sProfiler = String(sglang?.meta?.profiler?.type || "").toLowerCase();
+  const tProfiler = String(trtllm?.meta?.profiler?.type || "").toLowerCase();
+  const bothNsys = [sProfiler, tProfiler].every(value =>
+    value.includes("nsight") || value.includes("nsys")
+  );
+  const sBatch = sWorkload.selected_exact_target_verify_batch;
+  const tBatch = tWorkload.measured_shape?.selected_exact_generation_requests;
+  const sameExactBatch = sBatch != null && tBatch != null && Number(sBatch) === Number(tBatch);
+  const context = bothNsys && sameExactBatch
+    ? `Matched timing axes: worker-local NSYS on both engines and exact rank-local BS${sBatch}`
+      + (sameConcurrency ? ` at concurrency ${sWorkload.concurrency}.` : ".")
+      + " Context/KV shape, accepted-length distribution, graph policy, and backend remain separate provenance dimensions."
+    : sameConcurrency
+      ? `Both profiles report concurrency ${sWorkload.concurrency}, but profiler type, worker-local batch distribution, or capture boundary may differ.`
+      : "The selected workloads are not profiler- and shape-normalized.";
   const attributionOnly = [sWorkload, tWorkload].some(workload =>
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
