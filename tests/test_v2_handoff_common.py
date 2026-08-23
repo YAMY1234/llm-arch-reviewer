@@ -332,3 +332,20 @@ def test_viewer_contains_bidirectional_architecture_timeline_navigation() -> Non
     assert "event._engine" in viewer
     assert "directFusionGroup" in viewer
     assert 'event._mappingStatus === "fusion"' in viewer
+
+
+def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
+    viewer = (REPO_ROOT / "docs" / "viewer.html").read_text()
+    assert 'data-view-mode="compare"' in viewer
+    assert 'id="compare-sglang-profile"' in viewer
+    assert 'id="compare-trtllm-profile"' in viewer
+    assert 'id="module-compare-table"' in viewer
+    assert "function comparisonHierarchy()" in viewer
+    assert "node.drill && Number(node.layer_count) > 0" in viewer
+    assert "function comparisonKernelEntries(cell)" in viewer
+    assert "function comparisonAggregate(cell)" in viewer
+    assert "function exportComparisonCsv()" in viewer
+    assert "do not read the columns as a direct engine speedup" in viewer
+    assert viewer.index('if (cell?.status === "fused")') < viewer.index(
+        "const residency = cell?.gpu_residency_ms ?? cell?.ms_per_iter;"
+    )
