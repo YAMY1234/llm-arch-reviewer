@@ -168,49 +168,59 @@ def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
     assert sglang["profiler"]["capture_trigger"] == "nvtx"
     assert sglang["profiler"]["capture_range"] == "agentx_decode_capture"
     assert sglang["profiler"]["capture_range_end"] == "repeat:1:async"
+    assert sglang["profiler"]["capture_range_api"] == (
+        "torch.cuda.nvtx.range_start/range_end"
+    )
+    assert sglang["profiler"]["capture_finalize_gpu_synchronize"] is True
+    assert sglang["profiler"]["capture_completion"] == (
+        "natural_scheduler_forward_count_boundary"
+    )
     assert sglang["profiler"]["nvtx_registered_strings_only"] is False
     assert sglang["workload"]["selected_samples"] == sum(
         sglang["workload"]["selected_samples_by_source"].values()
     )
     assert sglang["workload"]["selected_samples"] == 2
-    assert set(sglang["workload"]["structurally_validated_worker_rank_sources"]) == {
-        "w0/r0",
-        "w1/r0",
+    expected_sglang_sources = {
+        f"w{worker}/r{rank}" for worker in range(2) for rank in range(4)
     }
+    assert set(
+        sglang["workload"]["structurally_validated_worker_rank_sources"]
+    ) == expected_sglang_sources
     evidence = sglang["evidence"]
-    assert evidence["job_id"] == 3253468
+    assert evidence["job_id"] == 3256437
     assert evidence["profiling_source_commit"] == (
-        "9fd6cc7f485bc6efd58025f9dd03edde47b77bda"
+        "9d7f6d73b632076002329cd7c19dac5af9c6f76b"
     )
     assert evidence["profiling_overlay_commit"] == (
-        "68bc798308541086ffa6779ace956cdeaf113070"
+        "29e068d852a789a297da9cb53376fdeeca6a336c"
     )
     assert evidence["profiling_harness_commit"] == (
         "ebf9b696269c484713bd25b58feead000ca120d1"
     )
     assert evidence["profiler_manager_sha256"] == (
-        "6c485b3bae27effffc0b954d75bd92e49138075fe4ae35b65f35c1f9cb12593d"
+        "a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657"
     )
     assert evidence["scheduler_nvtx_sha256"] == (
         "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
     )
     assert evidence["runtime_manifest_sha256"] == (
-        "7726df599bf57233106c789bc410c30a1c9decda47c2b90fc74ef3cb1f9c47dc"
+        "8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974"
     )
     assert evidence["symm_mem_gather_sha256"] == (
         "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
     )
     assert sglang["profiler"]["scheduler_capture_steps"] == {
-        "start_inclusive": 28500,
-        "stop_exclusive": 28900,
+        "start_inclusive": 10000,
+        "stop_exclusive": 10002,
     }
     assert sglang["profiler"]["exact_capture_stop_policy"] == {
-        "rebased_forward_count_width": 400,
+        "rebased_forward_count_width": 2,
         "minimum_completed_decode_batches": 2,
         "condition": (
             "both rebased forward-count width reached and at least two real "
             "decode batches completed"
         ),
+        "external_stop_required": False,
     }
     assert len(evidence["report_files"]) == 2
     assert evidence["nsys_export"]["product"] == "NVIDIA Nsight Systems"
@@ -222,8 +232,20 @@ def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
     )
     assert len(evidence["nsys_report_files"]) == 2
     assert len(evidence["worker_logs"]) == 2
-    assert evidence["instrumented_worker_rank_sources"] == ["w0/r0", "w1/r0"]
-    assert evidence["four_rank_validation"] is False
+    assert set(evidence["instrumented_worker_rank_sources"]) == expected_sglang_sources
+    assert evidence["four_rank_validation"] is True
+    assert set(evidence["all_rank_capture_integrity"]) == {0, 1}
+    for integrity in evidence["all_rank_capture_integrity"].values():
+        assert integrity["capture_device"] == 0
+        assert integrity["rank_count"] == 4
+        assert integrity["consistent_graph_bearing_scheduler_marker_count"] == 1
+        assert set(integrity["ranks"]) == {"r0", "r1", "r2", "r3"}
+        assert all(
+            rank["kernel_count"] > 0
+            and rank["cuda_graph_launch_count"] > 0
+            and rank["graph_bearing_scheduler_marker_count"] == 1
+            for rank in integrity["ranks"].values()
+        )
     assert evidence["worker_count"] == 2
     assert evidence["semantic_attribution_gate"] == {
         "metric": "mapped_or_fusion_active_union_ratio",
@@ -355,6 +377,13 @@ def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
 def test_architecture_exposes_timeline_rollups_on_drill_modules():
     bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
     profile_id = bundle["default_profile"]
+    assert profile_id == (
+        "qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_nsys_bs32"
+    )
+    variant_id = bundle["profiles"][profile_id]["meta"]["variant_id"]
+    assert variant_id == (
+        "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_nsys_bs32"
+    )
     expected_targets = {
         "top.decoder_stack",
         "stack.gdn_layer",
@@ -367,7 +396,7 @@ def test_architecture_exposes_timeline_rollups_on_drill_modules():
     for target in expected_targets:
         view_id, node_id = target.split(".", 1)
         cell = bundle["enriched"][view_id]["nodes_profile"][node_id][profile_id][
-            "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_steady"
+            variant_id
         ]
         assert cell["attribution_status"] == "inclusive_rollup"
         assert cell["active_gpu_ms"] > 0

@@ -1,0 +1,1006 @@
+schema_version: profile.v2
+profile_id: qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_nsys_bs32
+label: Qwen3.5 397B · SGLang · AgentX C704 · DEP4 + MTP6 · NSYS exact BS32
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+variant_id: sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_nsys_bs32
+phase: decode
+generation_mode: mtp
+entry_view: top
+execution_parameters:
+  tp_size: 1
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+hardware:
+  gpu: GB300
+  gpus_per_worker: 4
+  prefill_workers: 3
+  decode_workers: 2
+workload:
+  scenario: inferencex-agentx-mvp
+  rank_distribution: A-Z97
+  concurrency: 704
+  selected_exact_target_verify_batch: 32
+  selected_samples: 2
+  selected_samples_by_source:
+    w0/r0: 1
+    w1/r0: 1
+  selected_worker_rank_sources:
+  - w0/r0
+  - w1/r0
+  structurally_validated_worker_rank_sources: &id002
+  - w0/r0
+  - w0/r1
+  - w0/r2
+  - w0/r3
+  - w1/r0
+  - w1/r1
+  - w1/r2
+  - w1/r3
+  selected_rank_local_full_tokens:
+    semantics: 'scheduler #full token for the exact selected-batch rank-local step'
+    samples:
+    - 7609600
+    - 7632000
+    min: 7609600
+    median: 7620800.0
+    max: 7632000
+  selected_mean_full_tokens_per_request:
+    semantics: 'rank-local #full token divided by actual running requests'
+    samples:
+    - 237800.0
+    - 238500.0
+    min: 237800.0
+    median: 238150.0
+    max: 238500.0
+  accepted_length:
+    samples:
+    - 4.0
+    - 5.0
+    min: 4.0
+    median: 4.5
+    max: 5.0
+  queue_requests: 0
+  retracted_requests: 0
+profiler:
+  type: nsight_systems_worker_local
+  rank: exact-BS32 DP0 timing on both decode workers; all four DEP ranks validated
+    for CUDA table and scheduler-marker integrity
+  trace:
+  - cuda
+  - nvtx
+  capture_trigger: nvtx
+  capture_range: agentx_decode_capture
+  capture_range_end: repeat:1:async
+  capture_range_api: torch.cuda.nvtx.range_start/range_end
+  capture_finalize_gpu_synchronize: true
+  capture_completion: natural_scheduler_forward_count_boundary
+  nvtx_registered_strings_only: false
+  scheduler_capture_steps:
+    start_inclusive: 10000
+    stop_exclusive: 10002
+  exact_capture_stop_policy:
+    rebased_forward_count_width: 2
+    minimum_completed_decode_batches: 2
+    condition: both rebased forward-count width reached and at least two real decode
+      batches completed
+    external_stop_required: false
+  cuda_graph_enabled: true
+  gpu_metric_semantics: maximum of the two worker-local DP0 samples; parallel workers
+    and DEP ranks are not summed
+  attribution_calibration: graph-off eager Torch stack
+evidence:
+  job_id: 3256437
+  source_commit: 85c23c62fdc58a5a0c3b7c6d61a7bba720a6cbbf
+  runtime_source_commit: a31c1e52e947bcbdd0d551c5e2323e96a9bf303b
+  profiling_source_commit: 9d7f6d73b632076002329cd7c19dac5af9c6f76b
+  profiling_overlay_commit: 29e068d852a789a297da9cb53376fdeeca6a336c
+  profiling_harness_commit: ebf9b696269c484713bd25b58feead000ca120d1
+  profiler_manager_sha256: a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657
+  scheduler_nvtx_sha256: 56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd
+  runtime_manifest_sha256: 8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974
+  symm_mem_gather_sha256: 8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container_sha256: 87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a
+  config_file: config.yaml
+  config_sha256: 5421c9b62e2994eb2b199a4e9bc66a433aa35335aee4b7bada7bcfcb160ec6ac
+  job_metadata_file: 3256437.json
+  job_metadata_sha256: 3b04a6320f544150d764316de1fea445e84d2e7faad2c9c54fad811eec7b5bf1
+  benchmark_log_file: benchmark.out
+  benchmark_log_sha256: c966bdec7052352469432c700d1af1934f17808f6df71043b6c8de53b0d9eb03
+  benchmark_snapshot:
+    instant_rps: 14.3
+    average_rps: 27.0
+    done: 33155
+    ok: 33155
+    errors: 0
+  fingerprints:
+  - worker: 0
+    file: fingerprint_decode_w0.json
+    sha256: 5bc0aa8dedb1a7163ecaf95950ce631fa0203b1a677f9a3e3eadc21d4479100c
+    hostname: nvl72d181-T08
+    frameworks:
+      sglang: 0.0.0.dev1+gcea16bf22
+      dynamo: 1.4.0
+  - worker: 1
+    file: fingerprint_decode_w1.json
+    sha256: 21f0ce27a6e9c1d3c31e103717c0fb14b65b3dcfaed07dd3cf8b6c2d13f316df
+    hostname: nvl72d181-T09
+    frameworks:
+      sglang: 0.0.0.dev1+gcea16bf22
+      dynamo: 1.4.0
+  report_files:
+  - worker: 0
+    file: nvl72d181-T08_decode_w0_profile_gpu0-1-2-3.1.sqlite
+    sha256: a5afb3ea31df2efb0457d97b2ccd9bd6f6a1df1a1b15e19b0b4367efb66a438b
+    nsys_export: &id001
+      product: NVIDIA Nsight Systems
+      version: 2026.4.1.191
+      schema_version: 3.28.0
+  - worker: 1
+    file: nvl72d181-T09_decode_w1_profile_gpu0-1-2-3.1.sqlite
+    sha256: ea18bc737b846f78408bcdf2a41d16cb35ef8838f23e11532ea53a383f3b2a42
+    nsys_export:
+      product: NVIDIA Nsight Systems
+      version: 2026.4.1.191
+      schema_version: 3.28.0
+  nsys_export: *id001
+  nsys_report_files:
+  - worker: 0
+    file: nvl72d181-T08_decode_w0_profile_gpu0-1-2-3.1.nsys-rep
+    sha256: 63ced1944a4ee130fefeec9b34166c240563802cc7a970cb4861c07119f37b07
+  - worker: 1
+    file: nvl72d181-T09_decode_w1_profile_gpu0-1-2-3.1.nsys-rep
+    sha256: a0cbe478c546d366e25c0aba017c411f2066e9c82568bac2a08428b0b95792a3
+  worker_logs:
+  - worker: 0
+    file: nvl72d181-T08_decode_w0.out
+    sha256: 5915df583063053d756d275e20787d5c6a461bc7650ce01cce6f1c2bc8812a40
+  - worker: 1
+    file: nvl72d181-T09_decode_w1.out
+    sha256: da3c6bf31cc447e13eba92e4751d9c24fe4fdf19d85b1485f517c6e90baa8728
+  eager_mapping_file: kernel_mapping.tp0.jsonl
+  eager_mapping_sha256: 86bca610b8aebf815fe878416e72927d40b78b99cd6bb62710bdc62396b6cf83
+  contextual_eager_trace:
+    file: qwen35-dep4-attribution-bs32-cgoff-qwen35-dep4-attribution-bs32-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 18967dbdd721dab7a79f1dde19af6f2a20ee07332ff8dd1061f4a52e4279cd86
+    validated_repeated_slots: 51
+  mapping_policy: exact-batch capture gate + first-step capture/scheduler boundary
+    + graphId/nodeId occurrence + exact GGGA/MTP5 order + eager stack leaf calibration
+  selection_policy: first DP0 step after exact running_requests=32 capture gate on
+    each decode worker
+  mapped_or_fusion_duration_ratio: 0.955462
+  mapped_or_fusion_active_union_ratio: 0.957451
+  strict_signature_duration_ratio: 0.716129
+  mapped_duration_ratio: 0.86062
+  fusion_duration_ratio: 0.094842
+  unmapped_duration_ratio: 0.044538
+  timeline_interval_coverage_ratio: 1.0
+  semantic_attribution_gate:
+    metric: mapped_or_fusion_active_union_ratio
+    threshold: 0.95
+    passed: true
+  critical_gpu_span_ms:
+    samples:
+    - 54.834913
+    - 63.16927
+    mean: 59.0020915
+    median: 59.0020915
+    min: 54.834913
+    max: 63.16927
+  critical_logical_period_ms:
+    samples:
+    - 55.816005
+    - 64.019359
+    mean: 59.917682
+    median: 59.917682
+    min: 55.816005
+    max: 64.019359
+  instrumented_worker_rank_sources: *id002
+  all_rank_capture_integrity:
+    0:
+      capture_device: 0
+      capture_range:
+        label: agentx_decode_capture
+        start_ns: 35007861
+        end_ns: 141498760
+      rank_count: 4
+      consistent_graph_bearing_scheduler_marker_count: 1
+      boundary_marker_policy: complete positive-duration scheduler ranges without
+        a CUDA Graph launch are capture-finalization tail markers and are reported,
+        not counted as steps
+      ranks:
+        r0:
+          device_id: 0
+          global_pid: 309364548173824
+          kernel_count: 4482
+          cuda_graph_launch_count: 6
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+        r1:
+          device_id: 1
+          global_pid: 309367098310656
+          kernel_count: 2327
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+        r2:
+          device_id: 2
+          global_pid: 309368440487936
+          kernel_count: 2284
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 2
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 1
+        r3:
+          device_id: 3
+          global_pid: 309369816219648
+          kernel_count: 2421
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+    1:
+      capture_device: 0
+      capture_range:
+        label: agentx_decode_capture
+        start_ns: 42683129
+        end_ns: 161367349
+      rank_count: 4
+      consistent_graph_bearing_scheduler_marker_count: 1
+      boundary_marker_policy: complete positive-duration scheduler ranges without
+        a CUDA Graph launch are capture-finalization tail markers and are reported,
+        not counted as steps
+      ranks:
+        r0:
+          device_id: 0
+          global_pid: 336136052408320
+          kernel_count: 4676
+          cuda_graph_launch_count: 6
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+        r1:
+          device_id: 1
+          global_pid: 336137394585600
+          kernel_count: 2416
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+        r2:
+          device_id: 2
+          global_pid: 336138954866688
+          kernel_count: 2328
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+        r3:
+          device_id: 3
+          global_pid: 336140414484480
+          kernel_count: 2462
+          cuda_graph_launch_count: 3
+          complete_scheduler_marker_count: 1
+          graph_bearing_scheduler_marker_count: 1
+          boundary_tail_marker_count: 0
+  four_rank_validation: true
+  worker_count: 2
+timeline:
+  schema_version: timeline.v1
+  artifact: agentx_nsys_bs32.timeline.json.gz
+  sha256: b36fd2a0000713ebaa6948f005a0a4ec69d6118b1689dffb8cc583d69f632e12
+  reference_worker: 0
+  reference_rank: 0
+  step_count: 1
+  event_count: 2244
+  raw_trace_file: nvl72d181-T08_decode_w0_profile_gpu0-1-2-3.1.sqlite
+node_states:
+  gdn_attention.ba_projection:
+    status: fused
+    included_in: gdn_attention.qkvz_projection
+  gdn_attention.state_write:
+    status: fused
+    included_in: gdn_attention.gated_delta_recurrence
+  full_attention.partial_rope:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.attention_output_gate:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.kv_state_write:
+    status: fused
+    included_in: full_attention.qkv_projection
+  mtp_full_attention.partial_rope:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.attention_output_gate:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.kv_state_write:
+    status: fused
+    included_in: mtp_full_attention.qkv_projection
+  generation_loop.candidate_tokens:
+    status: fused
+    included_in: generation_loop.draft_propose
+  generation_loop.target_verify:
+    status: fused
+    included_in: top.decoder_stack
+  generation_loop.tentative_state:
+    status: fused
+    included_in: generation_loop.target_verify
+  generation_loop.commit_kv:
+    status: unobserved
+    reason: SGLang publishes accepted KV length/index metadata without a uniquely
+      attributable standalone CUDA kernel in the measured traces
+  generation_loop.next_iteration:
+    status: unobserved
+    reason: host-side loop control has no standalone GPU interval
+node_metrics:
+  full_attention.attention_output_gate:
+    ms_per_iter: 0.04304
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: full-attention output gate
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 2.869
+      total_us_per_iter: 43.04
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.042816
+    - 0.04304
+  full_attention.causal_gqa:
+    ms_per_iter: 9.793453
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 163.224
+      total_us_per_iter: 9793.453
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 9.51344
+    - 9.793453
+  full_attention.output_projection:
+    ms_per_iter: 0.251329
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output-projection implementation
+      count: 30
+      count_per_iter: 30.0
+      avg_us: 8.378
+      total_us_per_iter: 251.329
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.230112
+    - 0.251329
+  full_attention.qk_norm:
+    ms_per_iter: 0.165376
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 11.025
+      total_us_per_iter: 165.376
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.16525
+    - 0.165376
+  full_attention.qkv_projection:
+    ms_per_iter: 0.464578
+    mapping_status_duration_pct:
+      fusion: 17.3372
+      mapped: 82.6628
+    kernels:
+    - name: next-layer input projection
+      count: 30
+      count_per_iter: 30.0
+      avg_us: 12.801
+      total_us_per_iter: 384.033
+      share_in_node_pct: 82.663
+    - name: QKV projection + KV-cache write fusion
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 5.37
+      total_us_per_iter: 80.545
+      share_in_node_pct: 17.337
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.456803
+    - 0.464578
+  full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.072322
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 4.821
+      total_us_per_iter: 72.322
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.066464
+    - 0.072322
+  full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.055292
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + following RMSNorm
+      count: 15
+      count_per_iter: 15.0
+      avg_us: 3.686
+      total_us_per_iter: 55.292
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.054908
+    - 0.055292
+  gdn_attention.causal_conv:
+    ms_per_iter: 1.10231
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN causal convolution
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 24.496
+      total_us_per_iter: 1102.31
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 1.089929
+    - 1.10231
+  gdn_attention.gated_delta_recurrence:
+    ms_per_iter: 3.377323
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: GDN recurrent update
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 75.052
+      total_us_per_iter: 3377.323
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 3.356421
+    - 3.377323
+  gdn_attention.output_gate_norm:
+    ms_per_iter: 0.261057
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output gate norm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 5.801
+      total_us_per_iter: 261.057
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.25927
+    - 0.261057
+  gdn_attention.output_projection:
+    ms_per_iter: 0.763077
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output-projection implementation
+      count: 90
+      count_per_iter: 90.0
+      avg_us: 8.479
+      total_us_per_iter: 763.077
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.698944
+    - 0.763077
+  gdn_attention.qkvz_projection:
+    ms_per_iter: 1.727236
+    mapping_status_duration_pct:
+      fusion: 11.7663
+      mapped: 88.2337
+    kernels:
+    - name: next-layer input projection
+      count: 132
+      count_per_iter: 132.0
+      avg_us: 11.545
+      total_us_per_iter: 1524.004
+      share_in_node_pct: 88.234
+    - name: GDN QKVZBA split/reshape
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 4.516
+      total_us_per_iter: 203.232
+      share_in_node_pct: 11.766
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 1.690377
+    - 1.727236
+  gdn_moe_block.attention_residual:
+    ms_per_iter: 0.248707
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 5.527
+      total_us_per_iter: 248.707
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.205888
+    - 0.248707
+  gdn_moe_block.layer_residual:
+    ms_per_iter: 0.182299
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + following RMSNorm
+      count: 45
+      count_per_iter: 45.0
+      avg_us: 4.051
+      total_us_per_iter: 182.299
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.176661
+    - 0.182299
+  generation_loop.commit_gdn:
+    ms_per_iter: 0.075265
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted convolution-state commit
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 75.265
+      total_us_per_iter: 75.265
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.074977
+    - 0.075265
+  generation_loop.commit_tokens:
+    ms_per_iter: 0.001792
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: publish accepted target bonus tokens
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 1.792
+      total_us_per_iter: 1.792
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.001632
+    - 0.001792
+  generation_loop.draft_propose:
+    ms_per_iter: 0.039392
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: draft candidate construction
+      count: 9
+      count_per_iter: 9.0
+      avg_us: 4.377
+      total_us_per_iter: 39.392
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.03888
+    - 0.039392
+  generation_loop.replay_gdn:
+    ms_per_iter: 1.775308
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted-prefix GDN state replay
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 1775.308
+      total_us_per_iter: 1775.308
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 1.535623
+    - 1.775308
+  moe_block.routed_experts:
+    ms_per_iter: 10.15381
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 84.615
+      total_us_per_iter: 10153.81
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 10.023941
+    - 10.15381
+  moe_block.router:
+    ms_per_iter: 1.477384
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 7.325
+      total_us_per_iter: 879.013
+      share_in_node_pct: 59.498
+    - name: router projection/top-k implementation
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 4.986
+      total_us_per_iter: 598.371
+      share_in_node_pct: 40.502
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 1.436647
+    - 1.477384
+  moe_block.shared_expert:
+    ms_per_iter: 1.207262
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared-expert implementation
+      count: 240
+      count_per_iter: 240.0
+      avg_us: 4.144
+      total_us_per_iter: 994.593
+      share_in_node_pct: 82.384
+    - name: shared expert activation
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 3.544
+      total_us_per_iter: 212.669
+      share_in_node_pct: 17.616
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 1.1846
+    - 1.207262
+  moe_block.target_ep4_combine:
+    ms_per_iter: 1.395048
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 combine
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 11.625
+      total_us_per_iter: 1395.048
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 1.374629
+    - 1.395048
+  moe_block.target_ep4_dispatch:
+    ms_per_iter: 2.727849
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch
+      count: 120
+      count_per_iter: 120.0
+      avg_us: 21.728
+      total_us_per_iter: 2607.305
+      share_in_node_pct: 95.581
+    - name: Exact kernel signature proven by eager Python stack
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 2.009
+      total_us_per_iter: 120.544
+      share_in_node_pct: 4.419
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 1.973771
+    - 2.727849
+  moe_block.target_ep4_pack:
+    ms_per_iter: 0.090465
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch pack
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 1.508
+      total_us_per_iter: 90.465
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.078145
+    - 0.090465
+  moe_block.weighted_combine:
+    ms_per_iter: 0.180833
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE weighted combine
+      count: 60
+      count_per_iter: 60.0
+      avg_us: 3.014
+      total_us_per_iter: 180.833
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.177601
+    - 0.180833
+  mtp_draft_head.shared_lm_head:
+    ms_per_iter: 1.570987
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP shared LM head
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 314.197
+      total_us_per_iter: 1570.987
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 1.570698
+    - 1.570987
+  mtp_full_attention.attention_output_gate:
+    ms_per_iter: 0.0096
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP attention output gate
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 1.92
+      total_us_per_iter: 9.6
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.00944
+    - 0.0096
+  mtp_full_attention.causal_gqa:
+    ms_per_iter: 2.814735
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 20
+      count_per_iter: 20.0
+      avg_us: 140.737
+      total_us_per_iter: 2814.735
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 2.736564
+    - 2.814735
+  mtp_full_attention.output_projection:
+    ms_per_iter: 0.012384
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP attention output projection
+      count: 4
+      count_per_iter: 4.0
+      avg_us: 3.096
+      total_us_per_iter: 12.384
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.011104
+    - 0.012384
+  mtp_full_attention.qk_norm:
+    ms_per_iter: 0.020768
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 4.154
+      total_us_per_iter: 20.768
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.020352
+    - 0.020768
+  mtp_full_attention.qkv_projection:
+    ms_per_iter: 0.022368
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 4.474
+      total_us_per_iter: 22.368
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.021696
+    - 0.022368
+  mtp_full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.018335
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MTP attention residual add + pre-MoE RMSNorm
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 3.667
+      total_us_per_iter: 18.335
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.01683
+    - 0.018335
+  mtp_full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.015232
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MTP MoE residual add + draft final RMSNorm
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 3.046
+      total_us_per_iter: 15.232
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.015167
+    - 0.015232
+  mtp_moe_block.draft_ep4_combine:
+    ms_per_iter: 0.26061
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft combine
+      count: 10
+      count_per_iter: 10.0
+      avg_us: 26.061
+      total_us_per_iter: 260.61
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.235072
+    - 0.26061
+  mtp_moe_block.draft_ep4_dispatch:
+    ms_per_iter: 1.004645
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft dispatch
+      count: 10
+      count_per_iter: 10.0
+      avg_us: 100.465
+      total_us_per_iter: 1004.645
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.529059
+    - 1.004645
+  mtp_moe_block.routed_experts:
+    ms_per_iter: 1.62785
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 10
+      count_per_iter: 10.0
+      avg_us: 162.785
+      total_us_per_iter: 1627.85
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 1.605092
+    - 1.62785
+  mtp_moe_block.router:
+    ms_per_iter: 0.021856
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 5
+      count_per_iter: 5.0
+      avg_us: 4.371
+      total_us_per_iter: 21.856
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.02176
+    - 0.021856
+  mtp_moe_block.shared_expert:
+    ms_per_iter: 0.131811
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared expert activation
+      count: 10
+      count_per_iter: 10.0
+      avg_us: 10.512
+      total_us_per_iter: 105.123
+      share_in_node_pct: 79.753
+    - name: Exact kernel signature + repeated layer/round slot proven by eager stack
+      count: 4
+      count_per_iter: 4.0
+      avg_us: 6.672
+      total_us_per_iter: 26.688
+      share_in_node_pct: 20.247
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w0/r0
+    worker_rank_range_ms:
+    - 0.129666
+    - 0.131811
+  top.lm_head:
+    ms_per_iter: 0.51418
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target shared LM head
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 257.09
+      total_us_per_iter: 514.18
+      share_in_node_pct: 100.0
+    aggregation: maximum worker/rank kernel residency
+    source_worker_rank: w1/r0
+    worker_rank_range_ms:
+    - 0.51165
+    - 0.51418

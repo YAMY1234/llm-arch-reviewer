@@ -137,6 +137,140 @@ def read_nsys_export_metadata(path: Path) -> dict[str, str]:
     return metadata
 
 
+def validate_sglang_all_rank_capture_integrity(
+    path: Path,
+    *,
+    capture_range_label: str,
+    expected_ranks: tuple[int, ...] = (0, 1, 2, 3),
+) -> dict[str, Any]:
+    """Validate CUDA tables and complete scheduler markers for every DEP rank.
+
+    The exact-BS32 timing row is selected on DP0, while the worker-local Nsys
+    process records all four CUDA devices.  This check keeps those two claims
+    separate: it proves all-rank trace integrity without summing rank residency
+    or pretending every rank had the same dynamic batch size.
+    """
+
+    connection = sqlite3.connect(path)
+    try:
+        strings = _strings(connection)
+        process_by_device = _sglang_process_by_device(connection)
+        expected = set(expected_ranks)
+        if set(process_by_device) != expected:
+            raise ValueError(
+                f"{path}: expected SGLang devices {sorted(expected)}, "
+                f"found {sorted(process_by_device)}"
+            )
+
+        captures: list[tuple[int, tuple[int, int]]] = []
+        for device, process in sorted(process_by_device.items()):
+            captures.extend(
+                (device, capture)
+                for capture in _sglang_nvtx_ranges(
+                    connection,
+                    strings,
+                    global_pid=process,
+                    label=capture_range_label,
+                )
+            )
+        if len(captures) != 1:
+            raise ValueError(
+                f"{path}: expected one all-process {capture_range_label!r} range, "
+                f"found {len(captures)}"
+            )
+        capture_device, capture_window = captures[0]
+        capture_start, capture_end = capture_window
+
+        ranks: dict[str, dict[str, int]] = {}
+        graph_marker_counts: set[int] = set()
+        for device, process in sorted(process_by_device.items()):
+            kernels = [
+                kernel
+                for kernel in _kernel_rows(
+                    connection, strings, global_pid=process
+                )
+                if capture_start <= kernel.start_ns < capture_end
+            ]
+            if not kernels:
+                raise ValueError(f"{path}: device/rank {device} has no captured kernels")
+            if any(kernel.device_id != device for kernel in kernels):
+                raise ValueError(
+                    f"{path}: process {process} contains kernels from another device"
+                )
+            scheduler_ranges = [
+                boundary
+                for boundary in _sglang_nvtx_ranges(
+                    connection,
+                    strings,
+                    global_pid=process,
+                    label=SGLANG_STEP_LABEL,
+                )
+                if capture_start < boundary[0] < capture_end
+                and boundary[0] < boundary[1] <= capture_end
+            ]
+            if not scheduler_ranges:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no complete scheduler marker"
+                )
+            graph_launches = [
+                launch
+                for launch in _sglang_graph_launches(
+                    connection, strings, global_pid=process
+                )
+                if capture_start <= launch < capture_end
+            ]
+            if not graph_launches:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no captured CUDA Graph launch"
+                )
+            graph_scheduler_ranges = [
+                boundary
+                for boundary in scheduler_ranges
+                if any(boundary[0] <= launch < boundary[1] for launch in graph_launches)
+            ]
+            if not graph_scheduler_ranges:
+                raise ValueError(
+                    f"{path}: device/rank {device} has no graph-bearing scheduler marker"
+                )
+            graph_marker_counts.add(len(graph_scheduler_ranges))
+            ranks[f"r{device}"] = {
+                "device_id": device,
+                "global_pid": process,
+                "kernel_count": len(kernels),
+                "cuda_graph_launch_count": len(graph_launches),
+                "complete_scheduler_marker_count": len(scheduler_ranges),
+                "graph_bearing_scheduler_marker_count": len(graph_scheduler_ranges),
+                "boundary_tail_marker_count": (
+                    len(scheduler_ranges) - len(graph_scheduler_ranges)
+                ),
+            }
+    finally:
+        connection.close()
+
+    if len(graph_marker_counts) != 1:
+        raise ValueError(
+            f"{path}: SGLang all-rank graph-bearing scheduler marker counts differ: "
+            f"{sorted(graph_marker_counts)}"
+        )
+    return {
+        "capture_device": capture_device,
+        "capture_range": {
+            "label": capture_range_label,
+            "start_ns": capture_start,
+            "end_ns": capture_end,
+        },
+        "rank_count": len(ranks),
+        "consistent_graph_bearing_scheduler_marker_count": next(
+            iter(graph_marker_counts)
+        ),
+        "boundary_marker_policy": (
+            "complete positive-duration scheduler ranges without a CUDA Graph launch "
+            "are capture-finalization tail markers and are reported, not counted as steps"
+        ),
+        "ranks": ranks,
+    }
+
+
 def _strings(connection: sqlite3.Connection) -> dict[int, str]:
     return {int(key): str(value) for key, value in connection.execute(
         "select id, value from StringIds"

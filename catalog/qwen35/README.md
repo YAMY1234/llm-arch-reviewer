@@ -81,7 +81,7 @@ DeepEP low-latency plus DeepGEMM. The TRT-LLM target uses CUTEDSL MoE EP4, while
 quantization-excluded MTP experts use a CUTLASS BF16 fallback. These are implementation
 facts, not architecture mutations.
 
-Seven official profiles are published under `profiles/attention_dp4_moe_ep4/`, and every
+Eight official profiles are published under `profiles/attention_dp4_moe_ep4/`, and every
 one has `generation_mode: mtp`:
 
 | Engine | Profile | Capture identity | Critical GPU wall |
@@ -91,8 +91,9 @@ one has `generation_mode: mtp`:
 | SGLang | one-chunk 8K target prefill | job `3207938` | 367.889 ms |
 | SGLang | CUDA-Graph global-BS32 decode | job `3204736` | mean 18.510 ms |
 | SGLang | real A-Z97/C704 steady decode | job `3205969` | mean 55.478 ms |
+| SGLang | worker-local NSYS exact rank-local BS32 | job `3256437` | mean 59.002 ms |
 | TRT-LLM | exact one-request/8K prefill | job `532540` | mean 374.482 ms |
-| TRT-LLM | worker-local decode, 30–32 generation requests | job `532540` | mean 37.612 ms |
+| TRT-LLM | worker-local exact rank-local BS32 subset | job `532540` | mean 37.605 ms |
 
 All selected kernel intervals are retained and classified as mapped, evidence-backed
 fusion, or explicit unmapped with candidates and a reason.  Those three classes close
@@ -105,10 +106,12 @@ fusion groups, layer identifiers, and MTP rounds. One reference rank is displaye
 four ranks are validated and parallel rank residency is never summed.
 
 The exact 8K prefill profiles are shape-matched and give a descriptive TRT/SGL wall ratio
-of 1.0179x. Decode profiles are deliberately not subtracted: SGLang global-BS32 means
-eight requests per DP rank, whereas the TRT capture observes 30–32 generation requests
-per worker/rank, and the real AgentX batch distributions and accept-length settings also
-differ.
+of 1.0179x. The new decode pair aligns worker-local NSYS, phase, C704, DEP4 + MTP6 and
+actual rank-local BS32, but is still deliberately not subtracted: SGLang accepted length
+is 4.0/5.0 with roughly 238K full tokens per selected request, while TRT is configured for
+3.8 and does not retain a directly paired per-step full-token/KV shape. Stream interval,
+graph/fusion/backend, exporter version, and sample count also differ. The older SGLang
+global-BS32 profile remains a distinct eight-requests-per-DP-rank scope.
 
 ## Evidence boundaries
 

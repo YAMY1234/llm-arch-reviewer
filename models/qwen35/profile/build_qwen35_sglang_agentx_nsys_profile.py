@@ -50,23 +50,24 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     load_sglang_nsys_steps,
     read_nsys_export_metadata,
     sglang_nsys_trace_events,
+    validate_sglang_all_rank_capture_integrity,
     validate_sglang_graph_node_stability,
 )
 from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
-PROFILING_SOURCE_COMMIT = "9fd6cc7f485bc6efd58025f9dd03edde47b77bda"
-PROFILING_OVERLAY_COMMIT = "68bc798308541086ffa6779ace956cdeaf113070"
+PROFILING_SOURCE_COMMIT = "9d7f6d73b632076002329cd7c19dac5af9c6f76b"
+PROFILING_OVERLAY_COMMIT = "29e068d852a789a297da9cb53376fdeeca6a336c"
 SRT_SLURM_CAPTURE_COMMIT = "ebf9b696269c484713bd25b58feead000ca120d1"
 PROFILER_MANAGER_SHA256 = (
-    "6c485b3bae27effffc0b954d75bd92e49138075fe4ae35b65f35c1f9cb12593d"
+    "a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657"
 )
 SCHEDULER_NVTX_SHA256 = (
     "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
 )
 RUNTIME_MANIFEST_SHA256 = (
-    "7726df599bf57233106c789bc410c30a1c9decda47c2b90fc74ef3cb1f9c47dc"
+    "8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974"
 )
 SYMM_MEM_GATHER_SHA256 = (
     "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
@@ -222,42 +223,78 @@ def parse_exact_batch_capture_observation(
         raise ValueError(f"{path}: missing DP0 profiler completion marker")
 
     observations = []
+    all_rank_observations = []
     for line in lines[start + 1 : stop]:
         match = LOG_ROW_RE.search(line)
-        if match is None or int(match.group("rank")) != 0:
+        if match is None:
             continue
-        observations.append(
-            {
-                "dp_rank": 0,
-                "scheduler_step": int(match.group("step")),
-                "running_requests": int(match.group("running")),
-                "full_tokens": int(match.group("full_tokens")),
-                "accepted_length": float(match.group("accept")),
-                "retracted_requests": int(match.group("retracted")),
-                "cuda_graph": match.group("graph") == "True",
-                "queued_requests": int(match.group("queue")),
-            }
-        )
+        observation = {
+            "dp_rank": int(match.group("rank")),
+            "scheduler_step": int(match.group("step")),
+            "running_requests": int(match.group("running")),
+            "full_tokens": int(match.group("full_tokens")),
+            "accepted_length": float(match.group("accept")),
+            "retracted_requests": int(match.group("retracted")),
+            "cuda_graph": match.group("graph") == "True",
+            "queued_requests": int(match.group("queue")),
+        }
+        all_rank_observations.append(observation)
+        if observation["dp_rank"] == 0:
+            observations.append(observation)
     if not observations:
         raise ValueError(f"{path}: no DP0 decode row inside the Nsight capture")
-    first = observations[0]
-    if int(first["running_requests"]) != selected_batch:
+    gate_forward_ct = int(gate.group("forward_ct"))
+    exact_rows = [
+        row for row in observations if row["scheduler_step"] == gate_forward_ct
+    ]
+    if len(exact_rows) != 1:
         raise ValueError(
-            f"{path}: first captured DP0 decode row is BS{first['running_requests']}, "
+            f"{path}: expected one DP0 decode row for exact gate forward_ct "
+            f"{gate_forward_ct}, found {len(exact_rows)}"
+        )
+    exact = exact_rows[0]
+    if int(exact["running_requests"]) != selected_batch:
+        raise ValueError(
+            f"{path}: DP0 exact-gate decode row is BS{exact['running_requests']}, "
             f"expected exact BS{selected_batch}"
         )
     if (
-        not first["cuda_graph"]
-        or first["queued_requests"]
-        or first["retracted_requests"]
+        not exact["cuda_graph"]
+        or exact["queued_requests"]
+        or exact["retracted_requests"]
     ):
         raise ValueError(
-            f"{path}: exact first capture is not queue/retraction-free CUDA Graph steady state"
+            f"{path}: exact-gate decode row is not queue/retraction-free CUDA Graph steady state"
+        )
+    peer_rows = [
+        row
+        for row in all_rank_observations
+        if row["scheduler_step"] == gate_forward_ct
+    ]
+    peer_ranks = {int(row["dp_rank"]) for row in peer_rows}
+    if peer_ranks != {0, 1, 2, 3} or len(peer_rows) != 4:
+        raise ValueError(
+            f"{path}: exact-gate step {gate_forward_ct} does not have one row "
+            f"for every DEP rank: ranks={sorted(peer_ranks)}, rows={len(peer_rows)}"
         )
     return {
-        **first,
-        "gate_forward_ct": int(gate.group("forward_ct")),
+        **exact,
+        "gate_forward_ct": gate_forward_ct,
+        "logged_rows_before_exact": sum(
+            row["scheduler_step"] < gate_forward_ct for row in observations
+        ),
         "capture_dp0_observation_count": len(observations),
+        "rank_local_batches_at_exact_step": {
+            f"r{row['dp_rank']}": {
+                "running_requests": row["running_requests"],
+                "full_tokens": row["full_tokens"],
+                "accepted_length": row["accepted_length"],
+                "queued_requests": row["queued_requests"],
+                "retracted_requests": row["retracted_requests"],
+                "cuda_graph": row["cuda_graph"],
+            }
+            for row in sorted(peer_rows, key=lambda item: int(item["dp_rank"]))
+        },
         "profiler_completed": True,
     }
 
@@ -351,6 +388,17 @@ def build(args: argparse.Namespace):
         raise ValueError(
             f"SGLang workers use different Nsight exporters: {nsys_export_metadata}"
         )
+    all_rank_integrity = {
+        worker: validate_sglang_all_rank_capture_integrity(
+            path, capture_range_label=capture_range
+        )
+        for worker, path in sorted(reports.items())
+    }
+    structurally_validated_sources = [
+        f"w{worker}/r{rank}"
+        for worker in sorted(all_rank_integrity)
+        for rank in range(4)
+    ]
 
     source_metrics: dict[str, dict[str, Any]] = {}
     source_validation: dict[str, dict[str, Any]] = {}
@@ -583,7 +631,7 @@ def build(args: argparse.Namespace):
             "selected_samples": sum(source_selected_counts.values()),
             "selected_samples_by_source": dict(sorted(source_selected_counts.items())),
             "selected_worker_rank_sources": sorted(selected_sources),
-            "structurally_validated_worker_rank_sources": sorted(source_validation),
+            "structurally_validated_worker_rank_sources": structurally_validated_sources,
             "selected_rank_local_full_tokens": {
                 "semantics": (
                     "scheduler #full token for the exact selected-batch "
@@ -612,11 +660,17 @@ def build(args: argparse.Namespace):
         },
         "profiler": {
             "type": "nsight_systems_worker_local",
-            "rank": "base GPU rank (DP0) on both decode workers",
+            "rank": (
+                "exact-BS32 DP0 timing on both decode workers; all four DEP ranks "
+                "validated for CUDA table and scheduler-marker integrity"
+            ),
             "trace": ["cuda", "nvtx"],
             "capture_trigger": "nvtx",
             "capture_range": capture_range,
             "capture_range_end": capture_range_end,
+            "capture_range_api": "torch.cuda.nvtx.range_start/range_end",
+            "capture_finalize_gpu_synchronize": True,
+            "capture_completion": "natural_scheduler_forward_count_boundary",
             "nvtx_registered_strings_only": False,
             "scheduler_capture_steps": {
                 "start_inclusive": capture_start_step,
@@ -630,6 +684,7 @@ def build(args: argparse.Namespace):
                     "both rebased forward-count width reached and at least two "
                     "real decode batches completed"
                 ),
+                "external_stop_required": False,
             },
             "cuda_graph_enabled": True,
             "gpu_metric_semantics": (
@@ -716,8 +771,9 @@ def build(args: argparse.Namespace):
             },
             "critical_gpu_span_ms": timing_summary["critical_gpu_span_ms"],
             "critical_logical_period_ms": timing_summary["critical_logical_period_ms"],
-            "instrumented_worker_rank_sources": sorted(selected_sources),
-            "four_rank_validation": False,
+            "instrumented_worker_rank_sources": structurally_validated_sources,
+            "all_rank_capture_integrity": all_rank_integrity,
+            "four_rank_validation": True,
             "worker_count": 2,
         },
         "timeline": {},
@@ -728,6 +784,7 @@ def build(args: argparse.Namespace):
         "profile_id": profile_id,
         "run_identity": {"job_id": args.job_id, "name": config.get("name")},
         "source_validation": source_validation,
+        "all_rank_capture_integrity": all_rank_integrity,
         "selected_observations": selected_observations,
         "timing_summary": timing_summary,
         "status_duration_us": dict(status_us),

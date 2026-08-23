@@ -654,7 +654,7 @@ def test_sglang_exact_capture_rejects_idle_truncation_without_next_scheduler_mar
         )
 
 
-def test_sglang_exact_batch_log_proves_first_dp0_capture_observation(tmp_path):
+def test_sglang_exact_batch_log_selects_gate_step_after_delayed_previous_row(tmp_path):
     worker_log = tmp_path / "node_decode_w0.out"
     worker_log.write_text(
         "[x DP0 TP0 EP0] Exact running-batch Nsight gate matched: "
@@ -662,9 +662,17 @@ def test_sglang_exact_batch_log_proves_first_dp0_capture_observation(tmp_path):
         "[x DP0 TP0 EP0] Profiling starts. Traces will be saved to: /tmp\n"
         "[x DP1 TP1 EP1] Decode batch [77], #running-req: 41, #full token: 99, "
         "accept len: 4.8, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
-        "[x DP0 TP0 EP0] Decode batch [78], #running-req: 32, #full token: 6400, "
+        "[x DP0 TP0 EP0] Decode batch [30122], #running-req: 31, #full token: 6300, "
         "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
-        "[x DP0 TP0 EP0] Decode batch [79], #running-req: 35, #full token: 7000, "
+        "[x DP1 TP1 EP1] Decode batch [30123], #running-req: 29, #full token: 6200, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP2 TP2 EP2] Decode batch [30123], #running-req: 34, #full token: 6500, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP3 TP3 EP3] Decode batch [30123], #running-req: 33, #full token: 6450, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Decode batch [30123], #running-req: 32, #full token: 6400, "
+        "accept len: 4.75, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
+        "[x DP0 TP0 EP0] Decode batch [30124], #running-req: 35, #full token: 7000, "
         "accept len: 4.80, #retracted-req: 0, cuda graph: True, #queue-req: 0\n"
         "[x DP0 TP0 EP0] Stop profiling...\n"
         "[x DP0 TP0 EP0] Profiling done. Traces are saved to: /tmp\n"
@@ -673,7 +681,12 @@ def test_sglang_exact_batch_log_proves_first_dp0_capture_observation(tmp_path):
         worker_log, selected_batch=32
     )
     assert observation["gate_forward_ct"] == 30123
-    assert observation["scheduler_step"] == 78
+    assert observation["scheduler_step"] == 30123
     assert observation["running_requests"] == 32
-    assert observation["capture_dp0_observation_count"] == 2
+    assert observation["logged_rows_before_exact"] == 1
+    assert observation["capture_dp0_observation_count"] == 3
+    assert {
+        rank: row["running_requests"]
+        for rank, row in observation["rank_local_batches_at_exact_step"].items()
+    } == {"r0": 32, "r1": 29, "r2": 34, "r3": 33}
     assert observation["profiler_completed"] is True
