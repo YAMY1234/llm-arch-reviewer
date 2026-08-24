@@ -67,6 +67,12 @@ DYNAMO_HANDLER_BASE_SHA256 = (
 DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
     "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
 )
+DYNAMO_WHEEL_BASE_SHA256 = (
+    "43d2ff07ea8c60efea41c2f9085ebc846479639e63dfdb276ec1dbc93b144abf"
+)
+DYNAMO_EXACT_OUTPUT_WHEEL_SHA256 = (
+    "cf3c330a15fbb40fd38c42b59cc192617f1d27c02c3bfcaf83f8fc3ab3af0ca5"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -817,6 +823,8 @@ def build(args: argparse.Namespace):
             "py_executor_profile_overlay_sha256": PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
             "dynamo_handler_base_sha256": DYNAMO_HANDLER_BASE_SHA256,
             "dynamo_exact_output_overlay_sha256": DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256,
+            "dynamo_wheel_base_sha256": DYNAMO_WHEEL_BASE_SHA256,
+            "dynamo_exact_output_wheel_sha256": DYNAMO_EXACT_OUTPUT_WHEEL_SHA256,
             "model_revision": MODEL_REVISION,
             "model_config_sha256": MODEL_CONFIG_SHA256,
             "container_sha256": CONTAINER_SHA256,

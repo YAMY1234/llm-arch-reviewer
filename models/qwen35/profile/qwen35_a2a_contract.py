@@ -29,7 +29,7 @@ EXPECTED_BENCHMARK_SERVING_SHA256 = (
 EXPECTED_BACKEND_REQUEST_FUNC_SHA256 = (
     "2677208c7cfc159b3a4136cc4043a3bae9c62216ef332030350044df0b7f413b"
 )
-SGLANG_PROFILING_SOURCE_COMMIT = "b96080c93c29e3d705164df730a220591ecbb8a4"
+SGLANG_PROFILING_SOURCE_COMMIT = "45e540fd424fff2166e69804364f6c95e0a74039"
 TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
     "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
 )
@@ -38,6 +38,12 @@ TRT_DYNAMO_HANDLER_BASE_SHA256 = (
 )
 TRT_DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
     "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
+)
+TRT_DYNAMO_WHEEL_BASE_SHA256 = (
+    "43d2ff07ea8c60efea41c2f9085ebc846479639e63dfdb276ec1dbc93b144abf"
+)
+TRT_DYNAMO_EXACT_OUTPUT_WHEEL_SHA256 = (
+    "cf3c330a15fbb40fd38c42b59cc192617f1d27c02c3bfcaf83f8fc3ab3af0ca5"
 )
 
 
@@ -226,6 +232,16 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
             "Dynamo exact-output overlay SHA256",
             frameworks.get("dynamo_exact_output_overlay_sha256"),
             TRT_DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256,
+        )
+        _require_equal(
+            "Dynamo base wheel SHA256",
+            frameworks.get("dynamo_wheel_base_sha256"),
+            TRT_DYNAMO_WHEEL_BASE_SHA256,
+        )
+        _require_equal(
+            "Dynamo exact-output wheel SHA256",
+            frameworks.get("dynamo_exact_output_wheel_sha256"),
+            TRT_DYNAMO_EXACT_OUTPUT_WHEEL_SHA256,
         )
         decode = ((backend.get("trtllm_config") or {}).get("decode") or {})
         _require_equal("tensor parallel size", decode.get("tensor_parallel_size"), 4)
