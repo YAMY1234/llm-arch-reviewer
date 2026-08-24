@@ -11,14 +11,18 @@ from typing import Any
 import yaml
 
 
-CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-controlled-bs32-nsys-v4"
+CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-runtime-bs32-torch-v21"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 EXPECTED_DATASET_SHA256 = (
     "3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2"
 )
-EXPECTED_RUN_EXACT_SHA256 = (
-    "0d0e6c0c1c696af24bb55b28fdd9bf64ff2d1980c0f1b696d2185d2787b8d52f"
-)
+EXPECTED_RUN_EXACT_SHA256_BY_ENGINE = {
+    # SGLang stages the already-validated shared payload so model startup does
+    # not overlap a nine-minute tokenizer pass on the single-node etcd host.
+    "sglang": "c0f4ac5d2440147a214eb7b37fc7961969b50ba0497d4164fc4c05bbfc0e1632",
+    # The accepted TRT-LLM source generated the byte-identical payload in-run.
+    "trtllm": "0d0e6c0c1c696af24bb55b28fdd9bf64ff2d1980c0f1b696d2185d2787b8d52f",
+}
 EXPECTED_GENERATOR_SHA256 = (
     "c6060009fe3bc3ffe7bd39d1a3ab8183bb8a65b2294f4ba68d493b25d92c9298"
 )
@@ -29,21 +33,22 @@ EXPECTED_BENCHMARK_SERVING_SHA256 = (
 EXPECTED_BACKEND_REQUEST_FUNC_SHA256 = (
     "2677208c7cfc159b3a4136cc4043a3bae9c62216ef332030350044df0b7f413b"
 )
-SGLANG_PROFILING_SOURCE_COMMIT = "743ebb718caec3e46cf669b5043692119b5a5a13"
+SGLANG_PROFILING_SOURCE_COMMIT = "049323294ec36631b9aab74ffa5dac5ff020fdae"
+SGLANG_PROFILING_HARNESS_COMMIT = "fb4476ed42399ca6a160565e1e6a7bb864b9a015"
 TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
-    "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
+    "e8b4d2e03ecbe9a2f033e0f9afbb7c16bd4222b98d01a5ba90fabac7ae57471d"
 )
 TRT_DYNAMO_HANDLER_BASE_SHA256 = (
     "e44f1028ae686dd60e6ded8807735e678504898cccac0cf2b70749967714dcbc"
 )
 TRT_DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
-    "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
+    "e0a6eb5eae16820c439533f69bed4ea63abffd3ad6bdcc228d47a683588e938e"
 )
 TRT_DYNAMO_WHEEL_BASE_SHA256 = (
     "43d2ff07ea8c60efea41c2f9085ebc846479639e63dfdb276ec1dbc93b144abf"
 )
 TRT_DYNAMO_EXACT_OUTPUT_WHEEL_SHA256 = (
-    "cf3c330a15fbb40fd38c42b59cc192617f1d27c02c3bfcaf83f8fc3ab3af0ca5"
+    "2e1d883bba8dbd6aea6ed9ed264c593905168d4b569786a1ad0285690c77f536"
 )
 
 
@@ -67,15 +72,23 @@ def _validate_dataset(dataset: Path, manifest_path: Path) -> dict[str, Any]:
     dataset_sha = sha256_file(dataset)
     _require_equal("dataset SHA256", dataset_sha, EXPECTED_DATASET_SHA256)
     manifest = _load_manifest(manifest_path)
-    _require_equal("manifest dataset SHA256", manifest.get("dataset_sha256"), dataset_sha)
+    _require_equal(
+        "manifest dataset SHA256", manifest.get("dataset_sha256"), dataset_sha
+    )
     _require_equal("manifest input tokens", manifest.get("input_tokens"), 8192)
     _require_equal("manifest output tokens", manifest.get("output_tokens"), 1024)
     _require_equal("manifest prompt count", manifest.get("num_prompts"), 704)
     _require_equal("manifest unique prompt count", manifest.get("unique_prompts"), 704)
 
-    rows = [json.loads(line) for line in dataset.read_text().splitlines() if line.strip()]
+    rows = [
+        json.loads(line) for line in dataset.read_text().splitlines() if line.strip()
+    ]
     _require_equal("dataset row count", len(rows), 704)
-    _require_equal("dataset input lengths", Counter(row.get("prompt_len") for row in rows), Counter({8192: 704}))
+    _require_equal(
+        "dataset input lengths",
+        Counter(row.get("prompt_len") for row in rows),
+        Counter({8192: 704}),
+    )
     _require_equal(
         "dataset output lengths",
         Counter(row.get("expected_output_len") for row in rows),
@@ -131,7 +144,9 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         (((config.get("identity") or {}).get("model") or {}).get("revision")),
         MODEL_REVISION,
     )
-    _require_equal("model precision", (config.get("model") or {}).get("precision"), "fp4")
+    _require_equal(
+        "model precision", (config.get("model") or {}).get("precision"), "fp4"
+    )
     resources = config.get("resources") or {}
     _require_equal("GPU type", str(resources.get("gpu_type", "")).lower(), "gb300")
     _require_equal("prefill workers", resources.get("prefill_workers"), 3)
@@ -139,8 +154,12 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
     _require_equal("GPUs per node", resources.get("gpus_per_node"), 4)
     benchmark = config.get("benchmark") or {}
     benchmark_env = benchmark.get("env") or {}
-    _require_equal("benchmark concurrency", str(benchmark_env.get("EXACT_CONCURRENCY")), "704")
-    _require_equal("benchmark prompt count", str(benchmark_env.get("EXACT_NUM_PROMPTS")), "704")
+    _require_equal(
+        "benchmark concurrency", str(benchmark_env.get("EXACT_CONCURRENCY")), "704"
+    )
+    _require_equal(
+        "benchmark prompt count", str(benchmark_env.get("EXACT_NUM_PROMPTS")), "704"
+    )
     _require_equal(
         "expected dataset SHA256",
         benchmark_env.get("EXPECTED_DATASET_SHA256"),
@@ -149,7 +168,7 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
     _require_equal(
         "expected benchmark script SHA256",
         benchmark_env.get("EXPECTED_RUN_EXACT_SHA256"),
-        EXPECTED_RUN_EXACT_SHA256,
+        EXPECTED_RUN_EXACT_SHA256_BY_ENGINE[engine],
     )
     _require_equal(
         "expected dataset generator SHA256",
@@ -167,7 +186,7 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         EXPECTED_BACKEND_REQUEST_FUNC_SHA256,
     )
     _require_equal("profile engine", benchmark_env.get("PROFILE_ENGINE"), engine)
-    frameworks = ((config.get("identity") or {}).get("frameworks") or {})
+    frameworks = (config.get("identity") or {}).get("frameworks") or {}
     _require_equal(
         "SA-Bench fixed-shape source",
         frameworks.get("sa_bench_source"),
@@ -192,27 +211,125 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
             frameworks.get("sglang_source"),
             SGLANG_PROFILING_SOURCE_COMMIT,
         )
-        decode = ((backend.get("sglang_config") or {}).get("decode") or {})
+        _require_equal(
+            "SGLang profiling harness",
+            frameworks.get("srt_slurm_source"),
+            SGLANG_PROFILING_HARNESS_COMMIT,
+        )
+        decode = (backend.get("sglang_config") or {}).get("decode") or {}
         _require_equal("tensor parallel size", decode.get("tensor-parallel-size"), 4)
-        _require_equal("attention data parallel size", decode.get("data-parallel-size"), 4)
-        _require_equal("MoE expert parallel size", decode.get("expert-parallel-size"), 4)
-        _require_equal("MTP draft tokens", decode.get("speculative-num-draft-tokens"), 6)
+        _require_equal(
+            "attention data parallel size", decode.get("data-parallel-size"), 4
+        )
+        _require_equal(
+            "MoE expert parallel size", decode.get("expert-parallel-size"), 4
+        )
+        _require_equal(
+            "MTP draft tokens", decode.get("speculative-num-draft-tokens"), 6
+        )
         _require_equal("stream interval", decode.get("stream-interval"), 30)
-        _require_equal("forced accept length", decode_env.get("SGLANG_SIMULATE_ACC_LEN"), "4.80")
-        _require_equal("exact rank-local batch", decode_env.get("SGLANG_NSYS_EXACT_RUNNING_BATCH"), "32")
-        _require_equal("exact sync world size", decode_env.get("SGLANG_NSYS_EXACT_SYNC_WORLD_SIZE"), "4")
-        _require_equal("exact gate warm-up batches", decode_env.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES"), "1")
-        _require_equal("exact gate reduction", decode_env.get("SGLANG_NSYS_EXACT_GATE_REDUCTION"), "any")
-        _require_equal("variable-shape raw capture", decode_env.get("SGLANG_NSYS_REQUIRE_FIXED_CAPTURE"), "0")
-        _require_equal("raw captured decode iterations", decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"), "64")
+        _require_equal(
+            "forced accept length", decode_env.get("SGLANG_SIMULATE_ACC_LEN"), "4.80"
+        )
+        _require_equal(
+            "exact rank-local batch",
+            decode_env.get("SGLANG_NSYS_EXACT_RUNNING_BATCH"),
+            "32",
+        )
+        _require_equal(
+            "exact sync world size",
+            decode_env.get("SGLANG_NSYS_EXACT_SYNC_WORLD_SIZE"),
+            "4",
+        )
+        _require_equal(
+            "exact gate warm-up batches",
+            decode_env.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES"),
+            "1",
+        )
+        _require_equal(
+            "worker-local representative-rank election",
+            decode_env.get("SGLANG_NSYS_EXACT_GATE_REDUCTION"),
+            "auto",
+        )
+        _require_equal(
+            "raw-window shape filtering",
+            decode_env.get("SGLANG_NSYS_REQUIRE_FIXED_CAPTURE"),
+            "0",
+        )
+        _require_equal(
+            "raw captured decode iterations",
+            decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"),
+            "64",
+        )
+        decode_profile = (config.get("profiling") or {}).get("decode") or {}
+        _require_equal(
+            "reachable exact-BS32 gate start",
+            decode_profile.get("start_step"),
+            64,
+        )
+        _require_equal(
+            "64-step exact-BS32 raw-window stop",
+            decode_profile.get("stop_step"),
+            128,
+        )
+        _require_equal(
+            "no rank-local scheduler wrapper selection",
+            decode_env.get("SGLANG_NSYS_SCHEDULER_RANKS"),
+            None,
+        )
+        _require_equal(
+            "no rank-local prime-only peers",
+            decode_env.get("SGLANG_NSYS_PULSE_PRIME_ONLY_RANKS"),
+            None,
+        )
+        _require_equal(
+            "continuous NVTX capture",
+            decode_env.get("SGLANG_NSYS_PULSE_CAPTURE_PER_STEP"),
+            None,
+        )
+        _require_equal(
+            "no rank-local NVTX repetition override",
+            decode_env.get("SGLANG_NSYS_NVTX_CAPTURE_REPETITIONS"),
+            None,
+        )
+        _require_equal(
+            "profiling-only FlashInfer MoE A2A peer-wait override",
+            decode_env.get("SGLANG_NSYS_DISABLE_FLASHINFER_MOE_A2A_TIMEOUT"),
+            "1",
+        )
+        _require_equal(
+            "profile-safe symmetric-memory timeout",
+            decode_env.get("SGLANG_SYMM_MEM_GATHER_TIMEOUT_MS"),
+            "60000",
+        )
+        _require_equal(
+            "production symmetric-memory scheduler metadata sync",
+            decode_env.get("SGLANG_USE_SYMM_MEM_DP_SYNC"),
+            "true",
+        )
         _require_equal(
             "controlled worker-wide request cap",
             decode.get("max-running-requests"),
             128,
         )
-        _require_equal("profiler type", (config.get("profiling") or {}).get("type"), "nsys")
-        _require_equal("CUDA Graph enabled", bool(decode.get("disable-cuda-graph", False)), False)
+        _require_equal(
+            "profiler type", (config.get("profiling") or {}).get("type"), "torch"
+        )
+        _require_equal(
+            "no outer-worker process-tree Nsight",
+            (config.get("profiling") or {}).get("sglang_scheduler_nsys"),
+            None,
+        )
+        _require_equal(
+            "no Nsight CUDA Graph trace override",
+            (config.get("profiling") or {}).get("cuda_graph_trace"),
+            None,
+        )
+        _require_equal(
+            "CUDA Graph enabled", bool(decode.get("disable-cuda-graph", False)), False
+        )
     elif engine == "trtllm":
+        prefill_env = backend.get("prefill_environment") or {}
         _require_equal(
             "TRT py_executor base SHA256",
             frameworks.get("py_executor_base_sha256"),
@@ -243,23 +360,73 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
             frameworks.get("dynamo_exact_output_wheel_sha256"),
             TRT_DYNAMO_EXACT_OUTPUT_WHEEL_SHA256,
         )
-        decode = ((backend.get("trtllm_config") or {}).get("decode") or {})
+        decode = (backend.get("trtllm_config") or {}).get("decode") or {}
         _require_equal("tensor parallel size", decode.get("tensor_parallel_size"), 4)
-        _require_equal("attention data parallel", decode.get("enable_attention_dp"), True)
-        _require_equal("MoE expert parallel size", decode.get("moe_expert_parallel_size"), 4)
-        _require_equal("MTP draft tokens", (decode.get("speculative_config") or {}).get("max_draft_len"), 6)
+        _require_equal(
+            "attention data parallel", decode.get("enable_attention_dp"), True
+        )
+        _require_equal(
+            "MoE expert parallel size", decode.get("moe_expert_parallel_size"), 4
+        )
+        _require_equal(
+            "MTP draft tokens",
+            (decode.get("speculative_config") or {}).get("max_draft_len"),
+            6,
+        )
         _require_equal("stream interval", decode.get("stream_interval"), 30)
-        _require_equal("forced accept length", decode_env.get("TLLM_SPEC_DECODE_FORCE_NUM_ACCEPTED_TOKENS"), "4.80")
-        _require_equal("exact rank-local batch", decode_env.get("TLLM_PROFILE_EXACT_RUNNING_BATCH"), "32")
-        _require_equal("raw captured decode iterations", decode_env.get("TLLM_PROFILE_EXACT_DECODE_BATCHES"), "64")
+        _require_equal(
+            "forced accept length",
+            decode_env.get("TLLM_SPEC_DECODE_FORCE_NUM_ACCEPTED_TOKENS"),
+            "4.80",
+        )
+        _require_equal(
+            "exact rank-local batch",
+            decode_env.get("TLLM_PROFILE_EXACT_RUNNING_BATCH"),
+            "32",
+        )
+        _require_equal(
+            "raw captured decode iterations",
+            decode_env.get("TLLM_PROFILE_EXACT_DECODE_BATCHES"),
+            "64",
+        )
+        _require_equal(
+            "forced exact output tokens",
+            decode_env.get("TLLM_PROFILE_FORCE_EXACT_OUTPUT_TOKENS"),
+            "1024",
+        )
+        _require_equal(
+            "prefill first-token EOS guard",
+            prefill_env.get("TLLM_PROFILE_FORCE_EXACT_OUTPUT_TOKENS"),
+            "1024",
+        )
         _require_equal("profile ranks", decode_env.get("TLLM_PROFILE_LOG_RANKS"), "all")
+        _require_equal(
+            "rank-local Torch trace path",
+            decode_env.get("TLLM_TORCH_PROFILE_TRACE"),
+            "/logs/trtllm-a2a-8k1k-torch.trace.json",
+        )
+        _require_equal(
+            "no worker Nsight launcher output",
+            decode_env.get("TLLM_WORKER_NSYS_OUTPUT_DIR"),
+            None,
+        )
         _require_equal("rank-local request cap", decode.get("max_batch_size"), 32)
-        _require_equal("CUDA Graph batch 32", 32 in ((decode.get("cuda_graph_config") or {}).get("batch_sizes") or []), True)
+        _require_equal(
+            "CUDA Graph batch 32",
+            32 in ((decode.get("cuda_graph_config") or {}).get("batch_sizes") or []),
+            True,
+        )
     else:
         raise ValueError(f"unsupported comparison engine: {engine}")
     return {
         "config_file": path.name,
         "config_sha256": sha256_file(path),
+        "benchmark_script_sha256": benchmark_env.get(
+            "EXPECTED_RUN_EXACT_SHA256"
+        ),
+        "dataset_materialization": (
+            "pre_staged_shared_payload" if engine == "sglang" else "generated_in_run"
+        ),
     }
 
 
@@ -301,9 +468,17 @@ def validate_comparison_workload(
         "stream_interval": 30,
         "injected_scheduler_sleep": False,
         "cuda_graph": True,
-        "profiler": "nsys",
+        "profiler": "torch_kineto",
+        "profiler_activities": ["CPU", "CUDA"],
+        "profiler_with_stack": True,
+        "profiler_record_shapes": False,
         "sample_unit": "one real rank-local BS32 CUDA Graph decode period",
         "sample_aggregation": "mean over one source-balanced pool; parallel ranks are never summed",
-        "selected_rank_local_samples": 32,
+        "comparison_sources": (
+            "one runtime-elected exact-BS32 representative rank on each of two "
+            "decode workers"
+        ),
+        "selected_rank_local_samples": 10,
+        "selected_samples_per_source": 5,
     }
     return contract, evidence

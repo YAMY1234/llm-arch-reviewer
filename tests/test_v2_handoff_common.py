@@ -363,7 +363,7 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert 'id="module-compare-table"' in viewer
     assert "function comparisonHierarchy()" in viewer
     assert "function comparisonProfileScore(profileId)" in viewer
-    assert "function comparisonProfileIsNsys(profileId)" in viewer
+    assert "function comparisonProfilerFamily(profileId)" in viewer
     assert "function comparisonExactBatch(profileId)" in viewer
     assert "function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId)" in viewer
     assert "function comparisonProfileContract(profileId)" in viewer
@@ -374,14 +374,20 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert '"gpu_type"' in viewer
     assert '"effective_attention_tensor_parallel_size"' in viewer
     assert '"injected_scheduler_sleep"' in viewer
-    assert '"captured_decode_iterations"' in viewer
+    assert '"comparison_sources"' in viewer
+    assert '"selected_rank_local_samples"' in viewer
+    assert '"selected_samples_per_source"' in viewer
+    assert '"profiler_activities"' in viewer
+    assert '"profiler_with_stack"' in viewer
+    assert '"profiler_record_shapes"' in viewer
     assert "A2A PASS: validated 8K/1K contract" in viewer
     assert "not-a2a:" in viewer
     assert "function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds)" in viewer
     assert "Number(right.compatible) - Number(left.compatible)" in viewer
     assert "sglangPreferredValid ? [sglangPreferred] : sglangProfileIds" in viewer
     assert "trtllmPreferredValid ? [trtllmPreferred] : trtllmProfileIds" in viewer
-    assert 'profilerType.includes("nsight") || profilerType.includes("nsys")' in viewer
+    assert 'profilerType.includes("kineto") || profilerType.includes("torch")' in viewer
+    assert "profiler family differs" in viewer
     assert 'selection.includes("exact")' in viewer
     assert "node.drill && Number(node.layer_count) > 0" in viewer
     assert "function comparisonKernelEntries(cell, profileId, target)" in viewer
@@ -389,7 +395,7 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "function comparisonConcreteKernelEntries(profileId, target, kernel)" in viewer
     assert "function comparisonAggregate(cell)" in viewer
     assert "SGLang rank coverage" in viewer
-    assert "Exporter provenance" in viewer
+    assert "Profiler provenance" in viewer
     assert "function prepareComparisonTarget(target, summary = false)" in viewer
     assert "function exportComparisonCsv()" in viewer
     assert 'RAW_DATA?.meta?.model_id || "model"' in viewer
@@ -401,9 +407,11 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "concrete kernel name and time come verbatim from the profiler timeline" in viewer
     assert '"sglang_profile_id", "sglang_variant_id", "sglang_profiler_type"' in viewer
     assert '"trtllm_profile_id", "trtllm_variant_id", "trtllm_profiler_type"' in viewer
-    assert "sglang_nsys_version: sglangProvenance.nsysVersion" in viewer
-    assert "trtllm_nsys_version: trtllmProvenance.nsysVersion" in viewer
-    assert "validated 8K/1K contract, worker-local NSYS on both engines" in viewer
+    assert "sglang_profiler_family: sglangProvenance.profilerFamily" in viewer
+    assert "sglang_profiler_version: sglangProvenance.profilerVersion" in viewer
+    assert "trtllm_profiler_family: trtllmProvenance.profilerFamily" in viewer
+    assert "trtllm_profiler_version: trtllmProvenance.profilerVersion" in viewer
+    assert "validated 8K/1K contract, worker-local ${comparisonProfilerFamily" in viewer
     assert "Dataset, ISL/OSL, topology, MTP/acceptance policy" in viewer
     assert "Concrete kernel name" in viewer
     assert 'rowKind: "module_summary"' in viewer

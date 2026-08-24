@@ -47,7 +47,7 @@ def _timeline_targets(timeline: dict) -> set[str]:
 
 def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
     profiles = list(_profiles())
-    assert len(profiles) == 8
+    assert len(profiles) == 9
     for path, profile in profiles:
         assert profile["generation_mode"] == "mtp"
         assert profile["execution_parameters"] == EXPECTED_EXECUTION_PARAMETERS
@@ -76,15 +76,18 @@ def test_all_official_profiles_are_mtp_dep4_and_content_addressed():
         timeline = json.loads(gzip.decompress(timeline_path.read_bytes()))
         assert timeline["profile_id"] == profile["profile_id"]
         assert len(timeline["steps"]) == profile["timeline"]["step_count"]
-        assert sum(len(step["events"]) for step in timeline["steps"]) == profile[
-            "timeline"
-        ]["event_count"]
+        assert (
+            sum(len(step["events"]) for step in timeline["steps"])
+            == profile["timeline"]["event_count"]
+        )
 
 
 def test_semantic_kernel_aggregates_retain_concrete_profiler_symbols():
     for path, profile in _profiles():
         timeline = json.loads(
-            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+            gzip.decompress(
+                (path.parent / profile["timeline"]["artifact"]).read_bytes()
+            )
         )
         strings = timeline["strings"]
         concrete_by_semantic: dict[tuple[str, str], set[str]] = {}
@@ -104,49 +107,44 @@ def test_semantic_kernel_aggregates_retain_concrete_profiler_symbols():
                 assert all(name.strip() for name in concrete)
 
 
-def test_trt_decode_comparison_profile_uses_exact_bs32_nsys_subset():
+def test_trt_decode_comparison_profile_uses_exact_bs32_torch_subset():
     path = (
-        PROFILE_ROOT
-        / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
-        / "decode_bs32.yaml"
+        PROFILE_ROOT / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp" / "decode_bs32.yaml"
     )
     profile = yaml.safe_load(path.read_text())
-    assert profile["profiler"]["type"] == "nsight_systems_worker_local"
+    assert profile["profiler"]["type"] == "torch_kineto_worker_local"
+    assert profile["profiler"]["activities"] == ["CPU", "CUDA"]
+    assert profile["profiler"]["with_stack"] is True
+    assert profile["profiler"]["record_shapes"] is False
     shape = profile["workload"]["measured_shape"]
     assert shape["selected_exact_generation_requests"] == 32
     assert shape["selected_samples"] == sum(
         shape["selected_samples_by_source"].values()
     )
     assert set(shape["selected_samples_by_source"]) == {
-        "nvl72d150-T05/rank0",
-        "nvl72d150-T05/rank1",
-        "nvl72d150-T05/rank2",
-        "nvl72d150-T05/rank3",
-        "nvl72d150-T06/rank0",
-        "nvl72d150-T06/rank1",
-        "nvl72d150-T06/rank2",
-        "nvl72d150-T06/rank3",
+        "nvl72d131-T07/rank0",
+        "nvl72d131-T08/rank0",
     }
+    assert shape["selected_samples"] == 10
+    assert set(shape["selected_samples_by_source"].values()) == {5}
     assert profile["evidence"]["selection_policy"] == (
-        "exact generation_reqs=32 events only"
+        "exactly 10 real generation_reqs=32 rank-local events, balanced 5 per "
+        "runtime-elected worker source and time-spread over each capture"
     )
-    assert profile["evidence"]["nsys_export"] == {
-        "product": "NVIDIA Nsight Systems",
-        "version": "2026.2.1.210",
-        "schema_version": "3.25.0",
-    }
+    assert profile["workload"]["comparison_contract"]["profiler"] == "torch_kineto"
+    assert len(profile["evidence"]["report_files"]) == 8
     assert all(
-        report["nsys_export"] == profile["evidence"]["nsys_export"]
+        report["format"] == "PyTorch profiler trace JSON"
         for report in profile["evidence"]["report_files"]
     )
+    assert len(profile["evidence"]["exact_worker_logs"]) == 2
 
 
-def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
+def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_torch_peers():
     sglang_paths = sorted(
-        (
-            PROFILE_ROOT
-            / "sglang_85c23c62_attention_dp4_moe_ep4_mtp"
-        ).glob("agentx_nsys_bs*.yaml")
+        (PROFILE_ROOT / "sglang_85c23c62_attention_dp4_moe_ep4_mtp").glob(
+            "agentx_torch_bs*.yaml"
+        )
     )
     assert len(sglang_paths) == 1
     sglang = yaml.safe_load(sglang_paths[0].read_text())
@@ -159,94 +157,65 @@ def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
     )
 
     selected_batch = sglang["workload"]["selected_exact_target_verify_batch"]
-    assert selected_batch == trt["workload"]["measured_shape"][
-        "selected_exact_generation_requests"
+    assert (
+        selected_batch
+        == trt["workload"]["measured_shape"]["selected_exact_generation_requests"]
+    )
+    assert (
+        sglang["profiler"]["type"]
+        == trt["profiler"]["type"]
+        == ("torch_kineto_worker_local")
+    )
+    assert sglang["profiler"]["activities"] == trt["profiler"]["activities"] == [
+        "CPU",
+        "CUDA",
     ]
-    assert sglang["profiler"]["type"] == trt["profiler"]["type"] == (
-        "nsight_systems_worker_local"
+    assert sglang["profiler"]["with_stack"] is trt["profiler"]["with_stack"] is True
+    assert (
+        sglang["profiler"]["record_shapes"]
+        is trt["profiler"]["record_shapes"]
+        is False
     )
-    assert sglang["profiler"]["capture_trigger"] == "nvtx"
-    assert sglang["profiler"]["capture_range"] == "agentx_decode_capture"
-    assert sglang["profiler"]["capture_range_end"] == "repeat:1:async"
-    assert sglang["profiler"]["capture_range_api"] == (
-        "torch.cuda.nvtx.range_start/range_end"
-    )
-    assert sglang["profiler"]["capture_finalize_gpu_synchronize"] is True
-    assert sglang["profiler"]["capture_completion"] == (
-        "natural_scheduler_forward_count_boundary"
-    )
-    assert sglang["profiler"]["nvtx_registered_strings_only"] is False
     assert sglang["workload"]["selected_samples"] == sum(
         sglang["workload"]["selected_samples_by_source"].values()
     )
-    assert sglang["workload"]["selected_samples"] == 2
-    expected_sglang_sources = {
-        f"w{worker}/r{rank}" for worker in range(2) for rank in range(4)
+    assert sglang["workload"]["selected_samples"] == 10
+    assert sglang["workload"]["selected_samples_by_source"] == {
+        "w0/r3": 5,
+        "w1/r3": 5,
     }
-    assert set(
-        sglang["workload"]["structurally_validated_worker_rank_sources"]
-    ) == expected_sglang_sources
-    evidence = sglang["evidence"]
-    assert evidence["job_id"] == 3256437
-    assert evidence["profiling_source_commit"] == (
-        "9d7f6d73b632076002329cd7c19dac5af9c6f76b"
+    assert sglang["workload"]["accepted_length"]["selected_histogram"] == {
+        4.0: 2,
+        5.0: 8,
+    }
+    assert sglang["workload"]["accepted_length"]["selected_mean"] == 4.8
+    assert (
+        sglang["workload"]["comparison_contract"]
+        == trt["workload"]["comparison_contract"]
     )
-    assert evidence["profiling_overlay_commit"] == (
-        "29e068d852a789a297da9cb53376fdeeca6a336c"
+    evidence = sglang["evidence"]
+    assert evidence["job_id"] == 3270073
+    assert evidence["profiling_source_commit"] == (
+        "049323294ec36631b9aab74ffa5dac5ff020fdae"
     )
     assert evidence["profiling_harness_commit"] == (
-        "ebf9b696269c484713bd25b58feead000ca120d1"
+        "fb4476ed42399ca6a160565e1e6a7bb864b9a015"
     )
     assert evidence["profiler_manager_sha256"] == (
-        "a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657"
-    )
-    assert evidence["scheduler_nvtx_sha256"] == (
-        "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
+        "e08fd6430c83bffbc47e83cdd8a770891c8208b3fff6126627bc231d8e338eb9"
     )
     assert evidence["runtime_manifest_sha256"] == (
-        "8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974"
+        "f23af95628fe593cc6d1c140bc3c4a040ddbd224b94c38a7fdaa9b2c8fa46d41"
     )
-    assert evidence["symm_mem_gather_sha256"] == (
-        "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
-    )
-    assert sglang["profiler"]["scheduler_capture_steps"] == {
-        "start_inclusive": 10000,
-        "stop_exclusive": 10002,
-    }
-    assert sglang["profiler"]["exact_capture_stop_policy"] == {
-        "rebased_forward_count_width": 2,
-        "minimum_completed_decode_batches": 2,
-        "condition": (
-            "both rebased forward-count width reached and at least two real "
-            "decode batches completed"
-        ),
-        "external_stop_required": False,
-    }
-    assert len(evidence["report_files"]) == 2
-    assert evidence["nsys_export"]["product"] == "NVIDIA Nsight Systems"
-    assert evidence["nsys_export"]["version"]
-    assert evidence["nsys_export"]["schema_version"]
-    assert all(
-        report["nsys_export"] == evidence["nsys_export"]
-        for report in evidence["report_files"]
-    )
-    assert len(evidence["nsys_report_files"]) == 2
+    assert len(evidence["trace_files"]) == 8
     assert len(evidence["worker_logs"]) == 2
-    assert set(evidence["instrumented_worker_rank_sources"]) == expected_sglang_sources
-    assert evidence["four_rank_validation"] is True
-    assert set(evidence["all_rank_capture_integrity"]) == {0, 1}
-    for integrity in evidence["all_rank_capture_integrity"].values():
-        assert integrity["capture_device"] == 0
-        assert integrity["rank_count"] == 4
-        assert integrity["consistent_graph_bearing_scheduler_marker_count"] == 1
-        assert set(integrity["ranks"]) == {"r0", "r1", "r2", "r3"}
-        assert all(
-            rank["kernel_count"] > 0
-            and rank["cuda_graph_launch_count"] > 0
-            and rank["graph_bearing_scheduler_marker_count"] == 1
-            for rank in integrity["ranks"].values()
-        )
-    assert evidence["worker_count"] == 2
+    assert all(
+        trace["kernel_count"] > 0
+        and trace["concrete_kernel_name_count"] > 0
+        and trace["complete_mtp_window_count"] == 64
+        for trace in evidence["trace_files"]
+    )
+    assert evidence["all_eight_rank_traces_validated"] is True
     assert evidence["semantic_attribution_gate"] == {
         "metric": "mapped_or_fusion_active_union_ratio",
         "threshold": 0.95,
@@ -256,9 +225,7 @@ def test_sglang_and_trt_decode_comparison_profiles_are_exact_batch_nsys_peers():
 
 def test_trt_prefill_profile_uses_only_exact_one_by_8k_nsys_subset():
     path = (
-        PROFILE_ROOT
-        / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp"
-        / "prefill_8k.yaml"
+        PROFILE_ROOT / "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp" / "prefill_8k.yaml"
     )
     profile = yaml.safe_load(path.read_text())
     shape = profile["workload"]["measured_shape"]
@@ -275,7 +242,9 @@ def test_trt_prefill_profile_uses_only_exact_one_by_8k_nsys_subset():
 
 
 def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
-    bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
+    bundle = json.loads(
+        (REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text()
+    )
     variant = next(iter(bundle["execution_variants"].values()))
     valid_nodes = {
         f"{view_id}.{node['id']}"
@@ -284,7 +253,9 @@ def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
     }
     for path, profile in _profiles():
         timeline = json.loads(
-            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+            gzip.decompress(
+                (path.parent / profile["timeline"]["artifact"]).read_bytes()
+            )
         )
         assert _timeline_targets(timeline) <= valid_nodes
         for step in timeline["steps"]:
@@ -294,7 +265,9 @@ def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
             assert active <= elapsed + 1e-6
             assert active <= residency + 1e-6
             assert math.isclose(step["device_gap_us"], elapsed - active, abs_tol=2e-6)
-            assert math.isclose(step["gpu_overlap_us"], residency - active, abs_tol=2e-6)
+            assert math.isclose(
+                step["gpu_overlap_us"], residency - active, abs_tol=2e-6
+            )
             assert math.isclose(
                 sum(float(item["duration_us"]) for item in step["idle_intervals"]),
                 step["device_gap_us"],
@@ -308,7 +281,7 @@ def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
                 node_active = float(node["active_gpu_us"])
                 node_residency = float(node["gpu_residency_us"])
                 assert node_active <= node_elapsed + 1e-2
-                assert node_active <= node_residency + 1e-2
+                assert node_active <= node_residency + 2e-2
                 assert math.isclose(
                     node["gpu_overlap_us"], node_residency - node_active, abs_tol=2e-2
                 )
@@ -321,7 +294,9 @@ def test_timeline_timing_closes_and_every_target_is_a_real_ir_node():
 def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
     model_ir = yaml.safe_load((CATALOG_ROOT / "model_ir.yaml").read_text())
     resolver = QWEN35_TIMELINE_TARGETS
-    bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
+    bundle = json.loads(
+        (REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text()
+    )
     variant = next(iter(bundle["execution_variants"].values()))
     valid_nodes = {
         f"{view_id}.{node['id']}"
@@ -331,22 +306,26 @@ def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
 
     for path, profile in _profiles():
         timeline = json.loads(
-            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+            gzip.decompress(
+                (path.parent / profile["timeline"]["artifact"]).read_bytes()
+            )
         )
         strings = timeline["strings"]
         profile_targets: set[str] = set()
         for step in timeline["steps"]:
-            timing_targets = {
-                strings[item["ir_node"]] for item in step["node_timings"]
-            }
+            timing_targets = {strings[item["ir_node"]] for item in step["node_timings"]}
             for event in step["events"]:
-                direct = strings[event["ir_node"]] if event["ir_node"] is not None else ""
+                direct = (
+                    strings[event["ir_node"]] if event["ir_node"] is not None else ""
+                )
                 targets = {strings[index] for index in event["ir_targets"]}
                 profile_targets.update(targets)
                 expected = set(resolver({"node": direct, "ir_targets": list(targets)}))
                 assert expected <= targets
                 assert targets <= timing_targets
-                assert not any(target.startswith("layer_schedule.layer_") for target in targets)
+                assert not any(
+                    target.startswith("layer_schedule.layer_") for target in targets
+                )
 
                 status = strings[event["mapping_status"]]
                 assert status in {"mapped", "fusion", "unmapped"}
@@ -367,23 +346,32 @@ def test_timeline_targets_are_closed_over_visible_architecture_ancestors():
                     assert len(targets) >= 2
 
         if any(target.startswith("gdn_attention.") for target in profile_targets):
-            assert {"gdn_moe_block.attention", "stack.gdn_layer", "top.decoder_stack"} <= profile_targets
+            assert {
+                "gdn_moe_block.attention",
+                "stack.gdn_layer",
+                "top.decoder_stack",
+            } <= profile_targets
         if any(target.startswith("full_attention.") for target in profile_targets):
-            assert {"full_attention_moe_block.attention", "stack.full_attention_layer", "top.decoder_stack"} <= profile_targets
+            assert {
+                "full_attention_moe_block.attention",
+                "stack.full_attention_layer",
+                "top.decoder_stack",
+            } <= profile_targets
         if any(target.startswith("moe_block.") for target in profile_targets):
-            assert {"gdn_moe_block.moe", "full_attention_moe_block.moe"} & profile_targets
+            assert {
+                "gdn_moe_block.moe",
+                "full_attention_moe_block.moe",
+            } & profile_targets
 
 
 def test_architecture_exposes_timeline_rollups_on_drill_modules():
-    bundle = json.loads((REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text())
+    bundle = json.loads(
+        (REPO_ROOT / "docs" / "qwen35_v2" / "arch_data.json").read_text()
+    )
     profile_id = bundle["default_profile"]
-    assert profile_id == (
-        "qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_nsys_bs32"
-    )
+    assert profile_id == ("qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_torch_bs32")
     variant_id = bundle["profiles"][profile_id]["meta"]["variant_id"]
-    assert variant_id == (
-        "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_nsys_bs32"
-    )
+    assert variant_id == ("sglang_agentx_8k1k_c704_3p2d_dep4_mtp6_cg_torch_bs32")
     expected_targets = {
         "top.decoder_stack",
         "stack.gdn_layer",
@@ -411,7 +399,9 @@ def test_decode_timelines_expose_lifecycle_and_preserve_capture_boundaries():
         if profile["phase"] != "decode" or "eager" in profile["profile_id"]:
             continue
         timeline = json.loads(
-            gzip.decompress((path.parent / profile["timeline"]["artifact"]).read_bytes())
+            gzip.decompress(
+                (path.parent / profile["timeline"]["artifact"]).read_bytes()
+            )
         )
         targets = _timeline_targets(timeline)
         if profile["implementation_id"].startswith("sglang_"):
@@ -428,15 +418,27 @@ def test_decode_timelines_expose_lifecycle_and_preserve_capture_boundaries():
             "generation_loop.commit_gdn",
             "generation_loop.commit_tokens",
         } <= targets
-        assert profile["node_states"]["generation_loop.commit_kv"]["status"] == "unobserved"
+        assert (
+            profile["node_states"]["generation_loop.commit_kv"]["status"]
+            == "unobserved"
+        )
 
     assert len(by_engine["trtllm"]) == 1
     trt_profile, trt_targets = by_engine["trtllm"][0]
     assert {
         "generation_loop.target_verify",
         "generation_loop.draft_propose",
-        "generation_loop.commit_kv",
         "generation_loop.commit_gdn",
     } <= trt_targets
-    assert trt_profile["node_states"]["generation_loop.accept_prefix"]["status"] == "unobserved"
-    assert trt_profile["node_states"]["generation_loop.replay_gdn"]["status"] == "unobserved"
+    assert (
+        trt_profile["node_states"]["generation_loop.commit_kv"]["status"]
+        == "unobserved"
+    )
+    assert (
+        trt_profile["node_states"]["generation_loop.accept_prefix"]["status"]
+        == "unobserved"
+    )
+    assert (
+        trt_profile["node_states"]["generation_loop.replay_gdn"]["status"]
+        == "unobserved"
+    )

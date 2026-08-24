@@ -20,7 +20,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from models.common.timeline_artifact import build_timeline_artifact, write_timeline_artifact
+from models.common.timeline_artifact import (
+    build_timeline_artifact,
+    write_timeline_artifact,
+)
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     _metrics_for_rank,
     sha256_file,
@@ -36,10 +39,15 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     read_nsys_export_metadata,
 )
 from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
+from models.qwen35.profile.qwen35_torch_mapping import load_trt_torch_steps
 
 
 REPORT_RE = re.compile(
     r"(?P<worker>.+)-(?P<phase>prefill|decode)-rank(?P<rank>[0-3])(?:\.\d+)?\.sqlite$"
+)
+TORCH_TRACE_RE = re.compile(
+    r".+(?:\.trace)?-host-(?P<worker>[^/]+)-rank-(?P<rank>[0-3])"
+    r"(?:\.trace)?\.json(?:\.gz)?$"
 )
 TRT_EXACT_START_RE = re.compile(
     r"\[RANK (?P<rank>[0-3])\].*Rank-local BS32-triggered raw profiling "
@@ -61,24 +69,31 @@ PY_EXECUTOR_BASE_SHA256 = (
 PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
     "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
 )
+PY_EXECUTOR_TORCH_OVERLAY_SHA256 = (
+    "e8b4d2e03ecbe9a2f033e0f9afbb7c16bd4222b98d01a5ba90fabac7ae57471d"
+)
 DYNAMO_HANDLER_BASE_SHA256 = (
     "e44f1028ae686dd60e6ded8807735e678504898cccac0cf2b70749967714dcbc"
 )
 DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
-    "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
+    "e0a6eb5eae16820c439533f69bed4ea63abffd3ad6bdcc228d47a683588e938e"
 )
 DYNAMO_WHEEL_BASE_SHA256 = (
     "43d2ff07ea8c60efea41c2f9085ebc846479639e63dfdb276ec1dbc93b144abf"
 )
 DYNAMO_EXACT_OUTPUT_WHEEL_SHA256 = (
-    "cf3c330a15fbb40fd38c42b59cc192617f1d27c02c3bfcaf83f8fc3ab3af0ca5"
+    "2e1d883bba8dbd6aea6ed9ed264c593905168d4b569786a1ad0285690c77f536"
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
-    parser.add_argument("--sqlites", type=Path, nargs="+", required=True)
+    parser.add_argument("--sqlites", type=Path, nargs="*", default=[])
+    parser.add_argument("--torch-traces", type=Path, nargs="*", default=[])
+    parser.add_argument(
+        "--trace-format", choices=("nsys", "torch"), default="nsys"
+    )
     parser.add_argument("--nsys-reports", type=Path, nargs="*", default=[])
     parser.add_argument("--worker-logs", type=Path, nargs="*", default=[])
     parser.add_argument("--config", type=Path)
@@ -103,6 +118,13 @@ def _report_identity(path: Path, phase: str) -> tuple[str, int]:
     return match.group("worker"), int(match.group("rank"))
 
 
+def _torch_trace_identity(path: Path) -> tuple[str, int]:
+    match = TORCH_TRACE_RE.fullmatch(path.name)
+    if match is None:
+        raise ValueError(f"unrecognized host-safe Torch trace filename {path.name}")
+    return match.group("worker"), int(match.group("rank"))
+
+
 def _validate_process(path: Path) -> dict[str, Any]:
     connection = sqlite3.connect(path)
     try:
@@ -123,10 +145,16 @@ def _validate_process(path: Path) -> dict[str, Any]:
     finally:
         connection.close()
     if not processes or not any("python" in item["name"].lower() for item in processes):
-        raise ValueError(f"{path.name}: kernels are not attached to a Python worker process")
+        raise ValueError(
+            f"{path.name}: kernels are not attached to a Python worker process"
+        )
     if not nvtx_steps or not kernels:
         raise ValueError(f"{path.name}: missing NVTX steps or CUDA kernels")
-    return {"processes": processes, "nvtx_step_count": nvtx_steps, "kernel_count": kernels}
+    return {
+        "processes": processes,
+        "nvtx_step_count": nvtx_steps,
+        "kernel_count": kernels,
+    }
 
 
 def _validate_exact_worker_log(path: Path, *, expected_steps: int) -> dict[str, Any]:
@@ -142,7 +170,10 @@ def _validate_exact_worker_log(path: Path, *, expected_steps: int) -> dict[str, 
     if set(starts_by_rank) != {0, 1, 2, 3} or set(stops_by_rank) != {0, 1, 2, 3}:
         raise ValueError(f"{path}: incomplete or duplicate rank-local capture markers")
     for match in starts:
-        if int(match.group("batch")) != 32 or int(match.group("count")) != expected_steps:
+        if (
+            int(match.group("batch")) != 32
+            or int(match.group("count")) != expected_steps
+        ):
             raise ValueError(f"{path}: invalid exact start gate: {match.group(0)}")
     for match in stops:
         if int(match.group("count")) != expected_steps:
@@ -183,7 +214,9 @@ def _validate_nsys_reports(
             if worker in path.name and phase in path.name and f"rank{rank}" in path.name
         ]
         if len(identities) != 1:
-            raise ValueError(f"cannot identify worker/rank for raw NSYS report {path.name}")
+            raise ValueError(
+                f"cannot identify worker/rank for raw NSYS report {path.name}"
+            )
         identity = identities[0]
         if identity in matched:
             raise ValueError(f"duplicate raw NSYS report for {identity}")
@@ -227,13 +260,19 @@ def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, A
 
 
 def select_balanced_rank_local_steps(
-    rows: list[dict[str, Any]], *, sample_count: int
+    rows: list[dict[str, Any]],
+    *,
+    sample_count: int,
+    allowed_sources: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Select a deterministic, time-spread sample balanced across sources."""
 
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        by_source[str(row["source"])].append(row)
+        source = str(row["source"])
+        if allowed_sources is not None and source not in allowed_sources:
+            continue
+        by_source[source].append(row)
     for source_rows in by_source.values():
         source_rows.sort(key=lambda row: int(row["capture_iteration"]))
     available = sum(len(source_rows) for source_rows in by_source.values())
@@ -277,7 +316,45 @@ def select_balanced_rank_local_steps(
     return selected
 
 
+def elect_worker_comparison_sources(
+    raw_exact_counts: Counter[str],
+    *,
+    workers: list[str],
+    minimum_per_source: int,
+) -> set[str]:
+    """Elect one exact-BS source per worker, preferring count then low rank."""
+
+    selected: set[str] = set()
+    for worker in workers:
+        rank = max(
+            range(4),
+            key=lambda candidate: (
+                raw_exact_counts[f"{worker}/rank{candidate}"],
+                -candidate,
+            ),
+        )
+        source = f"{worker}/rank{rank}"
+        available = raw_exact_counts[source]
+        if available < minimum_per_source:
+            raise ValueError(
+                f"TRT {worker} has only {available} exact BS32 steps on its "
+                f"best rank-local source; need {minimum_per_source}"
+            )
+        selected.add(source)
+    return selected
+
+
 def build(args: argparse.Namespace):
+    trace_format = str(getattr(args, "trace_format", "nsys"))
+    if trace_format == "torch" and args.phase != "decode":
+        raise ValueError("the strict same-profiler Torch path currently supports decode")
+    trace_inputs = (
+        list(getattr(args, "torch_traces", []))
+        if trace_format == "torch"
+        else list(args.sqlites)
+    )
+    if not trace_inputs:
+        raise ValueError(f"TRT {trace_format} profile has no trace inputs")
     decode_batch = int(getattr(args, "decode_batch", 32))
     if decode_batch < 1 or decode_batch > 32:
         raise ValueError(f"TRT decode batch must be in 1..32, got {decode_batch}")
@@ -303,14 +380,14 @@ def build(args: argparse.Namespace):
             dataset_manifest=args.dataset_manifest,
             workload_result=args.workload_result,
         )
-        selected_sample_count = int(
-            comparison_contract["selected_rank_local_samples"]
-        )
+        selected_sample_count = int(comparison_contract["selected_rank_local_samples"])
         config_data = yaml.safe_load(args.config.read_text())
         raw_capture_step_count = int(
-            (((config_data.get("backend") or {}).get("decode_environment") or {}).get(
-                "TLLM_PROFILE_EXACT_DECODE_BATCHES", -1
-            ))
+            (
+                (
+                    (config_data.get("backend") or {}).get("decode_environment") or {}
+                ).get("TLLM_PROFILE_EXACT_DECODE_BATCHES", -1)
+            )
         )
         if raw_capture_step_count < selected_sample_count:
             raise ValueError(
@@ -318,15 +395,21 @@ def build(args: argparse.Namespace):
                 f"sample: raw={raw_capture_step_count}, selected={selected_sample_count}"
             )
     paths: dict[tuple[str, int], Path] = {}
-    for raw_path in args.sqlites:
+    for raw_path in trace_inputs:
         path = raw_path.resolve()
-        identity = _report_identity(path, args.phase)
+        identity = (
+            _torch_trace_identity(path)
+            if trace_format == "torch"
+            else _report_identity(path, args.phase)
+        )
         if identity in paths:
             raise ValueError(f"duplicate report for {identity}: {path}")
         paths[identity] = path
     workers = sorted({worker for worker, _rank in paths})
     if len(workers) != expected_workers:
-        raise ValueError(f"expected {expected_workers} {args.phase} workers, got {workers}")
+        raise ValueError(
+            f"expected {expected_workers} {args.phase} workers, got {workers}"
+        )
     for worker in workers:
         ranks = {rank for candidate, rank in paths if candidate == worker}
         if ranks != {0, 1, 2, 3}:
@@ -334,20 +417,35 @@ def build(args: argparse.Namespace):
     raw_nsys_reports = []
     exact_worker_logs = []
     if args.phase == "decode":
-        if len(args.nsys_reports) != 8 or len(args.worker_logs) != 2:
-            raise ValueError("strict TRT decode profile requires eight NSYS reports and two worker logs")
-        raw_nsys_reports = _validate_nsys_reports(
-            args.nsys_reports, workers=workers, phase=args.phase
-        )
+        if len(args.worker_logs) != 2:
+            raise ValueError(
+                "strict TRT decode profile requires two worker logs"
+            )
+        if trace_format == "nsys":
+            if len(args.nsys_reports) != 8:
+                raise ValueError(
+                    "strict TRT NSYS decode profile requires eight raw reports"
+                )
+            raw_nsys_reports = _validate_nsys_reports(
+                args.nsys_reports, workers=workers, phase=args.phase
+            )
+        elif args.nsys_reports:
+            raise ValueError("Torch profile must not carry NSYS reports")
         exact_worker_logs = [
             _validate_exact_worker_log(path, expected_steps=raw_capture_step_count)
             for path in args.worker_logs
         ]
-    nsys_export_metadata = {
-        identity: read_nsys_export_metadata(path)
-        for identity, path in sorted(paths.items())
-    }
-    if len({tuple(sorted(row.items())) for row in nsys_export_metadata.values()}) != 1:
+    nsys_export_metadata = (
+        {
+            identity: read_nsys_export_metadata(path)
+            for identity, path in sorted(paths.items())
+        }
+        if trace_format == "nsys"
+        else {}
+    )
+    if nsys_export_metadata and len(
+        {tuple(sorted(row.items())) for row in nsys_export_metadata.values()}
+    ) != 1:
         raise ValueError(
             f"TRT-LLM reports use different Nsight exporters: {nsys_export_metadata}"
         )
@@ -357,7 +455,7 @@ def build(args: argparse.Namespace):
     process_checks: dict[str, dict[str, Any]] = {}
     timing_by_step: dict[int, list[dict[str, Any]]] = {}
     all_mappings: list[dict[str, Any]] = []
-    reference_source = f"{workers[0]}/rank0"
+    reference_source = f"{workers[0]}/rank3"
     reference_steps: list[dict[str, Any]] = []
     observed_steps: list[dict[str, Any]] = []
     owner_rank_positions: set[int] = set()
@@ -365,8 +463,18 @@ def build(args: argparse.Namespace):
 
     for (worker, rank), path in sorted(paths.items()):
         source = f"{worker}/rank{rank}"
-        process_checks[source] = _validate_process(path)
-        steps = load_nsys_steps(path, rank=rank)
+        if trace_format == "torch":
+            steps = load_trt_torch_steps(path, rank=rank)
+            process_checks[source] = {
+                "gpu_step_count": len(steps),
+                "kernel_count": sum(len(step.kernels) for step in steps),
+                "concrete_kernel_name_count": len(
+                    {kernel.name for step in steps for kernel in step.kernels}
+                ),
+            }
+        else:
+            process_checks[source] = _validate_process(path)
+            steps = load_nsys_steps(path, rank=rank)
         actual_steps = [step.step_id for step in steps]
         if len(actual_steps) != raw_capture_step_count or actual_steps != list(
             range(actual_steps[0], actual_steps[0] + raw_capture_step_count)
@@ -427,7 +535,9 @@ def build(args: argparse.Namespace):
                     "timeline_step": {
                         "step_index": step.step_id,
                         "label": step.label,
-                        "trace_start_us": min(float(item["ts_us"]) for item in mappings),
+                        "trace_start_us": min(
+                            float(item["ts_us"]) for item in mappings
+                        ),
                         "duration_us": validation["gpu_span_us"],
                         "events": mappings,
                     },
@@ -449,7 +559,9 @@ def build(args: argparse.Namespace):
             if row["context_reqs"] == 1 and row["context_tokens"] == 8192
         ]
         if not exact_8k:
-            raise ValueError("TRT prefill capture has no exact one-request/8192-token step")
+            raise ValueError(
+                "TRT prefill capture has no exact one-request/8192-token step"
+            )
         exact_counts = Counter(str(row["source"]) for row in exact_8k)
         reference_source = min(
             exact_counts,
@@ -470,9 +582,7 @@ def build(args: argparse.Namespace):
             for source, events in sorted(exact_events_by_source.items())
         }
         all_mappings = [
-            event
-            for row in exact_8k
-            for event in row["timeline_step"]["events"]
+            event for row in exact_8k for event in row["timeline_step"]["events"]
         ]
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
         for row in exact_8k:
@@ -499,29 +609,33 @@ def build(args: argparse.Namespace):
             raise ValueError(
                 f"TRT decode capture has no exact BS{decode_batch} generation step"
             )
-        raw_exact_counts = Counter(
-            str(row["source"]) for row in raw_exact_decode
-        )
-        expected_sources = {f"{worker}/rank{rank}" for worker in workers for rank in range(4)}
-        minimum_per_source = selected_sample_count // len(expected_sources)
-        if set(raw_exact_counts) != expected_sources or any(
-            raw_exact_counts[source] < minimum_per_source for source in expected_sources
-        ):
+        raw_exact_counts = Counter(str(row["source"]) for row in raw_exact_decode)
+        expected_sources = {
+            f"{worker}/rank{rank}" for worker in workers for rank in range(4)
+        }
+        minimum_per_comparison_source = selected_sample_count // len(workers)
+        if set(raw_exact_counts) != expected_sources:
             raise ValueError(
-                f"TRT raw capture needs at least {minimum_per_source} real BS32 "
-                "steps on all eight "
-                f"worker/rank sources: {dict(sorted(raw_exact_counts.items()))}"
+                "TRT raw capture needs complete all-rank reports: "
+                f"{dict(sorted(raw_exact_counts.items()))}"
             )
+        comparison_sources = elect_worker_comparison_sources(
+            raw_exact_counts,
+            workers=workers,
+            minimum_per_source=minimum_per_comparison_source,
+        )
         exact_decode = select_balanced_rank_local_steps(
-            raw_exact_decode, sample_count=selected_sample_count
+            raw_exact_decode,
+            sample_count=selected_sample_count,
+            allowed_sources=comparison_sources,
         )
         exact_counts = Counter(str(row["source"]) for row in exact_decode)
         reference_source = min(
-            raw_exact_counts,
+            comparison_sources,
             key=lambda source: (-raw_exact_counts[source], source),
         )
         reference_observations = [
-            row for row in raw_exact_decode if row["source"] == reference_source
+            row for row in exact_decode if row["source"] == reference_source
         ]
         reference_steps = [row["timeline_step"] for row in reference_observations]
         exact_events_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -529,9 +643,7 @@ def build(args: argparse.Namespace):
         for row in exact_decode:
             source = str(row["source"])
             for event in row["timeline_step"]["events"]:
-                event["selected_sample_index"] = int(
-                    row["selected_sample_index"]
-                )
+                event["selected_sample_index"] = int(row["selected_sample_index"])
             exact_events_by_source[source].extend(row["timeline_step"]["events"])
             exact_step_counts[source] += 1
         source_metrics = {
@@ -539,9 +651,7 @@ def build(args: argparse.Namespace):
             for source, events in sorted(exact_events_by_source.items())
         }
         all_mappings = [
-            event
-            for row in exact_decode
-            for event in row["timeline_step"]["events"]
+            event for row in exact_decode for event in row["timeline_step"]["events"]
         ]
         selected_timing_by_sample: dict[int, list[dict[str, Any]]] = {}
         for row in exact_decode:
@@ -571,7 +681,9 @@ def build(args: argparse.Namespace):
         residency_us = selected["gpu_residency_us"]
         elapsed_us = selected["gpu_span_us"]
         if active_us > elapsed_us + 1e-6 or active_us > residency_us + 1e-6:
-            raise ValueError(f"TRT {args.phase} step {step_id}: impossible timing values")
+            raise ValueError(
+                f"TRT {args.phase} step {step_id}: impossible timing values"
+            )
         critical_steps[str(step_id)] = {
             "source_worker_rank": selected["source"],
             "elapsed_wall_us": elapsed_us,
@@ -590,7 +702,8 @@ def build(args: argparse.Namespace):
     timing_summary = {
         "semantics": (
             "each decode sample is one real rank-local BS32 CUDA Graph period; "
-            "the 32-sample pool is balanced across eight worker/rank sources; "
+            f"the {selected_sample_count}-sample pool is balanced across "
+            f"runtime-elected sources {', '.join(sorted(comparison_sources))}; "
             "CPU NVTX is asynchronous launch wall and rank residency is never summed"
             if args.phase == "decode"
             else "step elapsed is first-to-last GPU kernel span from one critical worker/rank; CPU NVTX is asynchronous launch wall; rank residency is never summed"
@@ -616,9 +729,7 @@ def build(args: argparse.Namespace):
     status_us: Counter[str] = Counter()
     for row in all_mappings:
         status_us[str(row["mapping_status"])] += float(row["dur_us"])
-    attributed_residency_ratio = (
-        status_us["mapped"] + status_us["fusion"]
-    ) / total_us
+    attributed_residency_ratio = (status_us["mapped"] + status_us["fusion"]) / total_us
     attributed_active_ratio = attribution_active_union_ratio(all_mappings)
     strict_signature_us = sum(
         float(event["dur_us"])
@@ -630,12 +741,11 @@ def build(args: argparse.Namespace):
         for cell in node_metrics.values():
             cell["ms_per_iter"] = round(float(cell["ms_per_iter"]), 6)
             cell["aggregation"] = (
-                "mean kernel residency over 32 balanced rank-local BS32 samples"
+                "mean kernel residency over "
+                f"{selected_sample_count} balanced rank-local BS32 samples"
             )
             cell["source_worker_rank"] = "balanced_pool"
-            cell["selected_samples_by_source"] = dict(
-                sorted(exact_counts.items())
-            )
+            cell["selected_samples_by_source"] = dict(sorted(exact_counts.items()))
     else:
         node_metrics = _aggregate_metrics(source_metrics)
 
@@ -651,12 +761,20 @@ def build(args: argparse.Namespace):
         raw_trace={
             "file": reference_path.name,
             "sha256": sha256_file(reference_path),
-            "format": "Nsight Systems SQLite export",
+            "format": (
+                "PyTorch profiler trace JSON"
+                if trace_format == "torch"
+                else "Nsight Systems SQLite export"
+            ),
             "rank": reference_rank,
             "worker": reference_worker,
         },
         stack_source={
-            "mode": "nsight_nvtx_and_cuda_graph_node_identity",
+            "mode": (
+                "kineto_gpu_annotation_and_conservative_kernel_signature"
+                if trace_format == "torch"
+                else "nsight_nvtx_and_cuda_graph_node_identity"
+            ),
             "file": reference_path.name,
             "sha256": sha256_file(reference_path),
             "mapped_residency_ratio": round(attributed_residency_ratio, 6),
@@ -668,22 +786,23 @@ def build(args: argparse.Namespace):
     )
 
     if args.phase == "decode":
+        selected_generation_requests = [
+            row["generation_reqs"] for row in exact_decode
+        ]
         measured_shape = {
             "generation_requests": {
-                "samples": [row["generation_reqs"] for row in shape_observations],
-                "min": min(row["generation_reqs"] for row in shape_observations),
+                "samples": selected_generation_requests,
+                "min": min(selected_generation_requests),
                 "median": statistics.median(
-                    row["generation_reqs"] for row in shape_observations
+                    selected_generation_requests
                 ),
-                "max": max(row["generation_reqs"] for row in shape_observations),
+                "max": max(selected_generation_requests),
             },
             "selected_exact_generation_requests": decode_batch,
             "selected_samples": len(exact_decode),
             "selected_samples_by_source": dict(sorted(exact_counts.items())),
             "raw_exact_samples": len(raw_exact_decode),
-            "raw_exact_samples_by_source": dict(
-                sorted(raw_exact_counts.items())
-            ),
+            "raw_exact_samples_by_source": dict(sorted(raw_exact_counts.items())),
         }
     else:
         owner_shapes = [row for row in shape_observations if row["owner_compute"]]
@@ -720,6 +839,10 @@ def build(args: argparse.Namespace):
                 "status": "unobserved",
                 "reason": "accept/sample is outside the worker-local _forward_step NVTX interval and has no uniquely attributable kernel in this capture",
             },
+            "generation_loop.commit_kv": {
+                "status": "unobserved",
+                "reason": "the captured Torch/Kineto path has no uniquely attributable standalone KV-prefix commit kernel",
+            },
             "generation_loop.replay_gdn": {
                 "status": "unobserved",
                 "reason": "the captured TRT path exposes state promotion/commit kernels but no separate accepted-prefix replay interval",
@@ -739,7 +862,7 @@ def build(args: argparse.Namespace):
         "profile_id": profile_id,
         "label": (
             "Qwen3.5 397B · TRT-LLM · exact 8K/1K C704 · DEP4 + MTP6 · "
-            f"NSYS 32×BS{decode_batch} decode"
+            f"{trace_format.upper()} {selected_sample_count}×BS{decode_batch} decode"
             if args.phase == "decode"
             else "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · prefill"
         ),
@@ -757,7 +880,12 @@ def build(args: argparse.Namespace):
         "phase": args.phase,
         "generation_mode": "mtp",
         "entry_view": "top",
-        "execution_parameters": {"tp_size": 1, "dp_size": 4, "cp_size": 1, "ep_size": 4},
+        "execution_parameters": {
+            "tp_size": 1,
+            "dp_size": 4,
+            "cp_size": 1,
+            "ep_size": 4,
+        },
         "hardware": {
             "gpu": "GB300",
             "gpus_per_node": 4,
@@ -793,18 +921,29 @@ def build(args: argparse.Namespace):
             }
         ),
         "profiler": {
-            "type": "nsight_systems_worker_local",
+            "type": (
+                "torch_kineto_worker_local"
+                if trace_format == "torch"
+                else "nsight_systems_worker_local"
+            ),
             "rank": (
-                "all four exact-BS32 DEP ranks on both decode workers; 32 complete "
-                "iterations per rank"
+                "one runtime-elected exact-BS32 rank on each decode worker "
+                f"({', '.join(sorted(comparison_sources))}); {selected_sample_count} "
+                "complete rank-local samples balanced "
+                f"{selected_sample_count // 2} per worker to match the SGLang source pool"
                 if args.phase == "decode"
                 else "all four DEP ranks on every worker"
             ),
-            "trace": ["cuda", "nvtx"],
+            "activities": (
+                ["CPU", "CUDA"] if trace_format == "torch" else ["cuda", "nvtx"]
+            ),
+            "with_stack": trace_format == "torch",
+            "record_shapes": False,
             "cuda_graph_enabled": args.phase == "decode",
             "gpu_metric_semantics": (
-                "per-node kernel residency is averaged over one balanced pool of 32 "
-                "rank-local BS32 samples; parallel ranks and workers are never summed"
+                "per-node kernel residency is averaged over one balanced pool of "
+                f"{selected_sample_count} rank-local BS32 samples; parallel ranks "
+                "and workers are never summed"
                 if args.phase == "decode"
                 else "maximum worker/rank residency; parallel ranks and workers are not summed"
             ),
@@ -820,7 +959,11 @@ def build(args: argparse.Namespace):
             "baseline_job_id": 501238,
             "tensorrt_llm_commit": TRT_COMMIT,
             "py_executor_base_sha256": PY_EXECUTOR_BASE_SHA256,
-            "py_executor_profile_overlay_sha256": PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
+            "py_executor_profile_overlay_sha256": (
+                PY_EXECUTOR_TORCH_OVERLAY_SHA256
+                if trace_format == "torch"
+                else PY_EXECUTOR_PROFILE_OVERLAY_SHA256
+            ),
             "dynamo_handler_base_sha256": DYNAMO_HANDLER_BASE_SHA256,
             "dynamo_exact_output_overlay_sha256": DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256,
             "dynamo_wheel_base_sha256": DYNAMO_WHEEL_BASE_SHA256,
@@ -834,18 +977,32 @@ def build(args: argparse.Namespace):
                     "rank": rank,
                     "file": path.name,
                     "sha256": sha256_file(path),
-                    "nsys_export": nsys_export_metadata[(worker, rank)],
+                    **(
+                        {"nsys_export": nsys_export_metadata[(worker, rank)]}
+                        if trace_format == "nsys"
+                        else {"format": "PyTorch profiler trace JSON"}
+                    ),
                 }
                 for (worker, rank), path in sorted(paths.items())
             ],
             "nsys_report_files": raw_nsys_reports,
             "exact_worker_logs": exact_worker_logs,
             "comparison_workload": workload_evidence,
-            "nsys_export": nsys_export_metadata[min(nsys_export_metadata)],
-            "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
+            **(
+                {"nsys_export": nsys_export_metadata[min(nsys_export_metadata)]}
+                if trace_format == "nsys"
+                else {}
+            ),
+            "mapping_policy": (
+                "Kineto GPU executor annotation + concrete kernel signature + exact GGGA/MTP6 order"
+                if trace_format == "torch"
+                else "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order"
+            ),
             "selection_policy": (
-                f"exactly 32 real generation_reqs={decode_batch} rank-local events, "
-                "balanced four per worker/rank source and time-spread over each capture"
+                f"exactly {selected_sample_count} real generation_reqs={decode_batch} "
+                f"rank-local events, balanced {selected_sample_count // 2} per "
+                "runtime-elected worker source and "
+                "time-spread over each capture"
                 if args.phase == "decode"
                 else "exact one-request/8192-token owner events only"
             ),
@@ -855,7 +1012,9 @@ def build(args: argparse.Namespace):
             "mapped_duration_ratio": round(status_us["mapped"] / total_us, 6),
             "fusion_duration_ratio": round(status_us["fusion"] / total_us, 6),
             "unmapped_duration_ratio": round(status_us["unmapped"] / total_us, 6),
-            "timeline_interval_coverage_ratio": round(sum(status_us.values()) / total_us, 6),
+            "timeline_interval_coverage_ratio": round(
+                sum(status_us.values()) / total_us, 6
+            ),
             "semantic_attribution_gate": {
                 "metric": "mapped_or_fusion_active_union_ratio",
                 "threshold": 0.90,
@@ -905,7 +1064,9 @@ def main() -> int:
         "raw_trace_file": timeline["raw_trace"]["file"],
     }
     args.output_profile.parent.mkdir(parents=True, exist_ok=True)
-    args.output_profile.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+    args.output_profile.write_text(
+        yaml.safe_dump(profile, sort_keys=False), encoding="utf-8"
+    )
     args.output_analysis.parent.mkdir(parents=True, exist_ok=True)
     args.output_analysis.write_text(json.dumps(analysis, indent=2) + "\n")
     args.output_mapping.parent.mkdir(parents=True, exist_ok=True)

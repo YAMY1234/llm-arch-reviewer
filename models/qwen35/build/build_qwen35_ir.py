@@ -764,6 +764,9 @@ def build_model_ir(raw_config: dict[str, Any], config_sha256: str) -> dict[str, 
         "ir_version": 2,
         "default_view": "top",
         "default_execution_path": "attention_dp4_moe_ep4",
+        "default_profile": (
+            "qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_torch_bs32"
+        ),
         "dimensions": {
             "B": "request batch",
             "B_local": "requests assigned to one attention-DP rank",

@@ -1,3 +1,4 @@
+from collections import Counter
 import math
 import sys
 from pathlib import Path
@@ -25,8 +26,10 @@ from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
     parse_worker_profile_observations,
 )
 from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
+    _profiled_scheduler_ranks,
     _source_coordinates,
     _validate_nsys_capture_contract,
+    _validate_outer_worker_report_files,
     _validate_nsys_report_files,
 )
 
@@ -63,28 +66,107 @@ def test_sglang_nsys_source_coordinates_are_strict():
         _source_coordinates("worker1/rank3")
 
 
-def test_sglang_nsys_raw_reports_require_two_nonempty_worker_files(tmp_path):
+def test_sglang_nsys_raw_reports_require_worker_balanced_rank3_pulses(tmp_path):
+    fingerprints = [
+        {"worker": 0, "hostname": "node-a"},
+        {"worker": 1, "hostname": "node-b"},
+    ]
     reports = [
-        tmp_path / "node-a_decode_w0_profile_gpu0-1-2-3.nsys-rep",
-        tmp_path / "node-b_decode_w1_profile_gpu0-1-2-3.nsys-rep",
+        tmp_path / f"node-{hostname}-decode-rank3.{capture}.nsys-rep"
+        for hostname in ("a", "b")
+        for capture in range(1, 3)
     ]
     for path in reports:
         path.write_bytes(b"nsys")
-    assert _validate_nsys_report_files(reports) == {
-        0: reports[0].resolve(),
-        1: reports[1].resolve(),
+    assert _validate_nsys_report_files(
+        reports,
+        fingerprints,
+        expected_ranks=(3,),
+        expected_reports_per_source=2,
+    ) == {
+        (worker, 3, capture): reports[worker * 2 + capture - 1].resolve()
+        for worker in range(2)
+        for capture in range(1, 3)
     }
 
-    reports[1].write_bytes(b"")
+    reports[-1].write_bytes(b"")
     with pytest.raises(ValueError, match="missing or empty"):
-        _validate_nsys_report_files(reports)
-    with pytest.raises(ValueError, match="incomplete"):
-        _validate_nsys_report_files(reports[:1])
+        _validate_nsys_report_files(
+            reports,
+            fingerprints,
+            expected_ranks=(3,),
+            expected_reports_per_source=2,
+        )
+    with pytest.raises(ValueError, match="report counts"):
+        _validate_nsys_report_files(
+            reports[:3],
+            fingerprints,
+            expected_ranks=(3,),
+            expected_reports_per_source=2,
+        )
+
+
+def test_sglang_nsys_raw_reports_accept_one_peer_prime_and_rank3_pulses(tmp_path):
+    fingerprints = [
+        {"worker": 0, "hostname": "node-a"},
+        {"worker": 1, "hostname": "node-b"},
+    ]
+    reports = []
+    for hostname in ("a", "b"):
+        for rank in range(4):
+            captures = (1, 2) if rank == 3 else (1,)
+            for capture in captures:
+                path = tmp_path / f"node-{hostname}-decode-rank{rank}.{capture}.nsys-rep"
+                path.write_bytes(b"nsys")
+                reports.append(path)
+
+    validated = _validate_nsys_report_files(
+        reports,
+        fingerprints,
+        expected_ranks=(0, 1, 2, 3),
+        expected_reports_by_rank={0: 1, 1: 1, 2: 1, 3: 2},
+    )
+    assert len(validated) == 10
+    assert Counter(rank for _worker, rank, _capture in validated) == Counter(
+        {0: 2, 1: 2, 2: 2, 3: 4}
+    )
+
+
+def test_sglang_nsys_outer_worker_scope_rejects_rank_local_pulses():
+    assert _profiled_scheduler_ranks({}) == (0, 1, 2, 3)
+    with pytest.raises(ValueError, match="cannot select rank-local"):
+        _profiled_scheduler_ranks({"SGLANG_NSYS_SCHEDULER_RANKS": "0,1"})
+    with pytest.raises(ValueError, match="continuous capture"):
+        _profiled_scheduler_ranks(
+            {"SGLANG_NSYS_PULSE_CAPTURE_PER_STEP": "1"}
+        )
+
+
+def test_sglang_outer_worker_reports_are_worker_balanced(tmp_path):
+    fingerprints = [
+        {"worker": 0, "hostname": "node-a"},
+        {"worker": 1, "hostname": "node-b"},
+    ]
+    selected_rank_by_worker = {0: 3, 1: 1}
+    reports = [
+        tmp_path / f"node-{suffix}_decode_w{worker}_profile_gpu0-1-2-3.1.nsys-rep"
+        for worker, suffix in enumerate(("a", "b"))
+    ]
+    for path in reports:
+        path.write_bytes(b"nsys")
+    assert _validate_outer_worker_report_files(
+        reports, fingerprints, selected_rank_by_worker
+    ) == {
+        (0, 3, 0): reports[0].resolve(),
+        (1, 1, 0): reports[1].resolve(),
+    }
 
 
 def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
     profiling = {
         "type": "nsys",
+        "sglang_scheduler_nsys": False,
+        "cuda_graph_trace": "node",
         "extra_nsys_args": [
             "-c",
             "nvtx",
@@ -100,10 +182,16 @@ def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
         "SGLANG_NSYS_NVTX_CAPTURE_RANGE": "agentx_decode_capture",
         "NSYS_NVTX_PROFILER_REGISTER_ONLY": "0",
     }
-    assert (
-        _validate_nsys_capture_contract(profiling, environment)
-        == ("agentx_decode_capture", "repeat:1:async")
+    assert _validate_nsys_capture_contract(profiling, environment) == (
+        "agentx_decode_capture",
+        "repeat:1:async",
+        "node",
     )
+
+    profiling["sglang_scheduler_nsys"] = True
+    with pytest.raises(ValueError, match="outer worker"):
+        _validate_nsys_capture_contract(profiling, environment)
+    profiling["sglang_scheduler_nsys"] = False
 
     environment.pop("NSYS_NVTX_PROFILER_REGISTER_ONLY")
     with pytest.raises(ValueError, match="unregistered NVTX"):
@@ -133,7 +221,19 @@ def test_sglang_nsys_capture_contract_requires_matching_nvtx_trigger():
         "--capture-range-end",
         "stop",
     ]
-    with pytest.raises(ValueError, match="asynchronous report finalization"):
+    with pytest.raises(ValueError, match="asynchronously finalized"):
+        _validate_nsys_capture_contract(profiling, environment)
+
+    profiling["extra_nsys_args"] = [
+        "-c",
+        "nvtx",
+        "-p",
+        "agentx_decode_capture@*",
+        "--capture-range-end",
+        "repeat:1:async",
+    ]
+    profiling["cuda_graph_trace"] = "graph"
+    with pytest.raises(ValueError, match="CUDA Graph node tracing"):
         _validate_nsys_capture_contract(profiling, environment)
 
 
@@ -175,16 +275,22 @@ def test_attribution_gate_uses_per_source_active_union_not_residency_sum():
 
 
 def test_generation_lifecycle_signatures_are_not_left_in_a_generic_scope():
-    assert direct_graph_mapping(
-        "void VerifyTreeGreedy<int, long>()",
-        substage="generation_lifecycle",
-        layer_kind=None,
-    ).node == "generation_loop.accept_prefix"
-    assert direct_graph_mapping(
-        "_fused_conv_window_scatter_with_mask_kernel",
-        substage="generation_lifecycle",
-        layer_kind=None,
-    ).node == "generation_loop.commit_gdn"
+    assert (
+        direct_graph_mapping(
+            "void VerifyTreeGreedy<int, long>()",
+            substage="generation_lifecycle",
+            layer_kind=None,
+        ).node
+        == "generation_loop.accept_prefix"
+    )
+    assert (
+        direct_graph_mapping(
+            "_fused_conv_window_scatter_with_mask_kernel",
+            substage="generation_lifecycle",
+            layer_kind=None,
+        ).node
+        == "generation_loop.commit_gdn"
+    )
     bonus = direct_graph_mapping(
         "fill_bonus_tokens",
         substage="generation_lifecycle",
@@ -263,9 +369,11 @@ def test_prefill_window_separates_target_layers_from_mtp_seed():
         ts = 100.0 + layer_id * 10.0
         events.append(
             _kernel(
-                "fused_qkvzba_split_reshape_cat_contiguous_kernel"
-                if kind == "gdn"
-                else "_fused_qk_rmsnorm_rope_gate_kernel",
+                (
+                    "fused_qkvzba_split_reshape_cat_contiguous_kernel"
+                    if kind == "gdn"
+                    else "_fused_qk_rmsnorm_rope_gate_kernel"
+                ),
                 ts,
             )
         )
@@ -293,7 +401,11 @@ def test_prefill_window_separates_target_layers_from_mtp_seed():
     assert validation["signature_counts"]["target_attention_layers"] == 15
     assert validation["signature_counts"]["mtp_seed_attention_layers"] == 1
     assert validation["signature_counts"]["mtp_seed_ep4_dispatch"] == 2
-    assert all(event["layer_id"] is None for event in mapped if event["substage"] == "mtp_seed_prefill")
+    assert all(
+        event["layer_id"] is None
+        for event in mapped
+        if event["substage"] == "mtp_seed_prefill"
+    )
 
 
 def test_occurrence_transfer_requires_one_exact_contiguous_sequence():
