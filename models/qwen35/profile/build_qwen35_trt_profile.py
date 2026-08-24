@@ -619,7 +619,7 @@ def build(args: argparse.Namespace):
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": (
-            "Qwen3.5 397B · TRT-LLM · exact 8K/1K C256 · DEP4 + MTP6 · "
+            "Qwen3.5 397B · TRT-LLM · exact 8K/1K C704 · DEP4 + MTP6 · "
             f"NSYS 32×BS{decode_batch} decode"
             if args.phase == "decode"
             else "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · prefill"
@@ -648,7 +648,7 @@ def build(args: argparse.Namespace):
         "workload": (
             {
                 "suite": "exact-8k1k",
-                "concurrency": 256,
+                "concurrency": 704,
                 "comparison_contract": comparison_contract,
                 "mtp_draft_tokens": 6,
                 "decode_cuda_graph_batch_cap": 32,

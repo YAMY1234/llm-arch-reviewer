@@ -314,12 +314,11 @@ def parse_exact_batch_capture_observations(
             for row in observations
             if row["running_requests"] != selected_batch
             or not row["cuda_graph"]
-            or row["queued_requests"]
             or row["retracted_requests"]
         ]
         if invalid:
             raise ValueError(
-                f"{path}: DP{rank} capture contains non-BS{selected_batch}, queue, "
+                f"{path}: DP{rank} capture contains non-BS{selected_batch}, "
                 f"retraction, or graph-off rows: {invalid[:3]}"
             )
         result[rank] = {
@@ -758,19 +757,22 @@ def build(args: argparse.Namespace):
         float(row["mean_full_tokens_per_request"])
         for row in selected_observations
     ]
+    selected_queue_requests = [
+        int(row["queued_requests"]) for row in selected_observations
+    ]
     node_metrics = _aggregate_source_metrics(source_metrics)
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": (
-            "Qwen3.5 397B · SGLang · exact 8K/1K C256 · DEP4 + MTP6 · "
+            "Qwen3.5 397B · SGLang · exact 8K/1K C704 · DEP4 + MTP6 · "
             f"NSYS 32×BS{selected_batch}"
         ),
         "model_id": "qwen35_397b_a17b",
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
         "variant_id": (
-            "sglang_agentx_8k1k_c256_3p2d_dep4_mtp6_cg_nsys_"
+            "sglang_agentx_8k1k_c704_3p2d_dep4_mtp6_cg_nsys_"
             f"bs{selected_batch}"
         ),
         "phase": "decode",
@@ -785,7 +787,7 @@ def build(args: argparse.Namespace):
         },
         "workload": {
             "scenario": "exact-8k1k",
-            "concurrency": 256,
+            "concurrency": 704,
             "comparison_contract": comparison_contract,
             "selected_exact_target_verify_batch": selected_batch,
             "selected_samples": sum(source_selected_counts.values()),
@@ -821,7 +823,17 @@ def build(args: argparse.Namespace):
                 "median": statistics.median(selected_acceptance),
                 "max": max(selected_acceptance),
             },
-            "queue_requests": 0,
+            "queue_requests": {
+                "semantics": (
+                    "rank-local scheduler waiting queue under the production "
+                    "C704 saturation load; recorded but outside the BS32 CUDA "
+                    "Graph input shape"
+                ),
+                "samples": selected_queue_requests,
+                "min": min(selected_queue_requests),
+                "median": statistics.median(selected_queue_requests),
+                "max": max(selected_queue_requests),
+            },
             "retracted_requests": 0,
         },
         "profiler": {

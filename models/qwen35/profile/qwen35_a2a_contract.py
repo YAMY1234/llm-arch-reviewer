@@ -11,10 +11,16 @@ from typing import Any
 import yaml
 
 
-CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-bs32-nsys-v1"
+CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-bs32-nsys-v2"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 EXPECTED_DATASET_SHA256 = (
-    "402952a096d98db31481ba1afac76a207f3e49f7f3493e4bedc411b7b3d98e40"
+    "3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2"
+)
+EXPECTED_RUN_EXACT_SHA256 = (
+    "05294c1a32a88e6e2ff6d3620995753a10361b5967bdbe47e3f7d98354cf9a08"
+)
+EXPECTED_GENERATOR_SHA256 = (
+    "c6060009fe3bc3ffe7bd39d1a3ab8183bb8a65b2294f4ba68d493b25d92c9298"
 )
 SA_BENCH_SOURCE_COMMIT = "1bce7447b4430c7ae5a88c0fff1d993a0534d730"
 SGLANG_PROFILING_SOURCE_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
@@ -43,21 +49,21 @@ def _validate_dataset(dataset: Path, manifest_path: Path) -> dict[str, Any]:
     _require_equal("manifest dataset SHA256", manifest.get("dataset_sha256"), dataset_sha)
     _require_equal("manifest input tokens", manifest.get("input_tokens"), 8192)
     _require_equal("manifest output tokens", manifest.get("output_tokens"), 1024)
-    _require_equal("manifest prompt count", manifest.get("num_prompts"), 256)
-    _require_equal("manifest unique prompt count", manifest.get("unique_prompts"), 256)
+    _require_equal("manifest prompt count", manifest.get("num_prompts"), 704)
+    _require_equal("manifest unique prompt count", manifest.get("unique_prompts"), 704)
 
     rows = [json.loads(line) for line in dataset.read_text().splitlines() if line.strip()]
-    _require_equal("dataset row count", len(rows), 256)
-    _require_equal("dataset input lengths", Counter(row.get("prompt_len") for row in rows), Counter({8192: 256}))
+    _require_equal("dataset row count", len(rows), 704)
+    _require_equal("dataset input lengths", Counter(row.get("prompt_len") for row in rows), Counter({8192: 704}))
     _require_equal(
         "dataset output lengths",
         Counter(row.get("expected_output_len") for row in rows),
-        Counter({1024: 256}),
+        Counter({1024: 704}),
     )
     _require_equal(
         "dataset unique prompt digests",
         len({row.get("prompt_sha256") for row in rows}),
-        256,
+        704,
     )
     return {
         "dataset_file": dataset.name,
@@ -77,22 +83,22 @@ def _validate_result(path: Path) -> dict[str, Any]:
         "total_output_tokens": result.get("total_output_tokens"),
     }
     expected = {
-        "completed": 256,
-        "input_lens": Counter({8192: 256}),
-        "output_lens": Counter({1024: 256}),
-        "total_input_tokens": 2_097_152,
-        "total_output_tokens": 262_144,
+        "completed": 704,
+        "input_lens": Counter({8192: 704}),
+        "output_lens": Counter({1024: 704}),
+        "total_input_tokens": 5_767_168,
+        "total_output_tokens": 720_896,
     }
     _require_equal("exact workload result", observed, expected)
     return {
         "workload_result_file": path.name,
         "workload_result_sha256": sha256_file(path),
         "completion": {
-            "completed": 256,
-            "input_lens": {"8192": 256},
-            "output_lens": {"1024": 256},
-            "total_input_tokens": 2_097_152,
-            "total_output_tokens": 262_144,
+            "completed": 704,
+            "input_lens": {"8192": 704},
+            "output_lens": {"1024": 704},
+            "total_input_tokens": 5_767_168,
+            "total_output_tokens": 720_896,
         },
     }
 
@@ -112,8 +118,23 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
     _require_equal("GPUs per node", resources.get("gpus_per_node"), 4)
     benchmark = config.get("benchmark") or {}
     benchmark_env = benchmark.get("env") or {}
-    _require_equal("benchmark concurrency", str(benchmark_env.get("EXACT_CONCURRENCY")), "256")
-    _require_equal("benchmark prompt count", str(benchmark_env.get("EXACT_NUM_PROMPTS")), "256")
+    _require_equal("benchmark concurrency", str(benchmark_env.get("EXACT_CONCURRENCY")), "704")
+    _require_equal("benchmark prompt count", str(benchmark_env.get("EXACT_NUM_PROMPTS")), "704")
+    _require_equal(
+        "expected dataset SHA256",
+        benchmark_env.get("EXPECTED_DATASET_SHA256"),
+        EXPECTED_DATASET_SHA256,
+    )
+    _require_equal(
+        "expected benchmark script SHA256",
+        benchmark_env.get("EXPECTED_RUN_EXACT_SHA256"),
+        EXPECTED_RUN_EXACT_SHA256,
+    )
+    _require_equal(
+        "expected dataset generator SHA256",
+        benchmark_env.get("EXPECTED_GENERATOR_SHA256"),
+        EXPECTED_GENERATOR_SHA256,
+    )
     _require_equal("profile engine", benchmark_env.get("PROFILE_ENGINE"), engine)
     frameworks = ((config.get("identity") or {}).get("frameworks") or {})
     _require_equal(
@@ -202,8 +223,8 @@ def validate_comparison_workload(
         "dataset_sha256": evidence["dataset_sha256"],
         "input_tokens": 8192,
         "output_tokens": 1024,
-        "request_count": 256,
-        "concurrency": 256,
+        "request_count": 704,
+        "concurrency": 704,
         "prefill_workers": 3,
         "decode_workers": 2,
         "gpu_type": "GB300",

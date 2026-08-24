@@ -694,7 +694,7 @@ def test_sglang_exact_batch_log_selects_gate_step_after_delayed_previous_row(tmp
 
 
 def _write_all_dp_exact_capture(
-    path: Path, *, steps: int = 32, invalid_rank=None
+    path: Path, *, steps: int = 32, invalid_rank=None, queued_requests: int = 0
 ) -> None:
     lines = []
     for rank in range(4):
@@ -715,7 +715,8 @@ def _write_all_dp_exact_capture(
             lines.append(
                 f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{3999 + offset}], "
                 "#running-req: 32, #full token: 6400, accept len: 4.80, "
-                "#retracted-req: 0, cuda graph: True, #queue-req: 0"
+                "#retracted-req: 0, cuda graph: True, "
+                f"#queue-req: {queued_requests}"
             )
         lines.append(f"[x DP{rank} TP{rank} EP{rank}] Stop profiling...")
         lines.append(
@@ -757,6 +758,20 @@ def test_sglang_exact_capture_rejects_incomplete_rank(tmp_path):
         parse_exact_batch_capture_observations(
             worker_log, selected_batch=32, expected_steps=32
         )
+
+
+def test_sglang_exact_capture_allows_recorded_saturation_queue(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    _write_all_dp_exact_capture(worker_log, queued_requests=37)
+
+    observations = parse_exact_batch_capture_observations(
+        worker_log, selected_batch=32, expected_steps=32
+    )
+
+    assert all(
+        {row["queued_requests"] for row in rank["observations"]} == {37}
+        for rank in observations.values()
+    )
 
 
 def test_sglang_exact_capture_rejects_missing_worker_wide_sync_proof(tmp_path):
