@@ -17,13 +17,19 @@ EXPECTED_DATASET_SHA256 = (
     "3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2"
 )
 EXPECTED_RUN_EXACT_SHA256 = (
-    "05294c1a32a88e6e2ff6d3620995753a10361b5967bdbe47e3f7d98354cf9a08"
+    "0d0e6c0c1c696af24bb55b28fdd9bf64ff2d1980c0f1b696d2185d2787b8d52f"
 )
 EXPECTED_GENERATOR_SHA256 = (
     "c6060009fe3bc3ffe7bd39d1a3ab8183bb8a65b2294f4ba68d493b25d92c9298"
 )
-SA_BENCH_SOURCE_COMMIT = "1bce7447b4430c7ae5a88c0fff1d993a0534d730"
-SGLANG_PROFILING_SOURCE_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
+SA_BENCH_SOURCE_COMMIT = "581ba9aa54736ef520592592bca75f5d32ca8eb9"
+EXPECTED_BENCHMARK_SERVING_SHA256 = (
+    "d3fa99513b9f25a5a98f73260cf9ae26a44939f2deb2185776ba2ac7f16ebe7a"
+)
+EXPECTED_BACKEND_REQUEST_FUNC_SHA256 = (
+    "2677208c7cfc159b3a4136cc4043a3bae9c62216ef332030350044df0b7f413b"
+)
+SGLANG_PROFILING_SOURCE_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
 
 
 def sha256_file(path: Path) -> str:
@@ -135,12 +141,32 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         benchmark_env.get("EXPECTED_GENERATOR_SHA256"),
         EXPECTED_GENERATOR_SHA256,
     )
+    _require_equal(
+        "expected benchmark client SHA256",
+        benchmark_env.get("EXPECTED_BENCHMARK_SERVING_SHA256"),
+        EXPECTED_BENCHMARK_SERVING_SHA256,
+    )
+    _require_equal(
+        "expected backend request client SHA256",
+        benchmark_env.get("EXPECTED_BACKEND_REQUEST_FUNC_SHA256"),
+        EXPECTED_BACKEND_REQUEST_FUNC_SHA256,
+    )
     _require_equal("profile engine", benchmark_env.get("PROFILE_ENGINE"), engine)
     frameworks = ((config.get("identity") or {}).get("frameworks") or {})
     _require_equal(
         "SA-Bench fixed-shape source",
         frameworks.get("sa_bench_source"),
         SA_BENCH_SOURCE_COMMIT,
+    )
+    _require_equal(
+        "benchmark client SHA256",
+        frameworks.get("benchmark_serving_sha256"),
+        EXPECTED_BENCHMARK_SERVING_SHA256,
+    )
+    _require_equal(
+        "backend request client SHA256",
+        frameworks.get("backend_request_func_sha256"),
+        EXPECTED_BACKEND_REQUEST_FUNC_SHA256,
     )
 
     backend = config.get("backend") or {}
@@ -160,12 +186,14 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         _require_equal("forced accept length", decode_env.get("SGLANG_SIMULATE_ACC_LEN"), "4.80")
         _require_equal("exact rank-local batch", decode_env.get("SGLANG_NSYS_EXACT_RUNNING_BATCH"), "32")
         _require_equal("exact sync world size", decode_env.get("SGLANG_NSYS_EXACT_SYNC_WORLD_SIZE"), "4")
-        _require_equal("exact warm-up batches", decode_env.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES"), "16")
-        _require_equal("captured decode iterations", decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"), "32")
+        _require_equal("exact gate warm-up batches", decode_env.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES"), "1")
+        _require_equal("exact gate reduction", decode_env.get("SGLANG_NSYS_EXACT_GATE_REDUCTION"), "any")
+        _require_equal("variable-shape raw capture", decode_env.get("SGLANG_NSYS_REQUIRE_FIXED_CAPTURE"), "0")
+        _require_equal("raw captured decode iterations", decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"), "64")
         _require_equal(
-            "worker-wide request cap for rank-local BS32 under Attention-DP4",
+            "A-Z97 worker-wide request cap",
             decode.get("max-running-requests"),
-            128,
+            320,
         )
         _require_equal("profiler type", (config.get("profiling") or {}).get("type"), "nsys")
         _require_equal("CUDA Graph enabled", bool(decode.get("disable-cuda-graph", False)), False)
@@ -239,6 +267,9 @@ def validate_comparison_workload(
         "injected_scheduler_sleep": False,
         "cuda_graph": True,
         "profiler": "nsys",
+        "sample_unit": "one real rank-local BS32 CUDA Graph decode period",
+        "sample_aggregation": "mean over one source-balanced pool; parallel ranks are never summed",
+        "selected_rank_local_samples": 32,
         "captured_decode_iterations": 32,
     }
     return contract, evidence

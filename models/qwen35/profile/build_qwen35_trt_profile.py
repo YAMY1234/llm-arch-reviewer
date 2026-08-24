@@ -209,6 +209,57 @@ def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, A
     return output
 
 
+def select_balanced_rank_local_steps(
+    rows: list[dict[str, Any]], *, sample_count: int
+) -> list[dict[str, Any]]:
+    """Select a deterministic, time-spread sample balanced across sources."""
+
+    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_source[str(row["source"])].append(row)
+    for source_rows in by_source.values():
+        source_rows.sort(key=lambda row: int(row["capture_iteration"]))
+    available = sum(len(source_rows) for source_rows in by_source.values())
+    if available < sample_count:
+        raise ValueError(
+            f"TRT exact capture has only {available} rank-local samples; "
+            f"need {sample_count}"
+        )
+
+    quotas: Counter[str] = Counter()
+    sources = sorted(by_source)
+    while sum(quotas.values()) < sample_count:
+        progressed = False
+        for source in sources:
+            if quotas[source] >= len(by_source[source]):
+                continue
+            quotas[source] += 1
+            progressed = True
+            if sum(quotas.values()) == sample_count:
+                break
+        if not progressed:
+            raise AssertionError("TRT sample quota allocation stalled")
+
+    selected = []
+    for source in sources:
+        source_rows = by_source[source]
+        quota = quotas[source]
+        indices = [
+            ((2 * index + 1) * len(source_rows)) // (2 * quota)
+            for index in range(quota)
+        ]
+        selected.extend(source_rows[index] for index in indices)
+    selected.sort(
+        key=lambda row: (
+            int(row["capture_iteration"]),
+            str(row["source"]),
+        )
+    )
+    for sample_index, row in enumerate(selected):
+        row["selected_sample_index"] = sample_index
+    return selected
+
+
 def build(args: argparse.Namespace):
     decode_batch = int(getattr(args, "decode_batch", 32))
     if decode_batch < 1 or decode_batch > 32:
@@ -410,36 +461,46 @@ def build(args: argparse.Namespace):
         reference_rank = int(reference_observations[0]["rank"])
         reference_worker = str(reference_observations[0]["worker"])
     else:
-        exact_decode = [
+        raw_exact_decode = [
             row for row in observed_steps if row["generation_reqs"] == decode_batch
         ]
-        if not exact_decode:
+        if not raw_exact_decode:
             raise ValueError(
                 f"TRT decode capture has no exact BS{decode_batch} generation step"
             )
-        exact_counts = Counter(str(row["source"]) for row in exact_decode)
+        raw_exact_counts = Counter(
+            str(row["source"]) for row in raw_exact_decode
+        )
         expected_sources = {f"{worker}/rank{rank}" for worker in workers for rank in range(4)}
-        if set(exact_counts) != expected_sources or set(exact_counts.values()) != {
+        if set(raw_exact_counts) != expected_sources or set(raw_exact_counts.values()) != {
             expected_step_count
         }:
             raise ValueError(
                 "TRT exact-batch capture is not 32 complete steps on all eight "
-                f"worker/rank sources: {dict(sorted(exact_counts.items()))}"
+                f"worker/rank sources: {dict(sorted(raw_exact_counts.items()))}"
             )
-        if len(exact_decode) != expected_step_count * len(expected_sources):
+        if len(raw_exact_decode) != expected_step_count * len(expected_sources):
             raise ValueError("TRT exact-batch capture contains partial or extra steps")
+        exact_decode = select_balanced_rank_local_steps(
+            raw_exact_decode, sample_count=expected_step_count
+        )
+        exact_counts = Counter(str(row["source"]) for row in exact_decode)
         reference_source = min(
-            exact_counts,
-            key=lambda source: (-exact_counts[source], source),
+            raw_exact_counts,
+            key=lambda source: (-raw_exact_counts[source], source),
         )
         reference_observations = [
-            row for row in exact_decode if row["source"] == reference_source
+            row for row in raw_exact_decode if row["source"] == reference_source
         ]
         reference_steps = [row["timeline_step"] for row in reference_observations]
         exact_events_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
         exact_step_counts: Counter[str] = Counter()
         for row in exact_decode:
             source = str(row["source"])
+            for event in row["timeline_step"]["events"]:
+                event["selected_sample_index"] = int(
+                    row["selected_sample_index"]
+                )
             exact_events_by_source[source].extend(row["timeline_step"]["events"])
             exact_step_counts[source] += 1
         source_metrics = {
@@ -451,19 +512,23 @@ def build(args: argparse.Namespace):
             for row in exact_decode
             for event in row["timeline_step"]["events"]
         ]
-        exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
+        selected_timing_by_sample: dict[int, list[dict[str, Any]]] = {}
         for row in exact_decode:
-            exact_sources_by_step[int(row["capture_iteration"])].add(str(row["source"]))
-        timing_by_step = {
-            step_id: [
-                row
-                for row in rows
-                if row["source"] in exact_sources_by_step.get(step_id, set())
-                and row["generation_reqs"] == decode_batch
+            capture_iteration = int(row["capture_iteration"])
+            source = str(row["source"])
+            candidates = [
+                timing
+                for timing in timing_by_step[capture_iteration]
+                if timing["source"] == source
+                and timing["generation_reqs"] == decode_batch
             ]
-            for step_id, rows in timing_by_step.items()
-            if exact_sources_by_step.get(step_id)
-        }
+            if len(candidates) != 1:
+                raise ValueError(
+                    f"TRT selected sample lacks unique timing row: {source} "
+                    f"iteration={capture_iteration}"
+                )
+            selected_timing_by_sample[int(row["selected_sample_index"])] = candidates
+        timing_by_step = selected_timing_by_sample
         reference_path = Path(reference_observations[0]["path"])
         reference_rank = int(reference_observations[0]["rank"])
         reference_worker = str(reference_observations[0]["worker"])
@@ -492,7 +557,13 @@ def build(args: argparse.Namespace):
         row["cpu_launch_wall_us"] / 1000.0 for row in critical_steps.values()
     ]
     timing_summary = {
-        "semantics": "step elapsed is first-to-last GPU kernel span from one critical worker/rank; CPU NVTX is asynchronous launch wall; rank residency is never summed",
+        "semantics": (
+            "each decode sample is one real rank-local BS32 CUDA Graph period; "
+            "the 32-sample pool is balanced across eight worker/rank sources; "
+            "CPU NVTX is asynchronous launch wall and rank residency is never summed"
+            if args.phase == "decode"
+            else "step elapsed is first-to-last GPU kernel span from one critical worker/rank; CPU NVTX is asynchronous launch wall; rank residency is never summed"
+        ),
         "critical_steps": critical_steps,
         "critical_step_wall_ms": {
             "samples": critical_elapsed_ms,
@@ -523,6 +594,19 @@ def build(args: argparse.Namespace):
         for event in all_mappings
         if event.get("attribution_method") == "unique_kernel_signature"
     )
+    if args.phase == "decode":
+        node_metrics = _metrics_for_rank(all_mappings, len(exact_decode))
+        for cell in node_metrics.values():
+            cell["ms_per_iter"] = round(float(cell["ms_per_iter"]), 6)
+            cell["aggregation"] = (
+                "mean kernel residency over 32 balanced rank-local BS32 samples"
+            )
+            cell["source_worker_rank"] = "balanced_pool"
+            cell["selected_samples_by_source"] = dict(
+                sorted(exact_counts.items())
+            )
+    else:
+        node_metrics = _aggregate_metrics(source_metrics)
 
     profile_id = f"qwen35_trtllm_attention_dp4_moe_ep4_agentx_{args.phase}"
     if args.phase == "decode" and decode_batch != 32:
@@ -565,6 +649,10 @@ def build(args: argparse.Namespace):
             "selected_exact_generation_requests": decode_batch,
             "selected_samples": len(exact_decode),
             "selected_samples_by_source": dict(sorted(exact_counts.items())),
+            "raw_exact_samples": len(raw_exact_decode),
+            "raw_exact_samples_by_source": dict(
+                sorted(raw_exact_counts.items())
+            ),
         }
     else:
         owner_shapes = [row for row in shape_observations if row["owner_compute"]]
@@ -628,7 +716,7 @@ def build(args: argparse.Namespace):
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
         "variant_id": (
-            f"trtllm_agentx_dep4_mtp6_{args.phase}_8k1k_c256"
+            f"trtllm_agentx_dep4_mtp6_{args.phase}_8k1k_c704"
             + (
                 f"_bs{decode_batch}"
                 if args.phase == "decode" and decode_batch != 32
@@ -684,9 +772,8 @@ def build(args: argparse.Namespace):
             "trace": ["cuda", "nvtx"],
             "cuda_graph_enabled": args.phase == "decode",
             "gpu_metric_semantics": (
-                "per-node metrics are averaged over 32 iterations per source, then "
-                "the critical maximum across workers/ranks is used; parallel ranks "
-                "and workers are never summed"
+                "per-node kernel residency is averaged over one balanced pool of 32 "
+                "rank-local BS32 samples; parallel ranks and workers are never summed"
                 if args.phase == "decode"
                 else "maximum worker/rank residency; parallel ranks and workers are not summed"
             ),
@@ -722,7 +809,8 @@ def build(args: argparse.Namespace):
             "nsys_export": nsys_export_metadata[min(nsys_export_metadata)],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "selection_policy": (
-                f"exact generation_reqs={decode_batch} events only"
+                f"exactly 32 real generation_reqs={decode_batch} rank-local events, "
+                "balanced four per worker/rank source and time-spread over each capture"
                 if args.phase == "decode"
                 else "exact one-request/8192-token owner events only"
             ),
@@ -747,7 +835,7 @@ def build(args: argparse.Namespace):
         },
         "timeline": {},
         "node_states": node_states,
-        "node_metrics": _aggregate_metrics(source_metrics),
+        "node_metrics": node_metrics,
     }
     analysis = {
         "profile_id": profile_id,

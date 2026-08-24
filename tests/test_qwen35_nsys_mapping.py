@@ -1,4 +1,5 @@
 import sys
+from collections import Counter
 from pathlib import Path
 import sqlite3
 
@@ -27,6 +28,10 @@ from models.qwen35.profile.qwen35_graph_mapping import map_graph_window
 from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
     parse_exact_batch_capture_observation,
     parse_exact_batch_capture_observations,
+    select_balanced_exact_observations,
+)
+from models.qwen35.profile.build_qwen35_trt_profile import (
+    select_balanced_rank_local_steps,
 )
 
 
@@ -739,7 +744,7 @@ def test_sglang_exact_capture_requires_32_contiguous_bs32_steps_on_all_dp_ranks(
     assert set(observations) == {0, 1, 2, 3}
     assert all(row["gate_forward_ct"] == 4000 for row in observations.values())
     assert all(row["sync_world_size"] == 4 for row in observations.values())
-    assert all(row["warmup_batches"] == 16 for row in observations.values())
+    assert all(row["local_warmup_batches"] == 16 for row in observations.values())
     assert all(
         row["capture_observation_count"] == 32 for row in observations.values()
     )
@@ -793,9 +798,124 @@ def test_sglang_exact_capture_rejects_missing_worker_wide_sync_proof(tmp_path):
 def test_sglang_exact_capture_rejects_short_exact_batch_warmup(tmp_path):
     worker_log = tmp_path / "node_decode_w0.out"
     _write_all_dp_exact_capture(worker_log)
-    worker_log.write_text(worker_log.read_text().replace("warmup_batches=16", "warmup_batches=15"))
+    worker_log.write_text(worker_log.read_text().replace("warmup_batches=16", "warmup_batches=0"))
 
-    with pytest.raises(ValueError, match="lacks 16 consecutive exact-batch warmups"):
+    with pytest.raises(ValueError, match="synchronized gate has no rank with 1"):
         parse_exact_batch_capture_observations(
-            worker_log, selected_batch=32, expected_steps=32
+            worker_log,
+            selected_batch=32,
+            expected_steps=32,
+            expected_warmup_batches=1,
         )
+
+
+def _write_any_rank_variable_capture(
+    path: Path, *, steps: int = 64, exact_per_rank: tuple[int, ...] = (8, 12, 16, 20)
+) -> None:
+    lines = []
+    for rank in range(4):
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Exact-batch Nsight sync group ready: "
+            "world_size=4"
+        )
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Worker-wide exact running-batch "
+            "Nsight gate matched: reduction=any batch=32 forward_ct=5000 "
+            f"local_warmup_batches={int(rank == 2)}"
+        )
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Profiling starts. "
+            "Traces will be saved to: /tmp"
+        )
+        exact_offsets = {
+            ((2 * index + 1) * steps) // (2 * exact_per_rank[rank])
+            for index in range(exact_per_rank[rank])
+        }
+        for offset in range(steps):
+            batch = 32 if offset in exact_offsets else 28 + ((offset + rank) % 4)
+            lines.append(
+                f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{4999 + offset}], "
+                f"#running-req: {batch}, #full token: 6400, accept len: 4.80, "
+                "#retracted-req: 0, cuda graph: True, #queue-req: 37"
+            )
+        lines.append(f"[x DP{rank} TP{rank} EP{rank}] Stop profiling...")
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Profiling done. "
+            "Traces are saved to: /tmp"
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_sglang_any_rank_capture_filters_and_balances_32_real_bs32_samples(
+    tmp_path,
+):
+    workers = {}
+    for worker in range(2):
+        worker_log = tmp_path / f"node_decode_w{worker}.out"
+        _write_any_rank_variable_capture(worker_log)
+        workers[worker] = parse_exact_batch_capture_observations(
+            worker_log,
+            selected_batch=32,
+            expected_steps=64,
+            expected_warmup_batches=1,
+            expected_gate_reduction="any",
+        )
+
+    selected = select_balanced_exact_observations(
+        workers, selected_batch=32, sample_count=32
+    )
+
+    assert len(selected) == 32
+    assert {row["sample_index"] for row in selected} == set(range(32))
+    assert {row["running_requests"] for row in selected} == {32}
+    assert {row["source"] for row in selected} == {
+        f"w{worker}/r{rank}" for worker in range(2) for rank in range(4)
+    }
+    assert all(
+        row["gate_reduction"] == "any"
+        for ranks in workers.values()
+        for row in ranks.values()
+    )
+
+
+def test_sglang_any_rank_capture_rejects_fewer_than_32_exact_samples(tmp_path):
+    workers = {}
+    for worker in range(2):
+        worker_log = tmp_path / f"node_decode_w{worker}.out"
+        _write_any_rank_variable_capture(
+            worker_log, exact_per_rank=(1, 1, 1, 1)
+        )
+        workers[worker] = parse_exact_batch_capture_observations(
+            worker_log,
+            selected_batch=32,
+            expected_steps=64,
+            expected_gate_reduction="any",
+        )
+
+    with pytest.raises(ValueError, match="only 8 valid rank-local BS32"):
+        select_balanced_exact_observations(
+            workers, selected_batch=32, sample_count=32
+        )
+
+
+def test_trt_exact_selector_balances_four_time_spread_samples_per_source():
+    rows = [
+        {
+            "source": f"worker{worker}/rank{rank}",
+            "capture_iteration": iteration,
+        }
+        for worker in range(2)
+        for rank in range(4)
+        for iteration in range(32)
+    ]
+
+    selected = select_balanced_rank_local_steps(rows, sample_count=32)
+
+    counts = Counter(row["source"] for row in selected)
+    assert set(counts.values()) == {4}
+    assert {row["selected_sample_index"] for row in selected} == set(range(32))
+    assert {
+        row["capture_iteration"]
+        for row in selected
+        if row["source"] == "worker0/rank0"
+    } == {4, 12, 20, 28}

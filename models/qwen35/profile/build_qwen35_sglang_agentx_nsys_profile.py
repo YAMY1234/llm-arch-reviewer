@@ -59,11 +59,11 @@ from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
-PROFILING_SOURCE_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
-PROFILING_OVERLAY_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
-SRT_SLURM_CAPTURE_COMMIT = "1bce7447b4430c7ae5a88c0fff1d993a0534d730"
+PROFILING_SOURCE_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
+PROFILING_OVERLAY_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
+SRT_SLURM_CAPTURE_COMMIT = "581ba9aa54736ef520592592bca75f5d32ca8eb9"
 PROFILER_MANAGER_SHA256 = (
-    "131154b022a07dc88a2ad8e8372a4d5d025ac6dc0fe40e627836b9fb4fe044db"
+    "dd8f62615af11dc28f6f5cd9d07f169b92514893f3538beb431c098bb5aa0bdb"
 )
 SCHEDULER_SHA256 = (
     "8676ceac0e7cbb6d8ca1c3902d143d9708c44b297b36027121fa719942b6f598"
@@ -72,16 +72,18 @@ SCHEDULER_NVTX_SHA256 = (
     "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
 )
 RUNTIME_MANIFEST_SHA256 = (
-    "effa1248378e2d537dab3222f4d0a5fc67a66d3ba589a0d8984600c159c422de"
+    "de3a279203840d83121415bd98816cdc69a840c469c019414ae03426f920559d"
 )
 SYMM_MEM_GATHER_SHA256 = (
     "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
 )
 SOURCE_RE = re.compile(r"^w(?P<worker>[01])/r(?P<rank>[0-3])$")
 EXACT_GATE_RE = re.compile(
-    r"DP(?P<rank>\d+) TP\d+ EP\d+\] (?:All-DP )?[Ee]xact running-batch Nsight gate matched: "
+    r"DP(?P<rank>\d+) TP\d+ EP\d+\] "
+    r"(?:Worker-wide |All-DP )?[Ee]xact running-batch Nsight gate matched: "
+    r"(?:reduction=(?P<reduction>all|any) )?"
     r"batch=(?P<batch>\d+) forward_ct=(?P<forward_ct>\d+)"
-    r"(?: warmup_batches=(?P<warmup_batches>\d+))?"
+    r"(?: (?:local_)?warmup_batches=(?P<warmup_batches>\d+))?"
 )
 SYNC_READY_RE = re.compile(
     r"DP(?P<rank>\d+) TP\d+ EP\d+\] Exact-batch Nsight sync group ready: "
@@ -187,9 +189,10 @@ def parse_exact_batch_capture_observations(
     selected_batch: int,
     expected_steps: int,
     expected_sync_world_size: int = 4,
-    expected_warmup_batches: int = 16,
+    expected_warmup_batches: int = 1,
+    expected_gate_reduction: str | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """Prove a synchronized exact-batch capture on every DEP rank."""
+    """Prove a synchronized raw capture and recover rank-local exact events."""
 
     lines = path.read_text(errors="replace").splitlines()
     sync_ready: dict[int, int] = {}
@@ -229,18 +232,21 @@ def parse_exact_batch_capture_observations(
         raise ValueError(f"{path}: incomplete all-DP exact-batch gates: {sorted(gates)}")
 
     result: dict[int, dict[str, Any]] = {}
+    local_warmups: dict[int, int] = {}
     for rank, (gate_index, gate) in sorted(gates.items()):
         gate_batch = int(gate.group("batch"))
         if gate_batch != selected_batch:
             raise ValueError(
                 f"{path}: DP{rank} gate selected BS{gate_batch}, expected BS{selected_batch}"
             )
-        warmup_batches = gate.group("warmup_batches")
-        if warmup_batches is None or int(warmup_batches) < expected_warmup_batches:
+        reduction = gate.group("reduction")
+        if expected_gate_reduction is not None and reduction != expected_gate_reduction:
             raise ValueError(
-                f"{path}: DP{rank} gate lacks {expected_warmup_batches} consecutive "
-                f"exact-batch warmups"
+                f"{path}: DP{rank} gate reduction is {reduction!r}, expected "
+                f"{expected_gate_reduction!r}"
             )
+        warmup_batches = int(gate.group("warmup_batches") or 0)
+        local_warmups[rank] = warmup_batches
         prefix = f"DP{rank} TP{rank} EP{rank}]"
         start = next(
             (
@@ -309,27 +315,114 @@ def parse_exact_batch_capture_observations(
                 f"{path}: DP{rank} captured scheduler steps are not contiguous from "
                 f"the exact pre-forward gate: {actual_forward_cts}"
             )
-        invalid = [
+        exact_observations = [
             row
             for row in observations
-            if row["running_requests"] != selected_batch
-            or not row["cuda_graph"]
-            or row["retracted_requests"]
+            if row["running_requests"] == selected_batch
         ]
-        if invalid:
+        invalid_exact = [
+            row
+            for row in exact_observations
+            if not row["cuda_graph"] or row["retracted_requests"]
+        ]
+        if invalid_exact:
             raise ValueError(
-                f"{path}: DP{rank} capture contains non-BS{selected_batch}, "
-                f"retraction, or graph-off rows: {invalid[:3]}"
+                f"{path}: DP{rank} exact-BS{selected_batch} candidates contain "
+                f"retraction or graph-off rows: {invalid_exact[:3]}"
             )
         result[rank] = {
             "gate_forward_ct": gate_forward_ct,
             "sync_world_size": sync_ready[rank],
-            "warmup_batches": int(warmup_batches),
+            "gate_reduction": reduction,
+            "local_warmup_batches": warmup_batches,
             "capture_observation_count": len(observations),
+            "captured_batch_distribution": dict(
+                sorted(Counter(row["running_requests"] for row in observations).items())
+            ),
+            "exact_observation_count": len(exact_observations),
             "observations": observations,
             "profiler_completed": True,
         }
+    if max(local_warmups.values(), default=0) < expected_warmup_batches:
+        raise ValueError(
+            f"{path}: synchronized gate has no rank with "
+            f"{expected_warmup_batches} exact-batch warmup(s): {local_warmups}"
+        )
     return result
+
+
+def select_balanced_exact_observations(
+    observations_by_worker: dict[int, dict[int, dict[str, Any]]],
+    *,
+    selected_batch: int,
+    sample_count: int,
+) -> list[dict[str, Any]]:
+    """Select a deterministic, source-balanced rank-local exact-BS sample."""
+
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    for worker, ranks in sorted(observations_by_worker.items()):
+        for rank, evidence in sorted(ranks.items()):
+            source = f"w{worker}/r{rank}"
+            rows = [
+                {
+                    **row,
+                    "worker": worker,
+                    "rank": rank,
+                    "source": source,
+                    "capture_iteration": iteration,
+                }
+                for iteration, row in enumerate(evidence["observations"])
+                if row["running_requests"] == selected_batch
+                and row["cuda_graph"]
+                and not row["retracted_requests"]
+            ]
+            if rows:
+                candidates[source] = rows
+
+    available = sum(len(rows) for rows in candidates.values())
+    if available < sample_count:
+        counts = {source: len(rows) for source, rows in candidates.items()}
+        raise ValueError(
+            f"SGLang raw capture has only {available} valid rank-local "
+            f"BS{selected_batch} observations; need {sample_count}: {counts}"
+        )
+
+    quotas: Counter[str] = Counter()
+    sources = sorted(candidates)
+    while sum(quotas.values()) < sample_count:
+        progressed = False
+        for source in sources:
+            if quotas[source] >= len(candidates[source]):
+                continue
+            quotas[source] += 1
+            progressed = True
+            if sum(quotas.values()) == sample_count:
+                break
+        if not progressed:
+            raise AssertionError("exact-observation quota allocation stalled")
+
+    selected: list[dict[str, Any]] = []
+    for source in sources:
+        rows = candidates[source]
+        quota = quotas[source]
+        if not quota:
+            continue
+        # Spread each source's quota over its complete raw capture instead of
+        # taking only the earliest contiguous occurrences.
+        indices = [((2 * index + 1) * len(rows)) // (2 * quota) for index in range(quota)]
+        selected.extend(rows[index] for index in indices)
+    selected.sort(
+        key=lambda row: (
+            int(row["capture_iteration"]),
+            int(row["worker"]),
+            int(row["rank"]),
+        )
+    )
+    for sample_index, row in enumerate(selected):
+        row["sample_index"] = sample_index
+    if len(selected) != sample_count:
+        raise AssertionError(f"selected {len(selected)} samples, expected {sample_count}")
+    return selected
 
 
 def parse_exact_batch_capture_observation(
@@ -500,17 +593,42 @@ def build(args: argparse.Namespace):
     )
     fingerprint_rows = _validate_fingerprints(args.fingerprints)
     benchmark = parse_benchmark_snapshot(args.benchmark_log)
-    expected_capture_steps = int(comparison_contract["captured_decode_iterations"])
+    expected_selected_samples = int(
+        comparison_contract["captured_decode_iterations"]
+    )
+    raw_capture_steps = int(
+        decode_environment.get("SGLANG_NSYS_EXACT_DECODE_BATCHES", -1)
+    )
+    if raw_capture_steps < expected_selected_samples:
+        raise ValueError(
+            "SGLang raw NSYS capture must be at least as wide as the selected "
+            f"sample: raw={raw_capture_steps}, selected={expected_selected_samples}"
+        )
     exact_observations = {
         _report_worker(path): parse_exact_batch_capture_observations(
             path,
             selected_batch=selected_batch,
-            expected_steps=expected_capture_steps,
+            expected_steps=raw_capture_steps,
+            expected_warmup_batches=int(
+                decode_environment.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES", 1)
+            ),
+            expected_gate_reduction=str(
+                decode_environment.get("SGLANG_NSYS_EXACT_GATE_REDUCTION", "")
+            ),
         )
         for path in args.worker_logs
     }
     if set(exact_observations) != {0, 1}:
         raise ValueError(f"incomplete SGLang worker logs: {sorted(exact_observations)}")
+    selected_sample_rows = select_balanced_exact_observations(
+        exact_observations,
+        selected_batch=selected_batch,
+        sample_count=expected_selected_samples,
+    )
+    selected_sample_by_key = {
+        (int(row["worker"]), int(row["rank"]), int(row["capture_iteration"])): row
+        for row in selected_sample_rows
+    }
 
     reports = {_report_worker(path): path.resolve() for path in args.sqlites}
     if set(reports) != {0, 1}:
@@ -552,20 +670,31 @@ def build(args: argparse.Namespace):
                 rank=rank,
                 capture_range_label=capture_range,
             )
-            if not steps[0].label.endswith(":first_exact_step"):
-                raise ValueError(f"{source}: parser did not recover the first capture step")
-            if len(steps) != expected_capture_steps:
+            if len(steps) != raw_capture_steps:
                 raise ValueError(
-                    f"{source}: expected {expected_capture_steps} complete NSYS steps, "
+                    f"{source}: expected {raw_capture_steps} complete raw NSYS steps, "
                     f"found {len(steps)}"
                 )
-            graph_stability = validate_sglang_graph_node_stability(steps)
             gate = exact_observations[worker][rank]
             observations = gate["observations"]
+            selected_iterations = {
+                iteration
+                for candidate_worker, candidate_rank, iteration in selected_sample_by_key
+                if candidate_worker == worker and candidate_rank == rank
+            }
+            graph_stability = validate_sglang_graph_node_stability(
+                step
+                for iteration, step in enumerate(steps)
+                if iteration in selected_iterations
+            )
             source_mappings: list[dict[str, Any]] = []
             validation_rows = []
 
             for iteration, (step, row) in enumerate(zip(steps, observations)):
+                sample = selected_sample_by_key.get((worker, rank, iteration))
+                if sample is None:
+                    continue
+                sample_index = int(sample["sample_index"])
                 trace_events, window, graph_roles = sglang_nsys_trace_events(
                     step, batch_size=int(row["running_requests"])
                 )
@@ -584,6 +713,7 @@ def build(args: argparse.Namespace):
                     event["scheduler_step"] = row["scheduler_step"]
                     event["gate_forward_ct"] = gate["gate_forward_ct"]
                     event["capture_iteration"] = iteration
+                    event["selected_sample_index"] = sample_index
                 timing = _timing(mapped, logical_period_us=step.cpu_wall_us)
                 validation_rows.append(
                     {
@@ -593,12 +723,15 @@ def build(args: argparse.Namespace):
                         "scheduler_step": row["scheduler_step"],
                         "gate_forward_ct": gate["gate_forward_ct"],
                         "capture_iteration": iteration,
+                        "selected_sample_index": sample_index,
                     }
                 )
                 selected_observations.append(
                     {
                         "worker": worker,
                         "rank": rank,
+                        "source": source,
+                        "selected_sample_index": sample_index,
                         "capture_iteration": iteration,
                         "scheduler_step": row["scheduler_step"],
                         "gate_forward_ct": gate["gate_forward_ct"],
@@ -612,10 +745,11 @@ def build(args: argparse.Namespace):
                         **timing,
                     }
                 )
-                timing_by_iteration[iteration].append({"source": source, **timing})
+                timing_by_iteration[sample_index].append({"source": source, **timing})
                 selected_steps_by_source[source].append(
                     {
-                        "step_index": iteration,
+                        "step_index": sample_index,
+                        "capture_iteration": iteration,
                         "trace_start_us": min(float(event["ts_us"]) for event in mapped),
                         "timing": timing,
                         "mapped": mapped,
@@ -624,17 +758,20 @@ def build(args: argparse.Namespace):
                 source_mappings.extend(mapped)
                 all_mappings.extend(mapped)
 
-            source_metrics[source] = _metrics_for_rank(
-                source_mappings, expected_capture_steps
+            source_selected_counts[source] = len(selected_iterations)
+            source_metrics[source] = (
+                _metrics_for_rank(source_mappings, len(selected_iterations))
+                if selected_iterations
+                else {}
             )
-            source_selected_counts[source] = expected_capture_steps
             source_validation[source] = {
                 "parser": parser_evidence,
                 "graph_node_stability": graph_stability,
                 "exact_gate": gate,
-                "captured_batch_distribution": {
-                    selected_batch: expected_capture_steps
-                },
+                "captured_batch_distribution": gate[
+                    "captured_batch_distribution"
+                ],
+                "selected_exact_sample_count": len(selected_iterations),
                 "selected_steps": validation_rows,
             }
 
@@ -649,6 +786,11 @@ def build(args: argparse.Namespace):
         raise ValueError(
             f"SGLang NSYS capture has no exact BS{selected_batch} step; "
             f"captured distributions={distributions}"
+        )
+    if sum(selected_sources.values()) != expected_selected_samples:
+        raise ValueError(
+            "SGLang exact-event selector did not close: "
+            f"expected={expected_selected_samples}, selected={selected_sources}"
         )
     reference_source = min(
         selected_sources,
@@ -681,9 +823,9 @@ def build(args: argparse.Namespace):
     ]
     timing_summary = {
         "semantics": (
-            "each of 32 logical periods is bounded by adjacent scheduler.run_batch "
-            "markers; the critical sample is the maximum GPU span across both "
-            "workers and all four DEP ranks for that iteration"
+            "each sample is one real rank-local BS32 CUDA Graph decode period, "
+            "bounded by adjacent scheduler.run_batch markers; 32 samples are "
+            "balanced across available worker/rank sources and never summed"
         ),
         "critical_steps": critical_steps,
         "critical_gpu_span_ms": {
@@ -760,7 +902,16 @@ def build(args: argparse.Namespace):
     selected_queue_requests = [
         int(row["queued_requests"]) for row in selected_observations
     ]
-    node_metrics = _aggregate_source_metrics(source_metrics)
+    node_metrics = _metrics_for_rank(all_mappings, expected_selected_samples)
+    for cell in node_metrics.values():
+        cell["ms_per_iter"] = round(float(cell["ms_per_iter"]), 6)
+        cell["aggregation"] = (
+            "mean kernel residency over 32 balanced rank-local BS32 samples"
+        )
+        cell["source_worker_rank"] = "balanced_pool"
+        cell["selected_samples_by_source"] = dict(
+            sorted(selected_sources.items())
+        )
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
@@ -839,8 +990,8 @@ def build(args: argparse.Namespace):
         "profiler": {
             "type": "nsight_systems_worker_local",
             "rank": (
-                "all four exact-BS32 DEP ranks on both decode workers; 32 complete "
-                "iterations per rank"
+                "all four DEP ranks on both decode workers; synchronized 64-step "
+                "raw windows with 32 balanced rank-local BS32 samples selected"
             ),
             "trace": ["cuda", "nvtx"],
             "capture_trigger": "nvtx",
@@ -857,18 +1008,19 @@ def build(args: argparse.Namespace):
             "exact_capture_stop_policy": {
                 "rebased_forward_count_width": capture_stop_step
                 - capture_start_step,
-                "minimum_completed_decode_batches": expected_capture_steps,
+                "completed_raw_decode_batches_per_rank": raw_capture_steps,
+                "selected_rank_local_exact_samples": expected_selected_samples,
                 "condition": (
-                    "all DP ranks reached the synchronized exact-BS32 gate and "
-                    "completed the configured 32 real decode batches"
+                    "any DP rank reached BS32, all ranks entered and exited one "
+                    "synchronized raw window, and only real BS32 CUDA Graph events "
+                    "were retained for comparison"
                 ),
                 "external_stop_required": False,
             },
             "cuda_graph_enabled": True,
             "gpu_metric_semantics": (
-                "per-node metrics are averaged over 32 iterations per source, then "
-                "the critical maximum across two workers and four DEP ranks is used; "
-                "parallel ranks are never summed"
+                "per-node kernel residency is averaged over one balanced pool of 32 "
+                "rank-local BS32 samples; parallel ranks and workers are never summed"
             ),
             "attribution_calibration": "graph-off eager Torch stack",
         },
@@ -930,13 +1082,14 @@ def build(args: argparse.Namespace):
                 "validated_repeated_slots": len(contextual_signatures),
             },
             "mapping_policy": (
-                "synchronized all-rank exact-batch gate + 32 scheduler boundaries + "
+                "synchronized any-rank BS32 raw gate + exact-event filtering + "
+                "32 selected scheduler boundaries + "
                 "graphId/nodeId occurrence + exact GGGA/MTP5 order + eager stack "
                 "leaf calibration"
             ),
             "selection_policy": (
-                f"32 complete running_requests={selected_batch} CUDA Graph steps on "
-                "all eight decode worker/rank sources"
+                f"exactly 32 real running_requests={selected_batch} CUDA Graph "
+                "rank-local steps, source-balanced and time-spread over the raw window"
             ),
             "mapped_or_fusion_duration_ratio": round(attributed_residency_ratio, 6),
             "mapped_or_fusion_active_union_ratio": round(attributed_active_ratio, 6),
