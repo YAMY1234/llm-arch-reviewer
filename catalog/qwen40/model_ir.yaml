@@ -1063,12 +1063,15 @@ views:
         label: "hidden states\n[B,T,2560]"
         shape: io
         semantic_op: qsa_indexer.input
+        semantic_details:
+          runtime_mapping: {expectation: structural, reason: input tensor boundary has no standalone kernel}
       - id: qk_projection
         label: "index Q/K projection\n2560 → 4Q×128 + 1K×128"
         shape: gemm
         semantic_op: qsa_indexer.qk_projection
         semantic_details:
           operators: [linear_projection]
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.qk_projection}
           tensors:
             - {name: index_q, role: output, shape: "[B,T,4,128]", dtype: bf16}
             - {name: index_k_raw, role: output, shape: "[B,T,1,128]", dtype: bf16}
@@ -1080,6 +1083,7 @@ views:
         shape: norm
         semantic_op: qsa_indexer.q_norm_rope
         semantic_details:
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.q_norm_rope}
           parameters:
             total: 128
             sharing: one 128-element Q norm per QSA layer
@@ -1088,6 +1092,7 @@ views:
         shape: cache
         semantic_op: qsa_indexer.raw_k_cache
         semantic_details:
+          runtime_mapping: {expectation: fused_state, owner: qsa_indexer.q_norm_rope}
           state:
             - {name: raw_index_k, shape: "[B,T,1,128]", dtype: bf16, lifecycle: token-growing per-request cache, update: append projected raw index K at each token slot}
             - {name: mrope_positions, shape: "[B,T,3]", dtype: int64, lifecycle: token-growing state shared across QSA layers, update: append the token MRoPE position}
@@ -1097,6 +1102,7 @@ views:
         semantic_op: qsa_indexer.compress
         semantic_details:
           operators: [four_token_average_pool, rms_norm]
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.compress}
           parameters:
             total: 128
             sharing: one 128-element compressed-K norm per QSA layer
@@ -1107,6 +1113,7 @@ views:
         shape: cache
         semantic_op: qsa_indexer.compressed_k_cache
         semantic_details:
+          runtime_mapping: {expectation: fused_state, owner: qsa_indexer.compress}
           state:
             - {name: compressed_index_k, shape: "[B,ceil(T/4),1,128]", dtype: bf16, lifecycle: block-growing paged per-request cache, update: append after each complete 4-token group}
       - id: compressed_score
@@ -1115,6 +1122,7 @@ views:
         semantic_op: qsa_indexer.compressed_score
         semantic_details:
           operators: [multi_query_attention_score, relu, index_head_reduce]
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.compressed_score}
           math:
             - "score(t,b) = sum_h ReLU(<q_index(t,h), k_compressed(b)>)/sqrt(128)"
       - id: block_topk
@@ -1123,6 +1131,7 @@ views:
         semantic_op: qsa_indexer.block_topk
         semantic_details:
           operators: [topk]
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.block_topk}
           tensors:
             - {name: selected_blocks, role: output, shape: "[B,T,<=512]", dtype: int32}
       - id: expand_tail
@@ -1131,12 +1140,15 @@ views:
         semantic_op: qsa_indexer.expand_tail
         semantic_details:
           operators: [block_to_token_expand, causal_tail_append]
+          runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.expand_tail}
           tensors:
             - {name: selected_tokens, role: output, shape: "[B,T,<=2051]", dtype: int32}
       - id: selected_indices
         label: "selected full-token positions\nfor main sparse attention"
         shape: io
         semantic_op: qsa_indexer.output
+        semantic_details:
+          runtime_mapping: {expectation: structural, owner: qsa_indexer.expand_tail, reason: output tensor boundary}
     edges:
       - {from: index_in, to: qk_projection, shape: "[B,T,2560]", dtype: bf16}
       - {from: qk_projection, to: q_norm_rope, shape: "[B,T,4,128]", dtype: bf16}

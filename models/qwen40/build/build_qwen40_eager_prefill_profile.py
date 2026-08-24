@@ -22,6 +22,8 @@ if str(REPO_ROOT) not in sys.path:
 from models.qwen40.build.qwen40_decode_attribution import (  # noqa: E402
     _metric,
     attach_hyperconnection_drill_metrics,
+    attach_qsa_indexer_drill_metrics,
+    attach_qsa_indexer_drill_targets,
     communication_semantics,
     default_node_states,
     direct_kernel_mapping,
@@ -206,6 +208,7 @@ def substage(event: dict[str, Any], node: str) -> str | None:
 
 
 def metrics_for_prefill(events: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    attach_qsa_indexer_drill_targets(events)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         groups[event["node"]].append(event)
@@ -261,6 +264,9 @@ def metrics_for_prefill(events: list[dict[str, Any]]) -> dict[str, dict[str, Any
             metrics[target]["communication"] = communication
     attach_hyperconnection_drill_metrics(
         metrics, groups, n_iters=1, all_events=events
+    )
+    attach_qsa_indexer_drill_metrics(
+        metrics, events, n_iters=1, all_events=events
     )
     return metrics
 

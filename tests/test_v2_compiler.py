@@ -152,6 +152,29 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     assert moe["semantic_details"]["parameters"]["total"] == 2522810880
 
 
+def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    implementation = bundle["implementations"]["sglang_f90a941aa"]
+    for target in (
+        "qsa_indexer.qk_projection",
+        "qsa_indexer.q_norm_rope",
+        "qsa_indexer.compress",
+        "qsa_indexer.compressed_score",
+        "qsa_indexer.block_topk",
+        "qsa_indexer.expand_tail",
+    ):
+        assert target in implementation["node_bindings"]
+
+    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    cell = profile["data"]["qsa_attention.indexer"]["tp4_cg_decode_bs1_8k1k"]
+    assert cell["drill_view"] == "qsa_indexer"
+    assert cell["drill_mapping_coverage_pct"] == 100.0
+    assert cell["drill_metrics"]["raw_k_cache"]["status"] == "fused"
+    assert cell["drill_metrics"]["compressed_k_cache"]["included_in"] == (
+        "qsa_indexer.compress"
+    )
+
+
 def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> None:
     model_path = MODEL_ROOT / "model_ir.yaml"
     plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"

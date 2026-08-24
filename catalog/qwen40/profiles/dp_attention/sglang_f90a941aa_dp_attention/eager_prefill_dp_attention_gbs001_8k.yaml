@@ -2339,6 +2339,217 @@ node_metrics:
       share_in_node_pct: 0.68
     source_rank: 0
     rank_policy: critical stack-disabled timing rank
+    drill_view: qsa_indexer
+    drill_scope: qsa_attention.indexer
+    drill_mapping_coverage_pct: 100.0
+    drill_metrics:
+      index_in:
+        status: structural
+        label: hidden-state input boundary · no standalone kernel
+        scope_target: qsa_attention.indexer
+      qk_projection:
+        ms_per_iter: 0.51543
+        active_gpu_ms: 0.51543
+        gpu_residency_ms: 0.515429
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 0.515429
+        kernels:
+        - name: project_qk
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 10.738
+          total_us_per_iter: 515.429
+          share_in_node_pct: 100.0
+        display_label: index Q/K projection
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      q_norm_rope:
+        ms_per_iter: 2.864898
+        active_gpu_ms: 2.864898
+        gpu_residency_ms: 2.864902
+        gpu_overlap_ms: 4.0e-06
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 0.382882
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 864
+              gpu_residency_ms_per_iter: 2.48202
+        kernels:
+        - name: update_key_state_and_compress
+          count: 816
+          count_per_iter: 816.0
+          avg_us: 2.92
+          total_us_per_iter: 2382.497
+          share_in_node_pct: 83.16
+        - name: QSA index query preparation
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 7.977
+          total_us_per_iter: 382.882
+          share_in_node_pct: 13.36
+        - name: _fused_compress_store
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 2.073
+          total_us_per_iter: 99.523
+          share_in_node_pct: 3.47
+        display_label: index Q RMSNorm + MRoPE + raw-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      raw_k_cache:
+        status: fused
+        label: raw index-K and MRoPE-position stores are fused into Q-prep
+        included_in: qsa_indexer.q_norm_rope
+        scope_target: qsa_attention.indexer
+      compress:
+        ms_per_iter: 0.196703
+        active_gpu_ms: 0.196703
+        gpu_residency_ms: 0.196704
+        gpu_overlap_ms: 1.0e-06
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 0.196704
+        kernels:
+        - name: QSA index key compression
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 4.098
+          total_us_per_iter: 196.704
+          share_in_node_pct: 100.0
+        display_label: 4-token average + K norm/MRoPE + compressed-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      compressed_k_cache:
+        status: fused
+        label: compressed-K cache store is fused into key compression
+        included_in: qsa_indexer.compress
+        scope_target: qsa_attention.indexer
+      compressed_score:
+        ms_per_iter: 4.935627
+        active_gpu_ms: 4.935627
+        gpu_residency_ms: 4.935634
+        gpu_overlap_ms: 7.0e-06
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            python_stack_ir_rule+exact_sequence_timing_transfer:
+              kernel_count: 1392
+              gpu_residency_ms_per_iter: 4.935634
+        kernels:
+        - name: tilelang_qsa_mqa_prefill
+          count: 192
+          count_per_iter: 192.0
+          avg_us: 10.992
+          total_us_per_iter: 2110.554
+          share_in_node_pct: 42.76
+        - name: build_qsa_row_ranges
+          count: 672
+          count_per_iter: 672.0
+          avg_us: 2.093
+          total_us_per_iter: 1406.634
+          share_in_node_pct: 28.5
+        - name: get_prefill_mqa_inputs
+          count: 384
+          count_per_iter: 384.0
+          avg_us: 2.723
+          total_us_per_iter: 1045.576
+          share_in_node_pct: 21.18
+        - name: forward_cuda
+          count: 96
+          count_per_iter: 96.0
+          avg_us: 3.123
+          total_us_per_iter: 299.846
+          share_in_node_pct: 6.08
+        - name: qsa_fast_topk
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 1.521
+          total_us_per_iter: 73.024
+          share_in_node_pct: 1.48
+        display_label: compressed MQA score
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      block_topk:
+        ms_per_iter: 1.810165
+        active_gpu_ms: 1.810165
+        gpu_residency_ms: 1.810165
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 1.810165
+        kernels:
+        - name: QSA index top-k
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 37.712
+          total_us_per_iter: 1810.165
+          share_in_node_pct: 100.0
+        display_label: Top-512 complete blocks
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      expand_tail:
+        ms_per_iter: 0.475844
+        active_gpu_ms: 0.475844
+        gpu_residency_ms: 0.475842
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 48
+              gpu_residency_ms_per_iter: 0.475842
+        kernels:
+        - name: QSA block-index expansion
+          count: 48
+          count_per_iter: 48.0
+          avg_us: 9.913
+          total_us_per_iter: 475.842
+          share_in_node_pct: 100.0
+        display_label: block expansion + causal tail
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: critical stack-disabled timing rank
+      selected_indices:
+        status: structural
+        label: selected-token output boundary · materialized by expansion
+        scope_target: qsa_attention.indexer
   qsa_attention.kv_cache:
     ms_per_iter: 0.158786
     active_gpu_ms: 0.158786
@@ -3201,4 +3412,4 @@ timeline:
   step_count: 1
   event_count: 14910
   raw_trace_file: qwen40-dp_attention-eager-gbs1-qwen40-dp_attention-eager-gbs1-TP-0-DP-0.trace.json.gz
-  sha256: 6717cc295e3bdb74c82f7b9b2058767d3a7bcac4429a51f64493ea0c37dedae9
+  sha256: 981e93eec73917b07068615e270ac783b0b86ba413550027dbfcc06fc73e3515

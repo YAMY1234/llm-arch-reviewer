@@ -2662,6 +2662,178 @@ node_metrics:
       envelope; device-idle cause is unclassified
     source_rank: 0
     rank_policy: one coherent critical reference rank
+    drill_view: qsa_indexer
+    drill_scope: qsa_attention.indexer
+    drill_mapping_coverage_pct: 100.0
+    drill_metrics:
+      index_in:
+        status: structural
+        label: hidden-state input boundary · no standalone kernel
+        scope_target: qsa_attention.indexer
+      qk_projection:
+        ms_per_iter: 0.133434
+        active_gpu_ms: 0.133434
+        gpu_residency_ms: 0.133434
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.133434
+        kernels:
+        - name: QSA index projection/support
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 3.706
+          total_us_per_iter: 133.434
+          share_in_node_pct: 100.0
+        display_label: index Q/K projection
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      q_norm_rope:
+        ms_per_iter: 0.060736
+        active_gpu_ms: 0.060736
+        gpu_residency_ms: 0.060736
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.060736
+        kernels:
+        - name: QSA index query preparation
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 5.061
+          total_us_per_iter: 60.736
+          share_in_node_pct: 100.0
+        display_label: index Q RMSNorm + MRoPE + raw-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      raw_k_cache:
+        status: fused
+        label: raw index-K and MRoPE-position stores are fused into Q-prep
+        included_in: qsa_indexer.q_norm_rope
+        scope_target: qsa_attention.indexer
+      compress:
+        ms_per_iter: 0.057594
+        active_gpu_ms: 0.057594
+        gpu_residency_ms: 0.057594
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.057594
+        kernels:
+        - name: QSA index key compression
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 4.799
+          total_us_per_iter: 57.594
+          share_in_node_pct: 100.0
+        display_label: 4-token average + K norm/MRoPE + compressed-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      compressed_k_cache:
+        status: fused
+        label: compressed-K cache store is fused into key compression
+        included_in: qsa_indexer.compress
+        scope_target: qsa_attention.indexer
+      compressed_score:
+        ms_per_iter: 0.359396
+        active_gpu_ms: 0.359396
+        gpu_residency_ms: 0.359394
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.359394
+        kernels:
+        - name: QSA index projection/support
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 9.983
+          total_us_per_iter: 359.394
+          share_in_node_pct: 100.0
+        display_label: compressed MQA score
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      block_topk:
+        ms_per_iter: 0.129377
+        active_gpu_ms: 0.129377
+        gpu_residency_ms: 0.129377
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.129377
+        kernels:
+        - name: QSA index top-k
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 10.781
+          total_us_per_iter: 129.377
+          share_in_node_pct: 100.0
+        display_label: Top-512 complete blocks
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      expand_tail:
+        ms_per_iter: 0.034874
+        active_gpu_ms: 0.034874
+        gpu_residency_ms: 0.034874
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.034874
+        kernels:
+        - name: QSA block-index expansion
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 2.906
+          total_us_per_iter: 34.874
+          share_in_node_pct: 100.0
+        display_label: block expansion + causal tail
+        scope_target: qsa_attention.indexer
+        source_rank: 0
+        rank_policy: one coherent critical reference rank
+      selected_indices:
+        status: structural
+        label: selected-token output boundary · materialized by expansion
+        scope_target: qsa_attention.indexer
   qsa_attention.kv_cache:
     ms_per_iter: 0.029529
     active_gpu_ms: 0.029529
@@ -3556,4 +3728,4 @@ timeline:
   step_count: 5
   event_count: 9085
   raw_trace_file: qwen40-tp4_flashinfer_gdn-cudagraph-gbs256-qwen40-tp4_flashinfer_gdn-cudagraph-gbs256-TP-0.trace.json.gz
-  sha256: dbbc7ae05d1ae1e12235786b5392037a03bd18ac1976fb514b769165b41d9996
+  sha256: b51280c3be654acb157502778b906204408fa03a3e57fcae384ba45d1c7e5832

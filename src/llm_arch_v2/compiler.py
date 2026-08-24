@@ -133,6 +133,12 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                             f"{source}: node {view_id}.{node_id} "
                             f"semantic_details.{field} must be a list"
                         )
+                runtime_mapping = semantic_details.get("runtime_mapping")
+                if runtime_mapping is not None and not isinstance(runtime_mapping, dict):
+                    raise CatalogError(
+                        f"{source}: node {view_id}.{node_id} "
+                        "semantic_details.runtime_mapping must be a mapping"
+                    )
             if node["shape"] not in allowed_shapes:
                 raise CatalogError(
                     f"{source}: node {view_id}.{node_id} has unknown shape {node['shape']!r}"
@@ -157,6 +163,25 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                 raise CatalogError(
                     f"{source}: node {view_id}.{node['id']} drills into unknown view {drill!r}"
                 )
+    for target, node in index.items():
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping")
+        if not runtime_mapping:
+            continue
+        expectation = runtime_mapping.get("expectation")
+        if expectation not in {"measured", "fused_state", "structural"}:
+            raise CatalogError(
+                f"{source}: node {target} has unknown runtime-mapping expectation "
+                f"{expectation!r}"
+            )
+        if expectation == "measured" and runtime_mapping.get("profile_leaf") != target:
+            raise CatalogError(
+                f"{source}: measured node {target} must name itself as profile_leaf"
+            )
+        owner = runtime_mapping.get("owner")
+        if expectation == "fused_state" and owner not in index:
+            raise CatalogError(
+                f"{source}: fused-state node {target} references unknown owner {owner!r}"
+            )
     return index
 
 

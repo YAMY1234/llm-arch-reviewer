@@ -216,6 +216,16 @@ Semantic trace 记录 stack、可获得的 tensor shape、operator order、colle
 4. 按计划应该执行、却没有任何 eager evidence 的节点属于失败；显式 structural 或本次 run 未选择的节点除外。
 5. 未预期的 eager scope 可以提示 Execution IR contract 缺失或位置错误，但不能自动修改 graph。
 
+Model IR 新增或拆分 drill view 时，必须额外执行一次 **mapping reconciliation**：
+
+- 每个子节点显式声明 `measured`、`fused_state` 或 `structural`，不能因为父节点已有时间就默认视为子节点已绑定；
+- `measured` 节点必须同时具备 commit-specific Binding 和 eager/sequence-validated Profile leaf；
+- 融合 cache/state update 只能指向实际 timing owner，不能复制 owner 的时间形成双重计数；
+- Timeline event 保留原父级 rollup target，同时增加最细的已验证 leaf target，从而支持架构图与 timeline 双向跳转；
+- 所有已经交付的 profile 必须回填并重新计算 artifact hash；若无法从原始 evidence 唯一细分，则保持父级 mapping 并把子节点标为未验证，禁止按 kernel 名称猜测。
+
+因此，Model IR semantic revision 可以不改变 Execution fingerprint，但只要新增了 runtime-bearing drill leaf，就必须使相关 Binding/Profile validation 失效，直到 mapping reconciliation 完成。
+
 如果不一致，Execution Plan 必须退回 review。Reconciliation 成功后，以 implementation-specific validation attestation 对 structural fingerprint 完成验证，并把该 attestation 存入 finalized Binding。Trace 不能生成 Model IR，其 framework-specific stack name 也不会成为 shared fingerprint 的组成部分。
 
 Stage 4 会生成三个可以直接 review 的 artifact：

@@ -75,6 +75,20 @@ Stage 1 现在增加四个 closure gate：
 
 并要求每个 architecture-bearing config field 有明确 disposition。默认图仍然只展示一个代表 layer；heads、experts 和相同 layer 不展开复制，精确信息进入节点详情或必要的 drill view。这样既保持当前 viewer 的可读性，也能复用于 vLLM、TensorRT-LLM 等不同实现。
 
+### 补充审计：新增 drill 后的 mapping reconciliation
+
+第一次精细化提交新增了 `qsa_indexer` drill，但沿用了父级 `qsa_attention.indexer` 的既有 Binding/Profile。父级聚合时间仍然正确，新增 leaf 却没有自动获得 source binding、独立 timing cell 和 timeline target。这说明 semantic completeness 与 runtime mapping completeness 是两道不同的 gate。
+
+本次已基于原有、100% attributed 的 timeline evidence 回填全部 33 个 profile：
+
+- projection、Q-prep、compression、compressed MQA score、Top-k 和 block expansion 分别映射到可测 leaf；
+- raw index-K cache store 归属 Q-prep fused kernel，compressed-K cache store 归属 compression fused kernel，均不重复时间；
+- input/output boundary 保持 structural；
+- 每个 event 同时保留父级 rollup target 和最细 verified target；
+- 每个 profile 的 drill residency mapping coverage 均为 100%，timeline content hash 已重新生成。
+
+Pipeline 现在明确规定：Model IR semantic revision 即使不改变 Execution fingerprint，只要增加 runtime-bearing leaf，也必须重新完成 Binding/Profile mapping reconciliation。
+
 ## 当前边界
 
 - 参数数字来自参考 artifact 标注的 config/source snapshot 和闭合推导，不能冒充 checkpoint-index 官方统计；snapshot 改变时必须重新跑 semantic audit。

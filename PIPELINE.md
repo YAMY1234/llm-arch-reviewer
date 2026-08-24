@@ -341,6 +341,26 @@ boundaries. It is reconciled against the complete candidate Execution IR:
 5. unexpected eager scopes may propose a missing or misplaced Execution IR
    contract, but cannot mutate the graph automatically.
 
+Adding or splitting a Model IR drill view requires a separate **mapping
+reconciliation**:
+
+- every child declares `measured`, `fused_state`, or `structural`; a timed
+  parent never implies that its new children are already bound;
+- a `measured` child requires both a commit-specific Binding and an
+  eager/sequence-validated Profile leaf;
+- a fused cache/state update points to its real timing owner and never copies
+  that owner's time;
+- each Timeline event retains the parent roll-up target and adds the finest
+  validated leaf target for bidirectional navigation;
+- every delivered profile is backfilled and its artifact hash recomputed. If
+  existing evidence cannot uniquely refine the interval, keep the parent
+  mapping, mark the child unvalidated, and do not guess from a generic kernel
+  name.
+
+A semantic revision can therefore preserve the Execution fingerprint, but any
+new runtime-bearing drill leaf invalidates the relevant Binding/Profile
+validation until this reconciliation succeeds.
+
 A mismatch sends the plan back to review. A successful reconciliation seals the
 structural fingerprint with an implementation-specific validation attestation
 stored in the finalized Binding. The trace does not generate Model IR, and its

@@ -52,6 +52,14 @@ default graph should remain compact; repeated identical layers, heads, and
 experts are represented by one node plus count/placement detail or a drill
 view, not by cloning every instance.
 
+When a semantic drill contains runtime-bearing leaves,
+`semantic_details.runtime_mapping` declares whether each leaf is `measured`, a
+`fused_state` owned by another leaf, or `structural`. This is a Model IR
+expectation, not a framework mapping: concrete symbols remain in Binding and
+measured intervals remain in Profile/Timeline artifacts. Adding a measured
+leaf therefore requires mapping reconciliation even when the structural
+Execution fingerprint is unchanged.
+
 Fused kernels remain an implementation/profile overlay. `status: fused` plus
 `included_in` is compiled into a `fusion_group` covering two or more stable IR
 nodes with `timing_semantics: shared_interval`. The shared interval is valid

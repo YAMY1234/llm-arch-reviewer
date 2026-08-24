@@ -282,6 +282,109 @@ def _map_qsa_attention(rows: list[dict[str, Any]], start: int, stop: int) -> Non
         _assign(rows, index, node, label, "validated_execution_sequence", "high")
 
 
+_QSA_INDEXER_PARENT_NODES = {
+    "qsa_attention.indexer",
+    "mtp_qsa_attention.indexer",
+}
+
+
+def _direct_qsa_indexer_drill_target(event: dict[str, Any]) -> str | None:
+    """Return only semantically unique QSA-indexer drill mappings."""
+
+    name = str(event.get("kernel_name") or "").lower()
+    label = str(event.get("kernel_label") or "").lower()
+    if "qsa_index_q_prep_kernel" in name or "query preparation" in label:
+        return "qsa_indexer.q_norm_rope"
+    if "qsa_index_k_compress_kernel" in name or "key compression" in label:
+        return "qsa_indexer.compress"
+    if "fast_topk" in name or "index top-k" in label:
+        return "qsa_indexer.block_topk"
+    if "expand_qsa_block_indices" in name or "block-index expansion" in label:
+        return "qsa_indexer.expand_tail"
+    if "qsa_mqa" in name or "compressed mqa" in label:
+        return "qsa_indexer.compressed_score"
+    return None
+
+
+def attach_qsa_indexer_drill_targets(events: list[dict[str, Any]]) -> None:
+    """Attach leaf drill targets without changing the validated parent mapping.
+
+    The eager/CUDA-Graph attribution contract already proves the whole QSA
+    indexer interval.  This pass refines that interval using direct fused
+    anchors plus their order inside one layer invocation.  State/cache nodes
+    intentionally remain fused/structural and never receive invented kernel
+    residency.
+    """
+
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if str(event.get("node") or "") not in _QSA_INDEXER_PARENT_NODES:
+            continue
+        direct = _direct_qsa_indexer_drill_target(event)
+        if direct is not None:
+            event["qsa_indexer_drill_target"] = direct
+        groups[
+            (
+                event.get("node"),
+                event.get("step_index"),
+                event.get("prefill_chunk_index"),
+                event.get("invocation_id"),
+                event.get("layer_id"),
+                event.get("substage"),
+            )
+        ].append(event)
+
+    for rows in groups.values():
+        ordered = sorted(rows, key=lambda row: float(row.get("ts_us", 0.0)))
+        q_preps = [
+            index
+            for index, row in enumerate(ordered)
+            if row.get("qsa_indexer_drill_target") == "qsa_indexer.q_norm_rope"
+        ]
+
+        # Without the fused Q-prep anchor there is no safe boundary between
+        # the projection and fallback normalization path. Keep ambiguous
+        # support on the validated parent instead of forcing a leaf mapping.
+        previous_expand = -1
+        for invocation_index, q_prep in enumerate(q_preps):
+            next_q_prep = (
+                q_preps[invocation_index + 1]
+                if invocation_index + 1 < len(q_preps)
+                else len(ordered)
+            )
+
+            def first_after(target: str) -> int | None:
+                return next(
+                    (
+                        index
+                        for index in range(q_prep, next_q_prep)
+                        if ordered[index].get("qsa_indexer_drill_target") == target
+                    ),
+                    None,
+                )
+
+            compress = first_after("qsa_indexer.compress")
+            topk = first_after("qsa_indexer.block_topk")
+            expand = first_after("qsa_indexer.expand_tail")
+            segment_stop = expand + 1 if expand is not None else next_q_prep
+            for index in range(previous_expand + 1, segment_stop):
+                row = ordered[index]
+                if row.get("qsa_indexer_drill_target") is not None:
+                    continue
+                if index < q_prep:
+                    target = "qsa_indexer.qk_projection"
+                elif compress is not None and index < compress:
+                    target = "qsa_indexer.q_norm_rope"
+                elif topk is not None and index < topk:
+                    target = "qsa_indexer.compressed_score"
+                elif expand is not None and index < expand:
+                    target = "qsa_indexer.block_topk"
+                else:
+                    target = "qsa_indexer.expand_tail"
+                row["qsa_indexer_drill_target"] = target
+            previous_expand = expand if expand is not None else segment_stop - 1
+
+
 def _map_moe(
     rows: list[dict[str, Any]], start: int, stop: int, *, config_name: str
 ) -> None:
@@ -896,6 +999,7 @@ def map_decode_step(
             f"decode attribution left {len(unresolved)} kernels unresolved: "
             f"{names.most_common(8)}"
         )
+    attach_qsa_indexer_drill_targets(rows)
     return rows
 
 
@@ -1236,6 +1340,8 @@ def metrics_for_rank(
 ) -> dict[str, dict[str, Any]]:
     """Build exclusive leaf metrics and overlap-aware inclusive rollups."""
 
+    attach_qsa_indexer_drill_targets(events)
+
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         groups[str(event["node"])].append(event)
@@ -1301,6 +1407,9 @@ def metrics_for_rank(
             metrics[target]["communication"] = communication
     attach_hyperconnection_drill_metrics(
         metrics, groups, n_iters=n_iters, all_events=events
+    )
+    attach_qsa_indexer_drill_metrics(
+        metrics, events, n_iters=n_iters, all_events=events
     )
     return metrics
 
@@ -1439,6 +1548,112 @@ def attach_hyperconnection_drill_metrics(
     ):
         if aggregate_target in metrics:
             metrics[split_target] = copy.deepcopy(metrics[aggregate_target])
+
+
+def attach_qsa_indexer_drill_metrics(
+    metrics: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+    *,
+    n_iters: int,
+    all_events: list[dict[str, Any]] | None = None,
+) -> None:
+    """Attach context-scoped runtime evidence to the QSA indexer drill view."""
+
+    attach_qsa_indexer_drill_targets(events)
+    all_events = events if all_events is None else all_events
+
+    for parent in sorted(_QSA_INDEXER_PARENT_NODES):
+        parent_rows = [event for event in events if str(event.get("node")) == parent]
+        if not parent_rows or parent not in metrics:
+            continue
+        by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in parent_rows:
+            target = event.get("qsa_indexer_drill_target")
+            if target:
+                by_target[str(target)].append(event)
+
+        def measured(target: str, label: str) -> dict[str, Any]:
+            selected = by_target.get(target) or []
+            if not selected:
+                return {
+                    "status": "not_observed",
+                    "label": f"{label} · no separately validated interval in this profile",
+                    "scope_target": parent,
+                }
+            cell = _metric(
+                selected,
+                n_iters=n_iters,
+                metric_kind="exclusive_leaf",
+                aggregation="kernel interval union inside the selected QSA-indexer scope",
+                all_events=all_events,
+                elapsed_scope=(
+                    "invocation"
+                    if all(event.get("invocation_id") is not None for event in selected)
+                    else None
+                ),
+            )
+            cell["display_label"] = label
+            cell["scope_target"] = parent
+            return cell
+
+        q_norm = measured(
+            "qsa_indexer.q_norm_rope", "index Q RMSNorm + MRoPE + raw-K store"
+        )
+        compress = measured(
+            "qsa_indexer.compress", "4-token average + K norm/MRoPE + compressed-K store"
+        )
+        mapped_residency_us = sum(
+            float(event.get("dur_us", 0.0))
+            for event in parent_rows
+            if event.get("qsa_indexer_drill_target")
+        )
+        total_residency_us = sum(float(event.get("dur_us", 0.0)) for event in parent_rows)
+        coverage = (
+            100.0 * mapped_residency_us / total_residency_us
+            if total_residency_us
+            else 100.0
+        )
+        metrics[parent]["drill_view"] = "qsa_indexer"
+        metrics[parent]["drill_scope"] = parent
+        metrics[parent]["drill_mapping_coverage_pct"] = round(coverage, 2)
+        metrics[parent]["drill_metrics"] = {
+            "index_in": {
+                "status": "structural",
+                "label": "hidden-state input boundary · no standalone kernel",
+                "scope_target": parent,
+            },
+            "qk_projection": measured(
+                "qsa_indexer.qk_projection", "index Q/K projection"
+            ),
+            "q_norm_rope": q_norm,
+            "raw_k_cache": {
+                "status": "fused",
+                "label": "raw index-K and MRoPE-position stores are fused into Q-prep",
+                "included_in": "qsa_indexer.q_norm_rope",
+                "scope_target": parent,
+            },
+            "compress": compress,
+            "compressed_k_cache": {
+                "status": "fused",
+                "label": "compressed-K cache store is fused into key compression",
+                "included_in": "qsa_indexer.compress",
+                "scope_target": parent,
+            },
+            "compressed_score": measured(
+                "qsa_indexer.compressed_score", "compressed MQA score"
+            ),
+            "block_topk": measured(
+                "qsa_indexer.block_topk", "Top-512 complete blocks"
+            ),
+            "expand_tail": measured(
+                "qsa_indexer.expand_tail", "block expansion + causal tail"
+            ),
+            "selected_indices": {
+                "status": "structural",
+                "label": "selected-token output boundary · materialized by expansion",
+                "scope_target": parent,
+            },
+        }
 
 
 def default_node_states(*, phase: str) -> dict[str, dict[str, str]]:
