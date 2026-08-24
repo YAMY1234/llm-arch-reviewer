@@ -514,7 +514,7 @@ def compile_profile(
     targets = set(effective_states) | set(
         profile.get("node_metrics") or {}
     )
-    for target in targets:
+    for target in sorted(targets):
         cell = copy.deepcopy(effective_states.get(target, {}))
         cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
         group_id = fusion_group_for_target.get(target)
