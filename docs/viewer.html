@@ -1790,8 +1790,11 @@ function comparisonProfileScore(profileId) {
   const evidence = profile.meta?.evidence || {};
   const purpose = String(workload.purpose || "").toLowerCase();
   const selection = String(evidence.selection_policy || "").toLowerCase();
+  const contract = workload.comparison_contract || {};
   let score = 0;
-  if (profilerType.includes("nsight") || profilerType.includes("nsys")) score += 100;
+  if (contract.validated === true) score += 500;
+  if (profilerType.includes("kineto") || profilerType.includes("torch")
+      || profilerType.includes("nsight") || profilerType.includes("nsys")) score += 100;
   if (selection.includes("exact")) score += 50;
   if (workload.selected_exact_target_verify_batch != null) score += 25;
   if (workload.measured_shape?.selected_exact_generation_requests != null) score += 25;
@@ -1800,11 +1803,13 @@ function comparisonProfileScore(profileId) {
   return score;
 }
 
-function comparisonProfileIsNsys(profileId) {
+function comparisonProfilerFamily(profileId) {
   const profilerType = String(
     RAW_DATA?.profiles?.[profileId]?.meta?.profiler?.type || ""
   ).toLowerCase();
-  return profilerType.includes("nsight") || profilerType.includes("nsys");
+  if (profilerType.includes("kineto") || profilerType.includes("torch")) return "torch_kineto";
+  if (profilerType.includes("nsight") || profilerType.includes("nsys")) return "nsys";
+  return "";
 }
 
 function comparisonExactBatch(profileId) {
@@ -1825,18 +1830,93 @@ function comparisonProfileProvenance(profileId) {
     profilerType: profile.meta?.profiler?.type || "",
     exactBatch: comparisonExactBatch(profileId),
     rankCoverage: profile.meta?.profiler?.rank || "",
-    nsysVersion: profile.meta?.evidence?.nsys_export?.version || "",
+    profilerFamily: comparisonProfilerFamily(profileId),
+    profilerVersion: profile.meta?.evidence?.nsys_export?.version || "",
   };
 }
 
-function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId) {
+const COMPARISON_CONTRACT_FIELDS = [
+  "contract_id",
+  "model_revision",
+  "model_precision",
+  "dataset_sha256",
+  "input_tokens",
+  "output_tokens",
+  "request_count",
+  "concurrency",
+  "prefill_workers",
+  "decode_workers",
+  "gpu_type",
+  "tensor_parallel_size",
+  "effective_attention_tensor_parallel_size",
+  "attention_data_parallel_size",
+  "moe_expert_parallel_size",
+  "rank_local_batch",
+  "mtp_draft_tokens",
+  "forced_mean_accept_length",
+  "stream_interval",
+  "injected_scheduler_sleep",
+  "cuda_graph",
+  "profiler",
+  "profiler_activities",
+  "profiler_with_stack",
+  "profiler_record_shapes",
+  "sample_unit",
+  "sample_aggregation",
+  "comparison_sources",
+  "selected_rank_local_samples",
+  "selected_samples_per_source",
+];
+
+function comparisonProfileContract(profileId) {
+  return RAW_DATA?.profiles?.[profileId]?.meta?.workload?.comparison_contract || null;
+}
+
+function comparisonProfileCompatibility(sglangProfileId, trtllmProfileId) {
+  const reasons = [];
+  const sglangProfiler = comparisonProfilerFamily(sglangProfileId);
+  const trtllmProfiler = comparisonProfilerFamily(trtllmProfileId);
+  if (!sglangProfiler) reasons.push("SGLang profiler family is unsupported or missing");
+  if (!trtllmProfiler) reasons.push("TRT-LLM profiler family is unsupported or missing");
+  if (sglangProfiler && trtllmProfiler && sglangProfiler !== trtllmProfiler) {
+    reasons.push(`profiler family differs (${sglangProfiler} vs ${trtllmProfiler})`);
+  }
   const sglangBatch = comparisonExactBatch(sglangProfileId);
   const trtllmBatch = comparisonExactBatch(trtllmProfileId);
-  return comparisonProfileIsNsys(sglangProfileId)
-    && comparisonProfileIsNsys(trtllmProfileId)
-    && sglangBatch != null
-    && trtllmBatch != null
-    && sglangBatch === trtllmBatch;
+  if (sglangBatch == null || trtllmBatch == null) {
+    reasons.push("rank-local exact batch is missing");
+  } else if (sglangBatch !== trtllmBatch) {
+    reasons.push(`rank-local batch differs (${sglangBatch} vs ${trtllmBatch})`);
+  }
+  const sglangContract = comparisonProfileContract(sglangProfileId);
+  const trtllmContract = comparisonProfileContract(trtllmProfileId);
+  if (!sglangContract || !trtllmContract) {
+    reasons.push("validated 8K/1K comparison contract is missing");
+  } else {
+    if (sglangContract.validated !== true || trtllmContract.validated !== true) {
+      reasons.push("one or both workload contracts failed validation");
+    }
+    for (const field of COMPARISON_CONTRACT_FIELDS) {
+      const left = sglangContract[field];
+      const right = trtllmContract[field];
+      if (left == null || right == null) {
+        reasons.push(`contract field ${field} is missing`);
+      } else if (String(left) !== String(right)) {
+        reasons.push(`contract field ${field} differs (${left} vs ${right})`);
+      }
+    }
+    if (sglangBatch != null && Number(sglangContract.rank_local_batch) !== sglangBatch) {
+      reasons.push("SGLang profile batch disagrees with its workload contract");
+    }
+    if (trtllmBatch != null && Number(trtllmContract.rank_local_batch) !== trtllmBatch) {
+      reasons.push("TRT-LLM profile batch disagrees with its workload contract");
+    }
+  }
+  return {compatible: reasons.length === 0, reasons};
+}
+
+function comparisonProfilesCompatible(sglangProfileId, trtllmProfileId) {
+  return comparisonProfileCompatibility(sglangProfileId, trtllmProfileId).compatible;
 }
 
 function comparisonBestProfilePair(sglangProfileIds, trtllmProfileIds) {
@@ -2277,13 +2357,15 @@ function comparisonCaveat() {
     COMPARE_SGLANG_PROFILE,
     COMPARE_TRTLLM_PROFILE,
   );
+  const compatibility = comparisonProfileCompatibility(
+    COMPARE_SGLANG_PROFILE,
+    COMPARE_TRTLLM_PROFILE,
+  );
   const context = matchedProfilePair
-    ? `Matched timing axes: worker-local NSYS on both engines and exact rank-local BS${sBatch}`
+    ? `A2A PASS: validated 8K/1K contract, worker-local ${comparisonProfilerFamily(COMPARE_SGLANG_PROFILE)} on both engines, and exact rank-local BS${sBatch}`
       + (sameConcurrency ? ` at concurrency ${sWorkload.concurrency}.` : ".")
-      + " Context/KV shape, accepted-length distribution, graph policy, and backend remain separate provenance dimensions."
-    : sameConcurrency
-      ? `Both profiles report concurrency ${sWorkload.concurrency}, but profiler type, worker-local batch distribution, or capture boundary may differ.`
-      : "The selected workloads are not profiler- and shape-normalized.";
+      + " Dataset, ISL/OSL, topology, MTP/acceptance policy, stream interval, graph policy, source pool, and selected sample count are contract-matched."
+    : `not-a2a: ${compatibility.reasons.join("; ") || "the selected workloads are not profiler- and shape-normalized"}.`;
   const attributionOnly = [sWorkload, tWorkload].some(workload =>
     String(workload.purpose || "").toLowerCase().includes("attribution")
   );
@@ -2291,7 +2373,7 @@ function comparisonCaveat() {
     sglang?.meta?.profiler?.rank ? `SGLang rank coverage: ${sglang.meta.profiler.rank}.` : "",
     trtllm?.meta?.profiler?.rank ? `TRT-LLM rank coverage: ${trtllm.meta.profiler.rank}.` : "",
   ].filter(Boolean).join(" ");
-  const exporterVersions = [
+  const profilerVersions = [
     sEvidence.nsys_export?.version
       ? `SGLang NSYS ${sEvidence.nsys_export.version}` : "",
     tEvidence.nsys_export?.version
@@ -2299,10 +2381,12 @@ function comparisonCaveat() {
   ].filter(Boolean).join("; ");
   return `${CURRENT_PHASE || "selected phase"}: ${context} `
     + (rankCoverage ? `${rankCoverage} ` : "")
-    + (exporterVersions ? `Exporter provenance: ${exporterVersions}. ` : "")
+    + (profilerVersions ? `Profiler provenance: ${profilerVersions}. ` : "")
     + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
     + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
-    + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
+    + (matchedProfilePair
+      ? "The per-module GPU residency, active-union, and wall columns are directly comparable under this A2A contract; summed GPU Σ is not end-to-end latency or throughput."
+      : "Values retain each profile's own provenance; do not read the columns as a direct engine speedup.")
     + (attributionOnly ? " An attribution-only profile is selected and is not a performance baseline." : "");
 }
 
@@ -2381,7 +2465,8 @@ function renderComparisonTable() {
         sglang_profiler_type: sglangProvenance.profilerType,
         sglang_exact_batch: sglangProvenance.exactBatch,
         sglang_rank_coverage: sglangProvenance.rankCoverage,
-        sglang_nsys_version: sglangProvenance.nsysVersion,
+        sglang_profiler_family: sglangProvenance.profilerFamily,
+        sglang_profiler_version: sglangProvenance.profilerVersion,
         sglang_semantic_kernel: sglangKernel.semanticName,
         sglang_semantic_kernel_ms: sglangKernel.semanticTimeMs,
         sglang_concrete_kernel_name: sglangKernel.concreteName,
@@ -2395,7 +2480,8 @@ function renderComparisonTable() {
         trtllm_profiler_type: trtllmProvenance.profilerType,
         trtllm_exact_batch: trtllmProvenance.exactBatch,
         trtllm_rank_coverage: trtllmProvenance.rankCoverage,
-        trtllm_nsys_version: trtllmProvenance.nsysVersion,
+        trtllm_profiler_family: trtllmProvenance.profilerFamily,
+        trtllm_profiler_version: trtllmProvenance.profilerVersion,
         trtllm_semantic_kernel: trtllmKernel.semanticName,
         trtllm_semantic_kernel_ms: trtllmKernel.semanticTimeMs,
         trtllm_concrete_kernel_name: trtllmKernel.concreteName,

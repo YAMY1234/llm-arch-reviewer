@@ -81,7 +81,7 @@ DeepEP low-latency plus DeepGEMM. The TRT-LLM target uses CUTEDSL MoE EP4, while
 quantization-excluded MTP experts use a CUTLASS BF16 fallback. These are implementation
 facts, not architecture mutations.
 
-Eight official profiles are published under `profiles/attention_dp4_moe_ep4/`, and every
+Nine official profiles are published under `profiles/attention_dp4_moe_ep4/`, and every
 one has `generation_mode: mtp`:
 
 | Engine | Profile | Capture identity | Critical GPU wall |
@@ -92,8 +92,9 @@ one has `generation_mode: mtp`:
 | SGLang | CUDA-Graph global-BS32 decode | job `3204736` | mean 18.510 ms |
 | SGLang | real A-Z97/C704 steady decode | job `3205969` | mean 55.478 ms |
 | SGLang | worker-local NSYS exact rank-local BS32 | job `3256437` | mean 59.002 ms |
+| SGLang | strict 8K/1K C704 worker-local Torch/Kineto rank-local BS32 | job `3270073` | mean 30.644 ms |
 | TRT-LLM | exact one-request/8K prefill | job `532540` | mean 374.482 ms |
-| TRT-LLM | worker-local exact rank-local BS32 subset | job `532540` | mean 37.605 ms |
+| TRT-LLM | strict 8K/1K C704 worker-local Torch/Kineto rank-local BS32 | job `553916` | mean 23.832 ms |
 
 All selected kernel intervals are retained and classified as mapped, evidence-backed
 fusion, or explicit unmapped with candidates and a reason.  Those three classes close
@@ -105,13 +106,26 @@ residency, overlap, idle/gap, per-node elapsed/active/module-gap/other-work, str
 fusion groups, layer identifiers, and MTP rounds. One reference rank is displayed; all
 four ranks are validated and parallel rank residency is never summed.
 
-The exact 8K prefill profiles are shape-matched and give a descriptive TRT/SGL wall ratio
-of 1.0179x. The new decode pair aligns worker-local NSYS, phase, C704, DEP4 + MTP6 and
-actual rank-local BS32, but is still deliberately not subtracted: SGLang accepted length
-is 4.0/5.0 with roughly 238K full tokens per selected request, while TRT is configured for
-3.8 and does not retain a directly paired per-step full-token/KV shape. Stream interval,
-graph/fusion/backend, exporter version, and sample count also differ. The older SGLang
-global-BS32 profile remains a distinct eight-requests-per-DP-rank scope.
+The exact one-chunk 8K prefill profiles remain a small-sample descriptive pair with a
+TRT/SGL wall ratio of 1.0179x. The new decode pair is the strict cross-engine comparison:
+both jobs completed the same 704 unique requests at exactly 8192 input and 1024 output
+tokens, use 3P+2D GB300 workers, Attention-DP4/MoE-EP4, MTP6, rank-local BS32, forced
+mean accept length 4.8, stream interval 30, CUDA Graphs, and worker-local Torch/Kineto
+CPU+CUDA capture with stack enabled and shape recording disabled. Each side contributes
+five time-spread samples from one representative rank on each decode worker (10 total);
+parallel ranks/workers are never summed. SGLang's selected histogram is exactly two AL4
+plus eight AL5 samples; TRT-LLM exposes the immutable AL4.8 simulator setting but no
+per-step accepted-length histogram, so its acceptance evidence is configuration-bound.
+
+Under that frozen contract, SGLang step wall is 30.644 ms mean / 29.517 ms median and
+TRT-LLM is 23.832 ms mean / 22.622 ms median. The mean ratio is 1.2858x (SGLang 28.6%
+slower, +6.812 ms). This is a matched decode-step comparison, not an end-to-end throughput
+claim. SGLang reaches 96.19% mapped-or-fusion active-union attribution; TRT-LLM reaches
+90.07%. TRT's Kineto trace does not carry executor GPU annotations, so its CUDA Graph
+events are reconstructed fail-closed by matching the Nth stable graph-node occurrence to
+the Nth Python `_forward_step`; concrete profiler kernel symbols and unmapped intervals
+remain visible. The older SGLang global-BS32 and NSYS profiles remain historical scopes
+and are not selected by default.
 
 ## Evidence boundaries
 
@@ -143,6 +157,7 @@ python3 -m pytest -q \
   tests/test_qwen35_trace_rules.py \
   tests/test_qwen35_graph_mapping.py \
   tests/test_qwen35_nsys_mapping.py \
+  tests/test_qwen35_torch_mapping.py \
   tests/test_trace_mapping_common.py \
   tests/test_timeline_artifact.py \
   tests/test_v2_compiler.py \

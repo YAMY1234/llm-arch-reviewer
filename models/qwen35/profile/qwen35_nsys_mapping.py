@@ -271,6 +271,135 @@ def validate_sglang_all_rank_capture_integrity(
     }
 
 
+def validate_sglang_rank_local_capture_integrity(
+    path: Path,
+    *,
+    capture_range_label: str,
+    rank: int,
+    expected_capture_count: int | None = None,
+) -> dict[str, Any]:
+    """Validate one scheduler rank and all complete one-step capture pulses."""
+
+    connection = sqlite3.connect(path)
+    try:
+        strings = _strings(connection)
+        process_by_device = _sglang_process_by_device(connection)
+        if set(process_by_device) != {rank}:
+            raise ValueError(
+                f"{path}: expected only SGLang rank/device {rank}, "
+                f"found {sorted(process_by_device)}"
+            )
+        process = process_by_device[rank]
+        captures = _sglang_nvtx_ranges(
+            connection,
+            strings,
+            global_pid=process,
+            label=capture_range_label,
+        )
+        if not captures:
+            raise ValueError(f"{path}: no complete {capture_range_label!r} range")
+        if expected_capture_count is not None and len(captures) != expected_capture_count:
+            raise ValueError(
+                f"{path}: expected {expected_capture_count} complete "
+                f"{capture_range_label!r} ranges, found {len(captures)}"
+            )
+        scheduler_ranges = _sglang_nvtx_ranges(
+            connection,
+            strings,
+            global_pid=process,
+            label=SGLANG_STEP_LABEL,
+        )
+        kernels = _kernel_rows(connection, strings, global_pid=process)
+        graph_launches = _sglang_graph_launches(
+            connection, strings, global_pid=process
+        )
+    finally:
+        connection.close()
+
+    kernel_count = 0
+    graph_launch_count = 0
+    enclosing_markers: set[tuple[int, int]] = set()
+    range_rows = []
+    for index, (capture_start, capture_end) in enumerate(captures):
+        range_kernels = [
+            kernel
+            for kernel in kernels
+            if capture_start <= kernel.start_ns < capture_end
+        ]
+        if not range_kernels:
+            raise ValueError(f"{path}: capture pulse {index} has no kernels")
+        if any(kernel.device_id != rank for kernel in range_kernels):
+            raise ValueError(f"{path}: capture pulse {index} crosses CUDA devices")
+        range_launches = [
+            launch
+            for launch in graph_launches
+            if capture_start <= launch < capture_end
+        ]
+        if not range_launches:
+            raise ValueError(
+                f"{path}: capture pulse {index} has no CUDA Graph launch"
+            )
+        enclosing = [
+            boundary
+            for boundary in scheduler_ranges
+            if boundary[0] <= capture_start < capture_end <= boundary[1]
+        ]
+        if len(enclosing) > 1:
+            raise ValueError(
+                f"{path}: capture pulse {index} is enclosed by multiple "
+                f"{SGLANG_STEP_LABEL} markers"
+            )
+        if enclosing:
+            enclosing_markers.add(enclosing[0])
+        kernel_count += len(range_kernels)
+        graph_launch_count += len(range_launches)
+        range_rows.append(
+            {
+                "index": index,
+                "start_ns": capture_start,
+                "end_ns": capture_end,
+                "kernel_count": len(range_kernels),
+                "cuda_graph_launch_count": len(range_launches),
+                "enclosing_scheduler_marker": bool(enclosing),
+            }
+        )
+    if enclosing_markers and len(enclosing_markers) != len(captures):
+        raise ValueError(
+            f"{path}: capture pulses do not map one-to-one to scheduler markers"
+        )
+
+    return {
+        "capture_scope": "rank_local_scheduler_process_pulsed_per_model_step",
+        "logical_rank": rank,
+        "capture_device": rank,
+        "capture_range": {
+            "label": capture_range_label,
+            "start_ns": captures[0][0],
+            "end_ns": captures[-1][1],
+        },
+        "capture_range_count": len(captures),
+        "capture_ranges": range_rows,
+        "rank_count": 1,
+        "consistent_graph_bearing_scheduler_marker_count": len(captures),
+        "boundary_marker_policy": (
+            "the source-controlled pulse starts inside scheduler.run_batch and ends "
+            "in its finally block; an enclosing scheduler marker is recorded when "
+            "the Nsight version materializes already-open NVTX ranges"
+        ),
+        "ranks": {
+            f"r{rank}": {
+                "device_id": rank,
+                "global_pid": process,
+                "kernel_count": kernel_count,
+                "cuda_graph_launch_count": graph_launch_count,
+                "complete_scheduler_marker_count": len(enclosing_markers),
+                "graph_bearing_scheduler_marker_count": len(captures),
+                "boundary_tail_marker_count": 0,
+            }
+        },
+    }
+
+
 def _strings(connection: sqlite3.Connection) -> dict[int, str]:
     return {int(key): str(value) for key, value in connection.execute(
         "select id, value from StringIds"
@@ -633,34 +762,66 @@ def _sglang_capture_step_boundaries(
     *,
     global_pid: int,
     capture_label: str,
-) -> tuple[tuple[int, int], list[tuple[int, int]], int]:
-    """Recover the first in-flight step and following scheduler boundaries."""
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]], int]:
+    """Recover exact model-step boundaries from one or repeated capture ranges."""
 
     captures = _sglang_nvtx_ranges(
         connection, strings, global_pid=global_pid, label=capture_label
     )
-    if len(captures) != 1:
+    if not captures:
         raise ValueError(
-            f"SGLang formal report requires one complete {capture_label!r} range; "
-            f"found {len(captures)}"
+            f"SGLang formal report requires complete {capture_label!r} ranges"
         )
+    scheduler_ranges = _sglang_nvtx_ranges(
+        connection, strings, global_pid=global_pid, label=SGLANG_STEP_LABEL
+    )
+    if len(captures) > 1:
+        enclosing = [
+            [
+                boundary
+                for boundary in scheduler_ranges
+                if boundary[0] <= capture[0] < capture[1] <= boundary[1]
+            ]
+            for capture in captures
+        ]
+        if any(len(matches) != 1 for matches in enclosing):
+            raise ValueError(
+                f"SGLang repeated {capture_label!r} ranges are not each enclosed "
+                f"by exactly one {SGLANG_STEP_LABEL} marker"
+            )
+        if len({matches[0] for matches in enclosing}) != len(captures):
+            raise ValueError(
+                f"SGLang repeated {capture_label!r} ranges do not map one-to-one "
+                f"to {SGLANG_STEP_LABEL} markers"
+            )
+        return captures, captures, len(enclosing)
+
     capture = captures[0]
-    scheduler_ranges = [
+    enclosing_scheduler_ranges = [
         boundary
-        for boundary in _sglang_nvtx_ranges(
-            connection, strings, global_pid=global_pid, label=SGLANG_STEP_LABEL
-        )
+        for boundary in scheduler_ranges
+        if boundary[0] <= capture[0] < capture[1] <= boundary[1]
+    ]
+    if len(enclosing_scheduler_ranges) == 1:
+        return [capture], [capture], 1
+    following_scheduler_ranges = [
+        boundary
+        for boundary in scheduler_ranges
         if capture[0] < boundary[0] < capture[1]
     ]
-    if not scheduler_ranges:
-        raise ValueError(
-            f"SGLang {capture_label!r} range contains no following "
-            f"{SGLANG_STEP_LABEL} marker; capture width is too short"
-        )
-    first_step = (capture[0], scheduler_ranges[0][0])
+    if not following_scheduler_ranges:
+        # A one-step pulsed report begins after scheduler.run_batch opened and
+        # ends before it closes. Some Nsight versions do not materialize that
+        # already-open outer range, so the capture range itself is the exact
+        # model-step boundary. Complete three-graph validation below remains
+        # the fail-closed execution proof.
+        return [capture], [capture], 0
+    first_step = (capture[0], following_scheduler_ranges[0][0])
     if first_step[1] <= first_step[0]:
         raise ValueError("SGLang exact-batch first-step boundary is empty")
-    return capture, [first_step, *scheduler_ranges], len(scheduler_ranges)
+    return [capture], [first_step, *following_scheduler_ranges], len(
+        following_scheduler_ranges
+    )
 
 
 def _sglang_graph_launches(
@@ -908,10 +1069,10 @@ def load_sglang_nsys_steps(
                 f"SGLang rank/device {rank} is absent; present devices={sorted(process_by_device)}"
             )
         process = process_by_device[rank]
-        capture_window: tuple[int, int] | None = None
+        capture_windows: list[tuple[int, int]] | None = None
         scheduler_marker_count: int | None = None
         if capture_range_label is not None:
-            capture_window, boundaries, scheduler_marker_count = (
+            capture_windows, boundaries, scheduler_marker_count = (
                 _sglang_capture_step_boundaries(
                     connection,
                     strings,
@@ -935,23 +1096,25 @@ def load_sglang_nsys_steps(
     finally:
         connection.close()
 
-    if capture_window is not None:
-        capture_start, capture_end = capture_window
+    if capture_windows is not None:
+        def inside_capture(timestamp: int) -> bool:
+            return any(start <= timestamp < end for start, end in capture_windows)
+
         kernels = [
             kernel
             for kernel in kernels
-            if capture_start <= kernel.start_ns < capture_end
+            if inside_capture(kernel.start_ns)
         ]
         graph_launches = [
             launch
             for launch in graph_launches
-            if capture_start <= launch < capture_end
+            if inside_capture(launch)
         ]
         runtime = [
-            row for row in runtime if capture_start <= row[0] < capture_end
+            row for row in runtime if inside_capture(row[0])
         ]
 
-    if marker_source == SGLANG_STEP_LABEL or capture_window is not None:
+    if marker_source == SGLANG_STEP_LABEL or capture_windows is not None:
         paired, pairing_evidence = _pair_sglang_graph_executions(
             kernels, graph_launches, boundaries
         )
@@ -987,11 +1150,13 @@ def load_sglang_nsys_steps(
         for step_index, (start, marker_end) in enumerate(boundaries):
             if sorted(graph_roles_by_step.get(step_index, [])) != required_roles:
                 continue
-            wall_end = (
-                boundaries[step_index + 1][0]
-                if step_index + 1 < len(boundaries)
-                else marker_end
-            )
+            wall_end = marker_end
+            if capture_windows is None or len(capture_windows) == 1:
+                wall_end = (
+                    boundaries[step_index + 1][0]
+                    if step_index + 1 < len(boundaries)
+                    else marker_end
+                )
             selected = tuple(
                 sorted(
                     [*direct_by_step[step_index], *graph_by_step[step_index]],
@@ -1015,7 +1180,7 @@ def load_sglang_nsys_steps(
                     rank=rank,
                     label=(
                         f"{marker_source}:first_exact_step"
-                        if capture_window is not None and step_index == 0
+                        if capture_windows is not None and step_index == 0
                         else SGLANG_STEP_LABEL
                     ),
                     cpu_start_ns=start,
@@ -1039,17 +1204,24 @@ def load_sglang_nsys_steps(
             "crossing_kernel_count": crossing_kernel_count,
             **pairing_evidence,
         }
-        if capture_window is not None:
+        if capture_windows is not None:
             evidence.update(
                 {
                     "capture_range": {
                         "label": marker_source,
-                        "start_ns": capture_window[0],
-                        "end_ns": capture_window[1],
+                        "start_ns": capture_windows[0][0],
+                        "end_ns": capture_windows[-1][1],
                     },
+                    "capture_range_count": len(capture_windows),
+                    "capture_ranges": [
+                        {"start_ns": start, "end_ns": end}
+                        for start, end in capture_windows
+                    ],
                     "scheduler_marker_count": scheduler_marker_count,
                     "first_step_boundary": (
-                        "capture-range start to next scheduler.run_batch start"
+                        "one pulsed capture range per scheduler.run_batch"
+                        if len(capture_windows) > 1
+                        else "capture-range start to next scheduler.run_batch start"
                     ),
                 }
             )
@@ -1655,6 +1827,35 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
     if any(not draft_anchors[index] < prepare[60 + index] for index in range(6)):
         raise ValueError(f"step {step.step_id}: MTP attention/MoE order mismatch")
 
+    # TRT emits one block-scale quantization kernel after the attention output
+    # and before MoE dispatch in every target layer.  The generic kernel name
+    # alone is not enough evidence, so accept it only when all 60 occurrences
+    # satisfy that exact anchor-to-dispatch slot invariant.
+    target_routed_quantize_indices = {
+        index
+        for index in range(draft_anchors[0])
+        if "quantize_with_block_size" in kernels[index].name.lower()
+    }
+    if target_routed_quantize_indices:
+        expected_quantize_indices: set[int] = set()
+        for layer_id, (anchor_index, prepare_index) in enumerate(
+            zip(target_anchors, target_prepare)
+        ):
+            candidates = target_routed_quantize_indices.intersection(
+                range(anchor_index, prepare_index)
+            )
+            if len(candidates) != 1:
+                raise ValueError(
+                    f"step {step.step_id}: target layer {layer_id} has "
+                    f"{len(candidates)} routed-expert quantization slots"
+                )
+            expected_quantize_indices.update(candidates)
+        if expected_quantize_indices != target_routed_quantize_indices:
+            raise ValueError(
+                f"step {step.step_id}: routed-expert quantization outside a "
+                "validated target layer slot"
+            )
+
     mapped: list[dict[str, Any]] = []
     total_ns = sum(kernel.end_ns - kernel.start_ns for kernel in kernels)
     status_ns: Counter[str] = Counter()
@@ -1677,12 +1878,19 @@ def map_decode_step(step: NsysStep) -> tuple[list[dict[str, Any]], dict[str, Any
             before_moe = event_index < target_prepare[int(layer_id)]
         else:
             before_moe = event_index < prepare[60 + int(mtp_round)]
-        direct = _direct_node(
-            kernel.name,
-            section=section,
-            layer_kind=layer_kind,
-            before_moe=before_moe,
-        )
+        if event_index in target_routed_quantize_indices:
+            direct = NsysAttribution(
+                "moe_block.routed_experts",
+                "routed-expert block-scale input quantization",
+                attribution_method="validated_graph_signature_slot",
+            )
+        else:
+            direct = _direct_node(
+                kernel.name,
+                section=section,
+                layer_kind=layer_kind,
+                before_moe=before_moe,
+            )
         candidates: list[str] = []
         unmapped_reason = None
         if direct is None:

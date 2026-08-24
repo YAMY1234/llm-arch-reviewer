@@ -218,7 +218,7 @@ def test_framework_independent_dep4_plan_compiles_with_explicit_payloads() -> No
     assert len(
         {implementation["execution_variant"] for implementation in implementations.values()}
     ) == 1
-    assert bundle["meta"]["profile_count"] == 8
+    assert bundle["meta"]["profile_count"] == 9
     assert {
         profile["meta"]["generation_mode"]
         for profile in bundle["profiles"].values()

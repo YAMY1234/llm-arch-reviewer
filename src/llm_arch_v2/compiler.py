@@ -1019,7 +1019,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         ),
         "",
     )
-    default_profile = next(
+    inferred_default_profile = next(
         (
             profile_id
             for profile_id, profile in profiles.items()
@@ -1028,6 +1028,26 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         ),
         "",
     )
+    default_profile = model_ir.get("default_profile") or inferred_default_profile
+    if default_profile and default_profile not in profiles:
+        raise CatalogError(
+            f"{model_path}: unknown default_profile {default_profile!r}"
+        )
+    if default_profile:
+        selected_default_profile = profiles[default_profile]
+        if selected_default_profile["execution_variant"] != default_fingerprint:
+            raise CatalogError(
+                f"{model_path}: default_profile {default_profile!r} does not match "
+                f"default_execution_path {default_path_id!r}"
+            )
+        if (
+            default_impl
+            and selected_default_profile["implementation_id"] != default_impl
+        ):
+            raise CatalogError(
+                f"{model_path}: default_profile {default_profile!r} does not match "
+                f"default implementation {default_impl!r}"
+            )
 
     default_variant = execution_variants[default_fingerprint]
     projected_views = copy.deepcopy(default_variant["views"])
@@ -1065,6 +1085,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     "dimensions",
                     "facts",
                     "default_view",
+                    "default_profile",
                 )
                 if key in model_ir
             },

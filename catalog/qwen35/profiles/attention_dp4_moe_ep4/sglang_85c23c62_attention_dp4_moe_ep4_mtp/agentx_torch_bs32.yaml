@@ -1,0 +1,1115 @@
+schema_version: profile.v2
+profile_id: qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_torch_bs32
+label: Qwen3.5 397B · SGLang · exact 8K/1K C704 · DEP4 + MTP6 · Torch/Kineto 10×BS32
+  decode
+model_id: qwen35_397b_a17b
+execution_path_id: attention_dp4_moe_ep4
+implementation_id: sglang_85c23c62_attention_dp4_moe_ep4_mtp
+variant_id: sglang_agentx_8k1k_c704_3p2d_dep4_mtp6_cg_torch_bs32
+phase: decode
+generation_mode: mtp
+entry_view: top
+execution_parameters:
+  tp_size: 1
+  dp_size: 4
+  cp_size: 1
+  ep_size: 4
+hardware:
+  gpu: GB300
+  gpus_per_worker: 4
+  prefill_workers: 3
+  decode_workers: 2
+workload:
+  suite: exact-8k1k
+  concurrency: 704
+  comparison_contract:
+    validated: true
+    contract_id: qwen35-agentx-dep4-mtp6-8k1k-c704-runtime-bs32-torch-v21
+    model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+    model_precision: fp4
+    dataset_sha256: 3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2
+    input_tokens: 8192
+    output_tokens: 1024
+    request_count: 704
+    concurrency: 704
+    prefill_workers: 3
+    decode_workers: 2
+    gpu_type: GB300
+    tensor_parallel_size: 4
+    effective_attention_tensor_parallel_size: 1
+    attention_data_parallel_size: 4
+    moe_expert_parallel_size: 4
+    rank_local_batch: 32
+    mtp_draft_tokens: 6
+    forced_mean_accept_length: 4.8
+    stream_interval: 30
+    injected_scheduler_sleep: false
+    cuda_graph: true
+    profiler: torch_kineto
+    profiler_activities:
+    - CPU
+    - CUDA
+    profiler_with_stack: true
+    profiler_record_shapes: false
+    sample_unit: one real rank-local BS32 CUDA Graph decode period
+    sample_aggregation: mean over one source-balanced pool; parallel ranks are never
+      summed
+    comparison_sources: one runtime-elected exact-BS32 representative rank on each
+      of two decode workers
+    selected_rank_local_samples: 10
+    selected_samples_per_source: 5
+  mtp_draft_tokens: 6
+  selected_exact_target_verify_batch: 32
+  selected_samples: 10
+  selected_samples_by_source:
+    w0/r3: 5
+    w1/r3: 5
+  selected_worker_rank_sources:
+  - w0/r3
+  - w1/r3
+  accepted_length:
+    control: SGLANG_SIMULATE_ACC_LEN=4.80
+    requested_mean: 4.8
+    selected_samples:
+    - 5.0
+    - 5.0
+    - 5.0
+    - 5.0
+    - 5.0
+    - 4.0
+    - 5.0
+    - 4.0
+    - 5.0
+    - 5.0
+    selected_histogram:
+      4.0: 2
+      5.0: 8
+    selected_mean: 4.8
+    raw_exact_bs32_histogram:
+      4.0: 13
+      5.0: 62
+    selection_policy: one AL4 plus four AL5 time-spread samples per worker; exact
+      10-sample mean 4.8
+  selected_rank_local_full_tokens:
+    samples:
+    - 298816.0
+    - 297536.0
+    - 299520.0
+    - 300992.0
+    - 290112.0
+    - 301376.0
+    - 301632.0
+    - 299904.0
+    - 299328.0
+    - 300544.0
+    mean: 298976.0
+    median: 299712.0
+    min: 290112.0
+    max: 301632.0
+  selected_queue_requests:
+    samples:
+    - 0.0
+    - 2.0
+    - 2.0
+    - 2.0
+    - 2.0
+    - 2.0
+    - 2.0
+    - 1.0
+    - 1.0
+    - 0.0
+    mean: 1.4
+    median: 2.0
+    min: 0.0
+    max: 2.0
+  retracted_requests: 0
+profiler:
+  type: torch_kineto_worker_local
+  rank: one runtime-elected exact-BS32 DP3 rank on each decode worker; 10 complete
+    samples balanced five per worker; all eight rank traces validated for window and
+    concrete-kernel integrity
+  activities:
+  - CPU
+  - CUDA
+  with_stack: true
+  record_shapes: false
+  cuda_graph_enabled: true
+  gpu_metric_semantics: per-node kernel residency is averaged over 10 balanced rank-local
+    BS32 periods; parallel ranks and workers are never summed
+evidence:
+  job_id: 3270073
+  profiling_source_commit: 049323294ec36631b9aab74ffa5dac5ff020fdae
+  profiling_harness_commit: fb4476ed42399ca6a160565e1e6a7bb864b9a015
+  profiler_manager_sha256: e08fd6430c83bffbc47e83cdd8a770891c8208b3fff6126627bc231d8e338eb9
+  runtime_manifest_sha256: f23af95628fe593cc6d1c140bc3c4a040ddbd224b94c38a7fdaa9b2c8fa46d41
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container_sha256: 87c34529c0e854e85b6075619a0f62cece4843de8bb4698f7aeaf30e0ae04c5a
+  config_file: config.yaml
+  config_sha256: 1510030b34d03c794ca2acff3df3b37ccdaad8d5735dbedf97099d00136b2c0e
+  job_metadata_file: 3270073.json
+  job_metadata_sha256: 4902298700028b84a071c7210fb5970be1a8898e81e1ecf224a2cf44a4da951f
+  benchmark_log_file: benchmark.out
+  benchmark_log_sha256: 51f451a40c97c67b462f0c8b39a758113117286d5ba55b35c11daf270ddcad65
+  benchmark_snapshot:
+    completed: 704
+    errors: 0
+    duration_s: 50.181109610013664
+    request_throughput: 14.029183600585757
+    output_throughput: 14365.884006999815
+  fingerprints:
+  - worker: 0
+    file: fingerprint_decode_w0.json
+    sha256: 1579f56d01f997a09beb03b3fd16f9d94e45bd7713b699d96da06506cdd464ac
+    hostname: nvl72d019-T12
+    frameworks:
+      sglang: 0.0.0.dev1+gcea16bf22
+      dynamo: 1.4.0
+  - worker: 1
+    file: fingerprint_decode_w1.json
+    sha256: cd081da6db5af74ba3eae618407e03d39eaad0fcc972b13544ef74864140967e
+    hostname: nvl72d019-T13
+    frameworks:
+      sglang: 0.0.0.dev1+gcea16bf22
+      dynamo: 1.4.0
+  trace_files:
+  - worker: 0
+    rank: 0
+    file: 1787581237.909634-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 9c35aa36b63bdc2e065479afe7222d292c1fa06299172222298da62ed15687d4
+    event_count: 876538
+    kernel_count: 154806
+    concrete_kernel_name_count: 164
+    complete_mtp_window_count: 64
+  - worker: 0
+    rank: 1
+    file: 1787581237.909634-TP-1-DP-1-EP-1.trace.json.gz
+    sha256: 0fc27793a395887d45b584400cb579af809544a2711bd8623b8020938305ab17
+    event_count: 903069
+    kernel_count: 155171
+    concrete_kernel_name_count: 155
+    complete_mtp_window_count: 64
+  - worker: 0
+    rank: 2
+    file: 1787581237.909634-TP-2-DP-2-EP-2.trace.json.gz
+    sha256: a5ac93dddb792ea00a604cd2d40e54bcb65087aa7db6f12e916e18e2785af5af
+    event_count: 943122
+    kernel_count: 155008
+    concrete_kernel_name_count: 159
+    complete_mtp_window_count: 64
+  - worker: 0
+    rank: 3
+    file: 1787581237.909634-TP-3-DP-3-EP-3.trace.json.gz
+    sha256: f9f34eabdbb9b8df4e125e0531b8b029c2c439ee480f44dca1c04204a4e5ef9f
+    event_count: 950566
+    kernel_count: 154905
+    concrete_kernel_name_count: 158
+    complete_mtp_window_count: 64
+  - worker: 1
+    rank: 0
+    file: 1787581237.9340699-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 2d32b55da7656fc2a316f450135dd4b26d622779c6dd9680f7a35e17e63ceab5
+    event_count: 929503
+    kernel_count: 154257
+    concrete_kernel_name_count: 134
+    complete_mtp_window_count: 64
+  - worker: 1
+    rank: 1
+    file: 1787581237.9340699-TP-1-DP-1-EP-1.trace.json.gz
+    sha256: c81e0f0f69b13a68be69a9be9d305e95723140925778310f866d2524258465f2
+    event_count: 932777
+    kernel_count: 154105
+    concrete_kernel_name_count: 140
+    complete_mtp_window_count: 64
+  - worker: 1
+    rank: 2
+    file: 1787581237.9340699-TP-2-DP-2-EP-2.trace.json.gz
+    sha256: c44ec224ec432d70ca69eeda44a90c87c67650555a5800f47a55298340d7941f
+    event_count: 945510
+    kernel_count: 154315
+    concrete_kernel_name_count: 143
+    complete_mtp_window_count: 64
+  - worker: 1
+    rank: 3
+    file: 1787581237.9340699-TP-3-DP-3-EP-3.trace.json.gz
+    sha256: a9c0d3650533f208908f65b8050ff2b7a27cfbb3cd1139132f15c17bd62f9664
+    event_count: 960490
+    kernel_count: 154464
+    concrete_kernel_name_count: 134
+    complete_mtp_window_count: 64
+  worker_logs:
+  - worker: 0
+    file: nvl72d019-T12_decode_w0.out
+    sha256: 83d61671b08b5496161c90e9c71e182eaf84b42b20a0dd3c0d1e9abce08ee070
+    profile_id: '1787581237.909634'
+    selected_rank: 3
+  - worker: 1
+    file: nvl72d019-T13_decode_w1.out
+    sha256: c3a45b3173db15b18c2bf45d9cbe8724fb79510aa9f882bc4410a9dbf9613c76
+    profile_id: '1787581237.9340699'
+    selected_rank: 3
+  comparison_workload:
+    config_file: config.yaml
+    config_sha256: 1510030b34d03c794ca2acff3df3b37ccdaad8d5735dbedf97099d00136b2c0e
+    benchmark_script_sha256: c0f4ac5d2440147a214eb7b37fc7961969b50ba0497d4164fc4c05bbfc0e1632
+    dataset_materialization: pre_staged_shared_payload
+    dataset_file: exact-8k1k.jsonl
+    dataset_sha256: 3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2
+    dataset_manifest_file: dataset-manifest.json
+    dataset_manifest_sha256: 180790dd8421ca31e23038ea813ef7b4a9ad4339fb1aca8a04b0635e9331b61e
+    workload_result_file: results_concurrency_704_gpus_20_ctx_12_gen_8.json
+    workload_result_sha256: c7e9eba86e74b3db4b83a6c7524fede939efad06bc7a49c2b6f6a19c1e313f0f
+    completion:
+      completed: 704
+      input_lens:
+        '8192': 704
+      output_lens:
+        '1024': 704
+      total_input_tokens: 5767168
+      total_output_tokens: 720896
+  eager_mapping_file: kernel_mapping.tp0.jsonl
+  eager_mapping_sha256: 86bca610b8aebf815fe878416e72927d40b78b99cd6bb62710bdc62396b6cf83
+  contextual_eager_trace:
+    file: qwen35-dep4-attribution-bs32-cgoff-qwen35-dep4-attribution-bs32-cgoff-TP-0-DP-0-EP-0.trace.json.gz
+    sha256: 18967dbdd721dab7a79f1dde19af6f2a20ee07332ff8dd1061f4a52e4279cd86
+  mapping_policy: Kineto GPU step annotations + exact GGGA/MTP6 order + conservative
+    eager stack/kernel signature transfer
+  selection_policy: '10 real rank-local BS32 graph periods: five time-spread samples
+    per runtime-elected worker source and exact AL4.8 histogram'
+  mapped_or_fusion_duration_ratio: 0.948111
+  mapped_or_fusion_active_union_ratio: 0.961895
+  strict_signature_duration_ratio: 0.613848
+  mapped_duration_ratio: 0.817599
+  fusion_duration_ratio: 0.130511
+  unmapped_duration_ratio: 0.051889
+  timeline_interval_coverage_ratio: 1.0
+  semantic_attribution_gate:
+    metric: mapped_or_fusion_active_union_ratio
+    threshold: 0.95
+    passed: true
+  critical_step_wall_ms:
+    samples:
+    - 29.246885
+    - 31.457741
+    - 29.596069
+    - 29.348709
+    - 38.272531
+    - 31.068013
+    - 29.034915
+    - 29.538756
+    - 29.495138
+    - 29.38045
+    mean: 30.643921
+    median: 29.516947
+    min: 29.034915
+    max: 38.272531
+  critical_gpu_span_ms:
+    samples:
+    - 29.2321
+    - 31.442061
+    - 29.579238
+    - 29.332997
+    - 38.259539
+    - 31.052173
+    - 29.018148
+    - 29.522146
+    - 29.47917
+    - 29.364386
+    mean: 30.628196
+    median: 29.500658
+    min: 29.018148
+    max: 38.259539
+  all_eight_rank_traces_validated: true
+timeline:
+  schema_version: timeline.v1
+  artifact: agentx_torch_bs32.timeline.json.gz
+  sha256: ce599bf90f81113e9c5e2d1d99f9829dca7f83fbd9ed3e2a60d8c90e98a4eb26
+  reference_rank: 3
+  step_count: 5
+  event_count: 11964
+  raw_trace_file: 1787581237.909634-TP-3-DP-3-EP-3.trace.json.gz
+node_states:
+  gdn_attention.ba_projection:
+    status: fused
+    included_in: gdn_attention.qkvz_projection
+  gdn_attention.state_write:
+    status: fused
+    included_in: gdn_attention.gated_delta_recurrence
+  full_attention.partial_rope:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.attention_output_gate:
+    status: fused
+    included_in: full_attention.qk_norm
+  full_attention.kv_state_write:
+    status: fused
+    included_in: full_attention.qkv_projection
+  mtp_full_attention.partial_rope:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.attention_output_gate:
+    status: fused
+    included_in: mtp_full_attention.qk_norm
+  mtp_full_attention.kv_state_write:
+    status: fused
+    included_in: mtp_full_attention.qkv_projection
+  generation_loop.candidate_tokens:
+    status: fused
+    included_in: generation_loop.draft_propose
+  generation_loop.target_verify:
+    status: fused
+    included_in: top.decoder_stack
+  generation_loop.tentative_state:
+    status: fused
+    included_in: generation_loop.target_verify
+  generation_loop.commit_kv:
+    status: unobserved
+    reason: SGLang publishes accepted KV length/index metadata without a uniquely
+      attributable standalone CUDA kernel in the measured traces
+  generation_loop.next_iteration:
+    status: unobserved
+    reason: host-side loop control has no standalone GPU interval
+node_metrics:
+  full_attention.attention_output_gate:
+    ms_per_iter: 0.042494
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: full-attention output gate
+      count: 150
+      count_per_iter: 15.0
+      avg_us: 2.833
+      total_us_per_iter: 42.494
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention.causal_gqa:
+    ms_per_iter: 1.731909
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 25.267
+      total_us_per_iter: 1516.001
+      share_in_node_pct: 87.534
+    - name: Exact kernel signature + repeated layer/round slot proven by eager stack
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 3.598
+      total_us_per_iter: 215.908
+      share_in_node_pct: 12.466
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention.output_projection:
+    ms_per_iter: 0.21618
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output-projection implementation
+      count: 300
+      count_per_iter: 30.0
+      avg_us: 7.206
+      total_us_per_iter: 216.18
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention.qk_norm:
+    ms_per_iter: 0.131841
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 150
+      count_per_iter: 15.0
+      avg_us: 8.789
+      total_us_per_iter: 131.841
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention.qkv_projection:
+    ms_per_iter: 0.41556
+    mapping_status_duration_pct:
+      fusion: 18.6436
+      mapped: 81.3564
+    kernels:
+    - name: next-layer input projection
+      count: 300
+      count_per_iter: 30.0
+      avg_us: 11.269
+      total_us_per_iter: 338.084
+      share_in_node_pct: 81.356
+    - name: QKV projection + KV-cache write fusion
+      count: 150
+      count_per_iter: 15.0
+      avg_us: 5.165
+      total_us_per_iter: 77.475
+      share_in_node_pct: 18.644
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.068285
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 150
+      count_per_iter: 15.0
+      avg_us: 4.552
+      total_us_per_iter: 68.285
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.054148
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + following RMSNorm
+      count: 150
+      count_per_iter: 15.0
+      avg_us: 3.61
+      total_us_per_iter: 54.148
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_attention.causal_conv:
+    ms_per_iter: 1.097787
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN causal convolution
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 24.395
+      total_us_per_iter: 1097.787
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_attention.gated_delta_recurrence:
+    ms_per_iter: 2.782697
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: GDN recurrent update
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 61.838
+      total_us_per_iter: 2782.697
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_attention.output_gate_norm:
+    ms_per_iter: 0.22817
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: GDN output gate norm
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 5.07
+      total_us_per_iter: 228.17
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_attention.output_projection:
+    ms_per_iter: 0.660915
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: attention output-projection implementation
+      count: 900
+      count_per_iter: 90.0
+      avg_us: 7.344
+      total_us_per_iter: 660.915
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_attention.qkvz_projection:
+    ms_per_iter: 1.682159
+    mapping_status_duration_pct:
+      fusion: 10.1883
+      mapped: 89.8117
+    kernels:
+    - name: next-layer input projection
+      count: 1760
+      count_per_iter: 176.0
+      avg_us: 8.584
+      total_us_per_iter: 1510.775
+      share_in_node_pct: 89.812
+    - name: GDN QKVZBA split/reshape
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 3.809
+      total_us_per_iter: 171.384
+      share_in_node_pct: 10.188
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_moe_block.attention_residual:
+    ms_per_iter: 0.207313
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: attention residual add + pre-MoE RMSNorm
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 4.607
+      total_us_per_iter: 207.313
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  gdn_moe_block.layer_residual:
+    ms_per_iter: 0.163828
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MoE residual add + following RMSNorm
+      count: 450
+      count_per_iter: 45.0
+      avg_us: 3.641
+      total_us_per_iter: 163.828
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  generation_loop.accept_prefix:
+    ms_per_iter: 0.003949
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: verify tree and select accepted prefix
+      count: 10
+      count_per_iter: 1.0
+      avg_us: 3.949
+      total_us_per_iter: 3.949
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  generation_loop.commit_gdn:
+    ms_per_iter: 0.073428
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted convolution-state commit
+      count: 10
+      count_per_iter: 1.0
+      avg_us: 73.428
+      total_us_per_iter: 73.428
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  generation_loop.commit_tokens:
+    ms_per_iter: 0.00169
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: publish accepted target bonus tokens
+      count: 10
+      count_per_iter: 1.0
+      avg_us: 1.69
+      total_us_per_iter: 1.69
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  generation_loop.draft_propose:
+    ms_per_iter: 0.041124
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: draft candidate construction
+      count: 90
+      count_per_iter: 9.0
+      avg_us: 4.569
+      total_us_per_iter: 41.124
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  generation_loop.replay_gdn:
+    ms_per_iter: 1.743666
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: accepted-prefix GDN state replay
+      count: 10
+      count_per_iter: 1.0
+      avg_us: 1743.666
+      total_us_per_iter: 1743.666
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.routed_experts:
+    ms_per_iter: 8.630274
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 1200
+      count_per_iter: 120.0
+      avg_us: 71.919
+      total_us_per_iter: 8630.274
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.router:
+    ms_per_iter: 0.98115
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 1200
+      count_per_iter: 120.0
+      avg_us: 6.246
+      total_us_per_iter: 749.498
+      share_in_node_pct: 76.39
+    - name: router projection/top-k implementation
+      count: 1200
+      count_per_iter: 120.0
+      avg_us: 1.93
+      total_us_per_iter: 231.653
+      share_in_node_pct: 23.61
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.shared_expert:
+    ms_per_iter: 1.18446
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared-expert implementation
+      count: 2400
+      count_per_iter: 240.0
+      avg_us: 4.069
+      total_us_per_iter: 976.472
+      share_in_node_pct: 82.44
+    - name: shared expert activation
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 3.466
+      total_us_per_iter: 207.988
+      share_in_node_pct: 17.56
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.target_ep4_combine:
+    ms_per_iter: 1.648018
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 combine
+      count: 1200
+      count_per_iter: 120.0
+      avg_us: 13.733
+      total_us_per_iter: 1648.018
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.target_ep4_dispatch:
+    ms_per_iter: 1.984083
+    mapping_status_duration_pct:
+      fusion: 22.071
+      mapped: 77.929
+    kernels:
+    - name: target EP4 dispatch
+      count: 1200
+      count_per_iter: 120.0
+      avg_us: 11.729
+      total_us_per_iter: 1407.456
+      share_in_node_pct: 70.937
+    - name: EP4 expert-workspace initialization bounded by dispatch and expert launches
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 7.298
+      total_us_per_iter: 437.906
+      share_in_node_pct: 22.071
+    - name: Exact kernel signature proven by eager Python stack
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 2.312
+      total_us_per_iter: 138.72
+      share_in_node_pct: 6.992
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.target_ep4_pack:
+    ms_per_iter: 0.099479
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target EP4 dispatch pack
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 1.658
+      total_us_per_iter: 99.479
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  moe_block.weighted_combine:
+    ms_per_iter: 0.164628
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE weighted combine
+      count: 600
+      count_per_iter: 60.0
+      avg_us: 2.744
+      total_us_per_iter: 164.628
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_draft_head.shared_lm_head:
+    ms_per_iter: 1.5694
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP shared LM head
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 313.88
+      total_us_per_iter: 1569.4
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention.attention_output_gate:
+    ms_per_iter: 0.011066
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP attention output gate
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 2.213
+      total_us_per_iter: 11.066
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention.causal_gqa:
+    ms_per_iter: 0.455237
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: causal GQA
+      count: 200
+      count_per_iter: 20.0
+      avg_us: 19.94
+      total_us_per_iter: 398.795
+      share_in_node_pct: 87.602
+    - name: Exact kernel signature + repeated layer/round slot proven by eager stack
+      count: 160
+      count_per_iter: 16.0
+      avg_us: 3.528
+      total_us_per_iter: 56.442
+      share_in_node_pct: 12.398
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention.output_projection:
+    ms_per_iter: 0.013027
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MTP attention output projection
+      count: 40
+      count_per_iter: 4.0
+      avg_us: 3.257
+      total_us_per_iter: 13.027
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention.qk_norm:
+    ms_per_iter: 0.020995
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: Q/K norm + partial RoPE + gate fusion
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 4.199
+      total_us_per_iter: 20.995
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention.qkv_projection:
+    ms_per_iter: 0.022896
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: QKV projection + KV-cache write fusion
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 4.579
+      total_us_per_iter: 22.896
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention_moe_block.attention_residual:
+    ms_per_iter: 0.018682
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MTP attention residual add + pre-MoE RMSNorm
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 3.736
+      total_us_per_iter: 18.682
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_full_attention_moe_block.layer_residual:
+    ms_per_iter: 0.016368
+    mapping_status_duration_pct:
+      fusion: 100.0
+    kernels:
+    - name: MTP MoE residual add + draft final RMSNorm
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 3.274
+      total_us_per_iter: 16.368
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_moe_block.draft_ep4_combine:
+    ms_per_iter: 0.393992
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft combine
+      count: 100
+      count_per_iter: 10.0
+      avg_us: 39.399
+      total_us_per_iter: 393.992
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_moe_block.draft_ep4_dispatch:
+    ms_per_iter: 0.246593
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: DeepEP draft dispatch
+      count: 100
+      count_per_iter: 10.0
+      avg_us: 23.749
+      total_us_per_iter: 237.489
+      share_in_node_pct: 96.308
+    - name: Exact kernel signature + repeated layer/round slot proven by eager stack
+      count: 40
+      count_per_iter: 4.0
+      avg_us: 2.276
+      total_us_per_iter: 9.104
+      share_in_node_pct: 3.692
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_moe_block.routed_experts:
+    ms_per_iter: 0.852167
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: routed expert GEMM
+      count: 100
+      count_per_iter: 10.0
+      avg_us: 85.217
+      total_us_per_iter: 852.167
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_moe_block.router:
+    ms_per_iter: 0.023376
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: MoE top-k router
+      count: 50
+      count_per_iter: 5.0
+      avg_us: 4.675
+      total_us_per_iter: 23.376
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  mtp_moe_block.shared_expert:
+    ms_per_iter: 0.168705
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: shared expert activation
+      count: 100
+      count_per_iter: 10.0
+      avg_us: 11.22
+      total_us_per_iter: 112.199
+      share_in_node_pct: 66.506
+    - name: Exact kernel signature + repeated layer/round slot proven by eager stack
+      count: 120
+      count_per_iter: 12.0
+      avg_us: 4.709
+      total_us_per_iter: 56.506
+      share_in_node_pct: 33.494
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
+  top.lm_head:
+    ms_per_iter: 0.469337
+    mapping_status_duration_pct:
+      mapped: 100.0
+    kernels:
+    - name: target shared LM head
+      count: 20
+      count_per_iter: 2.0
+      avg_us: 234.668
+      total_us_per_iter: 469.337
+      share_in_node_pct: 100.0
+    aggregation: mean kernel residency over 10 acceptance-balanced rank-local BS32
+      samples
+    source_worker_rank: balanced_pool
+    selected_samples_by_source:
+      w0/r3: 5
+      w1/r3: 5
