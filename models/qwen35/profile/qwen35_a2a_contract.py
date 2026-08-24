@@ -141,7 +141,11 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         _require_equal("exact sync world size", decode_env.get("SGLANG_NSYS_EXACT_SYNC_WORLD_SIZE"), "4")
         _require_equal("exact warm-up batches", decode_env.get("SGLANG_NSYS_EXACT_WARMUP_BATCHES"), "16")
         _require_equal("captured decode iterations", decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"), "32")
-        _require_equal("rank-local request cap", decode.get("max-running-requests"), 32)
+        _require_equal(
+            "worker-wide request cap for rank-local BS32 under Attention-DP4",
+            decode.get("max-running-requests"),
+            128,
+        )
         _require_equal("profiler type", (config.get("profiling") or {}).get("type"), "nsys")
         _require_equal("CUDA Graph enabled", bool(decode.get("disable-cuda-graph", False)), False)
     elif engine == "trtllm":
