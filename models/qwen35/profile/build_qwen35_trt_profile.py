@@ -42,12 +42,14 @@ REPORT_RE = re.compile(
     r"(?P<worker>.+)-(?P<phase>prefill|decode)-rank(?P<rank>[0-3])(?:\.\d+)?\.sqlite$"
 )
 TRT_EXACT_START_RE = re.compile(
-    r"All-rank exact-batch profiling started at iteration (?P<iteration>\d+): "
-    r"rank_batches=\[(?P<batches>[^]]+)\], capture_decode_batches=(?P<count>\d+)"
+    r"\[RANK (?P<rank>[0-3])\].*Rank-local BS32-triggered raw profiling "
+    r"started at iteration (?P<iteration>\d+): local_batch=(?P<batch>\d+), "
+    r"capture_raw_decode_batches=(?P<count>\d+)"
 )
 TRT_EXACT_STOP_RE = re.compile(
-    r"All-rank exact-batch profiling stopped at iteration (?P<iteration>\d+): "
-    r"local_batch=(?P<batch>\d+), captured_decode_batches=(?P<count>\d+)"
+    r"\[RANK (?P<rank>[0-3])\].*Rank-local BS32-triggered raw profiling "
+    r"stopped at iteration (?P<iteration>\d+): local_batch=(?P<batch>\d+), "
+    r"captured_raw_decode_batches=(?P<count>\d+)"
 )
 TRT_COMMIT = "1cef02e901be43081b1ba6d4981e94ed3bd9c1e8"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
@@ -57,7 +59,7 @@ PY_EXECUTOR_BASE_SHA256 = (
     "69b566f2d30e1d1465d4ef85af1913ef3cb8d0f4e36d78bf92989837e6f4aa9a"
 )
 PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
-    "50cb76d545b70c2543d94f107d9402f61e2ad8adee9fa2b9dbec686974c1af44"
+    "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
 )
 
 
@@ -117,39 +119,42 @@ def _validate_process(path: Path) -> dict[str, Any]:
 
 def _validate_exact_worker_log(path: Path, *, expected_steps: int) -> dict[str, Any]:
     text = path.read_text(errors="replace")
-    if "Exact-batch profile window lost its fixed shape" in text:
-        raise ValueError(f"{path}: exact-batch profile window lost BS32")
     starts = list(TRT_EXACT_START_RE.finditer(text))
     stops = list(TRT_EXACT_STOP_RE.finditer(text))
     if len(starts) != 4 or len(stops) != 4:
         raise ValueError(
-            f"{path}: expected four all-rank starts/stops, got {len(starts)}/{len(stops)}"
+            f"{path}: expected four rank-local starts/stops, got {len(starts)}/{len(stops)}"
         )
-    start_iters = {int(match.group("iteration")) for match in starts}
-    stop_iters = {int(match.group("iteration")) for match in stops}
-    if len(start_iters) != 1 or len(stop_iters) != 1:
-        raise ValueError(f"{path}: ranks did not share one capture boundary")
-    start_iter = next(iter(start_iters))
-    stop_iter = next(iter(stop_iters))
-    if stop_iter - start_iter != expected_steps:
-        raise ValueError(
-            f"{path}: expected {expected_steps} iterations, got {start_iter}:{stop_iter}"
-        )
+    starts_by_rank = {int(match.group("rank")): match for match in starts}
+    stops_by_rank = {int(match.group("rank")): match for match in stops}
+    if set(starts_by_rank) != {0, 1, 2, 3} or set(stops_by_rank) != {0, 1, 2, 3}:
+        raise ValueError(f"{path}: incomplete or duplicate rank-local capture markers")
     for match in starts:
-        batches = [int(value.strip()) for value in match.group("batches").split(",")]
-        if batches != [32, 32, 32, 32] or int(match.group("count")) != expected_steps:
+        if int(match.group("batch")) != 32 or int(match.group("count")) != expected_steps:
             raise ValueError(f"{path}: invalid exact start gate: {match.group(0)}")
     for match in stops:
-        if int(match.group("batch")) != 32 or int(match.group("count")) != expected_steps:
+        if int(match.group("count")) != expected_steps:
             raise ValueError(f"{path}: invalid exact stop gate: {match.group(0)}")
+    for rank in range(4):
+        start_iter = int(starts_by_rank[rank].group("iteration"))
+        stop_iter = int(stops_by_rank[rank].group("iteration"))
+        if stop_iter - start_iter != expected_steps:
+            raise ValueError(
+                f"{path}: rank {rank} expected {expected_steps} raw iterations, "
+                f"got {start_iter}:{stop_iter}"
+            )
     return {
         "file": path.name,
         "sha256": sha256_file(path),
         "rank_start_count": len(starts),
         "rank_stop_count": len(stops),
-        "start_iteration": start_iter,
-        "stop_iteration": stop_iter,
-        "captured_decode_iterations": expected_steps,
+        "start_iterations_by_rank": {
+            str(rank): int(starts_by_rank[rank].group("iteration")) for rank in range(4)
+        },
+        "stop_iterations_by_rank": {
+            str(rank): int(stops_by_rank[rank].group("iteration")) for rank in range(4)
+        },
+        "captured_raw_decode_iterations": expected_steps,
     }
 
 
@@ -267,7 +272,8 @@ def build(args: argparse.Namespace):
     expected_workers = 3 if args.phase == "prefill" else 2
     comparison_contract = None
     workload_evidence = None
-    expected_step_count = 2
+    raw_capture_step_count = 2
+    selected_sample_count = 2
     if args.phase == "decode":
         required_paths = {
             "config": args.config,
@@ -285,7 +291,20 @@ def build(args: argparse.Namespace):
             dataset_manifest=args.dataset_manifest,
             workload_result=args.workload_result,
         )
-        expected_step_count = int(comparison_contract["captured_decode_iterations"])
+        selected_sample_count = int(
+            comparison_contract["selected_rank_local_samples"]
+        )
+        config_data = yaml.safe_load(args.config.read_text())
+        raw_capture_step_count = int(
+            (((config_data.get("backend") or {}).get("decode_environment") or {}).get(
+                "TLLM_PROFILE_EXACT_DECODE_BATCHES", -1
+            ))
+        )
+        if raw_capture_step_count < selected_sample_count:
+            raise ValueError(
+                "TRT raw NSYS capture must be at least as wide as the selected "
+                f"sample: raw={raw_capture_step_count}, selected={selected_sample_count}"
+            )
     paths: dict[tuple[str, int], Path] = {}
     for raw_path in args.sqlites:
         path = raw_path.resolve()
@@ -309,7 +328,7 @@ def build(args: argparse.Namespace):
             args.nsys_reports, workers=workers, phase=args.phase
         )
         exact_worker_logs = [
-            _validate_exact_worker_log(path, expected_steps=expected_step_count)
+            _validate_exact_worker_log(path, expected_steps=raw_capture_step_count)
             for path in args.worker_logs
         ]
     nsys_export_metadata = {
@@ -337,11 +356,11 @@ def build(args: argparse.Namespace):
         process_checks[source] = _validate_process(path)
         steps = load_nsys_steps(path, rank=rank)
         actual_steps = [step.step_id for step in steps]
-        if len(actual_steps) != expected_step_count or actual_steps != list(
-            range(actual_steps[0], actual_steps[0] + expected_step_count)
+        if len(actual_steps) != raw_capture_step_count or actual_steps != list(
+            range(actual_steps[0], actual_steps[0] + raw_capture_step_count)
         ):
             raise ValueError(
-                f"{source}: expected {expected_step_count} contiguous steps, "
+                f"{source}: expected {raw_capture_step_count} contiguous steps, "
                 f"got {actual_steps}"
             )
         source_mappings: list[dict[str, Any]] = []
@@ -472,17 +491,17 @@ def build(args: argparse.Namespace):
             str(row["source"]) for row in raw_exact_decode
         )
         expected_sources = {f"{worker}/rank{rank}" for worker in workers for rank in range(4)}
-        if set(raw_exact_counts) != expected_sources or set(raw_exact_counts.values()) != {
-            expected_step_count
-        }:
+        minimum_per_source = selected_sample_count // len(expected_sources)
+        if set(raw_exact_counts) != expected_sources or any(
+            raw_exact_counts[source] < minimum_per_source for source in expected_sources
+        ):
             raise ValueError(
-                "TRT exact-batch capture is not 32 complete steps on all eight "
+                f"TRT raw capture needs at least {minimum_per_source} real BS32 "
+                "steps on all eight "
                 f"worker/rank sources: {dict(sorted(raw_exact_counts.items()))}"
             )
-        if len(raw_exact_decode) != expected_step_count * len(expected_sources):
-            raise ValueError("TRT exact-batch capture contains partial or extra steps")
         exact_decode = select_balanced_rank_local_steps(
-            raw_exact_decode, sample_count=expected_step_count
+            raw_exact_decode, sample_count=selected_sample_count
         )
         exact_counts = Counter(str(row["source"]) for row in exact_decode)
         reference_source = min(

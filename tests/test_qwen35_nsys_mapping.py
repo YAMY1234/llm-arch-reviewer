@@ -31,6 +31,7 @@ from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
     select_balanced_exact_observations,
 )
 from models.qwen35.profile.build_qwen35_trt_profile import (
+    _validate_exact_worker_log,
     select_balanced_rank_local_steps,
 )
 
@@ -919,3 +920,33 @@ def test_trt_exact_selector_balances_four_time_spread_samples_per_source():
         for row in selected
         if row["source"] == "worker0/rank0"
     } == {4, 12, 20, 28}
+
+
+def test_trt_rank_local_raw_capture_markers_allow_independent_boundaries(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    lines = []
+    for rank in range(4):
+        start = 100 + rank * 7
+        lines.extend(
+            [
+                f"[TRT-LLM] [_torch][RANK {rank}] Rank-local BS32-triggered "
+                f"raw profiling started at iteration {start}: local_batch=32, "
+                "capture_raw_decode_batches=64",
+                f"[TRT-LLM] [_torch][RANK {rank}] Rank-local BS32-triggered "
+                f"raw profiling stopped at iteration {start + 64}: "
+                f"local_batch={31 + rank % 2}, captured_raw_decode_batches=64",
+            ]
+        )
+    worker_log.write_text("\n".join(lines) + "\n")
+
+    evidence = _validate_exact_worker_log(worker_log, expected_steps=64)
+
+    assert evidence["rank_start_count"] == 4
+    assert evidence["rank_stop_count"] == 4
+    assert evidence["start_iterations_by_rank"] == {
+        "0": 100,
+        "1": 107,
+        "2": 114,
+        "3": 121,
+    }
+    assert evidence["captured_raw_decode_iterations"] == 64

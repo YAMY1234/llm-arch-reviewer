@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 
-CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-bs32-nsys-v2"
+CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-controlled-bs32-nsys-v3"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 EXPECTED_DATASET_SHA256 = (
     "3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2"
@@ -29,7 +29,10 @@ EXPECTED_BENCHMARK_SERVING_SHA256 = (
 EXPECTED_BACKEND_REQUEST_FUNC_SHA256 = (
     "2677208c7cfc159b3a4136cc4043a3bae9c62216ef332030350044df0b7f413b"
 )
-SGLANG_PROFILING_SOURCE_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
+SGLANG_PROFILING_SOURCE_COMMIT = "128e0e31b51d58b69cf9c8006a09213d34cfb3a6"
+TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
+    "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -191,9 +194,9 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         _require_equal("variable-shape raw capture", decode_env.get("SGLANG_NSYS_REQUIRE_FIXED_CAPTURE"), "0")
         _require_equal("raw captured decode iterations", decode_env.get("SGLANG_NSYS_EXACT_DECODE_BATCHES"), "64")
         _require_equal(
-            "A-Z97 worker-wide request cap",
+            "controlled worker-wide request cap",
             decode.get("max-running-requests"),
-            320,
+            128,
         )
         _require_equal("profiler type", (config.get("profiling") or {}).get("type"), "nsys")
         _require_equal("CUDA Graph enabled", bool(decode.get("disable-cuda-graph", False)), False)
@@ -206,7 +209,7 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         _require_equal(
             "TRT py_executor overlay SHA256",
             frameworks.get("py_executor_profile_overlay_sha256"),
-            "50cb76d545b70c2543d94f107d9402f61e2ad8adee9fa2b9dbec686974c1af44",
+            TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
         )
         decode = ((backend.get("trtllm_config") or {}).get("decode") or {})
         _require_equal("tensor parallel size", decode.get("tensor_parallel_size"), 4)
@@ -216,7 +219,7 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
         _require_equal("stream interval", decode.get("stream_interval"), 30)
         _require_equal("forced accept length", decode_env.get("TLLM_SPEC_DECODE_FORCE_NUM_ACCEPTED_TOKENS"), "4.80")
         _require_equal("exact rank-local batch", decode_env.get("TLLM_PROFILE_EXACT_RUNNING_BATCH"), "32")
-        _require_equal("captured decode iterations", decode_env.get("TLLM_PROFILE_EXACT_DECODE_BATCHES"), "32")
+        _require_equal("raw captured decode iterations", decode_env.get("TLLM_PROFILE_EXACT_DECODE_BATCHES"), "64")
         _require_equal("profile ranks", decode_env.get("TLLM_PROFILE_LOG_RANKS"), "all")
         _require_equal("rank-local request cap", decode.get("max_batch_size"), 32)
         _require_equal("CUDA Graph batch 32", 32 in ((decode.get("cuda_graph_config") or {}).get("batch_sizes") or []), True)
@@ -270,6 +273,5 @@ def validate_comparison_workload(
         "sample_unit": "one real rank-local BS32 CUDA Graph decode period",
         "sample_aggregation": "mean over one source-balanced pool; parallel ranks are never summed",
         "selected_rank_local_samples": 32,
-        "captured_decode_iterations": 32,
     }
     return contract, evidence

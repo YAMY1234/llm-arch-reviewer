@@ -59,11 +59,11 @@ from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
-PROFILING_SOURCE_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
-PROFILING_OVERLAY_COMMIT = "6d099c14e70b09afe8a5e8e7b6723d6d60ee8f73"
+PROFILING_SOURCE_COMMIT = "128e0e31b51d58b69cf9c8006a09213d34cfb3a6"
+PROFILING_OVERLAY_COMMIT = "128e0e31b51d58b69cf9c8006a09213d34cfb3a6"
 SRT_SLURM_CAPTURE_COMMIT = "581ba9aa54736ef520592592bca75f5d32ca8eb9"
 PROFILER_MANAGER_SHA256 = (
-    "dd8f62615af11dc28f6f5cd9d07f169b92514893f3538beb431c098bb5aa0bdb"
+    "d32fefc52062b19d81c9110e74e10bfc6e1327fc80ea96a7de449f6dce1d4a45"
 )
 SCHEDULER_SHA256 = (
     "8676ceac0e7cbb6d8ca1c3902d143d9708c44b297b36027121fa719942b6f598"
@@ -72,7 +72,7 @@ SCHEDULER_NVTX_SHA256 = (
     "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
 )
 RUNTIME_MANIFEST_SHA256 = (
-    "de3a279203840d83121415bd98816cdc69a840c469c019414ae03426f920559d"
+    "5e57a354a6113117bf8107fcfeb77cc543955163f31506b3502df9eb04beba5b"
 )
 SYMM_MEM_GATHER_SHA256 = (
     "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
@@ -594,7 +594,7 @@ def build(args: argparse.Namespace):
     fingerprint_rows = _validate_fingerprints(args.fingerprints)
     benchmark = parse_benchmark_snapshot(args.benchmark_log)
     expected_selected_samples = int(
-        comparison_contract["captured_decode_iterations"]
+        comparison_contract["selected_rank_local_samples"]
     )
     raw_capture_steps = int(
         decode_environment.get("SGLANG_NSYS_EXACT_DECODE_BATCHES", -1)
