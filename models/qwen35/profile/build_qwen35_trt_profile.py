@@ -61,6 +61,12 @@ PY_EXECUTOR_BASE_SHA256 = (
 PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
     "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
 )
+DYNAMO_HANDLER_BASE_SHA256 = (
+    "e44f1028ae686dd60e6ded8807735e678504898cccac0cf2b70749967714dcbc"
+)
+DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
+    "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -809,6 +815,8 @@ def build(args: argparse.Namespace):
             "tensorrt_llm_commit": TRT_COMMIT,
             "py_executor_base_sha256": PY_EXECUTOR_BASE_SHA256,
             "py_executor_profile_overlay_sha256": PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
+            "dynamo_handler_base_sha256": DYNAMO_HANDLER_BASE_SHA256,
+            "dynamo_exact_output_overlay_sha256": DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256,
             "model_revision": MODEL_REVISION,
             "model_config_sha256": MODEL_CONFIG_SHA256,
             "container_sha256": CONTAINER_SHA256,

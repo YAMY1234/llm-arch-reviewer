@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 
-CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-controlled-bs32-nsys-v3"
+CONTRACT_ID = "qwen35-agentx-dep4-mtp6-8k1k-c704-controlled-bs32-nsys-v4"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 EXPECTED_DATASET_SHA256 = (
     "3e4011a3de2b6d83d5800b27e31dfc6d13b062f521b10ed90869e0136bc73ab2"
@@ -29,9 +29,15 @@ EXPECTED_BENCHMARK_SERVING_SHA256 = (
 EXPECTED_BACKEND_REQUEST_FUNC_SHA256 = (
     "2677208c7cfc159b3a4136cc4043a3bae9c62216ef332030350044df0b7f413b"
 )
-SGLANG_PROFILING_SOURCE_COMMIT = "128e0e31b51d58b69cf9c8006a09213d34cfb3a6"
+SGLANG_PROFILING_SOURCE_COMMIT = "b96080c93c29e3d705164df730a220591ecbb8a4"
 TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
     "a0eb9784bc85c2d6e736224c5bde405649947f32b968f5d8d6c705f6cfc0f348"
+)
+TRT_DYNAMO_HANDLER_BASE_SHA256 = (
+    "e44f1028ae686dd60e6ded8807735e678504898cccac0cf2b70749967714dcbc"
+)
+TRT_DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256 = (
+    "3cb63d65872f82df2377ae7790d59ae9b8a8f090fa502d0a88c5faaa0cb6ef1c"
 )
 
 
@@ -210,6 +216,16 @@ def _validate_config(path: Path, engine: str) -> dict[str, Any]:
             "TRT py_executor overlay SHA256",
             frameworks.get("py_executor_profile_overlay_sha256"),
             TRT_PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
+        )
+        _require_equal(
+            "Dynamo TRT handler base SHA256",
+            frameworks.get("dynamo_handler_base_sha256"),
+            TRT_DYNAMO_HANDLER_BASE_SHA256,
+        )
+        _require_equal(
+            "Dynamo exact-output overlay SHA256",
+            frameworks.get("dynamo_exact_output_overlay_sha256"),
+            TRT_DYNAMO_EXACT_OUTPUT_OVERLAY_SHA256,
         )
         decode = ((backend.get("trtllm_config") or {}).get("decode") or {})
         _require_equal("tensor parallel size", decode.get("tensor_parallel_size"), 4)
