@@ -26,6 +26,9 @@ from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
     sha256_file,
 )
 from models.qwen35.profile.qwen35_graph_mapping import attribution_active_union_ratio
+from models.qwen35.profile.qwen35_a2a_contract import (
+    validate_comparison_workload,
+)
 from models.qwen35.profile.qwen35_nsys_mapping import (
     load_nsys_steps,
     map_decode_step,
@@ -38,16 +41,36 @@ from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 REPORT_RE = re.compile(
     r"(?P<worker>.+)-(?P<phase>prefill|decode)-rank(?P<rank>[0-3])(?:\.\d+)?\.sqlite$"
 )
+TRT_EXACT_START_RE = re.compile(
+    r"All-rank exact-batch profiling started at iteration (?P<iteration>\d+): "
+    r"rank_batches=\[(?P<batches>[^]]+)\], capture_decode_batches=(?P<count>\d+)"
+)
+TRT_EXACT_STOP_RE = re.compile(
+    r"All-rank exact-batch profiling stopped at iteration (?P<iteration>\d+): "
+    r"local_batch=(?P<batch>\d+), captured_decode_batches=(?P<count>\d+)"
+)
 TRT_COMMIT = "1cef02e901be43081b1ba6d4981e94ed3bd9c1e8"
 MODEL_REVISION = "8f590eae8f10bf55d9a46f79ea0280bde435c9f8"
 MODEL_CONFIG_SHA256 = "9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63"
 CONTAINER_SHA256 = "1cb820b92bd7ab56ab69457500adf3b7f2928bfefe7f2920951fe7286552dcf7"
+PY_EXECUTOR_BASE_SHA256 = (
+    "69b566f2d30e1d1465d4ef85af1913ef3cb8d0f4e36d78bf92989837e6f4aa9a"
+)
+PY_EXECUTOR_PROFILE_OVERLAY_SHA256 = (
+    "50cb76d545b70c2543d94f107d9402f61e2ad8adee9fa2b9dbec686974c1af44"
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
     parser.add_argument("--sqlites", type=Path, nargs="+", required=True)
+    parser.add_argument("--nsys-reports", type=Path, nargs="*", default=[])
+    parser.add_argument("--worker-logs", type=Path, nargs="*", default=[])
+    parser.add_argument("--config", type=Path)
+    parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--dataset-manifest", type=Path)
+    parser.add_argument("--workload-result", type=Path)
     parser.add_argument("--job-id", type=int, default=532540)
     parser.add_argument("--decode-batch", type=int, default=32)
     parser.add_argument("--output-profile", type=Path, required=True)
@@ -92,6 +115,77 @@ def _validate_process(path: Path) -> dict[str, Any]:
     return {"processes": processes, "nvtx_step_count": nvtx_steps, "kernel_count": kernels}
 
 
+def _validate_exact_worker_log(path: Path, *, expected_steps: int) -> dict[str, Any]:
+    text = path.read_text(errors="replace")
+    if "Exact-batch profile window lost its fixed shape" in text:
+        raise ValueError(f"{path}: exact-batch profile window lost BS32")
+    starts = list(TRT_EXACT_START_RE.finditer(text))
+    stops = list(TRT_EXACT_STOP_RE.finditer(text))
+    if len(starts) != 4 or len(stops) != 4:
+        raise ValueError(
+            f"{path}: expected four all-rank starts/stops, got {len(starts)}/{len(stops)}"
+        )
+    start_iters = {int(match.group("iteration")) for match in starts}
+    stop_iters = {int(match.group("iteration")) for match in stops}
+    if len(start_iters) != 1 or len(stop_iters) != 1:
+        raise ValueError(f"{path}: ranks did not share one capture boundary")
+    start_iter = next(iter(start_iters))
+    stop_iter = next(iter(stop_iters))
+    if stop_iter - start_iter != expected_steps:
+        raise ValueError(
+            f"{path}: expected {expected_steps} iterations, got {start_iter}:{stop_iter}"
+        )
+    for match in starts:
+        batches = [int(value.strip()) for value in match.group("batches").split(",")]
+        if batches != [32, 32, 32, 32] or int(match.group("count")) != expected_steps:
+            raise ValueError(f"{path}: invalid exact start gate: {match.group(0)}")
+    for match in stops:
+        if int(match.group("batch")) != 32 or int(match.group("count")) != expected_steps:
+            raise ValueError(f"{path}: invalid exact stop gate: {match.group(0)}")
+    return {
+        "file": path.name,
+        "sha256": sha256_file(path),
+        "rank_start_count": len(starts),
+        "rank_stop_count": len(stops),
+        "start_iteration": start_iter,
+        "stop_iteration": stop_iter,
+        "captured_decode_iterations": expected_steps,
+    }
+
+
+def _validate_nsys_reports(
+    paths: list[Path], *, workers: list[str], phase: str
+) -> list[dict[str, Any]]:
+    expected = {(worker, rank) for worker in workers for rank in range(4)}
+    matched: dict[tuple[str, int], Path] = {}
+    for raw_path in paths:
+        path = raw_path.resolve()
+        identities = [
+            (worker, rank)
+            for worker, rank in expected
+            if worker in path.name and phase in path.name and f"rank{rank}" in path.name
+        ]
+        if len(identities) != 1:
+            raise ValueError(f"cannot identify worker/rank for raw NSYS report {path.name}")
+        identity = identities[0]
+        if identity in matched:
+            raise ValueError(f"duplicate raw NSYS report for {identity}")
+        if not path.is_file() or path.stat().st_size <= 0:
+            raise ValueError(f"raw NSYS report is missing or empty: {path}")
+        matched[identity] = path
+    if set(matched) != expected:
+        raise ValueError(f"incomplete raw NSYS reports: {sorted(matched)}")
+    return [
+        {
+            "worker": worker,
+            "rank": rank,
+            "file": path.name,
+            "sha256": sha256_file(path),
+        }
+        for (worker, rank), path in sorted(matched.items())
+    ]
+
+
 def _aggregate_metrics(source_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
     nodes = sorted({node for metrics in source_metrics.values() for node in metrics})
     output = {}
@@ -120,13 +214,27 @@ def build(args: argparse.Namespace):
     if decode_batch < 1 or decode_batch > 32:
         raise ValueError(f"TRT decode batch must be in 1..32, got {decode_batch}")
     expected_workers = 3 if args.phase == "prefill" else 2
-    # The worker-local launcher treats stop_step as exclusive, matching the
-    # validated smoke range 10:12 -> steps 10 and 11.
-    expected_steps = (
-        set(range(10000, 10002))
-        if args.phase == "prefill"
-        else set(range(60000, 60020))
-    )
+    comparison_contract = None
+    workload_evidence = None
+    expected_step_count = 2
+    if args.phase == "decode":
+        required_paths = {
+            "config": args.config,
+            "dataset": args.dataset,
+            "dataset manifest": args.dataset_manifest,
+            "workload result": args.workload_result,
+        }
+        missing = [label for label, path in required_paths.items() if path is None]
+        if missing:
+            raise ValueError(f"strict TRT decode profile lacks {', '.join(missing)}")
+        comparison_contract, workload_evidence = validate_comparison_workload(
+            engine="trtllm",
+            config=args.config,
+            dataset=args.dataset,
+            dataset_manifest=args.dataset_manifest,
+            workload_result=args.workload_result,
+        )
+        expected_step_count = int(comparison_contract["captured_decode_iterations"])
     paths: dict[tuple[str, int], Path] = {}
     for raw_path in args.sqlites:
         path = raw_path.resolve()
@@ -141,6 +249,18 @@ def build(args: argparse.Namespace):
         ranks = {rank for candidate, rank in paths if candidate == worker}
         if ranks != {0, 1, 2, 3}:
             raise ValueError(f"worker {worker} lacks four-rank coverage: {ranks}")
+    raw_nsys_reports = []
+    exact_worker_logs = []
+    if args.phase == "decode":
+        if len(args.nsys_reports) != 8 or len(args.worker_logs) != 2:
+            raise ValueError("strict TRT decode profile requires eight NSYS reports and two worker logs")
+        raw_nsys_reports = _validate_nsys_reports(
+            args.nsys_reports, workers=workers, phase=args.phase
+        )
+        exact_worker_logs = [
+            _validate_exact_worker_log(path, expected_steps=expected_step_count)
+            for path in args.worker_logs
+        ]
     nsys_export_metadata = {
         identity: read_nsys_export_metadata(path)
         for identity, path in sorted(paths.items())
@@ -165,15 +285,17 @@ def build(args: argparse.Namespace):
         source = f"{worker}/rank{rank}"
         process_checks[source] = _validate_process(path)
         steps = load_nsys_steps(path, rank=rank)
-        actual_steps = {step.step_id for step in steps}
-        if actual_steps != expected_steps:
+        actual_steps = [step.step_id for step in steps]
+        if len(actual_steps) != expected_step_count or actual_steps != list(
+            range(actual_steps[0], actual_steps[0] + expected_step_count)
+        ):
             raise ValueError(
-                f"{source}: expected steps {min(expected_steps)}..{max(expected_steps)}, "
-                f"got {sorted(actual_steps)}"
+                f"{source}: expected {expected_step_count} contiguous steps, "
+                f"got {actual_steps}"
             )
         source_mappings: list[dict[str, Any]] = []
         source_validations = []
-        for step in steps:
+        for iteration, step in enumerate(steps):
             if args.phase == "decode":
                 mappings, validation = map_decode_step(step)
             else:
@@ -196,9 +318,10 @@ def build(args: argparse.Namespace):
                     "owner_compute": validation.get("owner_compute"),
                 }
             )
-            timing_by_step.setdefault(step.step_id, []).append(
+            timing_by_step.setdefault(iteration, []).append(
                 {
                     "source": source,
+                    "capture_iteration": iteration,
                     "context_reqs": validation["context_reqs"],
                     "context_tokens": validation["context_tokens"],
                     "generation_reqs": validation["generation_reqs"],
@@ -215,6 +338,7 @@ def build(args: argparse.Namespace):
                     "rank": rank,
                     "path": path,
                     "step_id": step.step_id,
+                    "capture_iteration": iteration,
                     "context_reqs": validation["context_reqs"],
                     "context_tokens": validation["context_tokens"],
                     "generation_reqs": validation["generation_reqs"],
@@ -270,7 +394,7 @@ def build(args: argparse.Namespace):
         ]
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
         for row in exact_8k:
-            exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
+            exact_sources_by_step[int(row["capture_iteration"])].add(str(row["source"]))
         timing_by_step = {
             step_id: [
                 row
@@ -294,6 +418,16 @@ def build(args: argparse.Namespace):
                 f"TRT decode capture has no exact BS{decode_batch} generation step"
             )
         exact_counts = Counter(str(row["source"]) for row in exact_decode)
+        expected_sources = {f"{worker}/rank{rank}" for worker in workers for rank in range(4)}
+        if set(exact_counts) != expected_sources or set(exact_counts.values()) != {
+            expected_step_count
+        }:
+            raise ValueError(
+                "TRT exact-batch capture is not 32 complete steps on all eight "
+                f"worker/rank sources: {dict(sorted(exact_counts.items()))}"
+            )
+        if len(exact_decode) != expected_step_count * len(expected_sources):
+            raise ValueError("TRT exact-batch capture contains partial or extra steps")
         reference_source = min(
             exact_counts,
             key=lambda source: (-exact_counts[source], source),
@@ -319,7 +453,7 @@ def build(args: argparse.Namespace):
         ]
         exact_sources_by_step: dict[int, set[str]] = defaultdict(set)
         for row in exact_decode:
-            exact_sources_by_step[int(row["step_id"])].add(str(row["source"]))
+            exact_sources_by_step[int(row["capture_iteration"])].add(str(row["source"]))
         timing_by_step = {
             step_id: [
                 row
@@ -485,8 +619,8 @@ def build(args: argparse.Namespace):
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": (
-            "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · "
-            f"exact BS{decode_batch} decode"
+            "Qwen3.5 397B · TRT-LLM · exact 8K/1K C256 · DEP4 + MTP6 · "
+            f"NSYS 32×BS{decode_batch} decode"
             if args.phase == "decode"
             else "Qwen3.5 397B · TRT-LLM · AgentX DEP4 + MTP6 · prefill"
         ),
@@ -494,7 +628,7 @@ def build(args: argparse.Namespace):
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "trtllm_1cef02e9_attention_dp4_moe_ep4_mtp",
         "variant_id": (
-            f"trtllm_agentx_dep4_mtp6_{args.phase}_c704_a_z97"
+            f"trtllm_agentx_dep4_mtp6_{args.phase}_8k1k_c256"
             + (
                 f"_bs{decode_batch}"
                 if args.phase == "decode" and decode_batch != 32
@@ -511,22 +645,51 @@ def build(args: argparse.Namespace):
             "nodes": expected_workers,
             "topology_scope": f"{expected_workers} disaggregated {args.phase} workers",
         },
-        "workload": {
-            "suite": "AgentX A-Z97",
-            "concurrency": 704,
-            "duration_seconds": 3600,
-            "warmup_requests_per_lane": 10,
-            "warmup_grace_seconds": 1800,
-            "mtp_draft_tokens": 6,
-            "decode_cuda_graph_batch_cap": 32,
-            "measured_shape": measured_shape,
-        },
+        "workload": (
+            {
+                "suite": "exact-8k1k",
+                "concurrency": 256,
+                "comparison_contract": comparison_contract,
+                "mtp_draft_tokens": 6,
+                "decode_cuda_graph_batch_cap": 32,
+                "accepted_length": {
+                    "control": "TLLM_SPEC_DECODE_FORCE_NUM_ACCEPTED_TOKENS=4.80",
+                    "requested_mean": 4.8,
+                    "evidence": "validated immutable launch config",
+                    "observed_histogram": None,
+                    "interpretation": (
+                        "TRT-LLM exposes the forced acceptance simulator setting but "
+                        "does not log a per-iteration accepted-length histogram; this "
+                        "field is configuration-bound, not an inferred measurement"
+                    ),
+                },
+                "measured_shape": measured_shape,
+            }
+            if args.phase == "decode"
+            else {
+                "suite": "AgentX A-Z97",
+                "concurrency": 704,
+                "mtp_draft_tokens": 6,
+                "measured_shape": measured_shape,
+            }
+        ),
         "profiler": {
             "type": "nsight_systems_worker_local",
-            "rank": "all four DEP ranks on every worker",
+            "rank": (
+                "all four exact-BS32 DEP ranks on both decode workers; 32 complete "
+                "iterations per rank"
+                if args.phase == "decode"
+                else "all four DEP ranks on every worker"
+            ),
             "trace": ["cuda", "nvtx"],
             "cuda_graph_enabled": args.phase == "decode",
-            "gpu_metric_semantics": "maximum worker/rank residency; parallel ranks and workers are not summed",
+            "gpu_metric_semantics": (
+                "per-node metrics are averaged over 32 iterations per source, then "
+                "the critical maximum across workers/ranks is used; parallel ranks "
+                "and workers are never summed"
+                if args.phase == "decode"
+                else "maximum worker/rank residency; parallel ranks and workers are not summed"
+            ),
             "runtime_launch_parallelism": {
                 "framework_world_size": 4,
                 "attention_dp_size": 4,
@@ -538,6 +701,8 @@ def build(args: argparse.Namespace):
             "job_id": args.job_id,
             "baseline_job_id": 501238,
             "tensorrt_llm_commit": TRT_COMMIT,
+            "py_executor_base_sha256": PY_EXECUTOR_BASE_SHA256,
+            "py_executor_profile_overlay_sha256": PY_EXECUTOR_PROFILE_OVERLAY_SHA256,
             "model_revision": MODEL_REVISION,
             "model_config_sha256": MODEL_CONFIG_SHA256,
             "container_sha256": CONTAINER_SHA256,
@@ -551,6 +716,9 @@ def build(args: argparse.Namespace):
                 }
                 for (worker, rank), path in sorted(paths.items())
             ],
+            "nsys_report_files": raw_nsys_reports,
+            "exact_worker_logs": exact_worker_logs,
+            "comparison_workload": workload_evidence,
             "nsys_export": nsys_export_metadata[min(nsys_export_metadata)],
             "mapping_policy": "NVTX step + runtime correlation + CUDA Graph node occurrence + exact GGGA/MTP6 order",
             "selection_policy": (

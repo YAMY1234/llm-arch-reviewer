@@ -25,7 +25,6 @@ from models.qwen35.profile.build_qwen35_sglang_agentx_profile import (
     _aggregate_source_metrics,
     _validate_fingerprints,
     parse_benchmark_snapshot,
-    validate_run_inputs,
     worker_identity,
 )
 from models.qwen35.profile.build_qwen35_sglang_decode_profile import (
@@ -53,29 +52,40 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
     validate_sglang_all_rank_capture_integrity,
     validate_sglang_graph_node_stability,
 )
+from models.qwen35.profile.qwen35_a2a_contract import (
+    validate_comparison_workload,
+)
 from models.qwen35.profile.qwen35_timeline import QWEN35_TIMELINE_TARGETS
 
 
 DEFAULT_SELECTED_BATCH = 32
-PROFILING_SOURCE_COMMIT = "9d7f6d73b632076002329cd7c19dac5af9c6f76b"
-PROFILING_OVERLAY_COMMIT = "29e068d852a789a297da9cb53376fdeeca6a336c"
-SRT_SLURM_CAPTURE_COMMIT = "ebf9b696269c484713bd25b58feead000ca120d1"
+PROFILING_SOURCE_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
+PROFILING_OVERLAY_COMMIT = "c4cd9fecc7713aceeb49b99712073cec9e8c555c"
+SRT_SLURM_CAPTURE_COMMIT = "1bce7447b4430c7ae5a88c0fff1d993a0534d730"
 PROFILER_MANAGER_SHA256 = (
-    "a2047ca7d49e1b1adf47f1b92e820ebd4b9fdb6825c96b615ea936ceac460657"
+    "131154b022a07dc88a2ad8e8372a4d5d025ac6dc0fe40e627836b9fb4fe044db"
+)
+SCHEDULER_SHA256 = (
+    "8676ceac0e7cbb6d8ca1c3902d143d9708c44b297b36027121fa719942b6f598"
 )
 SCHEDULER_NVTX_SHA256 = (
     "56610ee61c53c39e40fdd6b44c7443140eeb6e25bc499889e70f93a33bf3fcdd"
 )
 RUNTIME_MANIFEST_SHA256 = (
-    "8c4d28ff9a142151276ed04c61536eb35782941fa8e4ea8028313803aee2f974"
+    "effa1248378e2d537dab3222f4d0a5fc67a66d3ba589a0d8984600c159c422de"
 )
 SYMM_MEM_GATHER_SHA256 = (
     "8a1f8e9a1f13c26b89691eb0dc7bec07595b107778f180d1afa0a93d5e8af9c4"
 )
 SOURCE_RE = re.compile(r"^w(?P<worker>[01])/r(?P<rank>[0-3])$")
 EXACT_GATE_RE = re.compile(
-    r"DP(?P<rank>\d+) TP\d+ EP\d+\] Exact running-batch Nsight gate matched: "
+    r"DP(?P<rank>\d+) TP\d+ EP\d+\] (?:All-DP )?[Ee]xact running-batch Nsight gate matched: "
     r"batch=(?P<batch>\d+) forward_ct=(?P<forward_ct>\d+)"
+    r"(?: warmup_batches=(?P<warmup_batches>\d+))?"
+)
+SYNC_READY_RE = re.compile(
+    r"DP(?P<rank>\d+) TP\d+ EP\d+\] Exact-batch Nsight sync group ready: "
+    r"world_size=(?P<world_size>\d+)"
 )
 
 
@@ -90,6 +100,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--job-id", type=int, required=True)
     parser.add_argument("--selected-batch", type=int, default=DEFAULT_SELECTED_BATCH)
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--dataset-manifest", type=Path, required=True)
+    parser.add_argument("--workload-result", type=Path, required=True)
     parser.add_argument("--eager-mapping", type=Path, required=True)
     parser.add_argument("--eager-trace", type=Path, required=True)
     parser.add_argument("--output-profile", type=Path, required=True)
@@ -168,10 +181,162 @@ def _validate_nsys_capture_contract(
     return capture_range, capture_end
 
 
+def parse_exact_batch_capture_observations(
+    path: Path,
+    *,
+    selected_batch: int,
+    expected_steps: int,
+    expected_sync_world_size: int = 4,
+    expected_warmup_batches: int = 16,
+) -> dict[int, dict[str, Any]]:
+    """Prove a synchronized exact-batch capture on every DEP rank."""
+
+    lines = path.read_text(errors="replace").splitlines()
+    sync_ready: dict[int, int] = {}
+    for line in lines:
+        match = SYNC_READY_RE.search(line)
+        if match is None:
+            continue
+        rank = int(match.group("rank"))
+        if rank in sync_ready:
+            raise ValueError(f"{path}: duplicate sync-group proof for DP{rank}")
+        sync_ready[rank] = int(match.group("world_size"))
+    if set(sync_ready) != {0, 1, 2, 3}:
+        raise ValueError(
+            f"{path}: incomplete all-DP sync-group proof: {sorted(sync_ready)}"
+        )
+    invalid_sync = {
+        rank: world_size
+        for rank, world_size in sync_ready.items()
+        if world_size != expected_sync_world_size
+    }
+    if invalid_sync:
+        raise ValueError(
+            f"{path}: exact-batch sync group is not world size "
+            f"{expected_sync_world_size}: {invalid_sync}"
+        )
+
+    gates: dict[int, tuple[int, re.Match[str]]] = {}
+    for index, line in enumerate(lines):
+        match = EXACT_GATE_RE.search(line)
+        if match is None:
+            continue
+        rank = int(match.group("rank"))
+        if rank in gates:
+            raise ValueError(f"{path}: duplicate exact-batch gate for DP{rank}")
+        gates[rank] = (index, match)
+    if set(gates) != {0, 1, 2, 3}:
+        raise ValueError(f"{path}: incomplete all-DP exact-batch gates: {sorted(gates)}")
+
+    result: dict[int, dict[str, Any]] = {}
+    for rank, (gate_index, gate) in sorted(gates.items()):
+        gate_batch = int(gate.group("batch"))
+        if gate_batch != selected_batch:
+            raise ValueError(
+                f"{path}: DP{rank} gate selected BS{gate_batch}, expected BS{selected_batch}"
+            )
+        warmup_batches = gate.group("warmup_batches")
+        if warmup_batches is None or int(warmup_batches) < expected_warmup_batches:
+            raise ValueError(
+                f"{path}: DP{rank} gate lacks {expected_warmup_batches} consecutive "
+                f"exact-batch warmups"
+            )
+        prefix = f"DP{rank} TP{rank} EP{rank}]"
+        start = next(
+            (
+                index
+                for index, line in enumerate(lines[gate_index + 1 :], gate_index + 1)
+                if prefix in line and "Profiling starts." in line
+            ),
+            None,
+        )
+        if start is None:
+            raise ValueError(f"{path}: DP{rank} gate lacks profiler start")
+        stop = next(
+            (
+                index
+                for index, line in enumerate(lines[start + 1 :], start + 1)
+                if prefix in line and "Stop profiling..." in line
+            ),
+            None,
+        )
+        if stop is None:
+            raise ValueError(f"{path}: DP{rank} capture lacks profiler stop")
+        done = next(
+            (
+                index
+                for index, line in enumerate(lines[stop + 1 :], stop + 1)
+                if prefix in line and "Profiling done." in line
+            ),
+            None,
+        )
+        if done is None:
+            raise ValueError(f"{path}: DP{rank} capture lacks profiler completion")
+
+        observations = []
+        for line in lines[start + 1 : stop]:
+            match = LOG_ROW_RE.search(line)
+            if match is None or int(match.group("rank")) != rank:
+                continue
+            observations.append(
+                {
+                    "dp_rank": rank,
+                    "scheduler_step": int(match.group("step")),
+                    "running_requests": int(match.group("running")),
+                    "full_tokens": int(match.group("full_tokens")),
+                    "accepted_length": float(match.group("accept")),
+                    "retracted_requests": int(match.group("retracted")),
+                    "cuda_graph": match.group("graph") == "True",
+                    "queued_requests": int(match.group("queue")),
+                }
+            )
+        if len(observations) != expected_steps:
+            raise ValueError(
+                f"{path}: DP{rank} expected {expected_steps} captured decode rows, "
+                f"found {len(observations)}"
+            )
+        gate_forward_ct = int(gate.group("forward_ct"))
+        # The profiler predicate runs immediately before the current forward;
+        # the scheduler's post-forward log labels that same captured batch as
+        # forward_ct - 1 (confirmed by the live 8K/1K gate evidence).
+        first_captured_step = gate_forward_ct - 1
+        expected_forward_cts = list(
+            range(first_captured_step, first_captured_step + expected_steps)
+        )
+        actual_forward_cts = [row["scheduler_step"] for row in observations]
+        if actual_forward_cts != expected_forward_cts:
+            raise ValueError(
+                f"{path}: DP{rank} captured scheduler steps are not contiguous from "
+                f"the exact pre-forward gate: {actual_forward_cts}"
+            )
+        invalid = [
+            row
+            for row in observations
+            if row["running_requests"] != selected_batch
+            or not row["cuda_graph"]
+            or row["queued_requests"]
+            or row["retracted_requests"]
+        ]
+        if invalid:
+            raise ValueError(
+                f"{path}: DP{rank} capture contains non-BS{selected_batch}, queue, "
+                f"retraction, or graph-off rows: {invalid[:3]}"
+            )
+        result[rank] = {
+            "gate_forward_ct": gate_forward_ct,
+            "sync_world_size": sync_ready[rank],
+            "warmup_batches": int(warmup_batches),
+            "capture_observation_count": len(observations),
+            "observations": observations,
+            "profiler_completed": True,
+        }
+    return result
+
+
 def parse_exact_batch_capture_observation(
     path: Path, *, selected_batch: int
 ) -> dict[str, Any]:
-    """Prove that the first captured DP0 forward is exact-batch steady decode."""
+    """Compatibility wrapper for the historical two-step DP0 contract."""
 
     lines = path.read_text(errors="replace").splitlines()
     gates = [
@@ -181,36 +346,18 @@ def parse_exact_batch_capture_observation(
         and int(match.group("rank")) == 0
     ]
     if len(gates) != 1:
-        raise ValueError(
-            f"{path}: expected one DP0 exact-batch Nsight gate, found {len(gates)}"
-        )
+        raise ValueError(f"{path}: expected one DP0 exact-batch gate")
     gate_index, gate = gates[0]
-    gate_batch = int(gate.group("batch"))
-    if gate_batch != selected_batch:
-        raise ValueError(
-            f"{path}: exact-batch gate selected BS{gate_batch}, expected BS{selected_batch}"
-        )
-
     start = next(
-        (
-            index
-            for index, line in enumerate(lines[gate_index + 1 :], gate_index + 1)
-            if "DP0 TP0 EP0] Profiling starts." in line
-        ),
-        None,
+        index
+        for index, line in enumerate(lines[gate_index + 1 :], gate_index + 1)
+        if "DP0 TP0 EP0] Profiling starts." in line
     )
-    if start is None:
-        raise ValueError(f"{path}: exact-batch gate is not followed by DP0 profiler start")
     stop = next(
-        (
-            index
-            for index, line in enumerate(lines[start + 1 :], start + 1)
-            if "DP0 TP0 EP0] Stop profiling..." in line
-        ),
-        None,
+        index
+        for index, line in enumerate(lines[start + 1 :], start + 1)
+        if "DP0 TP0 EP0] Stop profiling..." in line
     )
-    if stop is None:
-        raise ValueError(f"{path}: missing DP0 profiler stop marker")
     done = next(
         (
             index
@@ -221,69 +368,41 @@ def parse_exact_batch_capture_observation(
     )
     if done is None:
         raise ValueError(f"{path}: missing DP0 profiler completion marker")
-
-    observations = []
-    all_rank_observations = []
+    rows = []
     for line in lines[start + 1 : stop]:
         match = LOG_ROW_RE.search(line)
         if match is None:
             continue
-        observation = {
-            "dp_rank": int(match.group("rank")),
-            "scheduler_step": int(match.group("step")),
-            "running_requests": int(match.group("running")),
-            "full_tokens": int(match.group("full_tokens")),
-            "accepted_length": float(match.group("accept")),
-            "retracted_requests": int(match.group("retracted")),
-            "cuda_graph": match.group("graph") == "True",
-            "queued_requests": int(match.group("queue")),
-        }
-        all_rank_observations.append(observation)
-        if observation["dp_rank"] == 0:
-            observations.append(observation)
-    if not observations:
-        raise ValueError(f"{path}: no DP0 decode row inside the Nsight capture")
+        rows.append(
+            {
+                "dp_rank": int(match.group("rank")),
+                "scheduler_step": int(match.group("step")),
+                "running_requests": int(match.group("running")),
+                "full_tokens": int(match.group("full_tokens")),
+                "accepted_length": float(match.group("accept")),
+                "retracted_requests": int(match.group("retracted")),
+                "cuda_graph": match.group("graph") == "True",
+                "queued_requests": int(match.group("queue")),
+            }
+        )
     gate_forward_ct = int(gate.group("forward_ct"))
-    exact_rows = [
-        row for row in observations if row["scheduler_step"] == gate_forward_ct
-    ]
+    dp0_rows = [row for row in rows if row["dp_rank"] == 0]
+    exact_rows = [row for row in dp0_rows if row["scheduler_step"] == gate_forward_ct]
     if len(exact_rows) != 1:
-        raise ValueError(
-            f"{path}: expected one DP0 decode row for exact gate forward_ct "
-            f"{gate_forward_ct}, found {len(exact_rows)}"
-        )
+        raise ValueError(f"{path}: DP0 gate step is missing or duplicated")
     exact = exact_rows[0]
-    if int(exact["running_requests"]) != selected_batch:
-        raise ValueError(
-            f"{path}: DP0 exact-gate decode row is BS{exact['running_requests']}, "
-            f"expected exact BS{selected_batch}"
-        )
-    if (
-        not exact["cuda_graph"]
-        or exact["queued_requests"]
-        or exact["retracted_requests"]
-    ):
-        raise ValueError(
-            f"{path}: exact-gate decode row is not queue/retraction-free CUDA Graph steady state"
-        )
-    peer_rows = [
-        row
-        for row in all_rank_observations
-        if row["scheduler_step"] == gate_forward_ct
-    ]
-    peer_ranks = {int(row["dp_rank"]) for row in peer_rows}
-    if peer_ranks != {0, 1, 2, 3} or len(peer_rows) != 4:
-        raise ValueError(
-            f"{path}: exact-gate step {gate_forward_ct} does not have one row "
-            f"for every DEP rank: ranks={sorted(peer_ranks)}, rows={len(peer_rows)}"
-        )
+    if exact["running_requests"] != selected_batch:
+        raise ValueError(f"{path}: DP0 gate step is not exact BS{selected_batch}")
+    peer_rows = [row for row in rows if row["scheduler_step"] == gate_forward_ct]
+    if {row["dp_rank"] for row in peer_rows} != {0, 1, 2, 3}:
+        raise ValueError(f"{path}: historical gate step lacks peer-rank observations")
     return {
         **exact,
         "gate_forward_ct": gate_forward_ct,
         "logged_rows_before_exact": sum(
-            row["scheduler_step"] < gate_forward_ct for row in observations
+            row["scheduler_step"] < gate_forward_ct for row in dp0_rows
         ),
-        "capture_dp0_observation_count": len(observations),
+        "capture_dp0_observation_count": len(dp0_rows),
         "rank_local_batches_at_exact_step": {
             f"r{row['dp_rank']}": {
                 "running_requests": row["running_requests"],
@@ -293,7 +412,7 @@ def parse_exact_batch_capture_observation(
                 "retracted_requests": row["retracted_requests"],
                 "cuda_graph": row["cuda_graph"],
             }
-            for row in sorted(peer_rows, key=lambda item: int(item["dp_rank"]))
+            for row in sorted(peer_rows, key=lambda item: item["dp_rank"])
         },
         "profiler_completed": True,
     }
@@ -337,12 +456,27 @@ def build(args: argparse.Namespace):
         "qwen35_sglang_attention_dp4_moe_ep4_mtp6_agentx_nsys_"
         f"bs{selected_batch}"
     )
-    run = validate_run_inputs(
-        args,
-        expected_job_id=args.job_id,
-        expected_runtime_source=PROFILING_SOURCE_COMMIT,
+    comparison_contract, workload_evidence = validate_comparison_workload(
+        engine="sglang",
+        config=args.config,
+        dataset=args.dataset,
+        dataset_manifest=args.dataset_manifest,
+        workload_result=args.workload_result,
     )
-    config = run["config"]
+    config = yaml.safe_load(args.config.read_text())
+    job = json.loads(args.job_metadata.read_text())
+    if int(job.get("job_id", -1)) != args.job_id:
+        raise ValueError(
+            f"job metadata ID {job.get('job_id')} does not match --job-id {args.job_id}"
+        )
+    actual_source = (
+        (((config.get("identity") or {}).get("frameworks") or {}).get("sglang_source"))
+    )
+    if actual_source != PROFILING_SOURCE_COMMIT:
+        raise ValueError(
+            f"SGLang profiling source mismatch: expected {PROFILING_SOURCE_COMMIT}, "
+            f"got {actual_source}"
+        )
     profiling = config.get("profiling") or {}
     decode_environment = ((config.get("backend") or {}).get("decode_environment") or {})
     if profiling.get("type") != "nsys":
@@ -367,9 +501,12 @@ def build(args: argparse.Namespace):
     )
     fingerprint_rows = _validate_fingerprints(args.fingerprints)
     benchmark = parse_benchmark_snapshot(args.benchmark_log)
+    expected_capture_steps = int(comparison_contract["captured_decode_iterations"])
     exact_observations = {
-        _report_worker(path): parse_exact_batch_capture_observation(
-            path, selected_batch=selected_batch
+        _report_worker(path): parse_exact_batch_capture_observations(
+            path,
+            selected_batch=selected_batch,
+            expected_steps=expected_capture_steps,
         )
         for path in args.worker_logs
     }
@@ -406,84 +543,101 @@ def build(args: argparse.Namespace):
     all_mappings: list[dict[str, Any]] = []
     selected_observations: list[dict[str, Any]] = []
     selected_steps_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    timing_by_forward: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    timing_by_iteration: dict[int, list[dict[str, Any]]] = defaultdict(list)
 
     for worker, path in sorted(reports.items()):
-        rank = 0
-        source = f"w{worker}/r{rank}"
-        steps, parser_evidence = load_sglang_nsys_steps(
-            path,
-            rank=rank,
-            capture_range_label=capture_range,
-        )
-        if not steps[0].label.endswith(":first_exact_step"):
-            raise ValueError(f"{source}: parser did not recover the first capture step")
-        graph_stability = validate_sglang_graph_node_stability(steps)
-        row = exact_observations[worker]
-        step = steps[0]
+        for rank in range(4):
+            source = f"w{worker}/r{rank}"
+            steps, parser_evidence = load_sglang_nsys_steps(
+                path,
+                rank=rank,
+                capture_range_label=capture_range,
+            )
+            if not steps[0].label.endswith(":first_exact_step"):
+                raise ValueError(f"{source}: parser did not recover the first capture step")
+            if len(steps) != expected_capture_steps:
+                raise ValueError(
+                    f"{source}: expected {expected_capture_steps} complete NSYS steps, "
+                    f"found {len(steps)}"
+                )
+            graph_stability = validate_sglang_graph_node_stability(steps)
+            gate = exact_observations[worker][rank]
+            observations = gate["observations"]
+            source_mappings: list[dict[str, Any]] = []
+            validation_rows = []
 
-        trace_events, window, graph_roles = sglang_nsys_trace_events(
-            step, batch_size=int(row["running_requests"])
-        )
-        mapped, validation = map_graph_window(
-            trace_events,
-            window=window,
-            rank=rank,
-            step_index=step.step_id,
-            eager_signatures=eager_signatures,
-            contextual_signatures=contextual_signatures,
-        )
-        _validate_step_signatures(validation, rank=rank, step=step.step_id)
-        for event in mapped:
-            event["event_id"] = f"w{worker}-{event['event_id']}"
-            event["worker"] = worker
-            event["scheduler_step"] = row["scheduler_step"]
-            event["gate_forward_ct"] = row["gate_forward_ct"]
-        timing = _timing(mapped, logical_period_us=step.cpu_wall_us)
-        validation_row = {
-            **validation,
-            **timing,
-            "graph_roles": graph_roles,
-            "scheduler_step": row["scheduler_step"],
-            "gate_forward_ct": row["gate_forward_ct"],
-        }
-        selected_observations.append(
-            {
-                "worker": worker,
-                "rank": rank,
-                "scheduler_step": row["scheduler_step"],
-                "gate_forward_ct": row["gate_forward_ct"],
-                "running_requests": row["running_requests"],
-                "full_tokens": row["full_tokens"],
-                "mean_full_tokens_per_request": (
-                    row["full_tokens"] / row["running_requests"]
-                ),
-                "accepted_length": row["accepted_length"],
-                "retracted_requests": row["retracted_requests"],
-                **timing,
+            for iteration, (step, row) in enumerate(zip(steps, observations)):
+                trace_events, window, graph_roles = sglang_nsys_trace_events(
+                    step, batch_size=int(row["running_requests"])
+                )
+                mapped, validation = map_graph_window(
+                    trace_events,
+                    window=window,
+                    rank=rank,
+                    step_index=step.step_id,
+                    eager_signatures=eager_signatures,
+                    contextual_signatures=contextual_signatures,
+                )
+                _validate_step_signatures(validation, rank=rank, step=step.step_id)
+                for event in mapped:
+                    event["event_id"] = f"w{worker}-r{rank}-{event['event_id']}"
+                    event["worker"] = worker
+                    event["scheduler_step"] = row["scheduler_step"]
+                    event["gate_forward_ct"] = gate["gate_forward_ct"]
+                    event["capture_iteration"] = iteration
+                timing = _timing(mapped, logical_period_us=step.cpu_wall_us)
+                validation_rows.append(
+                    {
+                        **validation,
+                        **timing,
+                        "graph_roles": graph_roles,
+                        "scheduler_step": row["scheduler_step"],
+                        "gate_forward_ct": gate["gate_forward_ct"],
+                        "capture_iteration": iteration,
+                    }
+                )
+                selected_observations.append(
+                    {
+                        "worker": worker,
+                        "rank": rank,
+                        "capture_iteration": iteration,
+                        "scheduler_step": row["scheduler_step"],
+                        "gate_forward_ct": gate["gate_forward_ct"],
+                        "running_requests": row["running_requests"],
+                        "full_tokens": row["full_tokens"],
+                        "mean_full_tokens_per_request": (
+                            row["full_tokens"] / row["running_requests"]
+                        ),
+                        "accepted_length": row["accepted_length"],
+                        "retracted_requests": row["retracted_requests"],
+                        **timing,
+                    }
+                )
+                timing_by_iteration[iteration].append({"source": source, **timing})
+                selected_steps_by_source[source].append(
+                    {
+                        "step_index": iteration,
+                        "trace_start_us": min(float(event["ts_us"]) for event in mapped),
+                        "timing": timing,
+                        "mapped": mapped,
+                    }
+                )
+                source_mappings.extend(mapped)
+                all_mappings.extend(mapped)
+
+            source_metrics[source] = _metrics_for_rank(
+                source_mappings, expected_capture_steps
+            )
+            source_selected_counts[source] = expected_capture_steps
+            source_validation[source] = {
+                "parser": parser_evidence,
+                "graph_node_stability": graph_stability,
+                "exact_gate": gate,
+                "captured_batch_distribution": {
+                    selected_batch: expected_capture_steps
+                },
+                "selected_steps": validation_rows,
             }
-        )
-        timing_by_forward[(worker, int(row["gate_forward_ct"]))].append(
-            {"source": source, **timing}
-        )
-        selected_steps_by_source[source].append(
-            {
-                "step_index": 0,
-                "trace_start_us": min(float(event["ts_us"]) for event in mapped),
-                "timing": timing,
-                "mapped": mapped,
-            }
-        )
-        source_metrics[source] = _metrics_for_rank(mapped, 1)
-        source_selected_counts[source] = 1
-        source_validation[source] = {
-            "parser": parser_evidence,
-            "graph_node_stability": graph_stability,
-            "exact_gate_observation": row,
-            "captured_batch_distribution": {selected_batch: 1},
-            "selected_steps": [validation_row],
-        }
-        all_mappings.extend(mapped)
 
     selected_sources = {
         source: count for source, count in source_selected_counts.items() if count
@@ -505,7 +659,7 @@ def build(args: argparse.Namespace):
     reference_steps = [
         {
             "step_index": row["step_index"],
-            "label": f"AgentX A-Z97 steady decode · NSYS exact BS{selected_batch}",
+            "label": f"Exact 8K/1K steady decode · NSYS BS{selected_batch}",
             "trace_start_us": row["trace_start_us"],
             "duration_us": row["timing"]["gpu_span_us"],
             "events": attach_graph_stack_evidence(
@@ -516,9 +670,9 @@ def build(args: argparse.Namespace):
     ]
 
     critical_steps: dict[str, dict[str, Any]] = {}
-    for (worker, gate_forward_ct), rows in sorted(timing_by_forward.items()):
+    for iteration, rows in sorted(timing_by_iteration.items()):
         selected = max(rows, key=lambda row: float(row["gpu_span_us"]))
-        critical_steps[f"w{worker}/f{gate_forward_ct}"] = selected
+        critical_steps[f"iteration-{iteration:02d}"] = selected
     critical_gpu_span_ms = [
         float(row["gpu_span_us"]) / 1000.0 for row in critical_steps.values()
     ]
@@ -528,9 +682,9 @@ def build(args: argparse.Namespace):
     ]
     timing_summary = {
         "semantics": (
-            "the exact first logical period is capture-range start to the next "
-            "scheduler.run_batch start; GPU span, active union, and residency "
-            "come from graph replays paired to worker-local launches"
+            "each of 32 logical periods is bounded by adjacent scheduler.run_batch "
+            "markers; the critical sample is the maximum GPU span across both "
+            "workers and all four DEP ranks for that iteration"
         ),
         "critical_steps": critical_steps,
         "critical_gpu_span_ms": {
@@ -593,6 +747,12 @@ def build(args: argparse.Namespace):
     )
 
     selected_acceptance = [float(row["accepted_length"]) for row in selected_observations]
+    measured_acceptance_mean = statistics.fmean(selected_acceptance)
+    if abs(measured_acceptance_mean - 4.8) > 0.05:
+        raise ValueError(
+            "SGLang captured accept length does not match forced mean 4.8: "
+            f"{measured_acceptance_mean}"
+        )
     selected_full_tokens = [int(row["full_tokens"]) for row in selected_observations]
     selected_mean_tokens = [
         float(row["mean_full_tokens_per_request"])
@@ -603,14 +763,14 @@ def build(args: argparse.Namespace):
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": (
-            "Qwen3.5 397B · SGLang · AgentX C704 · DEP4 + MTP6 · "
-            f"NSYS exact BS{selected_batch}"
+            "Qwen3.5 397B · SGLang · exact 8K/1K C256 · DEP4 + MTP6 · "
+            f"NSYS 32×BS{selected_batch}"
         ),
         "model_id": "qwen35_397b_a17b",
         "execution_path_id": "attention_dp4_moe_ep4",
         "implementation_id": "sglang_85c23c62_attention_dp4_moe_ep4_mtp",
         "variant_id": (
-            "sglang_agentx_a_z97_c704_3p2d_dep4_mtp6_cg_nsys_"
+            "sglang_agentx_8k1k_c256_3p2d_dep4_mtp6_cg_nsys_"
             f"bs{selected_batch}"
         ),
         "phase": "decode",
@@ -624,9 +784,9 @@ def build(args: argparse.Namespace):
             "decode_workers": 2,
         },
         "workload": {
-            "scenario": "inferencex-agentx-mvp",
-            "rank_distribution": "A-Z97",
-            "concurrency": 704,
+            "scenario": "exact-8k1k",
+            "concurrency": 256,
+            "comparison_contract": comparison_contract,
             "selected_exact_target_verify_batch": selected_batch,
             "selected_samples": sum(source_selected_counts.values()),
             "selected_samples_by_source": dict(sorted(source_selected_counts.items())),
@@ -650,7 +810,13 @@ def build(args: argparse.Namespace):
                 "max": max(selected_mean_tokens),
             },
             "accepted_length": {
-                "samples": selected_acceptance,
+                "control": "SGLANG_SIMULATE_ACC_LEN=4.80",
+                "evidence": "scheduler decode-batch log for every captured source/iteration",
+                "histogram": {
+                    str(value): count
+                    for value, count in sorted(Counter(selected_acceptance).items())
+                },
+                "mean": measured_acceptance_mean,
                 "min": min(selected_acceptance),
                 "median": statistics.median(selected_acceptance),
                 "max": max(selected_acceptance),
@@ -661,8 +827,8 @@ def build(args: argparse.Namespace):
         "profiler": {
             "type": "nsight_systems_worker_local",
             "rank": (
-                "exact-BS32 DP0 timing on both decode workers; all four DEP ranks "
-                "validated for CUDA table and scheduler-marker integrity"
+                "all four exact-BS32 DEP ranks on both decode workers; 32 complete "
+                "iterations per rank"
             ),
             "trace": ["cuda", "nvtx"],
             "capture_trigger": "nvtx",
@@ -679,17 +845,18 @@ def build(args: argparse.Namespace):
             "exact_capture_stop_policy": {
                 "rebased_forward_count_width": capture_stop_step
                 - capture_start_step,
-                "minimum_completed_decode_batches": 2,
+                "minimum_completed_decode_batches": expected_capture_steps,
                 "condition": (
-                    "both rebased forward-count width reached and at least two "
-                    "real decode batches completed"
+                    "all DP ranks reached the synchronized exact-BS32 gate and "
+                    "completed the configured 32 real decode batches"
                 ),
                 "external_stop_required": False,
             },
             "cuda_graph_enabled": True,
             "gpu_metric_semantics": (
-                "maximum of the two worker-local DP0 samples; parallel workers "
-                "and DEP ranks are not summed"
+                "per-node metrics are averaged over 32 iterations per source, then "
+                "the critical maximum across two workers and four DEP ranks is used; "
+                "parallel ranks are never summed"
             ),
             "attribution_calibration": "graph-off eager Torch stack",
         },
@@ -701,6 +868,7 @@ def build(args: argparse.Namespace):
             "profiling_overlay_commit": PROFILING_OVERLAY_COMMIT,
             "profiling_harness_commit": SRT_SLURM_CAPTURE_COMMIT,
             "profiler_manager_sha256": PROFILER_MANAGER_SHA256,
+            "scheduler_sha256": SCHEDULER_SHA256,
             "scheduler_nvtx_sha256": SCHEDULER_NVTX_SHA256,
             "runtime_manifest_sha256": RUNTIME_MANIFEST_SHA256,
             "symm_mem_gather_sha256": SYMM_MEM_GATHER_SHA256,
@@ -714,6 +882,7 @@ def build(args: argparse.Namespace):
             "benchmark_log_file": args.benchmark_log.name,
             "benchmark_log_sha256": sha256_file(args.benchmark_log),
             "benchmark_snapshot": benchmark,
+            "comparison_workload": workload_evidence,
             "fingerprints": fingerprint_rows,
             "report_files": [
                 {
@@ -749,13 +918,13 @@ def build(args: argparse.Namespace):
                 "validated_repeated_slots": len(contextual_signatures),
             },
             "mapping_policy": (
-                "exact-batch capture gate + first-step capture/scheduler boundary + "
+                "synchronized all-rank exact-batch gate + 32 scheduler boundaries + "
                 "graphId/nodeId occurrence + exact GGGA/MTP5 order + eager stack "
                 "leaf calibration"
             ),
             "selection_policy": (
-                f"first DP0 step after exact running_requests={selected_batch} "
-                "capture gate on each decode worker"
+                f"32 complete running_requests={selected_batch} CUDA Graph steps on "
+                "all eight decode worker/rank sources"
             ),
             "mapped_or_fusion_duration_ratio": round(attributed_residency_ratio, 6),
             "mapped_or_fusion_active_union_ratio": round(attributed_active_ratio, 6),

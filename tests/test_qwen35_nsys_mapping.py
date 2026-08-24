@@ -26,6 +26,7 @@ from models.qwen35.profile.qwen35_nsys_mapping import (
 from models.qwen35.profile.qwen35_graph_mapping import map_graph_window
 from models.qwen35.profile.build_qwen35_sglang_agentx_nsys_profile import (
     parse_exact_batch_capture_observation,
+    parse_exact_batch_capture_observations,
 )
 
 
@@ -690,3 +691,96 @@ def test_sglang_exact_batch_log_selects_gate_step_after_delayed_previous_row(tmp
         for rank, row in observation["rank_local_batches_at_exact_step"].items()
     } == {"r0": 32, "r1": 29, "r2": 34, "r3": 33}
     assert observation["profiler_completed"] is True
+
+
+def _write_all_dp_exact_capture(
+    path: Path, *, steps: int = 32, invalid_rank=None
+) -> None:
+    lines = []
+    for rank in range(4):
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Exact-batch Nsight sync group ready: "
+            "world_size=4"
+        )
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] All-DP exact running-batch Nsight "
+            f"gate matched: batch=32 forward_ct=4000 warmup_batches=16"
+        )
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Profiling starts. "
+            "Traces will be saved to: /tmp"
+        )
+        rank_steps = steps - 1 if rank == invalid_rank else steps
+        for offset in range(rank_steps):
+            lines.append(
+                f"[x DP{rank} TP{rank} EP{rank}] Decode batch [{3999 + offset}], "
+                "#running-req: 32, #full token: 6400, accept len: 4.80, "
+                "#retracted-req: 0, cuda graph: True, #queue-req: 0"
+            )
+        lines.append(f"[x DP{rank} TP{rank} EP{rank}] Stop profiling...")
+        lines.append(
+            f"[x DP{rank} TP{rank} EP{rank}] Profiling done. "
+            "Traces are saved to: /tmp"
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_sglang_exact_capture_requires_32_contiguous_bs32_steps_on_all_dp_ranks(
+    tmp_path,
+):
+    worker_log = tmp_path / "node_decode_w0.out"
+    _write_all_dp_exact_capture(worker_log)
+
+    observations = parse_exact_batch_capture_observations(
+        worker_log, selected_batch=32, expected_steps=32
+    )
+
+    assert set(observations) == {0, 1, 2, 3}
+    assert all(row["gate_forward_ct"] == 4000 for row in observations.values())
+    assert all(row["sync_world_size"] == 4 for row in observations.values())
+    assert all(row["warmup_batches"] == 16 for row in observations.values())
+    assert all(
+        row["capture_observation_count"] == 32 for row in observations.values()
+    )
+    assert all(
+        [item["scheduler_step"] for item in row["observations"]]
+        == list(range(3999, 4031))
+        for row in observations.values()
+    )
+
+
+def test_sglang_exact_capture_rejects_incomplete_rank(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    _write_all_dp_exact_capture(worker_log, invalid_rank=2)
+
+    with pytest.raises(ValueError, match="DP2 expected 32 captured decode rows"):
+        parse_exact_batch_capture_observations(
+            worker_log, selected_batch=32, expected_steps=32
+        )
+
+
+def test_sglang_exact_capture_rejects_missing_worker_wide_sync_proof(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    _write_all_dp_exact_capture(worker_log)
+    worker_log.write_text(
+        worker_log.read_text().replace(
+            "[x DP3 TP3 EP3] Exact-batch Nsight sync group ready: world_size=4\n",
+            "",
+        )
+    )
+
+    with pytest.raises(ValueError, match="incomplete all-DP sync-group proof"):
+        parse_exact_batch_capture_observations(
+            worker_log, selected_batch=32, expected_steps=32
+        )
+
+
+def test_sglang_exact_capture_rejects_short_exact_batch_warmup(tmp_path):
+    worker_log = tmp_path / "node_decode_w0.out"
+    _write_all_dp_exact_capture(worker_log)
+    worker_log.write_text(worker_log.read_text().replace("warmup_batches=16", "warmup_batches=15"))
+
+    with pytest.raises(ValueError, match="lacks 16 consecutive exact-batch warmups"):
+        parse_exact_batch_capture_observations(
+            worker_log, selected_batch=32, expected_steps=32
+        )

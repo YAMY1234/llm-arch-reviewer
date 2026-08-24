@@ -1784,6 +1784,8 @@ function comparisonProfileProvenance(profileId) {
 
 const COMPARISON_CONTRACT_FIELDS = [
   "contract_id",
+  "model_revision",
+  "model_precision",
   "dataset_sha256",
   "input_tokens",
   "output_tokens",
@@ -1791,13 +1793,16 @@ const COMPARISON_CONTRACT_FIELDS = [
   "concurrency",
   "prefill_workers",
   "decode_workers",
+  "gpu_type",
   "tensor_parallel_size",
+  "effective_attention_tensor_parallel_size",
   "attention_data_parallel_size",
   "moe_expert_parallel_size",
   "rank_local_batch",
   "mtp_draft_tokens",
   "forced_mean_accept_length",
   "stream_interval",
+  "injected_scheduler_sleep",
   "cuda_graph",
   "profiler",
   "captured_decode_iterations",
@@ -2314,7 +2319,9 @@ function comparisonCaveat() {
     + (exporterVersions ? `Exporter provenance: ${exporterVersions}. ` : "")
     + "Semantic kernel is the normalized attribution label; concrete kernel name and time come verbatim from the profiler timeline reference rank. "
     + "GPU Σ is summed kernel residency, active ∪ removes overlap, and wall is the measured descendant envelope including module gaps. "
-    + "Values retain each profile's own provenance; do not read the columns as a direct engine speedup."
+    + (matchedProfilePair
+      ? "The per-module GPU residency, active-union, and wall columns are directly comparable under this A2A contract; summed GPU Σ is not end-to-end latency or throughput."
+      : "Values retain each profile's own provenance; do not read the columns as a direct engine speedup.")
     + (attributionOnly ? " An attribution-only profile is selected and is not a performance baseline." : "");
 }
 

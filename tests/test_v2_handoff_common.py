@@ -369,6 +369,11 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert "function comparisonProfileContract(profileId)" in viewer
     assert "function comparisonProfileCompatibility(sglangProfileId, trtllmProfileId)" in viewer
     assert '"dataset_sha256"' in viewer
+    assert '"model_revision"' in viewer
+    assert '"model_precision"' in viewer
+    assert '"gpu_type"' in viewer
+    assert '"effective_attention_tensor_parallel_size"' in viewer
+    assert '"injected_scheduler_sleep"' in viewer
     assert '"captured_decode_iterations"' in viewer
     assert "A2A PASS: validated 8K/1K contract" in viewer
     assert "not-a2a:" in viewer
@@ -390,6 +395,8 @@ def test_viewer_contains_profile_paired_module_kernel_comparison() -> None:
     assert 'RAW_DATA?.meta?.model_id || "model"' in viewer
     assert "qwen35-sglang-vs-trtllm" not in viewer
     assert "do not read the columns as a direct engine speedup" in viewer
+    assert "directly comparable under this A2A contract" in viewer
+    assert "summed GPU Σ is not end-to-end latency or throughput" in viewer
     assert "GPU Σ is summed kernel residency" in viewer
     assert "concrete kernel name and time come verbatim from the profiler timeline" in viewer
     assert '"sglang_profile_id", "sglang_variant_id", "sglang_profiler_type"' in viewer
