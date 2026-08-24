@@ -99,6 +99,59 @@ def test_model_ir_and_execution_ir_are_separate_graphs() -> None:
     assert collective["boundary_role"] == "module_boundary"
 
 
+def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    model_ir = bundle["model_ir"]
+
+    assert model_ir["semantic_revision"] == 3
+    assert model_ir["semantic_coverage"]["parameter_closure"] == (
+        "complete_for_target_text_and_declared_mtp"
+    )
+    ledger = model_ir["facts"]["parameter_ledger"]
+    assert ledger["target_unique_total"] == 177392830576
+    assert ledger["target_text_total"] + ledger["vision_total"] == ledger[
+        "target_unique_total"
+    ]
+    assert ledger["target_unique_total"] + ledger["mtp_additional_unique"] == ledger[
+        "target_plus_mtp_unique_total"
+    ]
+    assert ledger["moe_per_layer"] * 48 == ledger["moe_all_48_layers"]
+    assert ledger["gdn_core_per_layer"] * 36 == ledger["gdn_core_all_36_layers"]
+    assert ledger["qsa_core_per_layer"] * 12 == ledger["qsa_core_all_12_layers"]
+    assert 51200245760 + 32768000 + 30720 + 40960 == ledger["ple_module_total"]
+    assert (10240 + 6553600 + 40960) * 2 == ledger[
+        "hyperconnection_per_layer"
+    ]
+    assert model_ir["facts"]["state_ledger"]["gdn_per_layer"]["growth"] == (
+        "fixed_per_request"
+    )
+    assert "qsa_indexer" in model_ir["views"]
+
+    qsa_indexer = next(
+        node
+        for node in model_ir["views"]["qsa_attention"]["nodes"]
+        if node["id"] == "indexer"
+    )
+    assert qsa_indexer["drill"] == "qsa_indexer"
+    assert qsa_indexer["semantic_details"]["parameters"]["total"] == 1638656
+
+    gdn_state = next(
+        node
+        for node in model_ir["views"]["linear_attention"]["nodes"]
+        if node["id"] == "recurrent_state"
+    )
+    assert gdn_state["semantic_details"]["state"][0]["shape"] == (
+        "[B,48,128,128]"
+    )
+
+    moe = next(
+        node
+        for node in model_ir["views"]["full_layer"]["nodes"]
+        if node["id"] == "moe"
+    )
+    assert moe["semantic_details"]["parameters"]["total"] == 2522810880
+
+
 def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> None:
     model_path = MODEL_ROOT / "model_ir.yaml"
     plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"

@@ -112,6 +112,11 @@ trace file instead.
 
 ## IR-first V2
 
+The reusable workflow is documented in [PIPELINE.md](PIPELINE.md) and
+[PIPELINE.zh-CN.md](PIPELINE.zh-CN.md). The Qwen 4.0 semantic-completeness
+audit is in
+[docs/qwen40-model-ir-enrichment-audit.zh-CN.md](docs/qwen40-model-ir-enrichment-audit.zh-CN.md).
+
 V2 makes four independently versioned documents explicit:
 
 1. **Model IR** owns stable semantic nodes, symbolic shapes, and data flow.

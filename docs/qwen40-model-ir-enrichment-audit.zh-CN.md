@@ -1,0 +1,82 @@
+# Qwen 4.0 Model IR 精细化与缺失原因审计
+
+## 结论
+
+原 Model IR 的主干 topology 基本正确，但只完成了“模块/边界可映射”，没有完成“模型语义闭包”。这不是 eager/CUDA Graph trace 缺失造成的，也不应该靠 trace 自动补齐。根因是旧 Stage 1 只要求 module、edge、symbolic shape 和 stable ID，没有要求 parameter、state/cache、公式与 architecture-bearing config field 的闭包验收；schema 和 test 也允许一张正确但信息很薄的图通过。
+
+本次保留默认图的简洁粒度，把精度放入 `semantic_details`、ledger 和 drill view：
+
+- 增加参数总账、state/cache 总账、QSA/GDN/PLE/MoE/MTP 的精确 head、shape、生命周期和参数口径；
+- 新增 QSA compressed index 下钻图，区分 raw index K、4-token compression、compressed K、Top-512 block 和 `≤2051` full-token positions；
+- 明确 HC mix 与 combine 的公式和输入边界；
+- 明确 GDN fixed-size conv/recurrent state、QSA token-growing cache、PLE fixed-size side state；
+- 记录语义 reference 和 snapshot caveat；
+- 保留 `ir_version=2` 的 execution-topology identity，新增 `semantic_revision=3`。纯文档/ledger 增强不会无意义地使已有 Execution IR fingerprint 和 profile 失效。
+
+## 从同事 HTML 借用了什么
+
+参考文件：`/Users/yangminl/Downloads/qwen4-exp-architecture.html`。
+
+纳入 Model IR 的内容必须同时满足：由 config/构造语义决定、跨 framework 稳定、不会因 kernel/fusion 改写而变化。本次纳入：
+
+- `[GDN,GDN,GDN,QSA] × 12`、PLE 位于 1-based L2；
+- HC `4 × 2560`、rank 320、mix/combine 数学边界；
+- GDN 的 16 Q/K、48 V/Z、128 head dim、conv/state contract；
+- QSA 的 24Q/2KV、index 4Q/1K、128 index dim、c4、Top-512 blocks、2048 + causal tail `≤2051`；
+- MoE 的 512 routed / Top-10 / 1 shared、intermediate 640 与参数闭包；
+- PLE 的 16 × 160、2/3-gram head split、projection、dilation-3 short-conv 与 state；
+- 单层 Full+QSA MTP、PLE off、target embedding/head 共享及额外参数口径。
+
+以下内容没有进入 Model IR：
+
+- `torch.cat ×4` 的具体 materialization；
+- TileLang、Triton、PAI-FA3、FlashInfer、DeepGEMM、AITer 等 backend；
+- A2A、TP all-reduce、DP/EP placement；
+- “几个 logical kernel”、具体 fusion/launch/stream 建议。
+
+它们分别属于 Execution IR、Binding、Timeline/Profile 或 optimization analysis。特别是参考 HTML 的 MoE `TOPK · A2A · GEMM` 不是 pure-TP 下稳定的模型语义，不能原样复制。
+
+## 为什么原来会漏
+
+### 1. Pipeline 的 Stage 1 是 topology-first，不是 completeness-first
+
+旧规则只要求读 config/source、画 semantic modules、标 tensor/state boundary、stable ID 和 symbolic shape。它能保证“图能用来挂 profile”，却不能保证：
+
+- 所有 architecture-bearing config field 都被消费；
+- 参数分项能和模型总量闭合；
+- 所有 persistent state/cache 都有 shape、dtype、增长规律和 update owner；
+- 公式和 weight sharing 能从 IR 直接读取；
+- optional path 是被表达，还是被静默遗漏。
+
+### 2. Schema 允许节点只写四个字段
+
+`id + label + shape class + semantic_op` 就能通过。没有结构化的 `semantic_details`，因此精确信息只能塞进 label、README 或人的脑子里，也没有自动化验收点。
+
+### 3. Test 重点在 Execution/Profile 一致性
+
+过去的 test 主要检查 drill reference、collective 边界、binding/profile target 和 timing attribution。它们能抓“AR 被画在 MoE 内部”或 mapping 错误，却不会抓“QSA raw/compressed cache 没画”“GDN state shape 未声明”。
+
+### 4. 初始交付 scope 是 text-serving profile
+
+为了优先完成 pure-TP profile 和跨图跳转，Model IR 被当作 timing attribution skeleton。Vision 路径没有进入默认 text graph，是明确 scope 选择；但过去没有把这种排除写入 machine-readable coverage，因此看起来像普通遗漏。本次先把 Vision 记入 ledger 并标为 `ledger_only`；在真正捕获 multimodal workload 前，不把未测路径硬塞进所有 text profile 的默认图。
+
+### 5. Trace 不能修复这个问题
+
+Eager stack 可以验证 Execution IR/Binding 的调用顺序、shape、multiplicity 和 state transition，也可以证明某个 semantic node 在 framework 中如何实现；但未执行的 optional path、参数共享、完整参数总账和长期 cache 语义不一定会出现在一次 trace 中。Model IR 必须由 config + construction source 建立，trace 只做 validation，不能反向成为模型架构的唯一来源。
+
+## Pipeline 修复
+
+Stage 1 现在增加四个 closure gate：
+
+1. data-flow closure；
+2. layer/optional variant closure；
+3. parameter closure；
+4. persistent state/cache closure。
+
+并要求每个 architecture-bearing config field 有明确 disposition。默认图仍然只展示一个代表 layer；heads、experts 和相同 layer 不展开复制，精确信息进入节点详情或必要的 drill view。这样既保持当前 viewer 的可读性，也能复用于 vLLM、TensorRT-LLM 等不同实现。
+
+## 当前边界
+
+- 参数数字来自参考 artifact 标注的 config/source snapshot 和闭合推导，不能冒充 checkpoint-index 官方统计；snapshot 改变时必须重新跑 semantic audit。
+- 当前默认 graph/profile scope 仍是 text-only serving；Vision 需要单独的 stable frontend view 和对应 workload/profile 后才能提升为完整已验证路径。
+- 新增语义详情不代表当前 SGLang kernel 一定按相同粒度执行；fusion 和 kernel decomposition 由 Binding/Timeline 解释。

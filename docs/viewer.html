@@ -2543,6 +2543,56 @@ function heatLevel(ms, viewName) {
 // ============================================================
 // 详情面板
 // ============================================================
+function semanticDetailsHtml(details) {
+  if (!details || typeof details !== "object") return "";
+  const list = (title, values) => {
+    if (!Array.isArray(values) || !values.length) return "";
+    return `<h4>${escapeHtml(title)}</h4><ul style="margin:4px 0 10px;padding-left:18px;color:var(--muted)">${values.map(value =>
+      `<li style="margin:3px 0">${escapeHtml(value)}</li>`
+    ).join("")}</ul>`;
+  };
+  const tensors = (details.tensors || []).map(tensor => `<tr>
+    <td class="name">${escapeHtml(tensor.name || "")}</td>
+    <td>${escapeHtml(tensor.role || "")}</td>
+    <td>${escapeHtml(tensor.shape || "")}</td>
+    <td>${escapeHtml(tensor.dtype || "")}</td>
+  </tr>`).join("");
+  const states = (details.state || []).map(state => `<tr>
+    <td class="name">${escapeHtml(state.name || "")}</td>
+    <td>${escapeHtml(state.shape || "")}</td>
+    <td>${escapeHtml(state.dtype || "")}</td>
+    <td>${escapeHtml(state.lifecycle || "")}</td>
+    <td>${escapeHtml(state.update || "")}</td>
+  </tr>`).join("");
+  const parameterBreakdown = (details.parameters?.breakdown || []).map(item => `<tr>
+    <td class="name">${escapeHtml(item.name || "")}</td>
+    <td>${escapeHtml(item.shape || "")}</td>
+    <td>${Number(item.count || 0).toLocaleString()}</td>
+  </tr>`).join("");
+  const provenance = (details.provenance || []).map(item => `<tr>
+    <td>${escapeHtml(item.kind || "")}</td>
+    <td class="name">${escapeHtml(item.source || "")}${item.revision ? ` @ ${escapeHtml(item.revision)}` : ""}</td>
+    <td class="name">${escapeHtml(item.locator || "")}${item.derivation ? `<br><span style="color:var(--muted)">${escapeHtml(item.derivation)}</span>` : ""}</td>
+  </tr>`).join("");
+  const parameterSummary = details.parameters
+    ? `<div class="kv">
+        ${details.parameters.total != null ? `<div class="k">parameters</div><div>${Number(details.parameters.total).toLocaleString()}</div>` : ""}
+        ${details.parameters.sharing ? `<div class="k">parameter scope</div><div>${escapeHtml(details.parameters.sharing)}</div>` : ""}
+      </div>`
+    : "";
+  return `<h3>model semantics</h3>
+    ${details.operators?.length ? `<div class="kv"><div class="k">logical operators</div><div>${details.operators.map(escapeHtml).join(" · ")}</div></div>` : ""}
+    ${list("math / recurrence", details.math)}
+    ${parameterSummary}
+    ${parameterBreakdown ? `<table class="kernels"><thead><tr><th>parameter</th><th>shape</th><th>count</th></tr></thead><tbody>${parameterBreakdown}</tbody></table>` : ""}
+    ${tensors ? `<h4>tensor contracts</h4><table class="kernels"><thead><tr><th>name</th><th>role</th><th>shape</th><th>dtype</th></tr></thead><tbody>${tensors}</tbody></table>` : ""}
+    ${states ? `<h4>state / cache contracts</h4><table class="kernels"><thead><tr><th>name</th><th>shape</th><th>dtype</th><th>lifecycle</th><th>update</th></tr></thead><tbody>${states}</tbody></table>` : ""}
+    ${list("invariants", details.invariants)}
+    ${list("conditions", details.conditions)}
+    ${list("notes", details.notes)}
+    ${provenance ? `<h4>semantic provenance</h4><table class="kernels"><thead><tr><th>kind</th><th>source</th><th>locator</th></tr></thead><tbody>${provenance}</tbody></table>` : ""}`;
+}
+
 function showDetail(n, viewName) {
   const ms = nodeMs(n, viewName);
   const e = DATA.enriched[viewName];
@@ -2743,6 +2793,7 @@ function showDetail(n, viewName) {
       ${CURRENT_IMPLEMENTATION ? `<div class="k">implementation</div><div>${escapeHtml(CURRENT_IMPLEMENTATION)}</div>` : ""}
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
+    ${semanticDetailsHtml(n.semantic_details)}
     ${provenanceHtml}
     ${drillBtn}
     ${n.short_doc ? `<h3>about</h3><div style="color:var(--muted); white-space: pre-wrap">${escapeHtml(n.short_doc)}</div>` : ""}

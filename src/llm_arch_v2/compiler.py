@@ -52,6 +52,47 @@ def _validate_schema_version(
         raise CatalogError(f"{source}: expected schema_version={expected!r}, got {actual!r}")
 
 
+def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Enforce semantic-completeness metadata for enriched Model IR revisions.
+
+    ``ir_version`` remains the execution-topology identity.  A model can add
+    formula/ledger detail under ``semantic_revision`` without invalidating all
+    existing timing evidence, but revision 3 and later must declare the Stage 1
+    closure result instead of silently omitting architecture-bearing fields.
+    """
+
+    if int(model_ir.get("semantic_revision") or 0) < 3:
+        return
+    coverage = model_ir.get("semantic_coverage")
+    if not isinstance(coverage, dict):
+        raise CatalogError(
+            f"{source}: semantic_revision>=3 requires semantic_coverage"
+        )
+    required = (
+        "parameter_closure",
+        "state_closure",
+        "layer_variant_closure",
+        "config_field_disposition",
+    )
+    missing = [field for field in required if not coverage.get(field)]
+    if missing:
+        raise CatalogError(
+            f"{source}: semantic_coverage is missing: {', '.join(missing)}"
+        )
+    disposition = coverage["config_field_disposition"]
+    if not isinstance(disposition, dict):
+        raise CatalogError(
+            f"{source}: semantic_coverage.config_field_disposition must be a mapping"
+        )
+    buckets = ("model_ir", "execution_ir", "binding_profile", "excluded")
+    missing_buckets = [bucket for bucket in buckets if bucket not in disposition]
+    if missing_buckets:
+        raise CatalogError(
+            f"{source}: config_field_disposition is missing buckets: "
+            f"{', '.join(missing_buckets)}"
+        )
+
+
 def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     allowed_shapes = {"io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"}
@@ -70,6 +111,28 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                     raise CatalogError(
                         f"{source}: node {view_id}.{node_id} is missing {field!r}"
                     )
+            semantic_details = node.get("semantic_details")
+            if semantic_details is not None and not isinstance(semantic_details, dict):
+                raise CatalogError(
+                    f"{source}: node {view_id}.{node_id} semantic_details must be a mapping"
+                )
+            if isinstance(semantic_details, dict):
+                for field in (
+                    "operators",
+                    "math",
+                    "tensors",
+                    "state",
+                    "invariants",
+                    "conditions",
+                    "notes",
+                    "provenance",
+                ):
+                    value = semantic_details.get(field)
+                    if value is not None and not isinstance(value, list):
+                        raise CatalogError(
+                            f"{source}: node {view_id}.{node_id} "
+                            f"semantic_details.{field} must be a list"
+                        )
             if node["shape"] not in allowed_shapes:
                 raise CatalogError(
                     f"{source}: node {view_id}.{node_id} has unknown shape {node['shape']!r}"
@@ -601,6 +664,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         source=model_path,
     )
     _node_index(model_ir["views"], source=model_path)
+    _validate_semantic_coverage(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"
@@ -863,6 +927,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             "model_label": model_ir["model_label"],
             "subtitle": "IR-first · execution-path variants · versioned profile overlays",
             "model_ir_version": model_ir["ir_version"],
+            "model_semantic_revision": model_ir.get("semantic_revision"),
             "catalog": f"catalog/{model_root.name}",
             "execution_variant_count": len(execution_variants),
             "implementation_count": len(implementations),
@@ -876,8 +941,11 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     "model_id",
                     "model_label",
                     "ir_version",
+                    "semantic_revision",
                     "dimensions",
                     "facts",
+                    "semantic_evidence",
+                    "semantic_coverage",
                     "default_view",
                 )
                 if key in model_ir

@@ -2,6 +2,7 @@ schema_version: model-ir.v2
 model_id: qwen40
 model_label: Qwen 4.0 Air Example BF16
 ir_version: 2
+semantic_revision: 3
 default_view: top
 default_execution_path: tp_only
 
@@ -16,6 +17,8 @@ dimensions:
   D: MTP draft/verify positions per request
 
 facts:
+  scope: target_text_model_plus_eagle_mtp
+  maximum_context_length: 262144
   text_layers: 48
   layer_pattern: "12 × (3 linear-attention + 1 full-attention)"
   linear_attention_layers: 36
@@ -27,18 +30,111 @@ facts:
   full_attention_kv_heads: 2
   attention_head_dim: 256
   qsa_indexer_heads: 4
+  qsa_indexer_kv_heads: 1
+  qsa_indexer_head_dim: 128
+  qsa_indexer_compress_ratio: 4
+  qsa_indexer_block_topk: 512
   qsa_indexer_budget: 2048
+  qsa_indexer_max_selected_tokens: 2051
   qsa_indexer_tp_layout: replicated
   lm_head_output_dtype: bf16
   routed_experts: 512
   experts_per_token: 10
   shared_experts: 1
+  expert_intermediate_size: 640
   ple_layer_ids_1_based: [2]
   ple_ngram_size: 3
+  ple_ngram_heads: 16
+  ple_ngram_head_dim: 160
+  ple_heads_per_ngram_order: 8
+  ple_short_conv_channels: 10240
+  ple_short_conv_kernel: 4
+  ple_short_conv_dilation: 3
   mtp_auxiliary_layers: 1
   mtp_auxiliary_layer_type: full_attention
   mtp_ple_enabled: false
   mtp_input_fusion: residual_linear_shared_across_4_hc_branches
+  parameter_ledger:
+    target_unique_total: 177392830576
+    target_text_total: 176943899520
+    vision_total: 448931056
+    target_plus_mtp_unique_total: 179999981424
+    moe_per_layer: 2522810880
+    moe_all_48_layers: 121094922240
+    moe_touched_per_token_per_layer: 55380480
+    gdn_core_per_layer: 57958624
+    gdn_core_all_36_layers: 2086510464
+    qsa_core_per_layer: 51446528
+    qsa_core_all_12_layers: 617358336
+    hyperconnection_per_layer: 13209600
+    hyperconnection_all_layers_plus_final: 640624640
+    ple_embedding_table: 51200245760
+    ple_module_total: 51233085440
+    mtp_additional_unique: 2607150848
+  state_ledger:
+    gdn_per_layer:
+      conv: "[10240,3] bf16"
+      recurrent: "[48,128,128] fp32"
+      growth: fixed_per_request
+    qsa_per_layer:
+      main_kv: "2 KV heads × 256, token-growing"
+      raw_index_k: "1 × 128, token-growing"
+      compressed_index_k: "1 × 128 per 4-token complete block"
+      position_state: "3 × int64 per token, shared across QSA layers"
+    ple_layer_2:
+      token_context: "2 recent token ids"
+      short_conv: "[10240,9] bf16"
+      growth: fixed_per_request
+
+semantic_evidence:
+  reference_artifact:
+    path: /Users/yangminl/Downloads/qwen4-exp-architecture.html
+    purpose: manually curated semantic cross-check, not a runtime or kernel source of truth
+  config_snapshot:
+    repository: qwen_air_config
+    revision: b751ecb
+    locator: qwen_air_configs/config.json
+  construction_snapshot:
+    repository: dev_0.5.10.post1.qwen4.0816
+    revision: 089f8ac
+    locators:
+      - python/sglang/srt/models/qwen4_exp.py
+      - python/sglang/srt/models/qwen4_exp_mtp.py
+      - python/sglang/srt/layers/hyperconnection.py
+      - python/sglang/srt/layers/attention/qsa/qsa_indexer.py
+  review_note: >-
+    The reference artifact mixes model semantics, one SGLang implementation,
+    execution collectives, and kernel recommendations. Only config- and
+    construction-stable facts are imported into Model IR.
+
+semantic_coverage:
+  parameter_closure: complete_for_target_text_and_declared_mtp
+  state_closure: complete_for_gdn_qsa_ple
+  layer_variant_closure: complete
+  config_field_disposition:
+    model_ir:
+      - hidden_size, vocab_size, max_position_embeddings
+      - num_hidden_layers, layer_types, ple_layer_ids
+      - hyperconnection_branches, hyperconnection_low_rank
+      - attention heads, KV heads, head dimensions, indexer compression and selection
+      - expert counts, experts_per_token, expert_intermediate_size
+      - PLE N-gram/table/short-conv dimensions
+      - MTP layer count, layer type, PLE disablement, and shared weights
+    execution_ir:
+      - TP/DP/CP/EP axes, placements, local tensor layouts, collectives, and payload contracts
+    binding_profile:
+      - framework symbols, backend selection, fusion, stream scheduling, CUDA Graph mode, and measured kernels
+    excluded:
+      - training-only loss coefficients and output_router_logits
+  optional_components:
+    vision:
+      status: ledger_only
+      reason: current default graph and all attached profiles are text-only; the visual encoder requires its own semantic entry view before profiling
+  implementation_details_excluded:
+    - concrete torch.cat materialization
+    - TileLang, Triton, PAI-FA3, FlashInfer, DeepGEMM, or AITer kernel choices
+    - TP, DP, EP collectives and token dispatch
+    - fusion and launch decomposition
 
 views:
   top:
@@ -61,14 +157,35 @@ views:
         shape: block
         semantic_op: model.decoder_stack
         drill: stack
+        semantic_details:
+          operators: [hybrid_decoder]
+          invariants:
+            - "layer types = [GDN, GDN, GDN, QSA] × 12"
+            - "PLE is injected only before the attention HC mix of 1-based layer 2"
+            - "every decoder layer ends with the same routed + shared MoE contract"
       - id: final_hc_mix
         label: "final hyper-connection mix\n[HC] → [H]"
         shape: elem
         semantic_op: model.final_hyperconnection_mix
+        semantic_details:
+          operators: [rms_norm, low_rank_dynamic_gate, weighted_branch_read]
+          math:
+            - "h_final = mean_b(sigmoid(W_up(SiLU(W_down(Norm(R))/4)))_b ⊙ Norm(R)_b)"
+          tensors:
+            - {name: R, role: input, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: h_final, role: output, shape: "[B,T,2560]", dtype: bf16}
+          parameters:
+            total: 6563840
+            sharing: one final read-only mixer for the target model
       - id: lm_head
         label: "language-model head\n[H,V]"
         shape: gemm
         semantic_op: model.lm_head
+        semantic_details:
+          operators: [vocabulary_projection]
+          tensors:
+            - {name: weight, role: parameter, shape: "[248320,2560]", dtype: bf16}
+            - {name: logits, role: output, shape: "[B,T,248320]", dtype: bf16}
       - id: logits
         label: "logits\n[B,T,V]"
         shape: io
@@ -152,19 +269,41 @@ views:
         label: "embedding RMSNorm + replicated linear\nH → H"
         shape: gemm
         semantic_op: mtp.input_fusion.embedding_projection
+        semantic_details:
+          operators: [rms_norm, linear_projection]
+          tensors:
+            - {name: projected_embedding, role: output, shape: "[B,D,2560]", dtype: bf16}
       - id: hidden_projection
         label: "HC RMSNorm + shared per-branch linear\n4 × (H → H)"
         shape: gemm
         semantic_op: mtp.input_fusion.hidden_projection
+        semantic_details:
+          operators: [grouped_rms_norm, shared_per_branch_linear]
+          tensors:
+            - {name: projected_hc, role: output, shape: "[B,D,4,2560]", dtype: bf16}
       - id: residual_fusion
         label: "add projected token embedding\nto each of 4 HC branches"
         shape: elem
         semantic_op: mtp.input_fusion.residual_add
+        semantic_details:
+          math:
+            - "R_mtp = W_hidden(Norm(R_target)) + W_embedding(Norm(E))[:,None,:]"
+          parameters:
+            total: 13120000
+            sharing: total MTP input-fusion parameters including two projections and their norms
       - id: decoder_layer
         label: "one QSA full-attention + MoE layer\nPLE disabled"
         shape: block
         semantic_op: mtp.decoder_layer
         drill: mtp_layer
+        semantic_details:
+          conditions:
+            - exactly one auxiliary layer
+            - full-attention/QSA layer type
+            - PLE disabled
+          parameters:
+            total: 2587467008
+            sharing: auxiliary layer owns independent HC, QSA, and MoE weights
       - id: final_hc_mix
         label: "MTP final hyper-connection mix\n[4,H] → [H]"
         shape: elem
@@ -173,6 +312,9 @@ views:
         label: "shared vocabulary LM head\n[H,V]"
         shape: gemm
         semantic_op: mtp.lm_head
+        semantic_details:
+          invariants:
+            - token embedding and vocabulary head are shared with the target model and are not counted twice
       - id: draft_logits
         label: "draft logits + next HC state\n[B,D,V]"
         shape: io
@@ -221,6 +363,10 @@ views:
         shape: moe
         semantic_op: mtp.layer.moe
         drill: mtp_moe
+        semantic_details:
+          parameters:
+            total: 2522810880
+            sharing: complete routed + shared MoE block for this auxiliary layer
       - id: mlp_hc_combine
         label: MTP MoE branch combine
         shape: elem
@@ -247,7 +393,7 @@ views:
       - {id: attn_in, label: "MTP hidden states\n[B,D,H]", shape: io, semantic_op: mtp.qsa.input}
       - {id: qkv_gate_projection, label: Q/K/V + output-gate projection, shape: gemm, semantic_op: mtp.qsa.qkv_gate_projection}
       - {id: qk_norm_rope, label: Q/K RMSNorm + MRoPE, shape: norm, semantic_op: mtp.qsa.qk_norm_rope}
-      - {id: indexer, label: "MTP QSA sparse indexer\n4 heads, budget 2048", shape: attn, semantic_op: mtp.qsa.indexer}
+      - {id: indexer, label: "MTP QSA sparse indexer\n4Q/1K ×128 · c4 · Top-512 blocks", shape: attn, semantic_op: mtp.qsa.indexer, drill: qsa_indexer}
       - {id: metadata, label: MTP QSA layout + valid counts, shape: elem, semantic_op: mtp.qsa.metadata}
       - {id: kv_cache, label: MTP full-attention KV cache, shape: cache, semantic_op: mtp.qsa.kv_cache}
       - {id: attention_core, label: MTP indexed sparse attention, shape: attn, semantic_op: mtp.qsa.core}
@@ -299,15 +445,40 @@ views:
         label: "initialize 4 hyper-connection branches\nH → HC"
         shape: elem
         semantic_op: stack.hyperconnection_expand
+        semantic_details:
+          operators: [branch_replication]
+          math:
+            - "R_0 = stack(x, x, x, x)"
+          tensors:
+            - {name: x, role: input, shape: "[B,T,2560]", dtype: bf16}
+            - {name: R_0, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+          invariants:
+            - four branch states are initialized once and then carried between layers
+            - the four branches are residual state, not four independent Transformer executions
       - id: schedule
         label: "repeat 12 times\nlinear ×3, full-QSA ×1"
         shape: elem
         semantic_op: stack.schedule
+        semantic_details:
+          operators: [repeat]
+          conditions:
+            - "QSA layers use 0-based ids 3,7,...,47 (1-based L4,L8,...,L48)"
+            - "the remaining 36 layers use Gated DeltaNet linear attention"
       - id: ple_injection
         label: "PLE N-gram injection\nconfigured layer id 2"
         shape: block
         semantic_op: stack.ple_injection
         drill: ple
+        semantic_details:
+          conditions:
+            - target model only
+            - 1-based layer id 2 only
+            - executed before that layer's attention hyper-connection mix
+          invariants:
+            - modifies the full four-branch HC state rather than a post-mix H-wide tensor
+          parameters:
+            total: 51233085440
+            sharing: complete PLE module at target layer 2
       - id: linear_layer
         label: "linear-attention decoder layer\n36 layers"
         shape: block
@@ -349,6 +520,10 @@ views:
         shape: attn
         semantic_op: decoder.linear.attention
         drill: linear_attention
+        semantic_details:
+          parameters:
+            total: 57958624
+            sharing: GDN core per linear-attention layer; excludes the layer's HC and MoE modules
       - id: attn_hc_combine
         label: attention branch combine
         shape: elem
@@ -364,6 +539,10 @@ views:
         shape: moe
         semantic_op: decoder.linear.moe
         drill: moe
+        semantic_details:
+          parameters:
+            total: 2522810880
+            sharing: complete routed + shared MoE block per decoder layer
       - id: mlp_hc_combine
         label: MoE branch combine
         shape: elem
@@ -401,6 +580,10 @@ views:
         shape: attn
         semantic_op: decoder.full.qsa_attention
         drill: qsa_attention
+        semantic_details:
+          parameters:
+            total: 51446528
+            sharing: QSA core per full-attention layer; excludes the layer's HC and MoE modules
       - id: attn_hc_combine
         label: attention branch combine
         shape: elem
@@ -416,6 +599,10 @@ views:
         shape: moe
         semantic_op: decoder.full.moe
         drill: moe
+        semantic_details:
+          parameters:
+            total: 2522810880
+            sharing: complete routed + shared MoE block per decoder layer
       - id: mlp_hc_combine
         label: MoE branch combine
         shape: elem
@@ -443,34 +630,90 @@ views:
         label: "token ids + cached N-gram context\nprepared before decoder stack"
         shape: cache
         semantic_op: ple.token_history
+        semantic_details:
+          state:
+            - {name: recent_token_ids, shape: "[B,2]", dtype: int64, lifecycle: fixed-size per-request context, update: commit the newest token after use}
+          invariants:
+            - ngram_size=3 therefore the side state retains the previous two token ids
       - id: ngram_hash
         label: "N-gram hashing\nexecuted at configured PLE layer 2"
         shape: elem
         semantic_op: ple.ngram_hash
+        semantic_details:
+          operators: [integer_ngram_hash]
+          math:
+            - "form 2-gram and 3-gram ids from current token plus the retained two-token context"
+          tensors:
+            - {name: hashed_ids, role: output, shape: "[B,T,16]", dtype: int64}
       - id: ngram_embedding
-        label: "N-gram embedding table\n16 heads"
+        label: "N-gram embedding table\n16 heads × 160 = H"
         shape: gemm
         semantic_op: ple.ngram_embedding
+        semantic_details:
+          operators: [vocabulary_parallel_lookup]
+          tensors:
+            - {name: weight, role: parameter, shape: "[320001536,160]", dtype: bf16}
+            - {name: embedding, role: output, shape: "[B,T,16,160]", dtype: bf16}
+          parameters:
+            total: 51200245760
+            sharing: 8 heads for 2-grams and 8 heads for 3-grams
+          invariants:
+            - concatenating all 16 head values yields one 2560-wide vector
       - id: key_value_projection
-        label: PLE key/value projections
+        label: "PLE key/value projections\nK: 2560→10240 · V: 2560→2560"
         shape: gemm
         semantic_op: ple.key_value_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: key, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: value, role: output, shape: "[B,T,2560]", dtype: bf16}
+          parameters:
+            total: 32768000
+            sharing: one 2560×10240 key projection and one 2560×2560 value projection
       - id: grouped_norm_gate
         label: grouped RMSNorm + query/key gate
         shape: norm
         semantic_op: ple.grouped_norm_gate
+        semantic_details:
+          operators: [grouped_rms_norm, branch_gate]
+          tensors:
+            - {name: query, role: input, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: gated_value, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+          parameters:
+            total: 30720
+            sharing: three 10240-element grouped RMSNorm scales
+          invariants:
+            - each HC branch owns a distinct query/key gate while the lookup value is shared
       - id: short_conv
-        label: dilated depthwise short convolution
+        label: "dilated depthwise short convolution\nC=10240 · K=4 · dilation=3"
         shape: elem
         semantic_op: ple.short_conv
+        semantic_details:
+          operators: [depthwise_conv1d]
+          state:
+            - {name: short_conv_history, shape: "[B,10240,9]", dtype: bf16, lifecycle: fixed-size per-request state, update: append current gated value and advance by one token}
+          parameters:
+            total: 40960
+            sharing: one depthwise 10240-channel × 4-tap convolution
       - id: conv_state
-        label: PLE short-conv state
+        label: "PLE short-conv state\n[B,10240,9] bf16"
         shape: cache
         semantic_op: ple.short_conv_state
+        semantic_details:
+          state:
+            - {name: short_conv_history, shape: "[B,10240,9]", dtype: bf16, lifecycle: fixed-size per-request state, update: read-modify-write at target layer 2}
       - id: injection
         label: gated PLE residual injection
         shape: elem
         semantic_op: ple.injection
+        semantic_details:
+          operators: [gated_residual_update]
+          math:
+            - "R_tilde = R + Delta_PLE"
+          tensors:
+            - {name: R, role: input, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: R_tilde, role: output, shape: "[B,T,4,2560]", dtype: bf16}
       - id: context_commit
         label: commit N-gram context
         shape: cache
@@ -498,14 +741,38 @@ views:
         label: per-branch RMSNorm
         shape: norm
         semantic_op: hyperconnection.branch_norm
+        semantic_details:
+          operators: [per_branch_rms_norm]
+          tensors:
+            - {name: normalized_branches, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+          parameters:
+            total: 10240
+            sharing: one grouped RMSNorm scale per HC shell
       - id: low_rank_gate
-        label: "low-rank dynamic gate\nrank 320"
+        label: "low-rank dynamic gate\n10240→320→10240"
         shape: gemm
         semantic_op: hyperconnection.low_rank_gate
+        semantic_details:
+          operators: [linear_projection, activation, linear_projection, sigmoid]
+          tensors:
+            - {name: flattened_branches, role: input, shape: "[B,T,10240]", dtype: bf16}
+            - {name: mix_weights, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+          parameters:
+            total: 6553600
+            sharing: 10240×320 down projection plus 320×10240 up projection
+          invariants:
+            - the low-rank dimension is 320
       - id: mix
         label: "weighted branch mix\n4 branches → one H-wide path"
         shape: elem
         semantic_op: hyperconnection.mix
+        semantic_details:
+          operators: [weighted_branch_reduce]
+          math:
+            - "x_module = mean_branch(mix_weights ⊙ Norm(R))"
+          tensors:
+            - {name: R, role: input, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: x_module, role: output, shape: "[B,T,2560]", dtype: bf16}
       - id: module_input
         label: "selected module input\n[B,T,H]"
         shape: io
@@ -529,9 +796,23 @@ views:
         shape: io
         semantic_op: hyperconnection.combine.module_output
       - id: combine
-        label: "update four branches\nwith processed H-wide result"
+        label: "update four branches\nR' = R + alpha ⊙ y"
         shape: elem
         semantic_op: hyperconnection.combine
+        semantic_details:
+          operators: [branch_injection_gate, residual_update]
+          math:
+            - "alpha = 2 × sigmoid(W_inject(flatten(Norm(R)))/4) with shape [B,T,4]"
+            - "R_prime[b] = R[b] + alpha[b] ⊙ y_module"
+          tensors:
+            - {name: R, role: preserved input, shape: "[B,T,4,2560]", dtype: bf16}
+            - {name: y_module, role: processed module input, shape: "[B,T,2560]", dtype: bf16}
+            - {name: R_prime, role: output, shape: "[B,T,4,2560]", dtype: bf16}
+          invariants:
+            - the fifth logical input is the processed attention or MoE result, not the pre-module mix output
+          parameters:
+            total: 40960
+            sharing: one 10240×4 branch-injection projection per HC shell
       - id: updated_branch_states
         label: "updated branch states\n[B,T,4,H]"
         shape: io
@@ -584,25 +865,54 @@ views:
         shape: io
         semantic_op: linear_attention.input
       - id: qkvz_projection
-        label: q/k/v/z projection
+        label: "q/k/v/z projection\nQ,K:16×128 · V,Z:48×128"
         shape: gemm
         semantic_op: linear_attention.qkvz_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: q, role: output, shape: "[B,T,16,128]", dtype: bf16}
+            - {name: k, role: output, shape: "[B,T,16,128]", dtype: bf16}
+            - {name: v, role: output, shape: "[B,T,48,128]", dtype: bf16}
+            - {name: z, role: output gate, shape: "[B,T,48,128]", dtype: bf16}
+          parameters:
+            total: 41943040
+            sharing: one projection matrix per GDN layer
       - id: ba_projection
-        label: beta/alpha projection
+        label: "beta/alpha projection\n48 beta + 48 decay scalars"
         shape: gemm
         semantic_op: linear_attention.ba_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: beta, role: output, shape: "[B,T,48]", dtype: bf16}
+            - {name: alpha, role: output, shape: "[B,T,48]", dtype: bf16}
+          parameters:
+            total: 245760
+            sharing: one 2560×96 projection per GDN layer
       - id: split_pack
         label: split, reshape and pack q/k/v
         shape: elem
         semantic_op: linear_attention.split_pack
       - id: causal_conv
-        label: causal Conv1D + SiLU
+        label: "causal depthwise Conv1D + SiLU\n10240 channels · kernel 4"
         shape: elem
         semantic_op: linear_attention.causal_conv
+        semantic_details:
+          operators: [causal_depthwise_conv1d, silu]
+          tensors:
+            - {name: packed_qkv, role: input, shape: "[B,T,10240]", dtype: bf16}
+          state:
+            - {name: conv_history, shape: "[B,10240,3]", dtype: bf16, lifecycle: fixed-size per-request state, update: shift and append one token}
       - id: recurrent_state
-        label: DeltaNet recurrent state
+        label: "DeltaNet recurrent state\n[B,48,128,128] fp32"
         shape: cache
         semantic_op: linear_attention.recurrent_state
+        semantic_details:
+          state:
+            - {name: S, shape: "[B,48,128,128]", dtype: fp32, lifecycle: fixed-size per-request state, update: gated delta-rule read-modify-write}
+          invariants:
+            - state size is independent of context length
       - id: gating
         label: beta/decay gating
         shape: elem
@@ -611,6 +921,13 @@ views:
         label: gated delta-rule recurrence
         shape: attn
         semantic_op: linear_attention.delta_rule
+        semantic_details:
+          operators: [gated_deltanet_recurrence]
+          math:
+            - "S_bar_t = exp(g_t) · S_(t-1)"
+            - "e_t = beta_t · (v_t - S_bar_t · k_t)"
+            - "S_t = S_bar_t + e_t · k_t^T"
+            - "o_t = S_t · (q_t / sqrt(128))"
       - id: gated_norm
         label: RMSNormGated(core, z)
         shape: norm
@@ -646,29 +963,66 @@ views:
         shape: io
         semantic_op: qsa_attention.input
       - id: qkv_gate_projection
-        label: Q/K/V + output-gate projection
+        label: "Q/K/V + output-gate projection\n24Q + 2K + 2V + 24 gates · dim 256"
         shape: gemm
         semantic_op: qsa_attention.qkv_gate_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: q, role: output, shape: "[B,T,24,256]", dtype: bf16}
+            - {name: k, role: output, shape: "[B,T,2,256]", dtype: bf16}
+            - {name: v, role: output, shape: "[B,T,2,256]", dtype: bf16}
+            - {name: output_gate, role: output, shape: "[B,T,24,256]", dtype: bf16}
+          parameters:
+            total: 34078720
+            sharing: one main Q/K/V/gate projection per QSA layer
       - id: qk_norm_rope
         label: Q/K RMSNorm + MRoPE
         shape: norm
         semantic_op: qsa_attention.qk_norm_rope
+        semantic_details:
+          operators: [qk_rms_norm, multimodal_rope]
+          parameters:
+            total: 512
+            sharing: one 256-element Q norm and one 256-element K norm per QSA layer
       - id: indexer
-        label: "QSA sparse indexer\n4 heads, budget 2048"
+        label: "QSA sparse indexer\n4Q/1K ×128 · c4 · Top-512 blocks"
         shape: attn
         semantic_op: qsa_attention.indexer
+        drill: qsa_indexer
+        semantic_details:
+          operators: [index_projection, compressed_mqa_score, topk_block_selection]
+          tensors:
+            - {name: index_q, role: query, shape: "[B,T,4,128]", dtype: bf16}
+            - {name: raw_index_k, role: cache input, shape: "[B,T,1,128]", dtype: bf16}
+            - {name: selected_token_indices, role: output, shape: "[B,T,<=2051]", dtype: int32}
+          parameters:
+            total: 1638656
+            sharing: 2560×640 projection plus two 128-element norms per QSA layer
+          invariants:
+            - every complete 4-token group contributes one compressed index key
+            - select at most 512 complete blocks, expand to 2048 tokens, then append at most 3 causal-tail tokens
       - id: metadata
         label: "QSA decode metadata\nlayout + valid counts"
         shape: elem
         semantic_op: qsa_attention.metadata
       - id: kv_cache
-        label: full-attention KV cache
+        label: "main token-level K/V cache\n2 KV heads × 256"
         shape: cache
         semantic_op: qsa_attention.kv_cache
+        semantic_details:
+          state:
+            - {name: main_kv, shape: "[B,T,2,256] for K and V", dtype: bf16, lifecycle: token-growing paged per-request cache, update: append selected full-attention K/V for each new token}
+          invariants:
+            - QSA selection reduces historical reads, not main K/V storage
       - id: attention_core
-        label: indexed sparse attention
+        label: "indexed sparse GQA\n24Q / 2KV · selected width ≤2051"
         shape: attn
         semantic_op: qsa_attention.core
+        semantic_details:
+          operators: [sparse_grouped_query_attention]
+          invariants:
+            - short contexts retain all causally visible full blocks rather than padding to 512 selected blocks
       - id: output_gate
         label: sigmoid output gate
         shape: elem
@@ -677,6 +1031,13 @@ views:
         label: output projection
         shape: gemm
         semantic_op: qsa_attention.output_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: weight, role: parameter, shape: "[6144,2560]", dtype: bf16}
+          parameters:
+            total: 15728640
+            sharing: one output projection per QSA layer
       - id: attn_out
         label: "attention output\n[B,T,H]"
         shape: io
@@ -695,6 +1056,100 @@ views:
       - {from: output_gate, to: output_projection, dtype: bf16}
       - {from: output_projection, to: attn_out, shape: "[B,T,H]", dtype: bf16}
 
+  qsa_indexer:
+    title: QSA compressed index path and side-state
+    nodes:
+      - id: index_in
+        label: "hidden states\n[B,T,2560]"
+        shape: io
+        semantic_op: qsa_indexer.input
+      - id: qk_projection
+        label: "index Q/K projection\n2560 → 4Q×128 + 1K×128"
+        shape: gemm
+        semantic_op: qsa_indexer.qk_projection
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: index_q, role: output, shape: "[B,T,4,128]", dtype: bf16}
+            - {name: index_k_raw, role: output, shape: "[B,T,1,128]", dtype: bf16}
+          parameters:
+            total: 1638400
+            sharing: one 2560×640 projection per QSA layer
+      - id: q_norm_rope
+        label: index Q RMSNorm + shared MRoPE positions
+        shape: norm
+        semantic_op: qsa_indexer.q_norm_rope
+        semantic_details:
+          parameters:
+            total: 128
+            sharing: one 128-element Q norm per QSA layer
+      - id: raw_k_cache
+        label: "raw index K cache\n1×128 per token, before block K norm/MRoPE"
+        shape: cache
+        semantic_op: qsa_indexer.raw_k_cache
+        semantic_details:
+          state:
+            - {name: raw_index_k, shape: "[B,T,1,128]", dtype: bf16, lifecycle: token-growing per-request cache, update: append projected raw index K at each token slot}
+            - {name: mrope_positions, shape: "[B,T,3]", dtype: int64, lifecycle: token-growing state shared across QSA layers, update: append the token MRoPE position}
+      - id: compress
+        label: "average complete 4-token group\nK RMSNorm + MRoPE"
+        shape: elem
+        semantic_op: qsa_indexer.compress
+        semantic_details:
+          operators: [four_token_average_pool, rms_norm]
+          parameters:
+            total: 128
+            sharing: one 128-element compressed-K norm per QSA layer
+          invariants:
+            - incomplete causal-tail tokens remain on the full-token path and are not written as a compressed block
+      - id: compressed_k_cache
+        label: "compressed index K cache\n1×128 per complete 4-token block"
+        shape: cache
+        semantic_op: qsa_indexer.compressed_k_cache
+        semantic_details:
+          state:
+            - {name: compressed_index_k, shape: "[B,ceil(T/4),1,128]", dtype: bf16, lifecycle: block-growing paged per-request cache, update: append after each complete 4-token group}
+      - id: compressed_score
+        label: "compressed MQA score\nReLU + sum across 4 index heads"
+        shape: attn
+        semantic_op: qsa_indexer.compressed_score
+        semantic_details:
+          operators: [multi_query_attention_score, relu, index_head_reduce]
+          math:
+            - "score(t,b) = sum_h ReLU(<q_index(t,h), k_compressed(b)>)/sqrt(128)"
+      - id: block_topk
+        label: "Top-512 complete blocks"
+        shape: elem
+        semantic_op: qsa_indexer.block_topk
+        semantic_details:
+          operators: [topk]
+          tensors:
+            - {name: selected_blocks, role: output, shape: "[B,T,<=512]", dtype: int32}
+      - id: expand_tail
+        label: "expand blocks to ≤2048 tokens\n+ causal tail ≤3"
+        shape: elem
+        semantic_op: qsa_indexer.expand_tail
+        semantic_details:
+          operators: [block_to_token_expand, causal_tail_append]
+          tensors:
+            - {name: selected_tokens, role: output, shape: "[B,T,<=2051]", dtype: int32}
+      - id: selected_indices
+        label: "selected full-token positions\nfor main sparse attention"
+        shape: io
+        semantic_op: qsa_indexer.output
+    edges:
+      - {from: index_in, to: qk_projection, shape: "[B,T,2560]", dtype: bf16}
+      - {from: qk_projection, to: q_norm_rope, shape: "[B,T,4,128]", dtype: bf16}
+      - {from: qk_projection, to: raw_k_cache, shape: "[B,T,1,128]", dtype: bf16}
+      - {from: raw_k_cache, to: compress, kind: residual, dtype: bf16}
+      - {from: compress, to: compressed_k_cache, kind: dashed, label: update, dtype: bf16}
+      - {from: q_norm_rope, to: compressed_score, shape: "[B,T,4,128]", dtype: bf16}
+      - {from: compressed_k_cache, to: compressed_score, kind: residual, dtype: bf16}
+      - {from: compressed_score, to: block_topk, dtype: fp32}
+      - {from: block_topk, to: expand_tail, dtype: int32}
+      - {from: raw_k_cache, to: expand_tail, kind: dashed, label: causal tail positions}
+      - {from: expand_tail, to: selected_indices, dtype: int32}
+
   moe:
     title: 512-expert routed + shared MoE
     nodes:
@@ -703,25 +1158,59 @@ views:
         shape: io
         semantic_op: moe.input
       - id: router
-        label: router logits
+        label: "FP32 router logits\n2560 → 512"
         shape: gemm
         semantic_op: moe.router
+        semantic_details:
+          operators: [linear_projection]
+          tensors:
+            - {name: router_logits, role: output, shape: "[B,T,512]", dtype: fp32}
+          parameters:
+            total: 1310720
+            sharing: one bias-free router per decoder layer
       - id: topk
         label: "Top-10 of 512 experts"
         shape: elem
         semantic_op: moe.topk
+        semantic_details:
+          operators: [topk, selected_probability_renormalization]
+          tensors:
+            - {name: expert_ids, role: output, shape: "[B,T,10]", dtype: int32}
+            - {name: expert_weights, role: output, shape: "[B,T,10]", dtype: fp32}
+          invariants:
+            - routed activation fraction is 10/512 = 1.953125 percent by expert count
       - id: routed_experts
-        label: routed expert gate/up/down
+        label: "10 selected routed SwiGLU experts\n2560→640→2560"
         shape: moe
         semantic_op: moe.routed_experts
+        semantic_details:
+          operators: [swiglu_expert]
+          math:
+            - "e(x) = W_down(SiLU(W_gate x) ⊙ W_up x)"
+          parameters:
+            total: 2516582400
+            sharing: 512 independently stored experts per layer; 4,915,200 parameters per expert
+          invariants:
+            - only the selected 10 routed experts are touched for each token
       - id: shared_expert
-        label: shared expert gate/up/down
+        label: "always-on shared SwiGLU expert\n2560→640→2560 + scalar gate"
         shape: gemm
         semantic_op: moe.shared_expert
+        semantic_details:
+          operators: [swiglu_expert, sigmoid_scalar_gate]
+          parameters:
+            total: 4917760
+            sharing: one shared expert plus one 2560-parameter scalar gate per layer
       - id: combine
         label: weighted routed + shared combine
         shape: elem
         semantic_op: moe.combine
+        semantic_details:
+          operators: [weighted_expert_sum, shared_expert_add]
+          math:
+            - "y = sum_{e in Top10} p_e e(x) + sigmoid(g_shared(x)) e_shared(x)"
+          invariants:
+            - TP/EP placement, token dispatch, collective choice, and expert replication are Execution IR concerns
       - id: moe_out
         label: "MoE output\n[B,T,H]"
         shape: io

@@ -42,6 +42,16 @@ Profiles and bindings may never create or mutate semantic model nodes. A new
 execution graph is created only when an execution plan changes the structural
 fingerprint (operator flow, sharding, placement, or collectives).
 
+Model IR may add `semantic_revision` and per-node `semantic_details` for
+implementation-independent formulas, tensor contracts, parameter counts and
+sharing, persistent state/cache lifecycle, and semantic provenance. These
+details do not enter the Execution IR fingerprint. Starting with semantic
+revision 3, the compiler requires `semantic_coverage` to record parameter,
+state, layer/optional-path, and architecture-bearing config-field closure. The
+default graph should remain compact; repeated identical layers, heads, and
+experts are represented by one node plus count/placement detail or a drill
+view, not by cloning every instance.
+
 Fused kernels remain an implementation/profile overlay. `status: fused` plus
 `included_in` is compiled into a `fusion_group` covering two or more stable IR
 nodes with `timing_semantics: shared_interval`. The shared interval is valid
