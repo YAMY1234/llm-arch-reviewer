@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-24-multilane-v1" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-25-selection-sync-v2" />
 <title>llm-arch-reviewer</title>
 <style>
   /* PDF 风浅色主题 */
@@ -517,6 +517,9 @@ let TIMELINE_LAYER = "";
 let TIMELINE_SEARCH = "";
 let TIMELINE_IR_TARGET = "";
 let TIMELINE_SELECTED_EVENT = null;
+// Click-originated selection is separate from the nearest-event cursor used
+// when Architecture asks Timeline to center a whole mapped module.
+let TIMELINE_EXPLICIT_SELECTION = null;
 let TIMELINE_CURSOR_US = null;
 let TIMELINE_RANGE = {startUs: 0, endUs: 1};
 let TIMELINE_HIT_RECTS = [];
@@ -2027,6 +2030,7 @@ async function loadTimelineForCurrentProfile() {
   const switcher = document.getElementById("view-switch");
   switcher.style.display = meta ? "inline-flex" : "none";
   TIMELINE_SELECTED_EVENT = null;
+  TIMELINE_EXPLICIT_SELECTION = null;
   TIMELINE_IR_TARGET = "";
   TIMELINE_CURSOR_US = null;
   PERFETTO_TRACE_BUFFER = null;
@@ -2178,6 +2182,62 @@ function timelineEventMatches(event) {
     if (!haystack.includes(TIMELINE_SEARCH.toLowerCase())) return false;
   }
   return true;
+}
+
+function timelineEventIsHighlighted(event) {
+  if (TIMELINE_EXPLICIT_SELECTION?.kind === "event") {
+    return event === TIMELINE_EXPLICIT_SELECTION.event;
+  }
+  if (TIMELINE_EXPLICIT_SELECTION?.kind === "owner") {
+    return TIMELINE_EXPLICIT_SELECTION.events.has(event);
+  }
+  return timelineEventMatches(event);
+}
+
+function timelineOwnerIsHighlighted(tierName, layout, ownerSpan) {
+  if (TIMELINE_EXPLICIT_SELECTION?.kind === "event") {
+    return ownerSpan.events.includes(TIMELINE_EXPLICIT_SELECTION.event);
+  }
+  if (TIMELINE_EXPLICIT_SELECTION?.kind === "owner") {
+    const selected = TIMELINE_EXPLICIT_SELECTION;
+    return selected.tier === tierName
+      && selected.streamId === String(layout.track.stream_id)
+      && selected.ownerKey === ownerSpan.owner.key
+      && selected.startUs === Number(ownerSpan.start_us)
+      && selected.endUs === Number(ownerSpan.end_us);
+  }
+  return ownerSpan.events.some(timelineEventMatches);
+}
+
+function clearTimelineSelectionFilters() {
+  TIMELINE_SEARCH = "";
+  TIMELINE_LAYER = "";
+  document.getElementById("timeline-search").value = "";
+  document.getElementById("timeline-layer").value = "";
+}
+
+function selectTimelineEvent(event) {
+  TIMELINE_SELECTED_EVENT = event;
+  TIMELINE_EXPLICIT_SELECTION = {kind: "event", event};
+  TIMELINE_IR_TARGET = event?._irNode || event?._irTargets?.[0] || "";
+  clearTimelineSelectionFilters();
+}
+
+function selectTimelineOwner(hit) {
+  const span = hit?.ownerSpan;
+  if (!span) return;
+  TIMELINE_SELECTED_EVENT = null;
+  TIMELINE_EXPLICIT_SELECTION = {
+    kind: "owner",
+    tier: hit.tier,
+    streamId: String(hit.track.stream_id),
+    ownerKey: span.owner.key,
+    startUs: Number(span.start_us),
+    endUs: Number(span.end_us),
+    events: new Set(span.events),
+  };
+  TIMELINE_IR_TARGET = span.owner.target || "";
+  clearTimelineSelectionFilters();
 }
 
 const TIMELINE_KERNEL_PALETTE = [
@@ -2516,11 +2576,11 @@ function renderTimeline() {
         const width = Math.max(0.8, x2 - x1);
         const lane = tier.packing.lanes.get(ownerSpan) || 0;
         const y = layout.y + tier.top + lane * (layout.ownerHeight + layout.laneGap);
-        const matches = ownerSpan.events.some(timelineEventMatches);
-        ctx.globalAlpha = matches ? tier.alpha : 0.07;
+        const highlighted = timelineOwnerIsHighlighted(tier.name, layout, ownerSpan);
+        ctx.globalAlpha = highlighted ? tier.alpha : 0.07;
         ctx.fillStyle = timelineModuleColor(ownerSpan.owner.key, ownerSpan.kind);
         ctx.fillRect(x1, y, width, layout.ownerHeight);
-        if (matches && width >= 28) {
+        if (highlighted && width >= 28) {
           ctx.save();
           ctx.beginPath(); ctx.rect(x1, y, width, layout.ownerHeight); ctx.clip();
           ctx.globalAlpha = 1; ctx.fillStyle = "#ffffff";
@@ -2528,6 +2588,11 @@ function renderTimeline() {
           const label = fitTimelineText(ctx, ownerSpan.owner.label, width - 7);
           if (label) ctx.fillText(label, x1 + 4, y + layout.ownerHeight / 2);
           ctx.restore();
+        }
+        if (highlighted && TIMELINE_EXPLICIT_SELECTION?.kind === "owner") {
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = "#000"; ctx.lineWidth = 2;
+          ctx.strokeRect(x1 - 1, y - 1, width + 2, layout.ownerHeight + 2);
         }
         ctx.globalAlpha = 1;
         TIMELINE_OWNER_HIT_RECTS.push({
@@ -2551,12 +2616,12 @@ function renderTimeline() {
       const width = Math.max(0.8, x2 - x1);
       const lane = layout.kernelPacking.lanes.get(event) || 0;
       const y = layout.y + layout.kernelTop + lane * (layout.kernelHeight + layout.laneGap);
-      const matches = timelineEventMatches(event);
-      ctx.globalAlpha = matches ? 0.9 : 0.09;
+      const highlighted = timelineEventIsHighlighted(event);
+      ctx.globalAlpha = highlighted ? 0.9 : 0.09;
       const kernelColor = timelineKernelColor(event);
       ctx.fillStyle = kernelColor;
       ctx.fillRect(x1, y, width, layout.kernelHeight);
-      if (matches && width >= 28) {
+      if (highlighted && width >= 28) {
         ctx.save();
         ctx.beginPath(); ctx.rect(x1, y, width, layout.kernelHeight); ctx.clip();
         ctx.globalAlpha = 1; ctx.fillStyle = timelineReadableTextColor(kernelColor);
@@ -2592,7 +2657,7 @@ function renderTimeline() {
       Math.max(1, Math.min(plotLeft + plotWidth, toX(end)) - Math.max(plotLeft, toX(start))), idleRowHeight - 14);
   }
 
-  const matching = (step.events || []).filter(timelineEventMatches).length;
+  const matching = (step.events || []).filter(timelineEventIsHighlighted).length;
   const maxLayerLanes = Math.max(0, ...trackLayouts.map(layout => layout.layerLaneCount));
   const maxModuleLanes = Math.max(0, ...trackLayouts.map(layout => layout.moduleLaneCount));
   const maxKernelLanes = Math.max(0, ...trackLayouts.map(layout => layout.actualKernelLaneCount));
@@ -2656,7 +2721,7 @@ function implementationSourceUrl(file, line) {
 }
 
 function showTimelineEventDetail(event) {
-  TIMELINE_SELECTED_EVENT = event;
+  selectTimelineEvent(event);
   renderTimeline();
   const step = currentTimelineStep();
   const traceTsUs = Number(step.trace_start_us) + Number(event.start_us);
@@ -2879,6 +2944,7 @@ function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
   TIMELINE_LAYER = "";
   document.getElementById("timeline-layer").value = "";
   TIMELINE_SELECTED_EVENT = null;
+  TIMELINE_EXPLICIT_SELECTION = null;
   if (shouldRender && TIMELINE_DATA) renderTimeline();
 }
 
@@ -2994,21 +3060,28 @@ function initTimelineUI() {
   document.getElementById("timeline-step").onchange = event => {
     TIMELINE_STEP_INDEX = Number(event.target.value);
     TIMELINE_SELECTED_EVENT = null;
+    TIMELINE_EXPLICIT_SELECTION = null;
     resetTimelineRange();
   };
   document.getElementById("timeline-layer").onchange = event => {
     TIMELINE_LAYER = event.target.value;
+    TIMELINE_SELECTED_EVENT = null;
+    TIMELINE_EXPLICIT_SELECTION = null;
     renderTimeline();
   };
   document.getElementById("timeline-search").oninput = event => {
     TIMELINE_SEARCH = event.target.value.trim();
     TIMELINE_IR_TARGET = "";
+    TIMELINE_SELECTED_EVENT = null;
+    TIMELINE_EXPLICIT_SELECTION = null;
     renderTimeline();
   };
   document.getElementById("timeline-reset").onclick = () => {
     TIMELINE_IR_TARGET = "";
     TIMELINE_SEARCH = "";
     TIMELINE_LAYER = "";
+    TIMELINE_SELECTED_EVENT = null;
+    TIMELINE_EXPLICIT_SELECTION = null;
     document.getElementById("timeline-search").value = "";
     document.getElementById("timeline-layer").value = "";
     resetTimelineRange();
@@ -3057,7 +3130,7 @@ function initTimelineUI() {
     const ownerHit = timelineOwnerAt(x, y);
     const ownerEvent = timelineEventForOwner(ownerHit);
     if (ownerEvent) {
-      TIMELINE_SELECTED_EVENT = null;
+      selectTimelineOwner(ownerHit);
       renderTimeline();
       showTimelineEventInArchitecture({event: ownerEvent, preserveViewMode: true});
     }
@@ -3084,7 +3157,8 @@ function initTimelineUI() {
   canvas.addEventListener("dblclick", event => {
     const hit = timelineEventAt(event.offsetX, event.offsetY);
     if (hit) {
-      TIMELINE_SELECTED_EVENT = hit;
+      selectTimelineEvent(hit);
+      renderTimeline();
       showTimelineEventInArchitecture({event: hit, preserveViewMode: true, preserveDetail: true});
     }
   });
