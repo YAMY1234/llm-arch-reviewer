@@ -11,9 +11,9 @@
 - 明确 HC mix 与 combine 的公式和输入边界；
 - 明确 GDN fixed-size conv/recurrent state、QSA token-growing cache、PLE fixed-size side state；
 - 记录语义 reference 和 snapshot caveat；
-- 保留 `ir_version=2` 的 execution-topology identity；本轮 primitive data-flow closure 将 `semantic_revision` 提升到 4。Compiler 从 revision 4 开始拒绝没有 drill view 的 multi-operator leaf。新增的 fused primitive 显式共享已有 timing owner，不复制时间，也不会无意义地使已有 Execution IR fingerprint 失效。
+- 保留 `ir_version=2` 的 execution-topology identity；完整 source-obligation closure 将 `semantic_revision` 提升到 5。Compiler 从 revision 4 开始拒绝没有 drill view 的 multi-operator leaf。新增的 fused primitive 显式共享已有 timing owner，不复制时间，也不会无意义地使已有 Execution IR fingerprint 失效。
 
-## Revision 4 的新增闭包
+## Revision 5 的完整闭包
 
 Model IR 现在把稳定的数学路径继续展开到 primitive data-flow，而不把当前 kernel fusion 当作叶子边界：
 
@@ -23,6 +23,10 @@ Model IR 现在把稳定的数学路径继续展开到 primitive data-flow，而
 - MoE route selection/combine、PLE grouped norm/gate、GDN conv/SiLU、QSA norm/MRoPE 和 index compression/scoring/expansion，也都有独立 drill view。
 
 这些节点是跨 framework 稳定的模型数学语义。SGLang、vLLM 或 TRT-LLM 可以把若干节点融合到同一个 kernel；Profile 通过唯一 timing owner 和 `shared_interval` fusion group 表达这种实现差异，不能把同一个 interval 重复累计到每个 primitive。
+
+本轮不再按截图逐点补图，而是依次关闭 PLE、HC、GDN、QSA、MoE、MTP/EAGLE 六个 source scope，并执行双向审计。最终结果为：15 个 pinned source file、26 个 verified entrypoint、155 条 source obligation、213 个 audited Model IR leaf；0 pending entrypoint、0 pending obligation、0 unclassified source member、0 uncovered leaf、0 compound primitive target。10 个 reverse exclusion 只保留 execution-support 或旧 profile timing-owner compatibility 节点，不冒充模型数学。
+
+此外，MTP 与 target model 仍共享同一套稳定 QSA/MoE drill view，但 measurement 采用 caller-isolated 规则：没有 MTP 子 leaf evidence 时只显示其父区间或未单独归因，禁止回退借用 target-model timing。
 
 ## 从同事 HTML 借用了什么
 

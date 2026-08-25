@@ -2,7 +2,7 @@ schema_version: model-ir.v2
 model_id: qwen40
 model_label: Qwen 4.0 Air Example BF16
 ir_version: 2
-semantic_revision: 4
+semantic_revision: 5
 default_view: top
 default_execution_path: tp_only
 
@@ -111,7 +111,7 @@ semantic_coverage:
   parameter_closure: complete_for_target_text_and_declared_mtp
   state_closure: complete_for_gdn_qsa_ple
   layer_variant_closure: complete
-  operator_dataflow_closure: complete_with_primitive_drill_views_and_shared_fusion_owners
+  operator_dataflow_closure: complete_against_pinned_source_089f8ac
   config_field_disposition:
     model_ir:
       - hidden_size, vocab_size, max_position_embeddings
@@ -146,7 +146,7 @@ views:
         shape: io
         semantic_op: model.input_ids
       - id: runtime_support
-        label: "runtime metadata + cache/state prep"
+        label: "runtime metadata + cache/state prep\nExecution support (not model math)"
         shape: elem
         semantic_op: runtime.model_step_support
       - id: embedding
@@ -211,6 +211,7 @@ views:
         label: "target-model prefill\n48-layer target + next-token logits"
         shape: block
         semantic_op: generation.mtp.target_prefill
+        drill: top
       - id: mtp_prefill
         label: "MTP seed prefill (draft_extend)\nshifted prompt + target HC states"
         shape: block
@@ -228,6 +229,7 @@ views:
         label: "target-model tree verify\n[B,2 candidate tokens]"
         shape: block
         semantic_op: generation.mtp.target_verify
+        drill: top
       - id: accept_commit
         label: "accept path + commit target state\nKV, GDN, PLE and sequence state"
         shape: elem
@@ -268,7 +270,7 @@ views:
         shape: io
         semantic_op: mtp.target_hc_states
       - id: embedding_projection
-        label: "embedding RMSNorm + replicated linear\nH → H"
+        label: "embedding RMSNorm + linear projection\nH → H"
         shape: gemm
         semantic_op: mtp.input_fusion.embedding_projection
         drill: mtp_embedding_projection
@@ -312,6 +314,7 @@ views:
         label: "MTP final hyper-connection mix\n[4,H] → [H]"
         shape: elem
         semantic_op: mtp.final_hyperconnection_mix
+        drill: final_hyperconnection_read
       - id: lm_head
         label: "shared vocabulary LM head\n[H,V]"
         shape: gemm
@@ -396,12 +399,27 @@ views:
     nodes:
       - {id: attn_in, label: "MTP hidden states\n[B,D,H]", shape: io, semantic_op: mtp.qsa.input}
       - {id: qkv_gate_projection, label: Q/K/V + output-gate projection, shape: gemm, semantic_op: mtp.qsa.qkv_gate_projection}
-      - {id: qk_norm_rope, label: Q/K RMSNorm + MRoPE, shape: norm, semantic_op: mtp.qsa.qk_norm_rope}
-      - {id: indexer, label: "MTP QSA sparse indexer\n4Q/1K ×128 · c4 · Top-512 blocks", shape: attn, semantic_op: mtp.qsa.indexer, drill: qsa_indexer}
-      - {id: metadata, label: MTP QSA layout + valid counts, shape: elem, semantic_op: mtp.qsa.metadata}
+      - id: qk_norm_rope
+        label: Q/K RMSNorm + MRoPE
+        shape: norm
+        semantic_op: mtp.qsa.qk_norm_rope
+        drill: qsa_qk_norm_rope
+        semantic_details: {runtime_scope: caller_isolated}
+      - id: indexer
+        label: "MTP QSA sparse indexer\n4Q/1K ×128 · c4 · Top-512 blocks"
+        shape: attn
+        semantic_op: mtp.qsa.indexer
+        drill: qsa_indexer
+        semantic_details: {runtime_scope: caller_isolated}
+      - {id: metadata, label: "MTP QSA layout + valid counts\nExecution support (not model math)", shape: elem, semantic_op: mtp.qsa.metadata}
       - {id: kv_cache, label: MTP full-attention KV cache, shape: cache, semantic_op: mtp.qsa.kv_cache}
       - {id: attention_core, label: MTP indexed sparse attention, shape: attn, semantic_op: mtp.qsa.core}
-      - {id: output_gate, label: sigmoid output gate, shape: elem, semantic_op: mtp.qsa.output_gate}
+      - id: output_gate
+        label: sigmoid output gate + apply
+        shape: elem
+        semantic_op: mtp.qsa.output_gate
+        drill: qsa_output_gate
+        semantic_details: {runtime_scope: caller_isolated}
       - {id: output_projection, label: output projection, shape: gemm, semantic_op: mtp.qsa.output_projection}
       - {id: attn_out, label: "MTP attention output\n[B,D,H]", shape: io, semantic_op: mtp.qsa.output}
     edges:
@@ -409,7 +427,7 @@ views:
       - {from: attn_in, to: indexer, dtype: bf16}
       - {from: qkv_gate_projection, to: qk_norm_rope, dtype: bf16}
       - {from: qk_norm_rope, to: metadata, dtype: bf16}
-      - {from: indexer, to: metadata, dtype: int32, label: top-k block indices}
+      - {from: indexer, to: metadata, dtype: int32, label: top-k token indices}
       - {from: metadata, to: attention_core, dtype: int32}
       - {from: kv_cache, to: attention_core, kind: residual}
       - {from: attention_core, to: kv_cache, kind: dashed, label: update}
@@ -423,10 +441,30 @@ views:
     nodes:
       - {id: moe_in, label: "MTP MoE input\n[B,D,H]", shape: io, semantic_op: mtp.moe.input}
       - {id: router, label: router logits, shape: gemm, semantic_op: mtp.moe.router}
-      - {id: topk, label: "Top-10 of 512 experts", shape: elem, semantic_op: mtp.moe.topk}
-      - {id: routed_experts, label: routed expert gate/up/down, shape: moe, semantic_op: mtp.moe.routed_experts}
-      - {id: shared_expert, label: shared expert gate/up/down, shape: gemm, semantic_op: mtp.moe.shared_expert}
-      - {id: combine, label: weighted routed + shared combine, shape: elem, semantic_op: mtp.moe.combine}
+      - id: topk
+        label: "Top-10 of 512 experts"
+        shape: elem
+        semantic_op: mtp.moe.topk
+        drill: moe_router_selection
+        semantic_details: {runtime_scope: caller_isolated}
+      - id: routed_experts
+        label: routed SwiGLU experts
+        shape: moe
+        semantic_op: mtp.moe.routed_experts
+        drill: moe_routed_expert
+        semantic_details: {runtime_scope: caller_isolated}
+      - id: shared_expert
+        label: shared SwiGLU expert + scalar gate
+        shape: gemm
+        semantic_op: mtp.moe.shared_expert
+        drill: moe_shared_expert
+        semantic_details: {runtime_scope: caller_isolated}
+      - id: combine
+        label: weighted routed + shared combine
+        shape: elem
+        semantic_op: mtp.moe.combine
+        drill: moe_combine
+        semantic_details: {runtime_scope: caller_isolated}
       - {id: moe_out, label: "MTP MoE output\n[B,D,H]", shape: io, semantic_op: mtp.moe.output}
     edges:
       - {from: moe_in, to: router, dtype: bf16}
@@ -630,6 +668,10 @@ views:
   ple:
     title: PLE N-gram side-state injection
     nodes:
+      - id: hc_state
+        label: "current Hyper-Connection state\n[B,T,4,H]"
+        shape: io
+        semantic_op: ple.hc_state_input
       - id: token_history
         label: "token ids + cached N-gram context\nprepared before decoder stack"
         shape: cache
@@ -667,8 +709,9 @@ views:
         label: "PLE key/value projections\nK: 2560→10240 · V: 2560→2560"
         shape: gemm
         semantic_op: ple.key_value_projection
+        drill: ple_key_value_projection
         semantic_details:
-          operators: [linear_projection]
+          operators: [linear_projection, linear_projection]
           tensors:
             - {name: key, role: output, shape: "[B,T,4,2560]", dtype: bf16}
             - {name: value, role: output, shape: "[B,T,2560]", dtype: bf16}
@@ -691,9 +734,10 @@ views:
           invariants:
             - each HC branch owns a distinct query/key gate while the lookup value is shared
       - id: short_conv
-        label: "dilated depthwise short convolution\nC=10240 · K=4 · dilation=3"
+        label: "dilated depthwise short convolution + SiLU\nC=10240 · K=4 · dilation=3"
         shape: elem
         semantic_op: ple.short_conv
+        drill: ple_short_conv
         semantic_details:
           operators: [depthwise_conv1d]
           state:
@@ -709,12 +753,14 @@ views:
           state:
             - {name: short_conv_history, shape: "[B,10240,9]", dtype: bf16, lifecycle: fixed-size per-request state, update: read-modify-write at target layer 2}
       - id: injection
-        label: gated PLE residual injection
+        label: "PLE residual flow\ninner merge + HC-state injection"
         shape: elem
         semantic_op: ple.injection
+        drill: ple_residual_flow
         semantic_details:
-          operators: [gated_residual_update]
+          operators: [residual_add, residual_add]
           math:
+            - "Delta_PLE = gated_value + short_conv(SiLU(Norm_conv(gated_value)))"
             - "R_tilde = R + Delta_PLE"
           tensors:
             - {name: R, role: input, shape: "[B,T,4,2560]", dtype: bf16}
@@ -727,11 +773,14 @@ views:
       - {from: token_history, to: ngram_hash, dtype: int64, label: "retained while the first decoder layer executes\nsemantic dependency, not time adjacency"}
       - {from: ngram_hash, to: ngram_embedding, dtype: int64}
       - {from: ngram_embedding, to: key_value_projection, dtype: bf16}
+      - {from: hc_state, to: grouped_norm_gate, dtype: bf16, label: query}
       - {from: key_value_projection, to: grouped_norm_gate, dtype: bf16}
       - {from: grouped_norm_gate, to: short_conv, shape: "[B,T,HC]", dtype: bf16}
       - {from: conv_state, to: short_conv, kind: residual}
       - {from: short_conv, to: conv_state, kind: dashed, label: update}
+      - {from: grouped_norm_gate, to: injection, kind: residual, label: "ungrouped gated value"}
       - {from: short_conv, to: injection, shape: "[B,T,HC]", dtype: bf16}
+      - {from: hc_state, to: injection, kind: residual, label: "current HC state R"}
       - {from: token_history, to: context_commit, kind: dashed}
       - {from: context_commit, to: token_history, kind: dashed, label: update}
 
@@ -852,30 +901,163 @@ views:
       - {from: grouped_norm, to: shared_projection, dtype: bf16}
       - {from: shared_projection, to: output, dtype: bf16}
 
+  ple_key_value_projection:
+    title: PLE key and value projection data flow
+    execution_contract: false
+    nodes:
+      - {id: ngram_embedding, label: "concatenated N-gram embedding\n[B,T,2560]", shape: io, semantic_op: ple.projection.input}
+      - id: key_projection
+        label: "key projection\n2560 → 4×2560"
+        shape: gemm
+        semantic_op: ple.projection.key
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: ple.key_value_projection}
+      - id: value_projection
+        label: "value projection\n2560 → 2560"
+        shape: gemm
+        semantic_op: ple.projection.value
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: ple.key_value_projection}
+      - {id: projected_key, label: "PLE key\n[B,T,4,2560]", shape: io, semantic_op: ple.projection.key_output}
+      - {id: projected_value, label: "PLE value\n[B,T,2560]", shape: io, semantic_op: ple.projection.value_output}
+    edges:
+      - {from: ngram_embedding, to: key_projection, dtype: bf16}
+      - {from: ngram_embedding, to: value_projection, dtype: bf16}
+      - {from: key_projection, to: projected_key, dtype: bf16}
+      - {from: value_projection, to: projected_value, dtype: bf16}
+
+  ple_residual_flow:
+    title: PLE inner and outer residual data flow
+    execution_contract: false
+    nodes:
+      - {id: gated_value, label: "ungrouped gated value\n[B,T,4,H]", shape: io, semantic_op: ple.residual.gated_value}
+      - {id: short_conv_output, label: "activated short-conv output\n[B,T,4,H]", shape: io, semantic_op: ple.residual.conv_output}
+      - {id: hc_state, label: "current HC state R\n[B,T,4,H]", shape: io, semantic_op: ple.residual.hc_state}
+      - id: inner_add
+        label: "form PLE delta\nDelta_PLE = gated value + conv output"
+        shape: elem
+        semantic_op: ple.residual.inner_add
+        semantic_details:
+          operators: [residual_add]
+          runtime_mapping: {expectation: fused, owner: ple.injection}
+      - id: outer_add
+        label: "inject into HC state\nR_tilde = R + Delta_PLE"
+        shape: elem
+        semantic_op: ple.residual.outer_add
+        semantic_details:
+          operators: [residual_add]
+          runtime_mapping: {expectation: fused, owner: ple.injection}
+      - {id: updated_hc_state, label: "updated HC state\n[B,T,4,H]", shape: io, semantic_op: ple.residual.output}
+    edges:
+      - {from: gated_value, to: inner_add, dtype: bf16}
+      - {from: short_conv_output, to: inner_add, dtype: bf16}
+      - {from: inner_add, to: outer_add, dtype: bf16}
+      - {from: hc_state, to: outer_add, kind: residual, dtype: bf16}
+      - {from: outer_add, to: updated_hc_state, dtype: bf16}
+
   ple_grouped_norm_gate:
     title: PLE grouped normalization and branch-gate data flow
     execution_contract: false
     nodes:
-      - {id: query_key_value, label: "PLE query/key/value\n[B,T,4,H]", shape: io, semantic_op: ple.grouped_norm_gate.input}
-      - id: grouped_norm
-        label: grouped RMSNorm
+      - {id: query, label: "current HC query\n[B,T,4,H]", shape: io, semantic_op: ple.gate.query}
+      - {id: key, label: "projected PLE key\n[B,T,4,H]", shape: io, semantic_op: ple.gate.key}
+      - {id: value, label: "projected PLE value\n[B,T,H]", shape: io, semantic_op: ple.gate.value}
+      - id: query_norm
+        label: query grouped RMSNorm
         shape: norm
-        semantic_op: ple.grouped_norm_gate.norm
+        semantic_op: ple.gate.query_norm
         semantic_details:
           operators: [grouped_rms_norm]
           runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
-      - id: query_key_gate
-        label: per-branch query/key gate
-        shape: elem
-        semantic_op: ple.grouped_norm_gate.branch_gate
+      - id: key_norm
+        label: key grouped RMSNorm
+        shape: norm
+        semantic_op: ple.gate.key_norm
         semantic_details:
-          operators: [branch_gate]
+          operators: [grouped_rms_norm]
           runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
-      - {id: gated_value, label: "gated PLE value\n[B,T,4,H]", shape: io, semantic_op: ple.grouped_norm_gate.output}
+      - id: dot_reduce
+        label: "per-branch Q·K reduction\n[B,T,4,H] → [B,T,4,1]"
+        shape: elem
+        semantic_op: ple.gate.dot_reduce
+        semantic_details:
+          operators: [dot_product_reduce]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: dimension_scale
+        label: "hidden-dimension scale\nx / √H"
+        shape: elem
+        semantic_op: ple.gate.dimension_scale
+        semantic_details:
+          operators: [dimension_scale]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: signed_sqrt
+        label: "signed square root\nsign(x) × √|x|"
+        shape: elem
+        semantic_op: ple.gate.signed_sqrt
+        semantic_details:
+          operators: [signed_sqrt]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: sigmoid
+        label: sigmoid branch gate
+        shape: elem
+        semantic_op: ple.gate.sigmoid
+        semantic_details:
+          operators: [sigmoid]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: value_multiply
+        label: "apply gate to shared value\ngate[:,branch] ⊙ value"
+        shape: elem
+        semantic_op: ple.gate.value_multiply
+        semantic_details:
+          operators: [broadcast_multiply]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: conv_input_norm
+        label: short-conv input grouped RMSNorm
+        shape: norm
+        semantic_op: ple.gate.conv_input_norm
+        semantic_details:
+          operators: [grouped_rms_norm]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - {id: gated_value, label: "normalized gated PLE value\n[B,T,4,H]", shape: io, semantic_op: ple.gate.output}
     edges:
-      - {from: query_key_value, to: grouped_norm, dtype: bf16}
-      - {from: grouped_norm, to: query_key_gate, dtype: bf16}
-      - {from: query_key_gate, to: gated_value, dtype: bf16}
+      - {from: query, to: query_norm, dtype: bf16}
+      - {from: key, to: key_norm, dtype: bf16}
+      - {from: query_norm, to: dot_reduce, dtype: bf16}
+      - {from: key_norm, to: dot_reduce, dtype: bf16}
+      - {from: dot_reduce, to: dimension_scale, dtype: fp32}
+      - {from: dimension_scale, to: signed_sqrt, dtype: fp32}
+      - {from: signed_sqrt, to: sigmoid, dtype: fp32}
+      - {from: sigmoid, to: value_multiply, kind: dashed, label: gate}
+      - {from: value, to: value_multiply, dtype: bf16}
+      - {from: value_multiply, to: conv_input_norm, dtype: bf16}
+      - {from: conv_input_norm, to: gated_value, dtype: bf16}
+
+  ple_short_conv:
+    title: PLE depthwise short-convolution data flow
+    execution_contract: false
+    nodes:
+      - {id: normalized_input, label: "normalized gated value\n[B,T,10240]", shape: io, semantic_op: ple.short_conv.input}
+      - id: depthwise_conv
+        label: "depthwise dilated Conv1D\n10240 channels · kernel 4 · dilation 3"
+        shape: elem
+        semantic_op: ple.short_conv.depthwise
+        semantic_details:
+          operators: [depthwise_conv1d]
+          runtime_mapping: {expectation: fused, owner: ple.short_conv}
+      - id: silu
+        label: SiLU activation
+        shape: elem
+        semantic_op: ple.short_conv.silu
+        semantic_details:
+          operators: [silu]
+          runtime_mapping: {expectation: fused, owner: ple.short_conv}
+      - {id: conv_output, label: "activated short-conv output\n[B,T,10240]", shape: io, semantic_op: ple.short_conv.output}
+    edges:
+      - {from: normalized_input, to: depthwise_conv, dtype: bf16}
+      - {from: depthwise_conv, to: silu, dtype: bf16}
+      - {from: silu, to: conv_output, dtype: bf16}
 
   hyperconnection_mix:
     title: Hyper-connection branch mix
@@ -1146,7 +1328,7 @@ views:
             total: 245760
             sharing: one 2560×96 projection per GDN layer
       - id: split_pack
-        label: split, reshape and pack q/k/v
+        label: "split, reshape and pack q/k/v\nshape-only implementation boundary"
         shape: elem
         semantic_op: linear_attention.split_pack
       - id: causal_conv
@@ -1173,6 +1355,7 @@ views:
         label: beta/decay gating
         shape: elem
         semantic_op: linear_attention.gating
+        drill: linear_beta_decay_gate
       - id: delta_rule
         label: gated delta-rule recurrence
         shape: attn
@@ -1185,9 +1368,10 @@ views:
             - "S_t = S_bar_t + e_t · k_t^T"
             - "o_t = S_t · (q_t / sqrt(128))"
       - id: gated_norm
-        label: RMSNormGated(core, z)
+        label: RMSNorm(core) × SiLU(z)
         shape: norm
         semantic_op: linear_attention.gated_norm
+        drill: linear_output_gate_norm
       - id: output_projection
         label: output projection
         shape: gemm
@@ -1202,7 +1386,8 @@ views:
       - {from: qkvz_projection, to: split_pack, dtype: bf16}
       - {from: ba_projection, to: split_pack, dtype: bf16}
       - {from: split_pack, to: causal_conv, dtype: bf16}
-      - {from: causal_conv, to: gating, dtype: bf16}
+      - {from: split_pack, to: gating, dtype: bf16, label: "beta and alpha"}
+      - {from: causal_conv, to: delta_rule, dtype: bf16, label: "activated Q/K/V"}
       - {from: recurrent_state, to: delta_rule, kind: residual}
       - {from: gating, to: delta_rule, dtype: bf16}
       - {from: delta_rule, to: recurrent_state, kind: dashed, label: update}
@@ -1260,7 +1445,7 @@ views:
             - every complete 4-token group contributes one compressed index key
             - select at most 512 complete blocks, expand to 2048 tokens, then append at most 3 causal-tail tokens
       - id: metadata
-        label: "QSA decode metadata\nlayout + valid counts"
+        label: "QSA layout + valid counts\nExecution support (not model math)"
         shape: elem
         semantic_op: qsa_attention.metadata
       - id: kv_cache
@@ -1281,9 +1466,10 @@ views:
           invariants:
             - short contexts retain all causally visible full blocks rather than padding to 512 selected blocks
       - id: output_gate
-        label: sigmoid output gate
+        label: sigmoid output gate + apply
         shape: elem
         semantic_op: qsa_attention.output_gate
+        drill: qsa_output_gate
       - id: output_projection
         label: output projection
         shape: gemm
@@ -1304,8 +1490,8 @@ views:
       - {from: attn_in, to: indexer, shape: "[B,T,H]", dtype: bf16}
       - {from: qkv_gate_projection, to: qk_norm_rope, dtype: bf16}
       - {from: qk_norm_rope, to: metadata, dtype: bf16}
-      - {from: indexer, to: metadata, dtype: int32, label: "top-k block indices"}
-      - {from: metadata, to: attention_core, dtype: int32, label: "block layout + valid counts"}
+      - {from: indexer, to: metadata, dtype: int32, label: "selected token indices"}
+      - {from: metadata, to: attention_core, dtype: int32, label: "layout + valid counts"}
       - {from: kv_cache, to: attention_core, kind: residual}
       - {from: attention_core, to: kv_cache, kind: dashed, label: update}
       - {from: attention_core, to: output_gate, dtype: bf16}
@@ -1339,6 +1525,7 @@ views:
         label: index Q RMSNorm + shared MRoPE positions
         shape: norm
         semantic_op: qsa_indexer.q_norm_rope
+        drill: qsa_index_query_transform
         semantic_details:
           runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.q_norm_rope}
           parameters:
@@ -1359,7 +1546,7 @@ views:
         semantic_op: qsa_indexer.compress
         drill: qsa_index_compress
         semantic_details:
-          operators: [four_token_average_pool, rms_norm]
+          operators: [four_token_average_pool, rms_norm, multimodal_rope]
           runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.compress}
           parameters:
             total: 128
@@ -1447,17 +1634,104 @@ views:
       - {from: depthwise_conv, to: silu, dtype: bf16}
       - {from: silu, to: activated_qkv, dtype: bf16}
 
+  linear_beta_decay_gate:
+    title: Gated DeltaNet beta and decay transforms
+    execution_contract: false
+    nodes:
+      - {id: projected_beta_alpha, label: "projected beta b and alpha a\n[B,T,48] each", shape: io, semantic_op: linear_attention.gating.input}
+      - {id: decay_parameters, label: "learned A_log and dt_bias\n[48] each", shape: io, semantic_op: linear_attention.gating.parameters}
+      - id: beta_sigmoid
+        label: "update strength\nbeta = sigmoid(b)"
+        shape: elem
+        semantic_op: linear_attention.gating.beta_sigmoid
+        semantic_details:
+          operators: [sigmoid]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gating}
+      - id: decay_softplus
+        label: "add learned time-step bias\na + dt_bias"
+        shape: elem
+        semantic_op: linear_attention.gating.dt_bias_add
+        semantic_details:
+          operators: [bias_add]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gating}
+      - id: dt_softplus
+        label: "positive time step\ndt = softplus(a + dt_bias)"
+        shape: elem
+        semantic_op: linear_attention.gating.dt_softplus
+        semantic_details:
+          operators: [softplus]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gating}
+      - id: negative_decay
+        label: "log decay\ng = -exp(A_log) × dt"
+        shape: elem
+        semantic_op: linear_attention.gating.negative_decay
+        semantic_details:
+          operators: [negative_exponential_scale]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gating}
+      - {id: beta_decay, label: "recurrence gates\nbeta and g", shape: io, semantic_op: linear_attention.gating.output}
+    edges:
+      - {from: projected_beta_alpha, to: beta_sigmoid, dtype: bf16}
+      - {from: projected_beta_alpha, to: decay_softplus, dtype: bf16}
+      - {from: decay_parameters, to: decay_softplus, kind: dashed, label: dt_bias}
+      - {from: decay_softplus, to: dt_softplus, dtype: fp32}
+      - {from: dt_softplus, to: negative_decay, dtype: fp32}
+      - {from: decay_parameters, to: negative_decay, kind: dashed, label: A_log}
+      - {from: beta_sigmoid, to: beta_decay, dtype: fp32}
+      - {from: negative_decay, to: beta_decay, dtype: fp32}
+
+  linear_output_gate_norm:
+    title: Gated DeltaNet output normalization and Z gate
+    execution_contract: false
+    nodes:
+      - {id: recurrence_output, label: "DeltaNet recurrence output\n[B,T,48,128]", shape: io, semantic_op: linear_attention.gated_norm.core_input}
+      - {id: z, label: "projected output gate z\n[B,T,48,128]", shape: io, semantic_op: linear_attention.gated_norm.z_input}
+      - id: core_rms_norm
+        label: per-head RMSNorm of recurrence output
+        shape: norm
+        semantic_op: linear_attention.gated_norm.core_rms_norm
+        semantic_details:
+          operators: [rms_norm]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gated_norm}
+      - id: z_silu
+        label: "SiLU output gate\nz × sigmoid(z)"
+        shape: elem
+        semantic_op: linear_attention.gated_norm.z_silu
+        semantic_details:
+          operators: [silu]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gated_norm}
+      - id: gated_multiply
+        label: "apply Z gate\nNorm(core) × SiLU(z)"
+        shape: elem
+        semantic_op: linear_attention.gated_norm.multiply
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: linear_attention.gated_norm}
+      - {id: normalized_output, label: "gated normalized output\n[B,T,6144]", shape: io, semantic_op: linear_attention.gated_norm.output}
+    edges:
+      - {from: recurrence_output, to: core_rms_norm, dtype: bf16}
+      - {from: z, to: z_silu, dtype: bf16}
+      - {from: core_rms_norm, to: gated_multiply, dtype: bf16}
+      - {from: z_silu, to: gated_multiply, dtype: bf16}
+      - {from: gated_multiply, to: normalized_output, dtype: bf16}
+
   qsa_qk_norm_rope:
     title: QSA Q/K normalization and position encoding
     execution_contract: false
     nodes:
       - {id: projected_qk, label: "projected Q/K\n24Q + 2K · dim 256", shape: io, semantic_op: qsa_attention.qk_transform.input}
-      - id: qk_norm
-        label: separate Q/K RMSNorm
+      - id: q_norm
+        label: query RMSNorm
         shape: norm
-        semantic_op: qsa_attention.qk_transform.norm
+        semantic_op: qsa_attention.qk_transform.q_norm
         semantic_details:
-          operators: [qk_rms_norm]
+          operators: [rms_norm]
+          runtime_mapping: {expectation: fused, owner: qsa_attention.qk_norm_rope}
+      - id: k_norm
+        label: key RMSNorm
+        shape: norm
+        semantic_op: qsa_attention.qk_transform.k_norm
+        semantic_details:
+          operators: [rms_norm]
           runtime_mapping: {expectation: fused, owner: qsa_attention.qk_norm_rope}
       - id: mrope
         label: multimodal rotary position encoding
@@ -1468,9 +1742,63 @@ views:
           runtime_mapping: {expectation: fused, owner: qsa_attention.qk_norm_rope}
       - {id: positioned_qk, label: "normalized positioned Q/K", shape: io, semantic_op: qsa_attention.qk_transform.output}
     edges:
-      - {from: projected_qk, to: qk_norm, dtype: bf16}
-      - {from: qk_norm, to: mrope, dtype: bf16}
+      - {from: projected_qk, to: q_norm, dtype: bf16, label: Q}
+      - {from: projected_qk, to: k_norm, dtype: bf16, label: K}
+      - {from: q_norm, to: mrope, dtype: bf16}
+      - {from: k_norm, to: mrope, dtype: bf16}
       - {from: mrope, to: positioned_qk, dtype: bf16}
+
+  qsa_index_query_transform:
+    title: QSA index-query normalization and position encoding
+    execution_contract: false
+    nodes:
+      - {id: projected_query, label: "projected index Q\n[B,T,4,128]", shape: io, semantic_op: qsa_indexer.query_transform.input}
+      - id: q_norm
+        label: per-head index-Q RMSNorm
+        shape: norm
+        semantic_op: qsa_indexer.query_transform.q_norm
+        semantic_details:
+          operators: [rms_norm]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.q_norm_rope}
+      - id: mrope
+        label: shared Qwen4 multimodal RoPE
+        shape: elem
+        semantic_op: qsa_indexer.query_transform.mrope
+        semantic_details:
+          operators: [multimodal_rope]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.q_norm_rope}
+      - {id: positioned_query, label: "normalized positioned index Q\n[B,T,4,128]", shape: io, semantic_op: qsa_indexer.query_transform.output}
+    edges:
+      - {from: projected_query, to: q_norm, dtype: bf16}
+      - {from: q_norm, to: mrope, dtype: bf16}
+      - {from: mrope, to: positioned_query, dtype: bf16}
+
+  qsa_output_gate:
+    title: QSA attention-output gate data flow
+    execution_contract: false
+    nodes:
+      - {id: attention_output, label: "indexed attention output\n[B,T,24,256]", shape: io, semantic_op: qsa_attention.output_gate.attention_input}
+      - {id: projected_gate, label: "projected gate logits\n[B,T,24,256]", shape: io, semantic_op: qsa_attention.output_gate.gate_input}
+      - id: gate_sigmoid
+        label: sigmoid gate activation
+        shape: elem
+        semantic_op: qsa_attention.output_gate.sigmoid
+        semantic_details:
+          operators: [sigmoid]
+          runtime_mapping: {expectation: fused, owner: qsa_attention.output_gate}
+      - id: gated_multiply
+        label: "apply output gate\nattention × sigmoid(gate)"
+        shape: elem
+        semantic_op: qsa_attention.output_gate.multiply
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: qsa_attention.output_gate}
+      - {id: gated_output, label: "gated attention output\n[B,T,6144]", shape: io, semantic_op: qsa_attention.output_gate.output}
+    edges:
+      - {from: projected_gate, to: gate_sigmoid, dtype: bf16}
+      - {from: gate_sigmoid, to: gated_multiply, dtype: bf16}
+      - {from: attention_output, to: gated_multiply, dtype: bf16}
+      - {from: gated_multiply, to: gated_output, dtype: bf16}
 
   qsa_index_compress:
     title: QSA four-token index-key compression
@@ -1491,11 +1819,19 @@ views:
         semantic_details:
           operators: [rms_norm]
           runtime_mapping: {expectation: fused, owner: qsa_indexer.compress}
+      - id: key_mrope
+        label: "compressed-K multimodal RoPE\nposition of first token in group"
+        shape: elem
+        semantic_op: qsa_indexer.compress.key_mrope
+        semantic_details:
+          operators: [multimodal_rope]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compress}
       - {id: compressed_key, label: "one compressed index K\n[1,128]", shape: io, semantic_op: qsa_indexer.compress.output}
     edges:
       - {from: raw_keys, to: average_pool, dtype: bf16}
       - {from: average_pool, to: key_norm, dtype: bf16}
-      - {from: key_norm, to: compressed_key, dtype: bf16}
+      - {from: key_norm, to: key_mrope, dtype: bf16}
+      - {from: key_mrope, to: compressed_key, dtype: bf16}
 
   qsa_index_score:
     title: QSA compressed-block scoring
@@ -1504,11 +1840,12 @@ views:
       - {id: index_query, label: "index Q\n4 heads × 128", shape: io, semantic_op: qsa_indexer.score.query}
       - {id: compressed_keys, label: "compressed block K cache\n1 head × 128", shape: cache, semantic_op: qsa_indexer.score.keys}
       - id: mqa_dot
-        label: compressed MQA dot products
+        label: "compressed MQA dot products\n<Q,K> / √128"
         shape: attn
         semantic_op: qsa_indexer.score.mqa_dot
         semantic_details:
           operators: [multi_query_attention_score]
+          math: ["s_h = <q_h, k_block> / sqrt(128)"]
           runtime_mapping: {expectation: fused, owner: qsa_indexer.compressed_score}
       - id: relu
         label: ReLU positive-evidence filter
@@ -1642,18 +1979,19 @@ views:
     nodes:
       - {id: router_logits, label: "FP32 router logits\n[B,T,512]", shape: io, semantic_op: moe.selection.input}
       - id: topk
-        label: select Top-10 expert ids and logits
+        label: select Top-10 expert ids from router logits
         shape: elem
         semantic_op: moe.selection.topk
         semantic_details:
           operators: [topk]
           runtime_mapping: {expectation: fused, owner: moe.topk, reason: current profiles attribute selection as one router-support interval}
       - id: selected_softmax
-        label: selected-expert probabilities
+        label: "selected-expert softmax probabilities\n(equivalent final routing weights)"
         shape: elem
         semantic_op: moe.selection.selected_softmax
         semantic_details:
           operators: [selected_probability_extract]
+          math: ["softmax over all experts then gather Top-10; after renormalization this equals softmax over selected logits"]
           runtime_mapping: {expectation: fused, owner: moe.topk, reason: current profiles attribute selection as one router-support interval}
       - id: renormalize
         label: renormalize Top-10 weights to unit sum

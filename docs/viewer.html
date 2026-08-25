@@ -3223,12 +3223,18 @@ function drillContext(viewName) {
   const parentNodeId = DRILL_FROM[index];
   if (!parentNodeId) return null;
   const parentCell = rawNodeCell(parentView, parentNodeId);
-  if (parentCell?.drill_view !== viewName || !parentCell.drill_metrics) return null;
+  const parentNode = (DATA.views[parentView]?.nodes || []).find(
+    item => item.id === parentNodeId
+  );
+  const callerIsolated = parentNode?.semantic_details?.runtime_scope === "caller_isolated";
+  if (parentCell?.drill_view && parentCell.drill_view !== viewName) return null;
+  if (!parentCell?.drill_metrics && !callerIsolated) return null;
   return {
     parentView,
     parentNodeId,
     parentCell,
-    scoped: parentCell.drill_metrics,
+    scoped: parentCell?.drill_metrics || {},
+    callerIsolated,
   };
 }
 
@@ -3266,6 +3272,23 @@ function nodeCell(n, viewName) {
   const context = drillContext(viewName);
   if (context && Object.prototype.hasOwnProperty.call(context.scoped, n.id)) {
     return context.scoped[n.id];
+  }
+  if (context?.callerIsolated) {
+    const runtime = n?.semantic_details?.runtime_mapping || {};
+    const parentTarget = `${context.parentView}.${context.parentNodeId}`;
+    if (runtime.expectation === "fused" || runtime.expectation === "fused_state") {
+      return {
+        status: "fused",
+        included_in: parentTarget,
+        label: "shares the caller-scoped parent interval; no independent timing",
+        provenance: "model_ir.runtime_scope",
+      };
+    }
+    return {
+      status: "unattributed",
+      label: "no caller-scoped leaf attribution; parent timing remains authoritative",
+      provenance: "model_ir.runtime_scope",
+    };
   }
   return rawNodeCell(viewName, n.id);
 }

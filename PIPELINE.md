@@ -387,6 +387,12 @@ reconciliation**:
   `measured` interval. If existing evidence cannot uniquely refine the
   interval, keep the parent mapping and do not guess from a generic kernel
   name. Recompute artifact hashes only when the artifact itself changes.
+- When a target model, MTP auxiliary head, or another framework reuses one
+  stable semantic drill view, runtime attribution remains caller-scoped. If
+  that caller has only a parent interval and no child-leaf evidence, show the
+  leaves as included in the caller's parent or as separately unattributed;
+  never fall back to a same-named leaf measurement from another caller/profile.
+  Shared Model IR does not imply shared measurements.
 
 A semantic revision can therefore preserve the Execution fingerprint, but any
 new runtime-bearing drill leaf invalidates the relevant Binding/Profile

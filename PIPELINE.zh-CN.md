@@ -226,6 +226,7 @@ Model IR 新增或拆分 drill view 时，必须额外执行一次 **mapping rec
 - 融合的数学原语或 cache/state update 只能指向实际 timing owner，不能复制 owner 的时间形成双重计数；
 - Timeline event 保留原父级 rollup target，同时增加最细的已验证 leaf target，从而支持架构图与 timeline 双向跳转；
 - 所有已经交付的 profile 都必须获得 reconciliation 后的 leaf disposition。Compiler 可以根据已经 review 的 Model IR timing-owner contract 自动生成显式 `fused` 状态，而不改动 trace artifact；但绝不能自动生成新的 `measured` interval。若原始 evidence 不能唯一细分，则保持父级 mapping，禁止按 generic kernel 名称猜测。只有 artifact 本身变化时才重新计算 hash。
+- 当 target model、MTP auxiliary head 或另一个 framework 复用同一个稳定 semantic drill view 时，runtime attribution 必须保持 caller-scoped。若当前 caller 只有父区间而没有子 leaf evidence，viewer 应显示“包含于 caller 父区间”或“未单独归因”，不能回退读取另一个 caller/profile 的同名 leaf timing。共享 Model IR 不等于共享 measurement。
 
 因此，Model IR semantic revision 可以不改变 Execution fingerprint，但只要新增了 runtime-bearing drill leaf，就必须使相关 Binding/Profile validation 失效，直到 mapping reconciliation 完成。
 

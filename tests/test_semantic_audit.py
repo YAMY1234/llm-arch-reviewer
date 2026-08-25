@@ -22,38 +22,36 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_qwen40_source_ledger_is_pinned_and_fail_closed() -> None:
+def test_qwen40_source_ledger_is_pinned_and_complete() -> None:
     report = audit_semantic_closure(
         model_ir_path=QWEN40_ROOT / "model_ir.yaml",
         ledger_path=QWEN40_ROOT / "semantic_source_ledger.yaml",
         source_repo=SOURCE_REPO,
     )
 
-    assert report["status"] == "incomplete"
+    assert report["status"] == "complete"
     assert report["gates"]["source_snapshot_integrity"] is True
-    assert report["gates"]["source_to_ir_closure"] is False
-    assert report["gates"]["ir_to_source_closure"] is False
-    assert report["gates"]["catalog_attestation_honest"] is False
-    assert report["counts"]["source_files"] == 9
-    assert report["counts"]["unclassified_source_members"] > 0
+    assert report["gates"]["source_to_ir_closure"] is True
+    assert report["gates"]["ir_to_source_closure"] is True
+    assert report["gates"]["catalog_attestation_honest"] is True
+    assert report["counts"]["source_files"] == 15
+    assert report["counts"]["pending_entrypoints"] == 0
+    assert report["counts"]["pending_obligations"] == 0
+    assert report["counts"]["unclassified_source_members"] == 0
+    assert report["counts"]["uncovered_model_ir_leaves"] == 0
+    assert report["counts"]["compound_primitive_targets"] == 0
     assert report["errors"] == []
 
 
-def test_qwen40_ple_audit_exposes_compound_model_ir_leaves() -> None:
+def test_qwen40_primitive_leaves_have_single_source_owners() -> None:
     report = audit_semantic_closure(
         model_ir_path=QWEN40_ROOT / "model_ir.yaml",
         ledger_path=QWEN40_ROOT / "semantic_source_ledger.yaml",
         source_repo=SOURCE_REPO,
     )
-    collisions = report["compound_primitive_targets"]
-
-    assert set(collisions) == {
-        "ple.key_value_projection",
-        "ple.short_conv",
-        "ple_grouped_norm_gate.grouped_norm",
-        "ple_grouped_norm_gate.query_key_gate",
+    assert report["compound_primitive_targets"] == {}
+    assert "ple_key_value_projection.key_projection" in {
+        target
+        for obligation in report["obligations"]
+        for target in obligation["ir_targets"]
     }
-    assert collisions["ple.key_value_projection"] == [
-        "ple_forward.key_projection",
-        "ple_forward.value_projection",
-    ]

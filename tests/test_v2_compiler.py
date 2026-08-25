@@ -103,9 +103,9 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     model_ir = bundle["model_ir"]
 
-    assert model_ir["semantic_revision"] == 4
+    assert model_ir["semantic_revision"] == 5
     assert model_ir["semantic_coverage"]["operator_dataflow_closure"] == (
-        "complete_with_primitive_drill_views_and_shared_fusion_owners"
+        "complete_against_pinned_source_089f8ac"
     )
     assert model_ir["semantic_coverage"]["parameter_closure"] == (
         "complete_for_target_text_and_declared_mtp"
