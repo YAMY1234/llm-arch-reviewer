@@ -32,6 +32,15 @@ class ViewerHandler(SimpleHTTPRequestHandler):
     trace_index: dict[str, list[Path]] = {}
     digest_cache: dict[Path, str] = {}
 
+    def end_headers(self) -> None:
+        """Prevent a browser from silently reusing an older inline viewer."""
+        path = urlparse(self.path).path
+        if path.endswith("/viewer.html") or path.endswith("/arch_data.json"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         parsed = urlparse(self.path)
         if parsed.path != "/__trace__":
@@ -97,7 +106,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         help=(
             "allowlisted raw-trace root; repeatable (defaults to "
-            "../current/qwen40-*/raw when present)"
+            "the ../current/qwen40-* task directories, searched recursively)"
         ),
     )
     return parser.parse_args()
@@ -106,7 +115,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     current_root = REPO_ROOT.parent / "current"
-    default_trace_roots = sorted(current_root.glob("qwen40-*/raw"))
+    # A profiling task may promote traces from ``raw/`` into a validated
+    # layout such as ``final/cg/raw/<job>/``.  Index the task directory rather
+    # than only its top-level raw child so the viewer and the finalized profile
+    # descriptor cannot silently disagree about which traces are available.
+    default_trace_roots = sorted(
+        root for root in current_root.glob("qwen40-*") if root.is_dir()
+    )
     trace_roots = args.trace_root or default_trace_roots
     ViewerHandler.trace_index = build_trace_index(trace_roots)
     handler = partial(ViewerHandler, directory=str(args.docs_root.resolve()))

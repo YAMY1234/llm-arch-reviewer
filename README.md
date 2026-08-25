@@ -93,13 +93,15 @@ python3 models/qwen35/build/run_pipeline.py --skip-trace-mapping
 python3 scripts/build_v2.py --model qwen35
 python3 scripts/build_v2.py --model qwen40
 
-# serve docs/ locally; the allowlisted trace endpoint enables exact Perfetto jumps
-python3 scripts/serve_viewer.py --port 8765
-open http://localhost:8765/                              # landing
-open 'http://localhost:8765/viewer.html?model=dsv4'      # one model
-open 'http://localhost:8765/viewer.html?model=qwen35'    # pipeline-generated Qwen3.5
-open 'http://localhost:8765/viewer.html?model=qwen35_v2' # IR-first Qwen3.5 V2
-open 'http://localhost:8765/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
+# start the canonical viewer on port 8766; this uses a detached tmux session so
+# the service survives the initiating terminal, validates the multi-lane build, and
+# replaces an older serve_viewer process instead of silently serving stale UI
+./scripts/start_viewer.sh
+open http://localhost:8766/                              # landing
+open 'http://localhost:8766/viewer.html?model=dsv4'      # one model
+open 'http://localhost:8766/viewer.html?model=qwen35'    # pipeline-generated Qwen3.5
+open 'http://localhost:8766/viewer.html?model=qwen35_v2' # IR-first Qwen3.5 V2
+open 'http://localhost:8766/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
 ```
 
 For a viewer-only session, `python3 -m http.server -d docs 8765` still works.
