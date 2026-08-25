@@ -266,7 +266,15 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
    `semantic_details` where they matter: logical operators or formulas,
    parameter shapes/counts and sharing, persistent state/cache lifecycle, and
    placement/optional-path conditions. Keep kernel/backend/fusion details out.
-5. Close four ledgers before runtime work starts:
+   A Model IR **leaf is a stable mathematical or data-flow primitive**, not an
+   implementation fusion boundary. Parameterized transforms, nonlinearities,
+   reductions/selections, semantic forks/joins, and persistent-state updates
+   must remain individually visible in a drill view. For example, a fused
+   `down projection + SiLU + up projection + sigmoid + branch reduction`
+   kernel still maps to five Model IR nodes. Pure reshape/view, launch, tiling,
+   allocator, and framework-scheduling helpers may remain in Binding/Timeline
+   evidence unless they change a tensor, communication, or state contract.
+5. Close five ledgers before runtime work starts:
    - **data-flow closure:** each semantic input, output, residual, cache read,
      and state update has an owner and edge;
    - **variant closure:** every distinct layer type and optional model path is
@@ -275,11 +283,17 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
      scope, with tied/shared weights counted once;
    - **state closure:** every persistent tensor has shape, dtype when known,
      lifecycle, update rule, and context-growth behavior.
+   - **operator/data-flow closure:** every architecture-bearing transform is a
+     visible node or drills into visible primitive nodes; every fused runtime
+     interval names one timing owner and all covered Model IR nodes, so timing
+     is shared rather than repeated.
 6. Review the compact graph and its ledgers before attaching runtime data.
 
-The default view stays readable; semantic precision belongs in drill views and
-node detail, not in dozens of duplicated nodes. A topology can therefore be
-correct yet still fail Stage 1 if its ledgers are incomplete.
+The default view stays readable; semantic precision belongs in drill views,
+while repeated heads, experts, and identical layers remain symbolic rather than
+cloned. A formula chain must not be hidden only in prose on a compound leaf.
+A topology can therefore be correct yet still fail Stage 1 if its ledgers are
+incomplete.
 
 Changing Model IR requires a semantic architecture change or correction. A
 framework refactor or kernel fusion is not sufficient.
@@ -344,18 +358,20 @@ boundaries. It is reconciled against the complete candidate Execution IR:
 Adding or splitting a Model IR drill view requires a separate **mapping
 reconciliation**:
 
-- every child declares `measured`, `fused_state`, or `structural`; a timed
+- every child declares `measured`, `fused`, `fused_state`, or `structural`; a timed
   parent never implies that its new children are already bound;
 - a `measured` child requires both a commit-specific Binding and an
   eager/sequence-validated Profile leaf;
-- a fused cache/state update points to its real timing owner and never copies
-  that owner's time;
+- a fused mathematical primitive or cache/state update points to its real
+  timing owner and never copies that owner's time;
 - each Timeline event retains the parent roll-up target and adds the finest
   validated leaf target for bidirectional navigation;
-- every delivered profile is backfilled and its artifact hash recomputed. If
-  existing evidence cannot uniquely refine the interval, keep the parent
-  mapping, mark the child unvalidated, and do not guess from a generic kernel
-  name.
+- every delivered profile receives the reconciled leaf disposition. A compiler
+  may derive an explicit `fused` state from a reviewed Model IR timing-owner
+  contract without changing the trace artifact; it may never derive a new
+  `measured` interval. If existing evidence cannot uniquely refine the
+  interval, keep the parent mapping and do not guess from a generic kernel
+  name. Recompute artifact hashes only when the artifact itself changes.
 
 A semantic revision can therefore preserve the Execution fingerprint, but any
 new runtime-bearing drill leaf invalidates the relevant Binding/Profile

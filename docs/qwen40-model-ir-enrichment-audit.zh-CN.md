@@ -11,7 +11,18 @@
 - 明确 HC mix 与 combine 的公式和输入边界；
 - 明确 GDN fixed-size conv/recurrent state、QSA token-growing cache、PLE fixed-size side state；
 - 记录语义 reference 和 snapshot caveat；
-- 保留 `ir_version=2` 的 execution-topology identity，新增 `semantic_revision=3`。纯文档/ledger 增强不会无意义地使已有 Execution IR fingerprint 和 profile 失效。
+- 保留 `ir_version=2` 的 execution-topology identity；本轮 primitive data-flow closure 将 `semantic_revision` 提升到 4。Compiler 从 revision 4 开始拒绝没有 drill view 的 multi-operator leaf。新增的 fused primitive 显式共享已有 timing owner，不复制时间，也不会无意义地使已有 Execution IR fingerprint 失效。
+
+## Revision 4 的新增闭包
+
+Model IR 现在把稳定的数学路径继续展开到 primitive data-flow，而不把当前 kernel fusion 当作叶子边界：
+
+- Hyper-Connection read gate：`RMSNorm → down projection → /4 + SiLU → up projection → sigmoid/view → branch weighting → branch mean`；
+- Hyper-Connection write gate：`inject projection → /4 + 2×sigmoid → broadcast multiply → residual add`；
+- MoE routed/shared expert：gate/up 两路 projection、SiLU、elementwise product、down projection，以及 shared scalar gate；
+- MoE route selection/combine、PLE grouped norm/gate、GDN conv/SiLU、QSA norm/MRoPE 和 index compression/scoring/expansion，也都有独立 drill view。
+
+这些节点是跨 framework 稳定的模型数学语义。SGLang、vLLM 或 TRT-LLM 可以把若干节点融合到同一个 kernel；Profile 通过唯一 timing owner 和 `shared_interval` fusion group 表达这种实现差异，不能把同一个 interval 重复累计到每个 primitive。
 
 ## 从同事 HTML 借用了什么
 

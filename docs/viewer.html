@@ -3211,8 +3211,10 @@ function nodeStateSummary(cell) {
   if (!cell?.status) return "";
   if (cell.status === "out_of_scope") return "not in selected stage";
   if (cell.status === "structural") return "structural boundary";
-  if (cell.status === "fused" && cell.included_in === "hyperconnection.mix") {
-    return "fused into mix";
+  if (cell.status === "fused") {
+    const owner = String(cell.included_in || "timing owner")
+      .split(".").pop().replaceAll("_", " ");
+    return `shared fused interval → ${shorten(owner, 24)}`;
   }
   return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
 }

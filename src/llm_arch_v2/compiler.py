@@ -91,6 +91,30 @@ def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> No
             f"{source}: config_field_disposition is missing buckets: "
             f"{', '.join(missing_buckets)}"
         )
+    if int(model_ir.get("semantic_revision") or 0) >= 4 and not coverage.get(
+        "operator_dataflow_closure"
+    ):
+        raise CatalogError(
+            f"{source}: semantic_revision>=4 requires "
+            "semantic_coverage.operator_dataflow_closure"
+        )
+
+
+def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Reject compound leaves once a catalog claims operator/data-flow closure."""
+
+    if int(model_ir.get("semantic_revision") or 0) < 4:
+        return
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            operators = (node.get("semantic_details") or {}).get("operators") or []
+            if len(operators) > 1 and not node.get("drill"):
+                target = f"{view_id}.{node.get('id', '<missing>')}"
+                raise CatalogError(
+                    f"{source}: compound Model IR leaf {target} contains "
+                    f"{len(operators)} operators; split it into primitive nodes "
+                    "or add a drill view"
+                )
 
 
 def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, Any]]:
@@ -168,7 +192,7 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
         if not runtime_mapping:
             continue
         expectation = runtime_mapping.get("expectation")
-        if expectation not in {"measured", "fused_state", "structural"}:
+        if expectation not in {"measured", "fused", "fused_state", "structural"}:
             raise CatalogError(
                 f"{source}: node {target} has unknown runtime-mapping expectation "
                 f"{expectation!r}"
@@ -178,9 +202,9 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                 f"{source}: measured node {target} must name itself as profile_leaf"
             )
         owner = runtime_mapping.get("owner")
-        if expectation == "fused_state" and owner not in index:
+        if expectation in {"fused", "fused_state"} and owner not in index:
             raise CatalogError(
-                f"{source}: fused-state node {target} references unknown owner {owner!r}"
+                f"{source}: fused node {target} references unknown owner {owner!r}"
             )
     return index
 
@@ -338,8 +362,15 @@ def _fingerprint_payload(
     topology or communication-graph changes produce a new fingerprint.
     """
 
+    semantic_only_views = {
+        view_id
+        for view_id, view in views.items()
+        if view.get("execution_contract") is False
+    }
     structural_views: dict[str, Any] = {}
     for view_id, view in sorted(views.items()):
+        if view_id in semantic_only_views:
+            continue
         structural_views[view_id] = {
             "nodes": [
                 {
@@ -352,6 +383,9 @@ def _fingerprint_payload(
                         "execution",
                     )
                     if key in node
+                    and not (
+                        key == "drill" and node.get("drill") in semantic_only_views
+                    )
                 }
                 for node in view.get("nodes", []) or []
             ],
@@ -466,6 +500,23 @@ def apply_binding(views: dict[str, Any], binding: dict[str, Any], *, source: Pat
                 node_binding.get("kernel_signatures", [])
             ),
         }
+    # Fine-grained Model IR nodes may share one fused implementation interval.
+    # Inherit the owner's source binding when an adapter does not provide a
+    # more precise link, while keeping the canonical semantic nodes distinct.
+    index = _node_index(views, source=source)
+    for target, node in index.items():
+        if node.get("implementation_binding"):
+            continue
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
+            continue
+        owner = index.get(str(runtime_mapping.get("owner") or ""))
+        if not owner or not owner.get("implementation_binding"):
+            continue
+        node["code_links"] = copy.deepcopy(owner.get("code_links", []))
+        node["implementation_binding"] = copy.deepcopy(owner["implementation_binding"])
+        node["implementation_binding"]["mapping_provenance"] = "shared_fused_owner"
+        node["implementation_binding"]["timing_owner"] = runtime_mapping["owner"]
 
 
 def _validate_parallelism(
@@ -491,6 +542,7 @@ def compile_profile(
     plan: dict[str, Any],
     fingerprint: str,
     node_targets: set[str],
+    node_index: dict[str, dict[str, Any]] | None = None,
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
@@ -505,6 +557,26 @@ def compile_profile(
                         "label": "MTP is disabled in this profile",
                     },
                 )
+    # A semantic refinement must not require rewriting every historical
+    # profile.  Runtime-mapping contracts synthesize explicit fused states for
+    # newly introduced primitive nodes; the measured owner remains the sole
+    # timing source, so residency/active time is never duplicated.
+    for target, node in (node_index or {}).items():
+        if target in effective_states or target in (profile.get("node_metrics") or {}):
+            continue
+        if effective_states.get(target, {}).get("status") == "disabled":
+            continue
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
+            continue
+        owner = str(runtime_mapping.get("owner") or "")
+        effective_states[target] = {
+            "status": "fused",
+            "included_in": owner,
+            "label": runtime_mapping.get("reason")
+            or "shares the fused runtime interval with its timing owner",
+            "provenance": "model_ir.runtime_mapping",
+        }
     unknown = sorted(set(profile.get("node_metrics") or {}) - node_targets)
     if unknown:
         raise CatalogError(f"{source}: profile references unknown nodes: {unknown}")
@@ -690,6 +762,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     )
     _node_index(model_ir["views"], source=model_path)
     _validate_semantic_coverage(model_ir, source=model_path)
+    _validate_operator_granularity(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"
@@ -885,14 +958,16 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                 f"{path}: evidence source_patch_sha256 {evidence_patch!r} does not "
                 f"match implementation {impl_id!r} patch {implementation_patch!r}"
             )
-        targets = set(
-            _node_index(execution_variants[fingerprint]["views"], source=plan_path)
+        target_index = _node_index(
+            execution_variants[fingerprint]["views"], source=plan_path
         )
+        targets = set(target_index)
         compiled_profile = compile_profile(
             raw_profile,
             plan=plan,
             fingerprint=fingerprint,
             node_targets=targets,
+            node_index=target_index,
             source=path,
         )
         profile_id = raw_profile["profile_id"]

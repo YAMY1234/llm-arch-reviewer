@@ -103,7 +103,10 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     model_ir = bundle["model_ir"]
 
-    assert model_ir["semantic_revision"] == 3
+    assert model_ir["semantic_revision"] == 4
+    assert model_ir["semantic_coverage"]["operator_dataflow_closure"] == (
+        "complete_with_primitive_drill_views_and_shared_fusion_owners"
+    )
     assert model_ir["semantic_coverage"]["parameter_closure"] == (
         "complete_for_target_text_and_declared_mtp"
     )
@@ -150,6 +153,70 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
         if node["id"] == "moe"
     )
     assert moe["semantic_details"]["parameters"]["total"] == 2522810880
+
+
+def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    model_views = bundle["model_ir"]["views"]
+
+    # Semantic-only drill enrichment must not create a new execution contract.
+    assert bundle["default_execution_variant"] == "exec_6de296eb5b2f6680"
+
+    mix_gate = next(
+        node
+        for node in model_views["hyperconnection_mix"]["nodes"]
+        if node["id"] == "low_rank_gate"
+    )
+    assert mix_gate["drill"] == "hyperconnection_read"
+    assert _node_ids(bundle["model_ir"], "hyperconnection_read") == [
+        "normalized_branches",
+        "down_projection",
+        "scaled_silu",
+        "up_projection",
+        "sigmoid_view",
+        "weighted_apply",
+        "branch_mean",
+        "module_input",
+    ]
+
+    routed = next(
+        node
+        for node in model_views["moe"]["nodes"]
+        if node["id"] == "routed_experts"
+    )
+    assert routed["drill"] == "moe_routed_expert"
+    assert _node_ids(bundle["model_ir"], "moe_routed_expert")[1:-1] == [
+        "gate_projection",
+        "up_projection",
+        "silu",
+        "gated_product",
+        "down_projection",
+    ]
+
+
+def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    group = profile["fusion_groups"]["fusion:hyperconnection_mix.mix"]
+
+    assert group["owner"] == "hyperconnection_mix.mix"
+    assert "hyperconnection_read.down_projection" in group["ir_nodes"]
+    assert "hyperconnection_read.branch_mean" in group["ir_nodes"]
+    cell = profile["data"]["hyperconnection_read.down_projection"][
+        "tp4_cg_decode_bs1_8k1k"
+    ]
+    assert cell["status"] == "fused"
+    assert cell["included_in"] == "hyperconnection_mix.mix"
+    assert cell["fusion_timing_semantics"] == "shared_interval"
+
+    node = next(
+        item
+        for item in bundle["views"]["hyperconnection_read"]["nodes"]
+        if item["id"] == "down_projection"
+    )
+    assert node["implementation_binding"]["mapping_provenance"] == (
+        "shared_fused_owner"
+    )
 
 
 def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:

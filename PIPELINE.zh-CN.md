@@ -168,15 +168,16 @@ Manifest 是唯一的 orchestration input。任何 builder 都不能静默替换
 1. 阅读 model config 和稳定架构定义。
 2. 先画一张简洁的默认图，再为有意义的重复 layer 类型和 stateful module 提供 drill view。重复结构只表达一次并标明 count/placement；不要复制相同 layer、attention head 或 expert。
 3. 对每个会影响架构的 config field，明确归类为 Model IR、Execution IR、Binding/Profile evidence，或“显式排除”。Construction source 用于消除歧义和验证语义，不能把某个 framework 当前的 call graph 复制成架构。
-4. 分配稳定 ID 和 symbolic shape/dtype contract。对重要节点补充结构化 `semantic_details`：logical operator/公式、参数 shape/count 与共享关系、持久 state/cache 生命周期，以及 placement/optional-path 条件。Kernel、backend 和 fusion 不进入这里。
-5. 在开始 runtime 工作之前关闭四本账：
+4. 分配稳定 ID 和 symbolic shape/dtype contract。对重要节点补充结构化 `semantic_details`：logical operator/公式、参数 shape/count 与共享关系、持久 state/cache 生命周期，以及 placement/optional-path 条件。Kernel、backend 和 fusion 不进入这里。Model IR 的**叶子节点必须是稳定的数学或数据流原语**，而不是某个实现的 fusion 边界。带参数的变换、非线性、reduction/selection、语义上的 fork/join，以及持久 state update，都必须在 drill view 中分别可见。例如一个融合了 `down projection + SiLU + up projection + sigmoid + branch reduction` 的 kernel，仍然映射到五个 Model IR 节点。纯 reshape/view、launch、tiling、allocator 和 framework scheduling helper，如果没有改变 tensor、communication 或 state contract，可以只留在 Binding/Timeline evidence 中。
+5. 在开始 runtime 工作之前关闭五本账：
    - **data-flow closure：** 每个 semantic input/output、residual、cache read 和 state update 都有明确 owner 与 edge；
    - **variant closure：** 每种不同 layer type 和 optional model path 只表达一次，并明确 placement rule；
    - **parameter closure：** 分项总和与声明的模型 scope 对齐，tied/shared weight 只计算一次；
    - **state closure：** 每个持久 tensor 都有 shape、已知 dtype、lifecycle、update rule 和是否随 context 增长。
-6. 在附加任何 runtime data 之前，同时 review 简洁主图和四本账。
+   - **operator/data-flow closure：** 每个影响架构语义的 transform 都必须是可见节点，或能 drill 到可见的原语节点；每个 fused runtime interval 必须声明唯一 timing owner 和所有被覆盖的 Model IR 节点，时间共享但不能重复累计。
+6. 在附加任何 runtime data 之前，同时 review 简洁主图和五本账。
 
-默认视图应保持易读；精度放在 drill view 和节点详情里，而不是复制几十个节点。因此一张图即使 topology 正确，只要 ledger 不闭合，Stage 1 仍然不能通过。
+默认视图应保持易读；精度放在 drill view 中，重复的 head、expert 和相同 layer 仍用符号化方式表达，不复制几十份。多步公式不能只写在一个 compound leaf 的文字详情里。因此一张图即使 topology 正确，只要 ledger 不闭合，Stage 1 仍然不能通过。
 
 只有模型语义架构确实改变或原有语义表达有误时，才能修改 Model IR。Framework refactor 或 kernel fusion 不足以成为修改理由。
 
@@ -218,11 +219,11 @@ Semantic trace 记录 stack、可获得的 tensor shape、operator order、colle
 
 Model IR 新增或拆分 drill view 时，必须额外执行一次 **mapping reconciliation**：
 
-- 每个子节点显式声明 `measured`、`fused_state` 或 `structural`，不能因为父节点已有时间就默认视为子节点已绑定；
+- 每个子节点显式声明 `measured`、`fused`、`fused_state` 或 `structural`，不能因为父节点已有时间就默认视为子节点已绑定；
 - `measured` 节点必须同时具备 commit-specific Binding 和 eager/sequence-validated Profile leaf；
-- 融合 cache/state update 只能指向实际 timing owner，不能复制 owner 的时间形成双重计数；
+- 融合的数学原语或 cache/state update 只能指向实际 timing owner，不能复制 owner 的时间形成双重计数；
 - Timeline event 保留原父级 rollup target，同时增加最细的已验证 leaf target，从而支持架构图与 timeline 双向跳转；
-- 所有已经交付的 profile 必须回填并重新计算 artifact hash；若无法从原始 evidence 唯一细分，则保持父级 mapping 并把子节点标为未验证，禁止按 kernel 名称猜测。
+- 所有已经交付的 profile 都必须获得 reconciliation 后的 leaf disposition。Compiler 可以根据已经 review 的 Model IR timing-owner contract 自动生成显式 `fused` 状态，而不改动 trace artifact；但绝不能自动生成新的 `measured` interval。若原始 evidence 不能唯一细分，则保持父级 mapping，禁止按 generic kernel 名称猜测。只有 artifact 本身变化时才重新计算 hash。
 
 因此，Model IR semantic revision 可以不改变 Execution fingerprint，但只要新增了 runtime-bearing drill leaf，就必须使相关 Binding/Profile validation 失效，直到 mapping reconciliation 完成。
 

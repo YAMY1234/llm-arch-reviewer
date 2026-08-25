@@ -2,7 +2,7 @@ schema_version: model-ir.v2
 model_id: qwen40
 model_label: Qwen 4.0 Air Example BF16
 ir_version: 2
-semantic_revision: 3
+semantic_revision: 4
 default_view: top
 default_execution_path: tp_only
 
@@ -111,6 +111,7 @@ semantic_coverage:
   parameter_closure: complete_for_target_text_and_declared_mtp
   state_closure: complete_for_gdn_qsa_ple
   layer_variant_closure: complete
+  operator_dataflow_closure: complete_with_primitive_drill_views_and_shared_fusion_owners
   config_field_disposition:
     model_ir:
       - hidden_size, vocab_size, max_position_embeddings
@@ -167,6 +168,7 @@ views:
         label: "final hyper-connection mix\n[HC] → [H]"
         shape: elem
         semantic_op: model.final_hyperconnection_mix
+        drill: final_hyperconnection_read
         semantic_details:
           operators: [rms_norm, low_rank_dynamic_gate, weighted_branch_read]
           math:
@@ -269,6 +271,7 @@ views:
         label: "embedding RMSNorm + replicated linear\nH → H"
         shape: gemm
         semantic_op: mtp.input_fusion.embedding_projection
+        drill: mtp_embedding_projection
         semantic_details:
           operators: [rms_norm, linear_projection]
           tensors:
@@ -277,6 +280,7 @@ views:
         label: "HC RMSNorm + shared per-branch linear\n4 × (H → H)"
         shape: gemm
         semantic_op: mtp.input_fusion.hidden_projection
+        drill: mtp_hidden_projection
         semantic_details:
           operators: [grouped_rms_norm, shared_per_branch_linear]
           tensors:
@@ -675,6 +679,7 @@ views:
         label: grouped RMSNorm + query/key gate
         shape: norm
         semantic_op: ple.grouped_norm_gate
+        drill: ple_grouped_norm_gate
         semantic_details:
           operators: [grouped_rms_norm, branch_gate]
           tensors:
@@ -730,6 +735,148 @@ views:
       - {from: token_history, to: context_commit, kind: dashed}
       - {from: context_commit, to: token_history, kind: dashed, label: update}
 
+  final_hyperconnection_read:
+    title: Final read-only Hyper-Connection data flow
+    execution_contract: false
+    nodes:
+      - {id: branch_states, label: "final branch states\n[B,T,4,H]", shape: io, semantic_op: hyperconnection.final_read.input}
+      - id: branch_norm
+        label: per-branch RMSNorm
+        shape: norm
+        semantic_op: hyperconnection.final_read.branch_norm
+        semantic_details:
+          operators: [per_branch_rms_norm]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: down_projection
+        label: "low-rank down projection\n10240 → 320"
+        shape: gemm
+        semantic_op: hyperconnection.final_read.down_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: scaled_silu
+        label: "divide by 4 + SiLU"
+        shape: elem
+        semantic_op: hyperconnection.final_read.scaled_silu
+        semantic_details:
+          operators: [scaled_silu]
+          math: ["a = SiLU(W_down Norm(R) / 4)"]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: up_projection
+        label: "low-rank up projection\n320 → 10240"
+        shape: gemm
+        semantic_op: hyperconnection.final_read.up_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: sigmoid_view
+        label: "sigmoid + view as 4 branches"
+        shape: elem
+        semantic_op: hyperconnection.final_read.sigmoid_view
+        semantic_details:
+          operators: [sigmoid]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: weighted_apply
+        label: "per-branch weighting\nw ⊙ Norm(R)"
+        shape: elem
+        semantic_op: hyperconnection.final_read.weighted_apply
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - id: branch_mean
+        label: "mean across 4 branches\n[4,H] → [H]"
+        shape: elem
+        semantic_op: hyperconnection.final_read.branch_mean
+        semantic_details:
+          operators: [branch_mean_reduce]
+          runtime_mapping: {expectation: fused, owner: top.final_hc_mix, reason: fused final HC read interval}
+      - {id: hidden_states, label: "final hidden states\n[B,T,H]", shape: io, semantic_op: hyperconnection.final_read.output}
+    edges:
+      - {from: branch_states, to: branch_norm, dtype: bf16}
+      - {from: branch_norm, to: down_projection, dtype: bf16}
+      - {from: down_projection, to: scaled_silu, dtype: bf16}
+      - {from: scaled_silu, to: up_projection, dtype: bf16}
+      - {from: up_projection, to: sigmoid_view, dtype: bf16}
+      - {from: sigmoid_view, to: weighted_apply, kind: dashed, label: weights}
+      - {from: branch_norm, to: weighted_apply, kind: residual, label: normalized branches}
+      - {from: weighted_apply, to: branch_mean, dtype: bf16}
+      - {from: branch_mean, to: hidden_states, dtype: bf16}
+
+  mtp_embedding_projection:
+    title: MTP token-embedding projection data flow
+    execution_contract: false
+    nodes:
+      - {id: embedding, label: "token embedding\n[B,D,H]", shape: io, semantic_op: mtp.embedding_projection.input}
+      - id: rms_norm
+        label: embedding RMSNorm
+        shape: norm
+        semantic_op: mtp.embedding_projection.rms_norm
+        semantic_details:
+          operators: [rms_norm]
+          runtime_mapping: {expectation: fused, owner: mtp_head.embedding_projection}
+      - id: projection
+        label: "replicated linear\nH → H"
+        shape: gemm
+        semantic_op: mtp.embedding_projection.linear
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: mtp_head.embedding_projection}
+      - {id: output, label: "projected embedding\n[B,D,H]", shape: io, semantic_op: mtp.embedding_projection.output}
+    edges:
+      - {from: embedding, to: rms_norm, dtype: bf16}
+      - {from: rms_norm, to: projection, dtype: bf16}
+      - {from: projection, to: output, dtype: bf16}
+
+  mtp_hidden_projection:
+    title: MTP target-HC projection data flow
+    execution_contract: false
+    nodes:
+      - {id: branch_states, label: "target HC states\n[B,D,4,H]", shape: io, semantic_op: mtp.hidden_projection.input}
+      - id: grouped_norm
+        label: grouped per-branch RMSNorm
+        shape: norm
+        semantic_op: mtp.hidden_projection.grouped_norm
+        semantic_details:
+          operators: [grouped_rms_norm]
+          runtime_mapping: {expectation: fused, owner: mtp_head.hidden_projection}
+      - id: shared_projection
+        label: "shared per-branch linear\n4 × (H → H)"
+        shape: gemm
+        semantic_op: mtp.hidden_projection.shared_linear
+        semantic_details:
+          operators: [shared_per_branch_linear]
+          runtime_mapping: {expectation: fused, owner: mtp_head.hidden_projection}
+      - {id: output, label: "projected HC states\n[B,D,4,H]", shape: io, semantic_op: mtp.hidden_projection.output}
+    edges:
+      - {from: branch_states, to: grouped_norm, dtype: bf16}
+      - {from: grouped_norm, to: shared_projection, dtype: bf16}
+      - {from: shared_projection, to: output, dtype: bf16}
+
+  ple_grouped_norm_gate:
+    title: PLE grouped normalization and branch-gate data flow
+    execution_contract: false
+    nodes:
+      - {id: query_key_value, label: "PLE query/key/value\n[B,T,4,H]", shape: io, semantic_op: ple.grouped_norm_gate.input}
+      - id: grouped_norm
+        label: grouped RMSNorm
+        shape: norm
+        semantic_op: ple.grouped_norm_gate.norm
+        semantic_details:
+          operators: [grouped_rms_norm]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - id: query_key_gate
+        label: per-branch query/key gate
+        shape: elem
+        semantic_op: ple.grouped_norm_gate.branch_gate
+        semantic_details:
+          operators: [branch_gate]
+          runtime_mapping: {expectation: fused, owner: ple.grouped_norm_gate}
+      - {id: gated_value, label: "gated PLE value\n[B,T,4,H]", shape: io, semantic_op: ple.grouped_norm_gate.output}
+    edges:
+      - {from: query_key_value, to: grouped_norm, dtype: bf16}
+      - {from: grouped_norm, to: query_key_gate, dtype: bf16}
+      - {from: query_key_gate, to: gated_value, dtype: bf16}
+
   hyperconnection_mix:
     title: Hyper-connection branch mix
     nodes:
@@ -752,6 +899,7 @@ views:
         label: "low-rank dynamic gate\n10240→320→10240"
         shape: gemm
         semantic_op: hyperconnection.low_rank_gate
+        drill: hyperconnection_read
         semantic_details:
           operators: [linear_projection, activation, linear_projection, sigmoid]
           tensors:
@@ -799,6 +947,7 @@ views:
         label: "update four branches\nR' = R + alpha ⊙ y"
         shape: elem
         semantic_op: hyperconnection.combine
+        drill: hyperconnection_update
         semantic_details:
           operators: [branch_injection_gate, residual_update]
           math:
@@ -821,6 +970,112 @@ views:
       - {from: branch_states, to: combine, kind: residual, shape: "[B,T,4,H]", dtype: bf16, label: "preserved branches"}
       - {from: module_output, to: combine, shape: "[B,T,H]", dtype: bf16, label: "processed H-wide result"}
       - {from: combine, to: updated_branch_states, shape: "[B,T,4,H]", dtype: bf16}
+
+  hyperconnection_read:
+    title: Hyper-Connection low-rank gate and branch-read data flow
+    execution_contract: false
+    nodes:
+      - {id: normalized_branches, label: "normalized branches\n[B,T,10240]", shape: io, semantic_op: hyperconnection.gate.input}
+      - id: down_projection
+        label: "down projection\n10240 → 320"
+        shape: gemm
+        semantic_op: hyperconnection.gate.down_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - id: scaled_silu
+        label: "divide by 4 + SiLU"
+        shape: elem
+        semantic_op: hyperconnection.gate.scaled_silu
+        semantic_details:
+          operators: [scaled_silu]
+          math: ["a = SiLU(W_down Norm(R) / 4)"]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - id: up_projection
+        label: "up projection\n320 → 10240"
+        shape: gemm
+        semantic_op: hyperconnection.gate.up_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - id: sigmoid_view
+        label: "sigmoid + view\n[B,T,4,H]"
+        shape: elem
+        semantic_op: hyperconnection.gate.sigmoid_view
+        semantic_details:
+          operators: [sigmoid]
+          math: ["w = view_4xH(sigmoid(W_up a))"]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - id: weighted_apply
+        label: "apply weights to normalized branches\nw ⊙ Norm(R)"
+        shape: elem
+        semantic_op: hyperconnection.gate.weighted_apply
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - id: branch_mean
+        label: "mean across 4 branches\n[4,H] → [H]"
+        shape: elem
+        semantic_op: hyperconnection.gate.branch_mean
+        semantic_details:
+          operators: [branch_mean_reduce]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_mix.mix, reason: fused HC mix kernel interval}
+      - {id: module_input, label: "selected module input\n[B,T,H]", shape: io, semantic_op: hyperconnection.gate.output}
+    edges:
+      - {from: normalized_branches, to: down_projection, dtype: bf16}
+      - {from: down_projection, to: scaled_silu, dtype: bf16}
+      - {from: scaled_silu, to: up_projection, dtype: bf16}
+      - {from: up_projection, to: sigmoid_view, dtype: bf16}
+      - {from: sigmoid_view, to: weighted_apply, kind: dashed, label: mix weights}
+      - {from: normalized_branches, to: weighted_apply, kind: residual, label: branch values}
+      - {from: weighted_apply, to: branch_mean, dtype: bf16}
+      - {from: branch_mean, to: module_input, dtype: bf16}
+
+  hyperconnection_update:
+    title: Hyper-Connection write-gate and residual update
+    execution_contract: false
+    nodes:
+      - {id: normalized_branches, label: "normalized preserved branches\n[B,T,10240]", shape: io, semantic_op: hyperconnection.update.normalized_input}
+      - {id: module_output, label: "processed module output\n[B,T,H]", shape: io, semantic_op: hyperconnection.update.module_output}
+      - {id: branch_states, label: "preserved branch states\n[B,T,4,H]", shape: io, semantic_op: hyperconnection.update.branch_states}
+      - id: inject_projection
+        label: "branch injection projection\n10240 → 4"
+        shape: gemm
+        semantic_op: hyperconnection.update.inject_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_combine.combine, reason: fused HC combine kernel interval}
+      - id: inject_gate
+        label: "divide by 4 + 2×sigmoid\nalpha [B,T,4]"
+        shape: elem
+        semantic_op: hyperconnection.update.inject_gate
+        semantic_details:
+          operators: [scaled_sigmoid]
+          math: ["alpha = 2 * sigmoid(W_inject Norm(R) / 4)"]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_combine.combine, reason: fused HC combine kernel interval}
+      - id: broadcast_injection
+        label: "broadcast module result\nalpha[:,c] ⊙ y"
+        shape: elem
+        semantic_op: hyperconnection.update.broadcast_injection
+        semantic_details:
+          operators: [broadcast_multiply]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_combine.combine, reason: fused HC combine kernel interval}
+      - id: residual_add
+        label: "per-branch residual add\nR' = R + alpha ⊙ y"
+        shape: elem
+        semantic_op: hyperconnection.update.residual_add
+        semantic_details:
+          operators: [residual_add]
+          runtime_mapping: {expectation: fused, owner: hyperconnection_combine.combine, reason: fused HC combine kernel interval}
+      - {id: updated_branches, label: "updated branch states\n[B,T,4,H]", shape: io, semantic_op: hyperconnection.update.output}
+    edges:
+      - {from: normalized_branches, to: inject_projection, dtype: bf16}
+      - {from: inject_projection, to: inject_gate, dtype: bf16}
+      - {from: inject_gate, to: broadcast_injection, kind: dashed, label: alpha}
+      - {from: module_output, to: broadcast_injection, dtype: bf16}
+      - {from: broadcast_injection, to: residual_add, dtype: bf16}
+      - {from: branch_states, to: residual_add, kind: residual, dtype: bf16}
+      - {from: residual_add, to: updated_branches, dtype: bf16}
 
   hyperconnection:
     title: Global Hyper-Connection kernel aggregate (all layer calls)
@@ -898,6 +1153,7 @@ views:
         label: "causal depthwise Conv1D + SiLU\n10240 channels · kernel 4"
         shape: elem
         semantic_op: linear_attention.causal_conv
+        drill: linear_causal_conv
         semantic_details:
           operators: [causal_depthwise_conv1d, silu]
           tensors:
@@ -980,6 +1236,7 @@ views:
         label: Q/K RMSNorm + MRoPE
         shape: norm
         semantic_op: qsa_attention.qk_norm_rope
+        drill: qsa_qk_norm_rope
         semantic_details:
           operators: [qk_rms_norm, multimodal_rope]
           parameters:
@@ -1100,6 +1357,7 @@ views:
         label: "average complete 4-token group\nK RMSNorm + MRoPE"
         shape: elem
         semantic_op: qsa_indexer.compress
+        drill: qsa_index_compress
         semantic_details:
           operators: [four_token_average_pool, rms_norm]
           runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.compress}
@@ -1120,6 +1378,7 @@ views:
         label: "compressed MQA score\nReLU + sum across 4 index heads"
         shape: attn
         semantic_op: qsa_indexer.compressed_score
+        drill: qsa_index_score
         semantic_details:
           operators: [multi_query_attention_score, relu, index_head_reduce]
           runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.compressed_score}
@@ -1138,6 +1397,7 @@ views:
         label: "expand blocks to ≤2048 tokens\n+ causal tail ≤3"
         shape: elem
         semantic_op: qsa_indexer.expand_tail
+        drill: qsa_index_expand
         semantic_details:
           operators: [block_to_token_expand, causal_tail_append]
           runtime_mapping: {expectation: measured, profile_leaf: qsa_indexer.expand_tail}
@@ -1162,6 +1422,141 @@ views:
       - {from: raw_k_cache, to: expand_tail, kind: dashed, label: causal tail positions}
       - {from: expand_tail, to: selected_indices, dtype: int32}
 
+  linear_causal_conv:
+    title: Gated DeltaNet causal convolution data flow
+    execution_contract: false
+    nodes:
+      - {id: packed_qkv, label: "packed Q/K/V\n[B,T,10240]", shape: io, semantic_op: linear_attention.causal_conv.input}
+      - id: depthwise_conv
+        label: "causal depthwise Conv1D\n10240 channels · kernel 4"
+        shape: elem
+        semantic_op: linear_attention.causal_conv.depthwise
+        semantic_details:
+          operators: [causal_depthwise_conv1d]
+          runtime_mapping: {expectation: fused, owner: linear_attention.causal_conv}
+      - id: silu
+        label: SiLU activation
+        shape: elem
+        semantic_op: linear_attention.causal_conv.silu
+        semantic_details:
+          operators: [silu]
+          runtime_mapping: {expectation: fused, owner: linear_attention.causal_conv}
+      - {id: activated_qkv, label: "activated Q/K/V\n[B,T,10240]", shape: io, semantic_op: linear_attention.causal_conv.output}
+    edges:
+      - {from: packed_qkv, to: depthwise_conv, dtype: bf16}
+      - {from: depthwise_conv, to: silu, dtype: bf16}
+      - {from: silu, to: activated_qkv, dtype: bf16}
+
+  qsa_qk_norm_rope:
+    title: QSA Q/K normalization and position encoding
+    execution_contract: false
+    nodes:
+      - {id: projected_qk, label: "projected Q/K\n24Q + 2K · dim 256", shape: io, semantic_op: qsa_attention.qk_transform.input}
+      - id: qk_norm
+        label: separate Q/K RMSNorm
+        shape: norm
+        semantic_op: qsa_attention.qk_transform.norm
+        semantic_details:
+          operators: [qk_rms_norm]
+          runtime_mapping: {expectation: fused, owner: qsa_attention.qk_norm_rope}
+      - id: mrope
+        label: multimodal rotary position encoding
+        shape: elem
+        semantic_op: qsa_attention.qk_transform.mrope
+        semantic_details:
+          operators: [multimodal_rope]
+          runtime_mapping: {expectation: fused, owner: qsa_attention.qk_norm_rope}
+      - {id: positioned_qk, label: "normalized positioned Q/K", shape: io, semantic_op: qsa_attention.qk_transform.output}
+    edges:
+      - {from: projected_qk, to: qk_norm, dtype: bf16}
+      - {from: qk_norm, to: mrope, dtype: bf16}
+      - {from: mrope, to: positioned_qk, dtype: bf16}
+
+  qsa_index_compress:
+    title: QSA four-token index-key compression
+    execution_contract: false
+    nodes:
+      - {id: raw_keys, label: "raw index K\n4 tokens × 128", shape: io, semantic_op: qsa_indexer.compress.input}
+      - id: average_pool
+        label: average one complete 4-token group
+        shape: elem
+        semantic_op: qsa_indexer.compress.average_pool
+        semantic_details:
+          operators: [four_token_average_pool]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compress}
+      - id: key_norm
+        label: compressed-K RMSNorm
+        shape: norm
+        semantic_op: qsa_indexer.compress.key_norm
+        semantic_details:
+          operators: [rms_norm]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compress}
+      - {id: compressed_key, label: "one compressed index K\n[1,128]", shape: io, semantic_op: qsa_indexer.compress.output}
+    edges:
+      - {from: raw_keys, to: average_pool, dtype: bf16}
+      - {from: average_pool, to: key_norm, dtype: bf16}
+      - {from: key_norm, to: compressed_key, dtype: bf16}
+
+  qsa_index_score:
+    title: QSA compressed-block scoring
+    execution_contract: false
+    nodes:
+      - {id: index_query, label: "index Q\n4 heads × 128", shape: io, semantic_op: qsa_indexer.score.query}
+      - {id: compressed_keys, label: "compressed block K cache\n1 head × 128", shape: cache, semantic_op: qsa_indexer.score.keys}
+      - id: mqa_dot
+        label: compressed MQA dot products
+        shape: attn
+        semantic_op: qsa_indexer.score.mqa_dot
+        semantic_details:
+          operators: [multi_query_attention_score]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compressed_score}
+      - id: relu
+        label: ReLU positive-evidence filter
+        shape: elem
+        semantic_op: qsa_indexer.score.relu
+        semantic_details:
+          operators: [relu]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compressed_score}
+      - id: head_reduce
+        label: sum across 4 index heads
+        shape: elem
+        semantic_op: qsa_indexer.score.head_reduce
+        semantic_details:
+          operators: [index_head_reduce]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.compressed_score}
+      - {id: block_scores, label: "one score per complete block", shape: io, semantic_op: qsa_indexer.score.output}
+    edges:
+      - {from: index_query, to: mqa_dot, dtype: bf16}
+      - {from: compressed_keys, to: mqa_dot, kind: residual, dtype: bf16}
+      - {from: mqa_dot, to: relu, dtype: fp32}
+      - {from: relu, to: head_reduce, dtype: fp32}
+      - {from: head_reduce, to: block_scores, dtype: fp32}
+
+  qsa_index_expand:
+    title: QSA selected-block expansion and causal tail
+    execution_contract: false
+    nodes:
+      - {id: selected_blocks, label: "Top-512 complete blocks", shape: io, semantic_op: qsa_indexer.expand.selected_blocks}
+      - id: block_expand
+        label: "expand each block to 4 token positions\n≤2048 tokens"
+        shape: elem
+        semantic_op: qsa_indexer.expand.block_to_token
+        semantic_details:
+          operators: [block_to_token_expand]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.expand_tail}
+      - id: causal_tail
+        label: "append incomplete causal tail\n≤3 tokens"
+        shape: elem
+        semantic_op: qsa_indexer.expand.causal_tail
+        semantic_details:
+          operators: [causal_tail_append]
+          runtime_mapping: {expectation: fused, owner: qsa_indexer.expand_tail}
+      - {id: selected_tokens, label: "selected full-token positions\n≤2051", shape: io, semantic_op: qsa_indexer.expand.output}
+    edges:
+      - {from: selected_blocks, to: block_expand, dtype: int32}
+      - {from: block_expand, to: causal_tail, dtype: int32}
+      - {from: causal_tail, to: selected_tokens, dtype: int32}
+
   moe:
     title: 512-expert routed + shared MoE
     nodes:
@@ -1184,6 +1579,7 @@ views:
         label: "Top-10 of 512 experts"
         shape: elem
         semantic_op: moe.topk
+        drill: moe_router_selection
         semantic_details:
           operators: [topk, selected_probability_renormalization]
           tensors:
@@ -1195,6 +1591,7 @@ views:
         label: "10 selected routed SwiGLU experts\n2560→640→2560"
         shape: moe
         semantic_op: moe.routed_experts
+        drill: moe_routed_expert
         semantic_details:
           operators: [swiglu_expert]
           math:
@@ -1208,6 +1605,7 @@ views:
         label: "always-on shared SwiGLU expert\n2560→640→2560 + scalar gate"
         shape: gemm
         semantic_op: moe.shared_expert
+        drill: moe_shared_expert
         semantic_details:
           operators: [swiglu_expert, sigmoid_scalar_gate]
           parameters:
@@ -1217,6 +1615,7 @@ views:
         label: weighted routed + shared combine
         shape: elem
         semantic_op: moe.combine
+        drill: moe_combine
         semantic_details:
           operators: [weighted_expert_sum, shared_expert_add]
           math:
@@ -1236,3 +1635,191 @@ views:
       - {from: routed_experts, to: combine, dtype: bf16}
       - {from: shared_expert, to: combine, dtype: bf16}
       - {from: combine, to: moe_out, shape: "[B,T,H]", dtype: bf16}
+
+  moe_router_selection:
+    title: MoE routed-expert selection and weight normalization
+    execution_contract: false
+    nodes:
+      - {id: router_logits, label: "FP32 router logits\n[B,T,512]", shape: io, semantic_op: moe.selection.input}
+      - id: topk
+        label: select Top-10 expert ids and logits
+        shape: elem
+        semantic_op: moe.selection.topk
+        semantic_details:
+          operators: [topk]
+          runtime_mapping: {expectation: fused, owner: moe.topk, reason: current profiles attribute selection as one router-support interval}
+      - id: selected_softmax
+        label: selected-expert probabilities
+        shape: elem
+        semantic_op: moe.selection.selected_softmax
+        semantic_details:
+          operators: [selected_probability_extract]
+          runtime_mapping: {expectation: fused, owner: moe.topk, reason: current profiles attribute selection as one router-support interval}
+      - id: renormalize
+        label: renormalize Top-10 weights to unit sum
+        shape: elem
+        semantic_op: moe.selection.renormalize
+        semantic_details:
+          operators: [selected_probability_renormalization]
+          math: ["p_e = exp(logit_e) / sum_{j in Top10} exp(logit_j)"]
+          runtime_mapping: {expectation: fused, owner: moe.topk, reason: current profiles attribute selection as one router-support interval}
+      - {id: selected_routes, label: "expert ids + normalized weights\n[B,T,10]", shape: io, semantic_op: moe.selection.output}
+    edges:
+      - {from: router_logits, to: topk, dtype: fp32}
+      - {from: topk, to: selected_softmax, dtype: fp32}
+      - {from: selected_softmax, to: renormalize, dtype: fp32}
+      - {from: renormalize, to: selected_routes, dtype: fp32}
+
+  moe_routed_expert:
+    title: One selected routed SwiGLU expert data flow
+    execution_contract: false
+    nodes:
+      - {id: expert_input, label: "dispatched selected-token activation\n[N_e,H]", shape: io, semantic_op: moe.routed_expert.input}
+      - id: gate_projection
+        label: "gate projection\n2560 → 640"
+        shape: gemm
+        semantic_op: moe.routed_expert.gate_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: current routed-expert aggregate owns the implementation decomposition}
+      - id: up_projection
+        label: "up projection\n2560 → 640"
+        shape: gemm
+        semantic_op: moe.routed_expert.up_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: current routed-expert aggregate owns the implementation decomposition}
+      - id: silu
+        label: SiLU gate activation
+        shape: elem
+        semantic_op: moe.routed_expert.silu
+        semantic_details:
+          operators: [silu]
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: current routed-expert aggregate owns the implementation decomposition}
+      - id: gated_product
+        label: "gated intermediate\nSiLU(gate) ⊙ up"
+        shape: elem
+        semantic_op: moe.routed_expert.gated_product
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: current routed-expert aggregate owns the implementation decomposition}
+      - id: down_projection
+        label: "down projection\n640 → 2560"
+        shape: gemm
+        semantic_op: moe.routed_expert.down_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: current routed-expert aggregate owns the implementation decomposition}
+      - {id: expert_output, label: "selected expert output\n[N_e,H]", shape: io, semantic_op: moe.routed_expert.output}
+    edges:
+      - {from: expert_input, to: gate_projection, dtype: bf16}
+      - {from: expert_input, to: up_projection, dtype: bf16}
+      - {from: gate_projection, to: silu, dtype: bf16}
+      - {from: silu, to: gated_product, dtype: bf16}
+      - {from: up_projection, to: gated_product, dtype: bf16}
+      - {from: gated_product, to: down_projection, dtype: bf16}
+      - {from: down_projection, to: expert_output, dtype: bf16}
+
+  moe_shared_expert:
+    title: Always-on shared SwiGLU expert and scalar gate
+    execution_contract: false
+    nodes:
+      - {id: shared_input, label: "shared-expert input\n[B,T,H]", shape: io, semantic_op: moe.shared_expert.input}
+      - id: gate_projection
+        label: "gate projection\n2560 → 640"
+        shape: gemm
+        semantic_op: moe.shared_expert.gate_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: up_projection
+        label: "up projection\n2560 → 640"
+        shape: gemm
+        semantic_op: moe.shared_expert.up_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: silu
+        label: SiLU gate activation
+        shape: elem
+        semantic_op: moe.shared_expert.silu
+        semantic_details:
+          operators: [silu]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: gated_product
+        label: "gated intermediate\nSiLU(gate) ⊙ up"
+        shape: elem
+        semantic_op: moe.shared_expert.gated_product
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: down_projection
+        label: "down projection\n640 → 2560"
+        shape: gemm
+        semantic_op: moe.shared_expert.down_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: scalar_gate_projection
+        label: "shared-expert scalar gate\n2560 → 1"
+        shape: gemm
+        semantic_op: moe.shared_expert.scalar_gate_projection
+        semantic_details:
+          operators: [linear_projection]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: scalar_sigmoid
+        label: sigmoid shared-expert gate
+        shape: elem
+        semantic_op: moe.shared_expert.scalar_sigmoid
+        semantic_details:
+          operators: [sigmoid]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - id: gated_shared_output
+        label: scalar-gated shared-expert output
+        shape: elem
+        semantic_op: moe.shared_expert.gated_output
+        semantic_details:
+          operators: [elementwise_multiply]
+          runtime_mapping: {expectation: fused, owner: moe.shared_expert, reason: current shared-expert aggregate owns the implementation decomposition}
+      - {id: shared_output, label: "gated shared output\n[B,T,H]", shape: io, semantic_op: moe.shared_expert.output}
+    edges:
+      - {from: shared_input, to: gate_projection, dtype: bf16}
+      - {from: shared_input, to: up_projection, dtype: bf16}
+      - {from: gate_projection, to: silu, dtype: bf16}
+      - {from: silu, to: gated_product, dtype: bf16}
+      - {from: up_projection, to: gated_product, dtype: bf16}
+      - {from: gated_product, to: down_projection, dtype: bf16}
+      - {from: shared_input, to: scalar_gate_projection, dtype: bf16}
+      - {from: scalar_gate_projection, to: scalar_sigmoid, dtype: bf16}
+      - {from: down_projection, to: gated_shared_output, dtype: bf16}
+      - {from: scalar_sigmoid, to: gated_shared_output, kind: dashed, label: scalar gate}
+      - {from: gated_shared_output, to: shared_output, dtype: bf16}
+
+  moe_combine:
+    title: Routed-expert weighting and shared-expert merge
+    execution_contract: false
+    nodes:
+      - {id: routed_outputs, label: "selected routed outputs\n[B,T,10,H]", shape: io, semantic_op: moe.combine.routed_outputs}
+      - {id: route_weights, label: "normalized Top-10 weights\n[B,T,10]", shape: io, semantic_op: moe.combine.route_weights}
+      - {id: shared_output, label: "gated shared output\n[B,T,H]", shape: io, semantic_op: moe.combine.shared_output}
+      - id: weighted_sum
+        label: weighted sum across 10 routed experts
+        shape: elem
+        semantic_op: moe.combine.weighted_sum
+        semantic_details:
+          operators: [weighted_expert_sum]
+          runtime_mapping: {expectation: fused, owner: moe.combine, reason: current combine aggregate owns routing weights and epilogue}
+      - id: shared_add
+        label: add always-on shared-expert result
+        shape: elem
+        semantic_op: moe.combine.shared_add
+        semantic_details:
+          operators: [shared_expert_add]
+          runtime_mapping: {expectation: fused, owner: moe.combine, reason: current combine aggregate owns routing weights and epilogue}
+      - {id: moe_output, label: "MoE output\n[B,T,H]", shape: io, semantic_op: moe.combine.output}
+    edges:
+      - {from: routed_outputs, to: weighted_sum, dtype: bf16}
+      - {from: route_weights, to: weighted_sum, dtype: fp32}
+      - {from: weighted_sum, to: shared_add, dtype: bf16}
+      - {from: shared_output, to: shared_add, dtype: bf16}
+      - {from: shared_add, to: moe_output, dtype: bf16}

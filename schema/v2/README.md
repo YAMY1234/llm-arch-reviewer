@@ -47,18 +47,32 @@ implementation-independent formulas, tensor contracts, parameter counts and
 sharing, persistent state/cache lifecycle, and semantic provenance. These
 details do not enter the Execution IR fingerprint. Starting with semantic
 revision 3, the compiler requires `semantic_coverage` to record parameter,
-state, layer/optional-path, and architecture-bearing config-field closure. The
-default graph should remain compact; repeated identical layers, heads, and
-experts are represented by one node plus count/placement detail or a drill
-view, not by cloning every instance.
+state, layer/optional-path, and architecture-bearing config-field closure.
+Starting with semantic revision 4, it additionally requires
+`operator_dataflow_closure` and rejects a multi-operator leaf unless that node
+drills into primitive semantic nodes. The default graph should remain compact;
+repeated identical layers, heads, and experts are represented by one node plus
+count/placement detail or a drill view, not by cloning every instance.
+
+A primitive drill view that refines only stable Model IR math sets
+`execution_contract: false`. The compiler excludes that view, and any parent
+drill link to it, from the Execution fingerprint. This permits a semantic
+correction or enrichment to preserve the already validated parallelism,
+placement, layout, and collective contract.
 
 When a semantic drill contains runtime-bearing leaves,
 `semantic_details.runtime_mapping` declares whether each leaf is `measured`, a
-`fused_state` owned by another leaf, or `structural`. This is a Model IR
+fused mathematical primitive (`fused`), a fused cache/state boundary
+(`fused_state`) owned by another leaf, or `structural`. This is a Model IR
 expectation, not a framework mapping: concrete symbols remain in Binding and
 measured intervals remain in Profile/Timeline artifacts. Adding a measured
 leaf therefore requires mapping reconciliation even when the structural
 Execution fingerprint is unchanged.
+
+The compiler may materialize a missing `fused`/`fused_state` profile cell from
+that reviewed owner contract. It shares the owner's interval and never creates
+or copies measured time. A new `measured` leaf always requires fresh Binding
+and Profile evidence.
 
 Fused kernels remain an implementation/profile overlay. `status: fused` plus
 `included_in` is compiled into a `fusion_group` covering two or more stable IR
