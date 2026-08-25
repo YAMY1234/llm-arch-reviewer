@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -114,6 +115,65 @@ def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) ->
                     f"{source}: compound Model IR leaf {target} contains "
                     f"{len(operators)} operators; split it into primitive nodes "
                     "or add a drill view"
+                )
+
+
+_DIMENSION_TRANSFORM_IN_LABEL = re.compile(
+    r"(?:\[[A-Z0-9_, ×]+\]|(?:\d+|[A-Z][A-Za-z0-9_]*)(?:\s*×\s*(?:\d+|[A-Z][A-Za-z0-9_]*))?)"
+    r"\s*→\s*(?:\[[A-Z0-9_, ×]+\]|\d+|[A-Z][A-Za-z0-9_]*)"
+)
+_SIGNATURE_SYMBOL = re.compile(
+    r"(?<![A-Za-z0-9_])[A-Z][A-Za-z0-9_]*(?![A-Za-z0-9_])"
+)
+
+
+def _validate_notation_contract(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Keep tensor layouts, operator transforms, and visual classes orthogonal."""
+
+    if int(model_ir.get("semantic_revision") or 0) < 6:
+        return
+    dimensions = model_ir.get("dimensions")
+    if not isinstance(dimensions, dict) or not dimensions:
+        raise CatalogError(
+            f"{source}: semantic_revision>=6 requires a non-empty dimensions mapping"
+        )
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            target = f"{view_id}.{node.get('id', '<missing>')}"
+            signature = node.get("operator_signature")
+            if signature is not None:
+                if not isinstance(signature, dict) or not signature.get("symbolic"):
+                    raise CatalogError(
+                        f"{source}: node {target} operator_signature requires symbolic"
+                    )
+                if signature.get("concrete") is not None and not isinstance(
+                    signature["concrete"], str
+                ):
+                    raise CatalogError(
+                        f"{source}: node {target} operator_signature.concrete must be a string"
+                    )
+                undeclared = sorted(
+                    set(_SIGNATURE_SYMBOL.findall(signature["symbolic"]))
+                    - set(dimensions)
+                )
+                if undeclared:
+                    raise CatalogError(
+                        f"{source}: node {target} operator_signature uses undeclared "
+                        f"dimension symbols {undeclared}"
+                    )
+            if _DIMENSION_TRANSFORM_IN_LABEL.search(str(node.get("label") or "")):
+                raise CatalogError(
+                    f"{source}: node {target} embeds a dimension transform in label; "
+                    "move it to operator_signature"
+                )
+        for edge in view.get("edges", []) or []:
+            if edge.get("kind", "data") == "control":
+                continue
+            if not edge.get("shape") or not edge.get("dtype"):
+                raise CatalogError(
+                    f"{source}: tensor-carrying edge {view_id}."
+                    f"{edge.get('from')}->{edge.get('to')} requires shape and dtype; "
+                    "mark non-tensor dependencies as kind=control"
                 )
 
 
@@ -763,6 +823,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     _node_index(model_ir["views"], source=model_path)
     _validate_semantic_coverage(model_ir, source=model_path)
     _validate_operator_granularity(model_ir, source=model_path)
+    _validate_notation_contract(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"

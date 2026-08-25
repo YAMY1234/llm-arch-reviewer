@@ -31,6 +31,20 @@ Model IR 负责表达与代码实现无关的稳定语义：
 
 Model IR 应根据 model config、模型规范或论文以及 source review 起草，然后经过人工 review。它**不能由某一次 trace 生成**。
 
+#### Shape notation 与视觉语法
+
+Model IR 必须把三种容易混淆的信息分开保存：
+
+- **tensor layout** 写在 data edge 上，使用已声明的 symbolic dimensions，例如 `[B,T,H] · bf16`；
+- **operator transform** 写在节点的结构化 `operator_signature` 中，先显示 symbolic signature，再显示模型解析后的 concrete signature，例如 `H → E  (2560 → 512)`；
+- 节点的 `shape` 字段只表示 viewer visual class，不表示 tensor shape。右侧详情应将它标为 `visual class`。
+
+所有 dimension symbol 必须在 Model IR 顶层 `dimensions` 中声明。主图和 drill view 不得在 label 中手写裸的 `2560 → 640`；如果模型配置可以解析数值，signature 同时保存 symbolic 和 concrete 两种形式。普通 data edge 必须有 shape 和 dtype；residual、cache/state read/write 也必须携带对应 tensor contract；纯 control edge必须显式标记为 `control`，不能伪装成没有 shape 的 data edge。
+
+Viewer 使用正交的视觉通道：填充色表示 operator family；几何形状表示 compute、tensor boundary、persistent state/cache 或 composite/drillable role；实线、residual、cache read/write 和 control 线表示 edge role；蓝色外框只表示 selected。Profile heat 使用独立的 heat bar/halo，不能覆盖 operator-family 颜色。Viewer 必须提供可访问的 legend，所有颜色、glyph 和 line style 由共享 compiler/viewer policy 生成，禁止 model-specific viewer 分支。
+
+`operator_signature` 以及等价的 symbolic/concrete 拼写调整属于语义展示 metadata，不改变 Execution fingerprint。Edge shape、dtype、layout、edge role、placement 和 collective contract 属于结构 contract；补上过去缺失的 contract 或改变其语义时，即使 runtime implementation 尚未变化，也必须产生新的 fingerprint。
+
 #### Repeated layer 与展开规则
 
 - 重复 layer stack 默认折叠，只显示 layer 数量和稳定排列规律，不为每个 layer instance 复制一张图。
@@ -168,7 +182,7 @@ Manifest 是唯一的 orchestration input。任何 builder 都不能静默替换
 1. 阅读 model config 和稳定架构定义。
 2. 先画一张简洁的默认图，再为有意义的重复 layer 类型和 stateful module 提供 drill view。重复结构只表达一次并标明 count/placement；不要复制相同 layer、attention head 或 expert。
 3. 对每个会影响架构的 config field，明确归类为 Model IR、Execution IR、Binding/Profile evidence，或“显式排除”。Construction source 用于消除歧义和验证语义，不能把某个 framework 当前的 call graph 复制成架构。
-4. 分配稳定 ID 和 symbolic shape/dtype contract。对重要节点补充结构化 `semantic_details`：logical operator/公式、参数 shape/count 与共享关系、持久 state/cache 生命周期，以及 placement/optional-path 条件。Kernel、backend 和 fusion 不进入这里。Model IR 的**叶子节点必须是稳定的数学或数据流原语**，而不是某个实现的 fusion 边界。带参数的变换、非线性、reduction/selection、语义上的 fork/join，以及持久 state update，都必须在 drill view 中分别可见。例如一个融合了 `down projection + SiLU + up projection + sigmoid + branch reduction` 的 kernel，仍然映射到五个 Model IR 节点。纯 reshape/view、launch、tiling、allocator 和 framework scheduling helper，如果没有改变 tensor、communication 或 state contract，可以只留在 Binding/Timeline evidence 中。
+4. 分配稳定 ID 和 symbolic shape/dtype contract。每个 operator transform 使用结构化 `operator_signature`，例如 `H → I  (2560 → 640)`；每条 data edge 使用完整 tensor layout 和 dtype，例如 `[B,T,H] · bf16`。对重要节点补充结构化 `semantic_details`：logical operator/公式、参数 shape/count 与共享关系、持久 state/cache 生命周期，以及 placement/optional-path 条件。Kernel、backend 和 fusion 不进入这里。Model IR 的**叶子节点必须是稳定的数学或数据流原语**，而不是某个实现的 fusion 边界。带参数的变换、非线性、reduction/selection、语义上的 fork/join，以及持久 state update，都必须在 drill view 中分别可见。例如一个融合了 `down projection + SiLU + up projection + sigmoid + branch reduction` 的 kernel，仍然映射到五个 Model IR 节点。纯 reshape/view、launch、tiling、allocator 和 framework scheduling helper，如果没有改变 tensor、communication 或 state contract，可以只留在 Binding/Timeline evidence 中。
 5. 在开始 runtime 工作之前关闭五本账：
    - **data-flow closure：** 每个 semantic input/output、residual、cache read 和 state update 都有明确 owner 与 edge；
    - **variant closure：** 每种不同 layer type 和 optional model path 只表达一次，并明确 placement rule；
@@ -450,6 +464,7 @@ python3 scripts/run_pipeline_v2.py \
 
 - 所有 document 通过 JSON Schema 和 cross-document reference check。
 - Model IR ID 稳定，所有 drill target 都能解析。
+- 所有 dimension symbol 已声明；operator transform 不再混入 label；所有非 control 的 data/residual/state edge 都有 shape/dtype；viewer legend、operator-family color、glyph、selection 和 heat channel 通过共享视觉语法检查。
 - 每个 architecture-bearing config field 都有明确归类，不能被静默丢弃。
 - Model IR 对其声明 scope 通过 data-flow、layer/optional variant、parameter 和 persistent state/cache closure；刻意不包含的 path 必须写明原因。
 - 自动生成的 semantic closure report 必须为 `complete`：pinned source digest 一致，所有 source member 和 obligation 均已归类，Source→IR 与 IR→Source 双向闭包通过，并且不存在 compound primitive target。

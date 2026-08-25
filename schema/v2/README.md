@@ -54,6 +54,16 @@ drills into primitive semantic nodes. The default graph should remain compact;
 repeated identical layers, heads, and experts are represented by one node plus
 count/placement detail or a drill view, not by cloning every instance.
 
+Starting with semantic revision 6, Model IR follows the notation contract:
+operator transforms are stored as `operator_signature.symbolic` plus optional
+model-resolved `operator_signature.concrete`; tensor layout and dtype are stored
+on edges; and node `shape` remains a visual class only. Every tensor-carrying
+edge, including residual and cache/state access, requires shape and dtype; a
+non-tensor dependency must be explicitly marked `kind: control`. The compiler
+also rejects undeclared signature symbols and dimension transforms embedded
+directly in labels so that the shared viewer can render one consistent
+symbolic-plus-concrete form across models.
+
 A primitive drill view that refines only stable Model IR math sets
 `execution_contract: false`. The compiler excludes that view, and any parent
 drill link to it, from the Execution fingerprint. This permits a semantic

@@ -47,6 +47,40 @@ Model IR owns code-independent semantics:
 It is drafted from the model config, model specification or paper, and source
 review, then human-reviewed. It is **not generated from a single trace**.
 
+#### Shape notation and visual grammar
+
+Model IR stores three otherwise-confusable concepts separately:
+
+- **tensor layouts** live on data edges and use declared symbolic dimensions,
+  for example `[B,T,H] · bf16`;
+- **operator transforms** live in structured `operator_signature` metadata and
+  render symbolic first and model-resolved concrete second, for example
+  `H → E  (2560 → 512)`;
+- a node's `shape` field is only its viewer visual class, never a tensor shape.
+  The detail panel labels it `visual class`.
+
+Every dimension symbol must be declared in the Model IR `dimensions` mapping.
+Labels in overview and drill views may not embed raw transforms such as
+`2560 → 640`. When config values resolve a signature, both symbolic and
+concrete forms are stored. Every ordinary data edge has shape and dtype;
+residual and cache/state read-write edges also carry their tensor contract;
+pure scheduling edges are explicitly `control`, not shape-less data edges.
+
+The viewer uses orthogonal visual channels: fill color is operator family;
+geometry is compute, tensor boundary, persistent state/cache, or
+composite/drillable role; line style is data, residual, cache read/write, or
+control; a blue outline is selection only. Profile heat uses a separate heat
+bar or halo and never replaces the operator-family color. An accessible legend
+is required. The shared compiler/viewer policy owns colors, glyphs, and line
+styles; model-specific viewer branches are forbidden.
+
+`operator_signature` and equivalent symbolic/concrete spelling changes are
+semantic presentation metadata and do not alter the Execution fingerprint.
+Edge shape, dtype, layout, edge role, placement, and collective contracts are
+structural: adding a previously missing contract or changing its meaning must
+produce a new fingerprint, even when the runtime implementation has not yet
+changed.
+
 #### Repeated layers and drill-down
 
 - A repeated layer stack is collapsed by default. It shows the layer count and
@@ -262,7 +296,10 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
    Model IR, Execution IR, Binding/Profile evidence, or explicitly excluded.
    Use construction source to resolve and verify semantics, never to copy the
    current framework call graph.
-4. Assign stable IDs and symbolic shape/dtype contracts. Add structured
+4. Assign stable IDs and symbolic shape/dtype contracts. Store every operator
+   transform as structured `operator_signature` metadata, for example
+   `H → I  (2560 → 640)`, and every data edge as a complete tensor layout plus
+   dtype, for example `[B,T,H] · bf16`. Add structured
    `semantic_details` where they matter: logical operators or formulas,
    parameter shapes/counts and sharing, persistent state/cache lifecycle, and
    placement/optional-path conditions. Keep kernel/backend/fusion details out.
@@ -729,6 +766,10 @@ never copied into another merely because their Model IR nodes share names.
 
 - All documents pass their JSON schema and cross-document reference checks.
 - Model IR IDs are stable and every drill target resolves.
+- Every dimension symbol is declared; operator transforms are absent from
+  labels; every non-control data/residual/state edge has shape and dtype; and
+  the shared legend, operator-family color, glyph, selection, and heat-channel
+  visual grammar validates.
 - Every architecture-bearing config field has an explicit disposition; no
   field is silently dropped.
 - Model IR passes data-flow, layer/optional-variant, parameter, and persistent

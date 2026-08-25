@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from llm_arch_v2.compiler import (  # noqa: E402
     CatalogError,
+    _validate_notation_contract,
     apply_execution_plan,
     compile_catalog,
     compile_profile,
@@ -103,7 +104,7 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     model_ir = bundle["model_ir"]
 
-    assert model_ir["semantic_revision"] == 5
+    assert model_ir["semantic_revision"] == 6
     assert model_ir["semantic_coverage"]["operator_dataflow_closure"] == (
         "complete_against_pinned_source_089f8ac"
     )
@@ -130,6 +131,23 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     )
     assert "qsa_indexer" in model_ir["views"]
 
+    assert model_ir["dimensions"]["H"] == 2560
+    assert model_ir["dimensions"]["E"] == "512 routed experts"
+    assert model_ir["dimensions"]["I"] == "640 expert intermediate dimension"
+    router = next(
+        node for node in model_ir["views"]["moe"]["nodes"] if node["id"] == "router"
+    )
+    assert router["operator_signature"] == {
+        "symbolic": "H → E",
+        "concrete": "2560 → 512",
+    }
+    for view in model_ir["views"].values():
+        for edge in view.get("edges", []):
+            if edge.get("kind", "data") == "control":
+                continue
+            assert edge.get("shape")
+            assert edge.get("dtype")
+
     qsa_indexer = next(
         node
         for node in model_ir["views"]["qsa_attention"]["nodes"]
@@ -146,7 +164,6 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     assert gdn_state["semantic_details"]["state"][0]["shape"] == (
         "[B,48,128,128]"
     )
-
     moe = next(
         node
         for node in model_ir["views"]["full_layer"]["nodes"]
@@ -155,12 +172,43 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     assert moe["semantic_details"]["parameters"]["total"] == 2522810880
 
 
+def test_notation_contract_rejects_undeclared_symbols_and_untyped_edges() -> None:
+    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    broken = copy.deepcopy(model_ir)
+    broken["views"]["moe"]["nodes"][1]["operator_signature"]["symbolic"] = (
+        "H → UNKNOWN"
+    )
+    with pytest.raises(CatalogError, match="undeclared dimension symbols"):
+        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+
+    broken = copy.deepcopy(model_ir)
+    del broken["views"]["moe"]["edges"][0]["dtype"]
+    with pytest.raises(CatalogError, match="tensor-carrying edge"):
+        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+
+
+def test_operator_signature_does_not_change_execution_fingerprint() -> None:
+    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    plan = load_yaml(QWEN40_ROOT / "execution_paths" / "tp_only.yaml")
+    baseline_views = apply_execution_plan(model_ir, plan, source=QWEN40_ROOT)
+    baseline = execution_fingerprint(model_ir, plan, baseline_views)
+
+    relabeled = copy.deepcopy(model_ir)
+    relabeled["views"]["moe"]["nodes"][1]["operator_signature"]["concrete"] = (
+        "resolved elsewhere"
+    )
+    relabeled_views = apply_execution_plan(relabeled, plan, source=QWEN40_ROOT)
+    assert execution_fingerprint(relabeled, plan, relabeled_views) == baseline
+
+
 def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     model_views = bundle["model_ir"]["views"]
 
-    # Semantic-only drill enrichment must not create a new execution contract.
-    assert bundle["default_execution_variant"] == "exec_6de296eb5b2f6680"
+    # Revision 6 closes previously missing tensor-edge contracts. Its new
+    # fingerprint is the stable baseline; operator_signature itself remains
+    # presentation/semantic metadata and is excluded from the payload.
+    assert bundle["default_execution_variant"] == "exec_d26e4c11cac590d4"
 
     mix_gate = next(
         node

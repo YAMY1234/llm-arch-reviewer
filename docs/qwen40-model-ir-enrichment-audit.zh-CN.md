@@ -11,7 +11,13 @@
 - 明确 HC mix 与 combine 的公式和输入边界；
 - 明确 GDN fixed-size conv/recurrent state、QSA token-growing cache、PLE fixed-size side state；
 - 记录语义 reference 和 snapshot caveat；
-- 保留 `ir_version=2` 的 execution-topology identity；完整 source-obligation closure 将 `semantic_revision` 提升到 5。Compiler 从 revision 4 开始拒绝没有 drill view 的 multi-operator leaf。新增的 fused primitive 显式共享已有 timing owner，不复制时间，也不会无意义地使已有 Execution IR fingerprint 失效。
+- 保留 `ir_version=2` 的 execution-topology generation；完整 source-obligation closure 在 revision 5 完成，revision 6 增加统一的 shape/operator notation、视觉语法，并关闭过去缺失的 tensor-edge contract。纯 `operator_signature` 展示不进入 Execution fingerprint；本轮补齐的 edge shape/dtype/role 属于结构 contract，因此建立新的 fingerprint baseline。Compiler 从 revision 4 开始拒绝没有 drill view 的 multi-operator leaf；从 revision 6 开始拒绝 label 中的裸 dimension transform、未声明的 signature symbol，以及缺少 shape/dtype 的 tensor edge。新增的 fused primitive显式共享已有 timing owner，不复制时间。
+
+## Revision 6 的统一 notation
+
+图上的三类信息现在严格分离：edge 只表达 tensor layout 与 dtype；节点标题只表达算子语义；线性/投影等 operator transform 由结构化 `operator_signature` 统一渲染为 symbolic-first、concrete-second，例如 `H → E  (2560 → 512)`。`R=4`、`L=320`、`I=640`、`E=512` 等复用维度统一在顶层 `dimensions` 声明，主图与 drill view 不再混用 `[B,T,4,H]`、`[B,T,10240]` 和裸 `2560 → 640`。
+
+视觉通道也彼此独立：node fill/glyph 表示 operator family 与结构角色，edge line style 表示 data/residual/cache/control，蓝色外框只表示 selected，profile heat 使用独立细条而不覆盖 operator color。共享 viewer 中的 legend 是该约定的可见说明；模型 catalog 不允许添加专用颜色或专用 viewer 分支。
 
 ## Revision 5 的完整闭包
 

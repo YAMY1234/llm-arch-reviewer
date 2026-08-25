@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-25-selection-sync-v2" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-25-notation-contract-v1" />
 <title>llm-arch-reviewer</title>
 <style>
   /* PDF 风浅色主题 */
@@ -144,6 +144,35 @@
     width: 100%; height: 100%; pointer-events: none;
     background: var(--bg);
   }
+  .architecture-legend {
+    position: absolute; top: 8px; right: 8px; z-index: 8;
+    width: 250px; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 6px; background: rgba(255,255,255,.96);
+    box-shadow: 0 2px 8px rgba(31,35,40,.08); font-size: 10px;
+  }
+  .architecture-legend summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+  .architecture-legend-grid {
+    display: grid; grid-template-columns: 15px 1fr; gap: 5px 7px;
+    align-items: center; margin-top: 8px; color: var(--muted);
+  }
+  .arch-swatch { width: 13px; height: 10px; border: 1.5px solid var(--border2); background: white; }
+  .arch-swatch.gemm { border-color: var(--gemm); background: var(--gemm-fill); }
+  .arch-swatch.norm { border-color: var(--norm); background: var(--norm-fill); clip-path: polygon(20% 0,80% 0,100% 50%,80% 100%,20% 100%,0 50%); }
+  .arch-swatch.elem { border-color: var(--elem); background: var(--elem-fill); border-radius: 5px; }
+  .arch-swatch.attn { border-color: var(--attn); background: var(--attn-fill); }
+  .arch-swatch.moe { border-color: var(--moe); background: var(--moe-fill); }
+  .arch-swatch.state { border-color: var(--cache); background: var(--cache-fill); border-radius: 5px; }
+  .arch-swatch.boundary { border-color: var(--io); border-style: dashed; transform: skew(-12deg); }
+  .arch-swatch.heat { width: 5px; border: 0; background: linear-gradient(var(--warn) 0 50%, var(--hot) 50%); }
+  .arch-swatch.selected { border: 2px solid var(--link); box-shadow: 0 0 3px rgba(9,105,218,.5); }
+  .arch-line { width: 14px; height: 0; border-top: 2px solid var(--border2); }
+  .arch-line.residual { border-color: var(--swa); border-top-style: dashed; }
+  .arch-line.state { border-color: var(--warn); border-top-style: dashed; }
+  .arch-line.control { border-color: var(--muted); border-top-style: dotted; }
+  .architecture-legend-note {
+    grid-column: 1 / -1; padding-top: 4px; border-top: 1px solid var(--border);
+    font: 9px ui-monospace, monospace; line-height: 1.35;
+  }
 
   #timeline-pane { display: flex; flex-direction: column; background: var(--panel); }
   .timeline-toolbar {
@@ -255,8 +284,9 @@
 
   .node.drillable { cursor: pointer; }
   .node.drillable:hover .node-bg { stroke-width: 3; filter: brightness(0.97); }
-  .node.heat-warm .node-bg { stroke: var(--warn); }
-  .node.heat-hot  .node-bg { stroke: var(--hot); stroke-width: 2.4; }
+  .node-heat-bar { pointer-events: none; }
+  .node-heat-bar.heat-warm { fill: var(--warn); }
+  .node-heat-bar.heat-hot  { fill: var(--hot); }
 
   .node-label { font-size: 11px; fill: var(--text); }
   .node-label.title { font-weight: 600; font-size: 12px; }
@@ -276,6 +306,7 @@
   .edge.kind-cache_read path { stroke: var(--warn); stroke-dasharray: 4 2; }
   .edge.kind-cache_read path.arrow { fill: var(--warn); }
   .edge.kind-dashed path { stroke-dasharray: 5 3; }
+  .edge.kind-control path { stroke: var(--muted); stroke-dasharray: 2 4; }
 
   .edge-label {
     font-size: 10px; fill: var(--muted);
@@ -286,7 +317,10 @@
 
   .edge-label-bg { fill: var(--bg); }
 
-  .selected .node-bg { stroke: var(--link) !important; stroke-width: 3 !important; }
+  .selected .node-bg {
+    stroke: var(--link) !important; stroke-width: 3 !important;
+    filter: drop-shadow(0 0 3px rgba(9,105,218,.45));
+  }
 
   /* 多 view 容器 */
   .view-frame {
@@ -435,6 +469,25 @@
 
 <main id="workspace" class="mode-architecture">
   <section id="architecture-pane">
+    <details class="architecture-legend">
+      <summary>visual legend</summary>
+      <div class="architecture-legend-grid">
+        <i class="arch-swatch gemm"></i><span>linear / GEMM</span>
+        <i class="arch-swatch norm"></i><span>normalization</span>
+        <i class="arch-swatch elem"></i><span>elementwise / reduction</span>
+        <i class="arch-swatch attn"></i><span>attention</span>
+        <i class="arch-swatch moe"></i><span>MoE composite</span>
+        <i class="arch-swatch state"></i><span>persistent state / cache</span>
+        <i class="arch-swatch boundary"></i><span>tensor / structural boundary</span>
+        <i class="arch-swatch heat"></i><span>heat bar: warm / hot</span>
+        <i class="arch-swatch selected"></i><span>blue outline: selected</span>
+        <i class="arch-line"></i><span>solid edge: tensor data</span>
+        <i class="arch-line residual"></i><span>green dashed: residual/state bypass</span>
+        <i class="arch-line state"></i><span>amber dashed: cache/state access</span>
+        <i class="arch-line control"></i><span>dotted: control only, no tensor</span>
+        <span class="architecture-legend-note">edge = tensor layout · dtype<br>node second line = symbolic transform (concrete transform)</span>
+      </div>
+    </details>
     <svg id="svg-host" xmlns="http://www.w3.org/2000/svg"
        viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
     <defs>
@@ -1645,6 +1698,7 @@ function drawNode(root, n, c, viewName) {
 
   // background shape
   drawShape(g, kind, c.width, c.height);
+  if (heat) drawHeatBar(g, heat, c.height);
 
   // label (multi-line)
   const lbl = profileNodeLabel(n, viewName);
@@ -1806,6 +1860,15 @@ function drawShape(g, kind, w, h) {
   }
   bg.setAttribute("class", "node-bg");
   g.appendChild(bg);
+}
+
+function drawHeatBar(g, heat, h) {
+  const bar = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  bar.setAttribute("class", `node-heat-bar ${heat}`);
+  bar.setAttribute("x", 3); bar.setAttribute("y", 4);
+  bar.setAttribute("width", 4); bar.setAttribute("height", Math.max(8, h - 8));
+  bar.setAttribute("rx", 2); bar.setAttribute("ry", 2);
+  g.appendChild(bar);
 }
 
 // ============================================================
@@ -3296,12 +3359,19 @@ function nodeCell(n, viewName) {
 function profileNodeLabel(n, viewName) {
   const cell = nodeCell(n, viewName);
   const base = cell?.display_label || n.label || n.id;
+  const signature = n.operator_signature || null;
+  const signatureLine = signature?.symbolic
+    ? `${signature.symbolic}${signature.concrete ? `  (${signature.concrete})` : ""}`
+    : "";
+  const semanticBase = signatureLine && !base.includes(signatureLine)
+    ? `${base}\n${signatureLine}`
+    : base;
   const communication = cell?.communication;
   const kinds = [...new Set((communication?.observed_collectives || []).map(item =>
     String(item.kind || "").replaceAll("_", "-")
-  ).filter(kind => kind && !base.toLowerCase().includes(kind.toLowerCase())))];
-  if (!kinds.length) return base;
-  return `${base}\nobserved: ${kinds.join(" + ")}`;
+  ).filter(kind => kind && !semanticBase.toLowerCase().includes(kind.toLowerCase())))];
+  if (!kinds.length) return semanticBase;
+  return `${semanticBase}\nobserved: ${kinds.join(" + ")}`;
 }
 
 function nodeStateSummary(cell) {
@@ -3706,7 +3776,8 @@ function showDetail(n, viewName) {
     ${timelineBtn}
     <div class="kv">
       <div class="k">id</div><div>${escapeHtml(n.id)}</div>
-      <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
+      <div class="k">visual class</div><div>${escapeHtml(n.shape || "")}</div>
+      ${n.operator_signature?.symbolic ? `<div class="k">operator signature</div><div>${escapeHtml(n.operator_signature.symbolic)}${n.operator_signature.concrete ? ` (${escapeHtml(n.operator_signature.concrete)})` : ""}</div>` : ""}
       <div class="k">IR layer</div><div>${escapeHtml(n.ir_origin || (isV2Bundle() ? "model_ir" : "legacy"))}</div>
       <div class="k">node kind</div><div>${escapeHtml(n.node_kind || "semantic")}</div>
       ${n.boundary_role ? `<div class="k">boundary role</div><div>${escapeHtml(n.boundary_role)}</div>` : ""}
