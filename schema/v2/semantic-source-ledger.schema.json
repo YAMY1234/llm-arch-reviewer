@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "semantic-source-ledger.schema.json",
+  "title": "llm-arch-reviewer semantic source ledger",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "model_id",
+    "scope_id",
+    "source_snapshot",
+    "audit_views",
+    "entrypoints"
+  ],
+  "properties": {
+    "schema_version": {"const": "semantic-source-ledger.v1"},
+    "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "scope_id": {"type": "string", "minLength": 1},
+    "source_snapshot": {
+      "type": "object",
+      "required": ["repository", "revision", "files"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "git_blob_oid", "role"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "git_blob_oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "role": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "audit_views": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "entrypoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "component",
+          "source_file",
+          "symbol",
+          "anchor",
+          "review_status",
+          "expected_ir_views",
+          "obligations"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9_.-]+$"},
+          "component": {"type": "string", "minLength": 1},
+          "source_file": {"type": "string", "minLength": 1},
+          "symbol": {"type": "string", "minLength": 1},
+          "anchor": {"type": "string", "minLength": 1},
+          "review_status": {"enum": ["verified", "pending_review"]},
+          "variants": {"type": "array", "items": {"type": "string"}},
+          "expected_ir_views": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "member_dispositions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "disposition"],
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "disposition": {"enum": ["reviewed", "pending", "excluded"]},
+                "reason": {"type": "string"}
+              }
+            }
+          },
+          "obligations": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/obligation"}
+          },
+          "pending_reason": {"type": "string"}
+        }
+      }
+    },
+    "reverse_exclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "reason"],
+        "properties": {
+          "target": {"type": "string", "pattern": "^[^.]+\\.[^.]+$"},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "obligation": {
+      "type": "object",
+      "required": ["id", "kind", "source_anchor", "disposition"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_.-]+$"},
+        "kind": {
+          "enum": [
+            "model_ir_primitive",
+            "tensor_boundary",
+            "state_read",
+            "state_update",
+            "execution_ir",
+            "implementation_only",
+            "shape_only_omitted",
+            "training_only_excluded"
+          ]
+        },
+        "source_anchor": {"type": "string", "minLength": 1},
+        "disposition": {"enum": ["mapped", "excluded", "pending"]},
+        "ir_targets": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[^.]+\\.[^.]+$"}
+        },
+        "inputs": {"type": "array", "items": {"type": "string"}},
+        "outputs": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"}
+      }
+    }
+  }
+}

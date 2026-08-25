@@ -287,7 +287,22 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
      visible node or drills into visible primitive nodes; every fused runtime
      interval names one timing owner and all covered Model IR nodes, so timing
      is shared rather than repeated.
-6. Review the compact graph and its ledgers before attaching runtime data.
+6. Persist an external `semantic-source-ledger` against an immutable source
+   revision. It must enumerate the declared source files and architecture
+   entrypoints, classify every locally declared source member, and attach each
+   architecture-bearing obligation to a source anchor. Every obligation is
+   one of: Model IR primitive, tensor boundary, state read/update, Execution
+   IR, implementation-only, shape-only omission, or training-only exclusion.
+7. Run the fail-closed semantic closure audit in both directions. Source→IR
+   requires every obligation to map to a primitive target or a reasoned
+   exclusion. IR→Source requires every audited leaf to have pinned evidence or
+   a reasoned reverse exclusion. Multiple independent primitives mapped to one
+   Model IR leaf are a compound-target failure even when one runtime kernel
+   fuses them. Source blob OIDs, the ledger, and Model IR are fingerprinted;
+   changing any input invalidates the attestation.
+8. Review the compact graph, source ledger, and generated gap report before
+   editing Model IR or attaching runtime data. A self-declared `complete`
+   string in Model IR is not evidence and cannot satisfy this gate.
 
 The default view stays readable; semantic precision belongs in drill views,
 while repeated heads, experts, and identical layers remain symbolic rather than
@@ -713,6 +728,9 @@ never copied into another merely because their Model IR nodes share names.
 - Model IR passes data-flow, layer/optional-variant, parameter, and persistent
   state/cache closure for its declared scope. Any intentionally excluded path
   is named with a reason.
+- The generated semantic closure report is `complete`: pinned source digests
+  match, all source members and obligations are classified, Source→IR and
+  IR→Source closure both pass, and no compound primitive target remains.
 - Stable formulas, tensor contracts, weight sharing, state lifecycle, and
   placement conditions are visible in Model IR detail without depending on a
   framework trace.

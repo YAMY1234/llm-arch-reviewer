@@ -175,7 +175,9 @@ Manifest 是唯一的 orchestration input。任何 builder 都不能静默替换
    - **parameter closure：** 分项总和与声明的模型 scope 对齐，tied/shared weight 只计算一次；
    - **state closure：** 每个持久 tensor 都有 shape、已知 dtype、lifecycle、update rule 和是否随 context 增长。
    - **operator/data-flow closure：** 每个影响架构语义的 transform 都必须是可见节点，或能 drill 到可见的原语节点；每个 fused runtime interval 必须声明唯一 timing owner 和所有被覆盖的 Model IR 节点，时间共享但不能重复累计。
-6. 在附加任何 runtime data 之前，同时 review 简洁主图和五本账。
+6. 针对不可变 source revision 持久化一份外部 `semantic-source-ledger`。它必须枚举声明 scope 内的 source file 和 architecture entrypoint、归类每个本地声明的 source member，并让每个 architecture-bearing obligation 都带有 source anchor。每条 obligation 只能归为：Model IR primitive、tensor boundary、state read/update、Execution IR、implementation-only、shape-only omission 或 training-only exclusion。
+7. 双向运行 fail-closed semantic closure audit。Source→IR 要求每条 obligation 映射到原语节点或带理由排除；IR→Source 要求每个被审计 leaf 都有 pinned evidence 或带理由的 reverse exclusion。多个独立原语映射到同一个 Model IR leaf 时，即使 runtime 把它们融合成同一个 kernel，也必须判定为 compound-target failure。Source blob OID、ledger 和 Model IR 共同进入 audit fingerprint，任一输入变化都会使 attestation 失效。
+8. 在修改 Model IR 或附加 runtime data 之前，先 review 简洁主图、source ledger 和自动生成的 gap report。Model IR 中作者自行填写的 `complete` 字符串不是证据，不能通过该 gate。
 
 默认视图应保持易读；精度放在 drill view 中，重复的 head、expert 和相同 layer 仍用符号化方式表达，不复制几十份。多步公式不能只写在一个 compound leaf 的文字详情里。因此一张图即使 topology 正确，只要 ledger 不闭合，Stage 1 仍然不能通过。
 
@@ -449,6 +451,7 @@ python3 scripts/run_pipeline_v2.py \
 - Model IR ID 稳定，所有 drill target 都能解析。
 - 每个 architecture-bearing config field 都有明确归类，不能被静默丢弃。
 - Model IR 对其声明 scope 通过 data-flow、layer/optional variant、parameter 和 persistent state/cache closure；刻意不包含的 path 必须写明原因。
+- 自动生成的 semantic closure report 必须为 `complete`：pinned source digest 一致，所有 source member 和 obligation 均已归类，Source→IR 与 IR→Source 双向闭包通过，并且不存在 compound primitive target。
 - 稳定公式、tensor contract、weight sharing、state lifecycle 和 placement condition 可以直接从 Model IR detail 读取，不依赖任何 framework trace。
 - 编译后的 Execution IR fingerprint 与 Binding、Profile 一致。
 - Binding 中包含针对该 structural fingerprint、source revision、phase 和 execution path 的 passing eager-validation attestation。

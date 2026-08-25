@@ -1,0 +1,371 @@
+schema_version: semantic-source-ledger.v1
+model_id: qwen40
+scope_id: target_text_model_plus_eagle_mtp
+
+# Source is semantic evidence, not a framework-shaped Model IR.  This first
+# ledger intentionally remains fail-closed while each entrypoint is reviewed.
+source_snapshot:
+  repository: git@github.com:Qiaolin-Yu/sglang-qwen-next.git
+  revision: 089f8ac
+  files:
+    - path: python/sglang/srt/configs/qwen4_exp.py
+      git_blob_oid: 2a8d7892ec0ffa1c0b8a732db4ee8b682b169aa2
+      role: architecture-bearing configuration
+    - path: python/sglang/srt/models/qwen4_exp.py
+      git_blob_oid: 7182e338483ef21ecdbdf03e3f0d51475f59b28e
+      role: Qwen4 target model, PLE, layer orchestration, and QSA path
+    - path: python/sglang/srt/models/qwen4_exp_mtp.py
+      git_blob_oid: 6bb09f75f5469f586b3462e744acfe22c7d5f945
+      role: Qwen4 EAGLE auxiliary head
+    - path: python/sglang/srt/models/qwen3_5.py
+      git_blob_oid: dfcc30f5c36ab949217a54591dc2a73089f9c88e
+      role: inherited GatedDeltaNet and full-attention model semantics
+    - path: python/sglang/srt/models/qwen2_moe.py
+      git_blob_oid: f10d82ba3ab7aea1f2958c6df7a11bb646a90bd4
+      role: inherited routed and shared MoE semantics
+    - path: python/sglang/srt/layers/hyperconnection.py
+      git_blob_oid: c9fec3146339ce1bc536398bb21647e6238ff8ca
+      role: hyper-connection read and update equations
+    - path: python/sglang/srt/layers/attention/qsa/qsa_indexer.py
+      git_blob_oid: 9b117c68b436fabbc8f81015b943e36508030558
+      role: QSA compressed index construction and selection
+    - path: python/sglang/srt/speculative/eagle_worker.py
+      git_blob_oid: 983e550f76034d173b0deb3144e2bc393a21712f
+      role: EAGLE target-verify, accept, and draft-extend control flow
+    - path: python/sglang/srt/speculative/eagle_info.py
+      git_blob_oid: 819af16cdf804bd8bbd67720a5b0d4733603f1b4
+      role: EAGLE candidate tree and persistent proposal state contracts
+
+audit_views:
+  - top
+  - mtp_generation
+  - mtp_head
+  - mtp_layer
+  - mtp_qsa_attention
+  - mtp_moe
+  - stack
+  - linear_layer
+  - full_layer
+  - ple
+  - final_hyperconnection_read
+  - mtp_embedding_projection
+  - mtp_hidden_projection
+  - ple_grouped_norm_gate
+  - hyperconnection_mix
+  - hyperconnection_combine
+  - hyperconnection_read
+  - hyperconnection_update
+  - hyperconnection
+  - linear_attention
+  - qsa_attention
+  - qsa_indexer
+  - linear_causal_conv
+  - qsa_qk_norm_rope
+  - qsa_index_compress
+  - qsa_index_score
+  - qsa_index_expand
+  - moe
+  - moe_router_selection
+  - moe_routed_expert
+  - moe_shared_expert
+  - moe_combine
+
+entrypoints:
+  - id: qwen4_config
+    component: configuration and layer variants
+    source_file: python/sglang/srt/configs/qwen4_exp.py
+    symbol: Qwen4ExpTextConfig
+    anchor: "class Qwen4ExpTextConfig"
+    review_status: pending_review
+    expected_ir_views: [top, stack, linear_layer, full_layer, ple, qsa_indexer, moe]
+    obligations: []
+    pending_reason: every architecture-bearing config field still needs an explicit disposition and consumer
+
+  - id: target_model
+    component: target model outer data flow
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpModel
+    anchor: "class Qwen4ExpModel"
+    review_status: pending_review
+    expected_ir_views: [top, stack, final_hyperconnection_read]
+    obligations: []
+    pending_reason: embedding, decoder repetition, final HC read, final norm, LM head, and tied weights need source obligations
+
+  - id: ple_batch
+    component: PLE token context and state addressing
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: _prepare_ple_batch
+    anchor: "def _prepare_ple_batch("
+    review_status: pending_review
+    expected_ir_views: [ple]
+    variants: [prefill, decode, target_verify]
+    obligations: []
+    pending_reason: mode-specific context reads, valid-token masks, and state indices need separate dispositions
+
+  - id: ple_ngram_embedding
+    component: PLE N-gram hashing and embedding
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpNGramEmbedding
+    anchor: "class Qwen4ExpNGramEmbedding"
+    review_status: pending_review
+    expected_ir_views: [ple]
+    variants: [prefill, decode, target_verify, attention_dp]
+    obligations: []
+    pending_reason: hash, per-head vocabulary partition, embedding lookup, and context semantics need atomic review
+
+  - id: ple_grouped_norm
+    component: PLE grouped RMS normalization formula
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLEGroupedNorm
+    anchor: "class Qwen4ExpPLEGroupedNorm"
+    review_status: pending_review
+    expected_ir_views: [ple_grouped_norm_gate]
+    obligations: []
+    pending_reason: formula evidence must be linked to three distinct call-site semantics without duplicating operations
+
+  - id: ple_forward
+    component: PLE key/value, gate, short-conv, and residual data flow
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer.forward
+    anchor: "class Qwen4ExpPLELayer"
+    review_status: verified
+    member_dispositions:
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [ple, ple_grouped_norm_gate]
+    variants: [prefill, decode, target_verify]
+    obligations:
+      - id: key_projection
+        kind: model_ir_primitive
+        source_anchor: "key, _ = self.key_proj(embeddings)"
+        disposition: mapped
+        inputs: [ngram_embeddings]
+        outputs: [ple_key]
+        ir_targets: [ple.key_value_projection]
+      - id: value_projection
+        kind: model_ir_primitive
+        source_anchor: "value, _ = self.value_proj(embeddings)"
+        disposition: mapped
+        inputs: [ngram_embeddings]
+        outputs: [ple_value]
+        ir_targets: [ple.key_value_projection]
+      - id: key_grouped_norm
+        kind: model_ir_primitive
+        source_anchor: "key_normed = self._apply_ple_norm(self.norm_key, key)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.grouped_norm]
+      - id: query_grouped_norm
+        kind: model_ir_primitive
+        source_anchor: "query_normed = self._apply_ple_norm(self.norm_query, query)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.grouped_norm]
+      - id: gate_dot_reduce
+        kind: model_ir_primitive
+        source_anchor: "gate = (key_normed * query_normed).sum(dim=-1, keepdim=True)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.query_key_gate]
+      - id: gate_dimension_scale
+        kind: model_ir_primitive
+        source_anchor: "gate = gate / math.sqrt(hidden_size)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.query_key_gate]
+      - id: gate_signed_sqrt
+        kind: model_ir_primitive
+        source_anchor: "gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.query_key_gate]
+      - id: gate_sigmoid
+        kind: model_ir_primitive
+        source_anchor: "gate = torch.sigmoid(gate)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.query_key_gate]
+      - id: value_gate_apply
+        kind: model_ir_primitive
+        source_anchor: "gated_value = gate * value.unsqueeze(-2)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.gated_value]
+      - id: conv_input_grouped_norm
+        kind: model_ir_primitive
+        source_anchor: "gated_value_normed = self._apply_ple_norm(self.norm_conv, gated_value)"
+        disposition: mapped
+        ir_targets: [ple_grouped_norm_gate.grouped_norm]
+      - id: inner_conv_residual
+        kind: model_ir_primitive
+        source_anchor: "output = gated_value + conv_output"
+        disposition: mapped
+        ir_targets: [ple.injection]
+      - id: padding_mask
+        kind: implementation_only
+        source_anchor: "output = torch.where("
+        disposition: excluded
+        reason: masks padded physical rows and does not change the valid-token model function
+      - id: physical_row_padding
+        kind: implementation_only
+        source_anchor: "return _pad_token_rows(output, batch.physical_tokens)"
+        disposition: excluded
+        reason: serving layout padding only
+
+  - id: ple_short_conv
+    component: PLE depthwise short-conv and persistent state
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer._short_conv
+    anchor: "def _short_conv("
+    review_status: verified
+    member_dispositions:
+      - {name: _short_conv, disposition: reviewed}
+    expected_ir_views: [ple]
+    variants: [prefill, decode, target_verify]
+    obligations:
+      - id: depthwise_dilated_conv
+        kind: model_ir_primitive
+        source_anchor: "conv_output = F.conv1d("
+        disposition: mapped
+        ir_targets: [ple.short_conv]
+      - id: conv_silu
+        kind: model_ir_primitive
+        source_anchor: "return F.silu(conv_output[batch.req_indices, batch.token_offsets])"
+        disposition: mapped
+        ir_targets: [ple.short_conv]
+      - id: short_conv_state_read
+        kind: state_read
+        source_anchor: "state = conv_state.index_select(0, batch.state_indices).to(dtype=x.dtype)"
+        disposition: mapped
+        ir_targets: [ple.conv_state]
+      - id: short_conv_state_update
+        kind: state_update
+        source_anchor: "conv_state[batch.state_indices] = next_state.to(dtype=conv_state.dtype)"
+        disposition: mapped
+        ir_targets: [ple.conv_state]
+
+  - id: ple_construction
+    component: PLE parameter, dimension, and module construction
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer.__init__
+    anchor: "class Qwen4ExpPLELayer"
+    review_status: pending_review
+    expected_ir_views: [ple, ple_grouped_norm_gate]
+    member_dispositions:
+      - {name: __init__, disposition: pending}
+    obligations: []
+    pending_reason: key/value projections, three independent norms, depthwise weights, dilation, and state length need parameter closure
+
+  - id: layer_extension
+    component: PLE placement, attention/MLP HC boundaries, and topology-dependent collectives
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpLayerExtensionMixin
+    anchor: "class Qwen4ExpLayerExtensionMixin"
+    review_status: pending_review
+    expected_ir_views: [linear_layer, full_layer, ple, hyperconnection_mix, hyperconnection_combine]
+    variants: [pure_tp, attention_dp, moe_ep]
+    obligations: []
+    pending_reason: separate stable PLE/residual semantics from TP/DP/EP execution contracts
+
+  - id: hyperconnection
+    component: hyper-connection read and update equations
+    source_file: python/sglang/srt/layers/hyperconnection.py
+    symbol: GatedResidualSimple
+    anchor: "class GatedResidualSimple"
+    review_status: pending_review
+    expected_ir_views: [hyperconnection_mix, hyperconnection_combine, hyperconnection_read, hyperconnection_update, final_hyperconnection_read]
+    obligations: []
+    pending_reason: independently enumerate norm, low-rank gate, scaling, reduction, injection gate, and residual update
+
+  - id: gated_deltanet
+    component: linear attention GatedDeltaNet
+    source_file: python/sglang/srt/models/qwen3_5.py
+    symbol: Qwen3_5GatedDeltaNet
+    anchor: "class Qwen3_5GatedDeltaNet"
+    review_status: pending_review
+    expected_ir_views: [linear_attention, linear_causal_conv]
+    variants: [prefill, decode]
+    obligations: []
+    pending_reason: projection, causal conv, recurrence, state, gated norm, and output projection need source-level closure
+
+  - id: linear_decoder_layer
+    component: linear-attention decoder layer boundaries
+    source_file: python/sglang/srt/models/qwen3_5.py
+    symbol: Qwen3_5LinearDecoderLayer
+    anchor: "class Qwen3_5LinearDecoderLayer"
+    review_status: pending_review
+    expected_ir_views: [linear_layer]
+    obligations: []
+    pending_reason: inherited norm/residual and MoE call boundaries need reconciliation with Qwen4 overrides
+
+  - id: full_attention
+    component: full QSA attention data flow
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpAttentionDecoderLayer
+    anchor: "class Qwen4ExpAttentionDecoderLayer"
+    review_status: pending_review
+    expected_ir_views: [full_layer, qsa_attention, qsa_qk_norm_rope]
+    variants: [qsa, dense_attention_fallback, prefill, decode]
+    obligations: []
+    pending_reason: projection split, gate bypass, Q/K norm/RoPE, index dependency, cache, attention, output gate, and projection need closure
+
+  - id: qsa_indexer
+    component: QSA index projection, compression, score, selection, and cache state
+    source_file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py
+    symbol: QSAIndexer
+    anchor: "class QSAIndexer"
+    review_status: pending_review
+    expected_ir_views: [qsa_indexer, qsa_index_compress, qsa_index_score, qsa_index_expand]
+    variants: [prefill, decode, cuda_graph_decode]
+    obligations: []
+    pending_reason: every cache read/write and prefill/decode selection fork must be reconciled, not inferred from kernel names
+
+  - id: moe_expert_mlp
+    component: routed/shared expert SwiGLU primitive
+    source_file: python/sglang/srt/models/qwen2_moe.py
+    symbol: Qwen2MoeMLP
+    anchor: "class Qwen2MoeMLP"
+    review_status: pending_review
+    expected_ir_views: [moe_routed_expert, moe_shared_expert]
+    obligations: []
+    pending_reason: gate/up projections, SiLU, product, and down projection need call-site-aware obligations
+
+  - id: sparse_moe
+    component: router, top-k, routed/shared execution, weighting, and combine
+    source_file: python/sglang/srt/models/qwen2_moe.py
+    symbol: Qwen2MoeSparseMoeBlock
+    anchor: "class Qwen2MoeSparseMoeBlock"
+    review_status: pending_review
+    expected_ir_views: [moe, moe_router_selection, moe_routed_expert, moe_shared_expert, moe_combine]
+    variants: [pure_tp, attention_dp, moe_ep, shared_expert_fused]
+    obligations: []
+    pending_reason: model semantics must be separated from backend dispatch, fusion, and parallel collectives
+
+  - id: mtp_head
+    component: Qwen4 one-layer EAGLE auxiliary model
+    source_file: python/sglang/srt/models/qwen4_exp_mtp.py
+    symbol: Qwen4ExpForCausalLMMTP
+    anchor: "class Qwen4ExpForCausalLMMTP"
+    review_status: pending_review
+    expected_ir_views: [mtp_head, mtp_embedding_projection, mtp_hidden_projection, mtp_layer, mtp_qsa_attention, mtp_moe]
+    variants: [draft_extend]
+    obligations: []
+    pending_reason: shared weights, input fusion, single-layer path, HC state handoff, and LM head need closure
+
+  - id: eagle_generation
+    component: EAGLE target verification and draft-extend generation flow
+    source_file: python/sglang/srt/speculative/eagle_worker.py
+    symbol: EAGLEWorker
+    anchor: "class EAGLEWorker"
+    review_status: pending_review
+    expected_ir_views: [mtp_generation]
+    variants: [prefill_seed, target_verify, accept_commit, draft_extend]
+    obligations: []
+    pending_reason: scheduler/control-flow semantics require a distinct reviewed ledger from target and MTP model math
+
+  - id: eagle_state_contract
+    component: EAGLE candidate tree and proposal state
+    source_file: python/sglang/srt/speculative/eagle_info.py
+    symbol: EagleVerifyInput
+    anchor: "class EagleVerifyInput("
+    review_status: pending_review
+    expected_ir_views: [mtp_generation]
+    obligations: []
+    pending_reason: candidate tree, accepted path, and proposal-state lifecycle need explicit state obligations
+
+# Reverse exclusions are allowed only for nodes intentionally outside stable
+# model math.  This list starts empty so the first report exposes every
+# unsupported claim instead of silently forgiving it.
+reverse_exclusions: []

@@ -83,3 +83,11 @@ The JSON Schema files document the persisted contract. The compiler also runs
 cross-document checks that JSON Schema cannot express, including node-reference
 integrity, execution-path compatibility, topology constraints, and deterministic
 fingerprinting.
+
+`semantic-source-ledger.v1` is the external evidence contract for Model IR
+closure. Unlike `semantic_details.operators`, it is anchored to immutable Git
+blobs and source symbols, classifies source members and obligations, and is
+audited in both Source→IR and IR→Source directions. Its generated
+`semantic-closure-report.v1` is deliberately fail-closed: incomplete review,
+uncovered IR leaves, changed source blobs, or multiple stable primitives hidden
+behind one Model IR leaf all prevent a semantic-completeness attestation.
