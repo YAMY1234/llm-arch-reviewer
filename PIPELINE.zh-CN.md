@@ -360,8 +360,8 @@ Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能
 
 凡是被 repeat 或多个上下文复用的模块边界，都必须声明
 `timing_scope_contract`。Contract 必须写明 composite target、真实 production
-owner、精确上下文过滤条件（例如 `layer_kind=attention` 与
-`substage=pre_weights`）、期望 occurrence 数量以及 drill view。Mapper 必须把
+owner、精确上下文过滤条件（例如 `substage=attention`）、期望 occurrence
+数量以及 drill view。Mapper 必须把
 这些坐标保留在每个 event 上；materializer 只能对满足过滤条件的真实物理
 区间做并集来生成 parent 时间，绝不能把一个 profile-wide owner 标量复制给
 多个 parent。Occurrence 缺失、重复或作用域不一致时，profile 必须 fail
