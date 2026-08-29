@@ -420,6 +420,52 @@ def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting
     )
 
 
+def test_hidden_timing_aggregate_declares_reachable_architecture_owner() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    for profile_id in (
+        "qwen40_tp4_cg_decode_bs1_8k1k",
+        "qwen40_tp4_mtp_cg_decode_gbs001_8k1k",
+    ):
+        profile = bundle["profiles"][profile_id]
+        group = profile["fusion_groups"]["fusion:hyperconnection.mix"]
+        assert group["owner"] == "hyperconnection.mix"
+        assert group["architecture_owner"] == "hyperconnection_mix.mix"
+
+
+def test_profile_rejects_unreachable_fusion_architecture_owner() -> None:
+    model = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    plan_path = QWEN40_ROOT / "execution_paths" / "tp_only.yaml"
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    node_index = {
+        f"{view_id}.{node['id']}": node
+        for view_id, view in views.items()
+        for node in view["nodes"]
+    }
+    # The legacy all-call aggregate exists, but it is intentionally absent
+    # from the canonical architecture drill tree. Removing its explicit
+    # architecture destination must therefore fail closed.
+    node_index["hyperconnection.mix"].pop("architecture_target")
+    profile = load_yaml(
+        QWEN40_ROOT
+        / "profiles"
+        / "tp_only"
+        / "sglang_f90a941aa"
+        / "cg_decode_bs001_8k1k.yaml"
+    )
+
+    with pytest.raises(CatalogError, match="not reachable from entry_view"):
+        compile_profile(
+            profile,
+            plan=plan,
+            fingerprint=execution_fingerprint(model, plan, views),
+            node_targets=set(node_index),
+            node_index=node_index,
+            views=views,
+            source=Path("profile.yaml"),
+        )
+
+
 def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     implementation = bundle["implementations"]["sglang_f90a941aa"]

@@ -5,7 +5,7 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(cd -- "$script_dir/.." && pwd)"
 viewer_host="${VIEWER_HOST:-127.0.0.1}"
 viewer_port="${VIEWER_PORT:-8766}"
-viewer_build="2026-08-29-semantic-reconciliation-v1"
+viewer_build="$(sed -n 's/.*name="llm-arch-reviewer-viewer-build" content="\([^"]*\)".*/\1/p' "$repo_dir/docs/viewer.html" | head -n 1)"
 viewer_url="http://${viewer_host}:${viewer_port}/viewer.html?model=qwen40_v2"
 log_path="${TMPDIR:-/tmp}/llm-arch-reviewer-viewer-${viewer_port}.log"
 tmux_session="llm-arch-reviewer-viewer-${viewer_port}"
@@ -16,7 +16,7 @@ if [[ ! "$viewer_port" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-if ! grep -Fq \
+if [[ -z "$viewer_build" ]] || ! grep -Fq \
   "<meta name=\"llm-arch-reviewer-viewer-build\" content=\"${viewer_build}\"" \
   "$repo_dir/docs/viewer.html"; then
   echo "Refusing to start: docs/viewer.html is not canonical build ${viewer_build}." >&2

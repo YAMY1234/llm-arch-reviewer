@@ -284,6 +284,13 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                     f"{source}: node {view_id}.{node['id']} drills into unknown view {drill!r}"
                 )
     for target, node in index.items():
+        architecture_target = node.get("architecture_target")
+        if architecture_target is not None:
+            if not isinstance(architecture_target, str) or architecture_target not in index:
+                raise CatalogError(
+                    f"{source}: node {target} architecture_target "
+                    f"{architecture_target!r} is not a known IR node"
+                )
         runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping")
         if not runtime_mapping:
             continue
@@ -303,6 +310,24 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                 f"{source}: fused node {target} references unknown owner {owner!r}"
             )
     return index
+
+
+def _reachable_views(views: dict[str, Any], entry_view: str) -> set[str]:
+    """Return every view reachable through authored drill edges from one root."""
+
+    reachable: set[str] = set()
+    pending = [entry_view]
+    while pending:
+        view_id = pending.pop()
+        if view_id in reachable or view_id not in views:
+            continue
+        reachable.add(view_id)
+        pending.extend(
+            str(node["drill"])
+            for node in views[view_id].get("nodes", []) or []
+            if node.get("drill")
+        )
+    return reachable
 
 
 def _split_target(target: str, *, source: Path) -> tuple[str, str]:
@@ -1045,6 +1070,7 @@ def compile_profile(
     fingerprint: str,
     node_targets: set[str],
     node_index: dict[str, dict[str, Any]] | None = None,
+    views: dict[str, Any] | None = None,
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
@@ -1262,6 +1288,36 @@ def compile_profile(
         for group_id, group in fusion_groups.items()
         for target in group["ir_nodes"]
     }
+    # A timing owner may be an intentionally hidden aggregate retained for
+    # attribution compatibility.  Its authored ``architecture_target`` points
+    # to the canonical semantic node that users can actually reach from this
+    # profile's architecture root.  This relationship is explicit IR data;
+    # the viewer must never infer it from labels or framework-specific names.
+    entry_view = str(profile.get("entry_view") or "top")
+    reachable_views = (
+        _reachable_views(views, entry_view) if views is not None else None
+    )
+    if views is not None and entry_view not in views:
+        raise CatalogError(f"{source}: profile entry_view {entry_view!r} is unknown")
+    for group_id, group in fusion_groups.items():
+        owner = str(group["owner"])
+        owner_node = (node_index or {}).get(owner) or {}
+        architecture_owner = str(owner_node.get("architecture_target") or owner)
+        if architecture_owner not in node_targets:
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} architecture owner "
+                f"{architecture_owner!r} is not a known IR node"
+            )
+        if reachable_views is not None:
+            owner_view = architecture_owner.split(".", 1)[0]
+            if owner_view not in reachable_views:
+                raise CatalogError(
+                    f"{source}: fusion group {group_id!r} architecture owner "
+                    f"{architecture_owner!r} is not reachable from entry_view "
+                    f"{entry_view!r}; author an architecture_target or a drill route"
+                )
+        if architecture_owner != owner:
+            group["architecture_owner"] = architecture_owner
     for target, state in effective_states.items():
         if state.get("status") != "fused":
             continue
@@ -1620,6 +1676,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             fingerprint=fingerprint,
             node_targets=targets,
             node_index=target_index,
+            views=execution_variants[fingerprint]["views"],
             source=path,
         )
         profile_id = raw_profile["profile_id"]

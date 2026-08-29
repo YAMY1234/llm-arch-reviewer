@@ -796,6 +796,15 @@ never copied into another merely because their Model IR nodes share names.
 - Viewer cards and details identify the timing owner, covered semantic
   contracts, mapping proof, and occurrence/aggregate scope; a generic
   `fused implementation` label is not an accepted deliverable.
+- Every rendered `fused into <timing owner>` relationship is a data-driven
+  architecture link. The viewer resolves the timing owner's exact compiled
+  `architecture_owner`: the timing owner itself by default, or an explicitly
+  authored `architecture_target` when timing is retained on a hidden aggregate.
+  It opens that target's canonical drill route, centers it, and selects it; it
+  must not infer destinations from display labels or add model-specific routing.
+  An absent owner or an architecture owner unreachable from the profile's
+  `entry_view` is a compile/release-gate failure, not plain text that silently
+  leads nowhere.
 - The complete candidate Execution IR has been reconciled against eager stacks,
   shapes, invocation multiplicity, state transitions, and collective order.
 - Every measured event is mapped, explicitly fused/shared, or typed

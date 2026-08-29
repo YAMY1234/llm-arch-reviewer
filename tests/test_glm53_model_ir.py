@@ -153,6 +153,10 @@ def test_viewer_renders_the_compiled_semantic_contract() -> None:
     assert "timing owner" in viewer
     assert "fusionScopeDescription" in viewer
     assert "fused into" in viewer
+    assert "fusion-owner-link" in viewer
+    assert "data-fusion-owner" in viewer
+    assert "showFusionOwnerInArchitecture" in viewer
+    assert "fusionArchitectureOwnerForTarget" in viewer
     assert "timing scope" in viewer
     assert "required occurrences" in viewer
 

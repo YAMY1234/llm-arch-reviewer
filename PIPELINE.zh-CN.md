@@ -510,6 +510,7 @@ python3 scripts/run_pipeline_v2.py \
 - 每个 `fused` node 必须且只能属于一个 fusion group，group owner 与 `included_in` 一致；每个 group 都明确 exact interval 或 aggregate event set 语义以及可 review 的 evidence scope。
 - `fused` node 不得携带 standalone scalar timing field。每个 group 只有 owner 承载 measured production timing；如果同一节点同时声明 fused state 和独立 `node_metrics`，编译必须失败。
 - Viewer 的 node card 与详情必须显示 timing owner、covered semantic contract、mapping proof 和 occurrence/aggregate scope；泛化的 `fused implementation` 文字不能作为可交付结果。
+- 每一处 `fused into <timing owner>` 都必须是由编译后 metadata 驱动的 architecture 链接：默认跳到 timing owner 自身；若 timing owner 是不可见的聚合节点，则必须在 Model IR 中显式声明 `architecture_target`，Compiler 将它物化为 `architecture_owner`。点击后必须沿该目标的 canonical drill path 打开、居中并选中。Viewer 不得从显示文字猜测目标，也不得加入 model-specific 跳转逻辑；目标缺失或从 profile `entry_view` 不可达必须在编译／发布阶段失败，不能退化为无法点击的普通文字。
 - 完整 candidate Execution IR 已经使用 eager stack、shape、invocation multiplicity、state transition 和 collective order 完成 reconciliation。
 - 每个 measured event 都属于以下状态之一：已映射、显式 fused/shared，或带类型和原因的 framework/runtime support。没有完成 production attribution closure 的 Model/Execution IR node 必须标记为 `mapping_incomplete`，不能伪装成 measured zero，也不能把 generic `unmapped` 当作 node 状态。
 - Release build 中必需节点的 `mapping_incomplete` 必须为零；每个 fused

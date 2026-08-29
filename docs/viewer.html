@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-fusion-timing-ownership-v2" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-fusion-owner-navigation-v4" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -189,6 +189,11 @@
     font-size: 11px; text-decoration: none;
   }
   .detail-action.primary { color: white; background: var(--link); }
+  .inline-ir-link {
+    appearance: none; border: 0; padding: 0; margin: 0; background: transparent;
+    color: var(--link); cursor: pointer; font: inherit; text-decoration: underline;
+  }
+  .inline-ir-link:hover { color: #054ea3; }
   .stack-frames { margin: 5px 0 0; padding-left: 20px; font: 10px ui-monospace, monospace; }
   .stack-frames li { margin-bottom: 4px; word-break: break-all; }
 
@@ -262,6 +267,11 @@
   .node-label.title { font-weight: 600; font-size: 12px; }
   .node-ms { font-size: 10px; fill: var(--muted); font-family: ui-monospace, monospace; }
   .node-note { font-size: 9.5px; fill: var(--muted); font-style: italic; }
+  .node .fusion-owner-link text {
+    fill: var(--link); text-decoration: underline; cursor: pointer;
+    pointer-events: all;
+  }
+  .node .fusion-owner-link:hover text { fill: #054ea3; }
 
   /* drill 角标 */
   .drill-mark { fill: var(--link); }
@@ -861,6 +871,27 @@ function fusionGroupForTarget(target) {
   ) || null;
 }
 
+function irTargetExists(target) {
+  const value = String(target || "");
+  const dot = value.indexOf(".");
+  if (dot < 1) return false;
+  const viewName = value.slice(0, dot);
+  const nodeId = value.slice(dot + 1);
+  return (DATA?.views?.[viewName]?.nodes || []).some(node => node.id === nodeId);
+}
+
+function fusionOwnerForTarget(target, cell = null) {
+  const group = fusionGroupForTarget(target)?.[1] || null;
+  return String(
+    group?.owner || cell?.shared_timing_owner || cell?.included_in || ""
+  );
+}
+
+function fusionArchitectureOwnerForTarget(target, ownerTarget = "") {
+  const group = fusionGroupForTarget(target)?.[1] || null;
+  return String(group?.architecture_owner || ownerTarget || group?.owner || "");
+}
+
 function irTargetLabel(target) {
   const value = String(target || "");
   const dot = value.indexOf(".");
@@ -883,6 +914,20 @@ function fusionTimingDescription(group) {
   return aggregate
     ? "validated shared production-event set; the owner is the only additive timing value"
     : "one validated shared production interval; never sum once per covered IR node";
+}
+
+function fusionOwnerLinkHtml(ownerTarget, sourceTarget, options = {}) {
+  const owner = String(ownerTarget || "");
+  const architectureOwner = fusionArchitectureOwnerForTarget(sourceTarget, owner);
+  const label = options.label || irTargetLabel(architectureOwner || owner);
+  if (!architectureOwner || !irTargetExists(architectureOwner)) return escapeHtml(label || owner || "unknown owner");
+  const suffix = options.showTarget
+    ? ` <span style="color:var(--muted)">(${escapeHtml(architectureOwner)})</span>`
+    : "";
+  return `<button type="button" class="inline-ir-link"
+      data-fusion-owner="${escapeHtml(architectureOwner)}"
+      data-fusion-timing-owner="${escapeHtml(owner)}"
+      data-fusion-source="${escapeHtml(sourceTarget || "")}">${escapeHtml(label)}</button>${suffix}`;
 }
 
 function fusionScopeDescription(group) {
@@ -1744,6 +1789,32 @@ function updateArchitectureSelection(viewName, nodeId) {
   target?.classList.add("selected");
 }
 
+function appendFusionOwnerNodeLink(root, textElement, ownerTarget, sourceTarget) {
+  const owner = String(ownerTarget || "");
+  const architectureOwner = fusionArchitectureOwnerForTarget(sourceTarget, owner);
+  if (!architectureOwner || !irTargetExists(architectureOwner)) {
+    return false;
+  }
+  const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
+  link.setAttribute("class", "fusion-owner-link");
+  link.setAttribute("href", "#");
+  link.setAttribute("aria-label", `Open timing owner ${irTargetLabel(architectureOwner)} in architecture`);
+  link.dataset.fusionOwner = architectureOwner;
+  link.dataset.fusionTimingOwner = owner;
+  link.dataset.fusionSource = sourceTarget;
+  const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  title.textContent = `Open timing owner: ${irTargetLabel(architectureOwner)} (${architectureOwner})`;
+  link.appendChild(title);
+  link.appendChild(textElement);
+  link.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    showFusionOwnerInArchitecture(owner, sourceTarget);
+  });
+  root.appendChild(link);
+  return true;
+}
+
 function drawNode(root, n, c, viewName) {
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   const kind = n.shape || "block";
@@ -1841,13 +1912,15 @@ function drawNode(root, n, c, viewName) {
     t.textContent = solMetricUnavailableText(`${viewName}.${n.id}`);
     g.appendChild(t);
   } else if (cell?.status) {
+    const target = `${viewName}.${n.id}`;
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
     t.setAttribute("class", "node-note");
     t.setAttribute("x", c.width / 2);
     t.setAttribute("y", c.height - 6);
     t.setAttribute("text-anchor", "middle");
-    t.textContent = nodeStateSummary(cell, `${viewName}.${n.id}`);
-    g.appendChild(t);
+    t.textContent = nodeStateSummary(cell, target);
+    const owner = cell.status === "fused" ? fusionOwnerForTarget(target, cell) : "";
+    if (!appendFusionOwnerNodeLink(g, t, owner, target)) g.appendChild(t);
   } else if (n.note) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
     t.setAttribute("class", "node-note");
@@ -3027,6 +3100,28 @@ async function showTimelineEventInArchitecture(options = {}) {
   }
 }
 
+async function showFusionOwnerInArchitecture(ownerTarget, sourceTarget = "") {
+  const owner = String(ownerTarget || "");
+  const source = String(sourceTarget || "");
+  const architectureOwner = fusionArchitectureOwnerForTarget(source, owner);
+  if (!irTargetExists(architectureOwner)) return false;
+  const fusionEntry = fusionGroupForTarget(source);
+  const group = fusionEntry?.[1] || null;
+  const scope = group?.evidence_scope || {};
+  const scopeHints = Object.values(scope).flatMap(value =>
+    Array.isArray(value) ? value : [value]
+  ).filter(value => value != null).join(" ");
+  const event = {
+    _irNode: architectureOwner,
+    _irTargets: [...new Set([source, ...(group?.ir_nodes || [])].filter(Boolean))],
+    _layerKind: source,
+    _substage: scopeHints,
+    _occurrenceId: (scope.occurrence_ids || []).join(" "),
+  };
+  await showTimelineEventInArchitecture({event, preserveViewMode: true});
+  return SELECTED?.view && `${SELECTED.view}.${SELECTED.nodeId}` === architectureOwner;
+}
+
 function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
   const target = `${viewName}.${nodeId}`;
   // A fused semantic leaf has no independent production interval. Highlight
@@ -3411,8 +3506,7 @@ function nodeStateSummary(cell, target = "") {
   if (cell.status === "out_of_scope") return "not in selected stage";
   if (cell.status === "structural") return "structural boundary";
   if (cell.status === "fused") {
-    const group = fusionGroupForTarget(target)?.[1] || null;
-    const owner = group?.owner || cell.included_in || "unknown owner";
+    const owner = fusionOwnerForTarget(target, cell) || "unknown owner";
     return `fused into ${shorten(irTargetLabel(owner), 32)}`;
   }
   return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
@@ -3563,7 +3657,7 @@ function showDetail(n, viewName) {
   const fusionEntry = fusionGroupForTarget(target);
   const fusionGroupId = fusionEntry?.[0] || "";
   const fusionGroup = fusionEntry?.[1] || null;
-  const fusionOwner = fusionGroup?.owner || scopedCell?.included_in || "";
+  const fusionOwner = fusionOwnerForTarget(target, scopedCell);
   const fusionOwnerCell = fusionOwner ? profileCellForTarget(fusionOwner) : null;
   const fusionMembers = (fusionGroup?.ir_nodes || []).map(member =>
     `${irTargetLabel(member)} (${member})`
@@ -3619,14 +3713,18 @@ function showDetail(n, viewName) {
   const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;
   const variants = Object.keys(visibleVariants).map(k => {
     const value = visibleVariants[k] || {};
-    const display = value.status === "fused"
-      ? `fused into ${irTargetLabel(value.shared_timing_owner || value.included_in || fusionOwner)}`
-      : value.active_gpu_ms != null || value.ms_per_iter != null
+    const variantOwner = value.status === "fused"
+      ? fusionOwnerForTarget(target, value) || fusionOwner
+      : "";
+    const display = value.active_gpu_ms != null || value.ms_per_iter != null
       ? (value.gpu_elapsed_ms != null
         ? `${formatMs(value.gpu_elapsed_ms)} ms elapsed · ${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · ${formatMs(value.device_idle_ms)} ms idle`
         : `${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · elapsed unavailable`)
       : `${value.status || "not timed"}: ${value.label || "no standalone kernel"}`;
-    return `<span class="badge ${k.toLowerCase()}">${escapeHtml(k)}: ${escapeHtml(display)}</span>`;
+    const valueHtml = variantOwner
+      ? `fused into ${fusionOwnerLinkHtml(variantOwner, target)}`
+      : escapeHtml(display);
+    return `<span class="badge ${k.toLowerCase()}">${escapeHtml(k)}: ${valueHtml}</span>`;
   }).join(" ");
 
   const codeLinks = (n.code_links || []).map(c => {
@@ -3689,7 +3787,7 @@ function showDetail(n, viewName) {
         ${cell.source_rank != null ? `<div class="k">source rank</div><div>${escapeHtml(cell.source_rank)}</div>` : ""}
         ${cell.scope_target ? `<div class="k">drill scope</div><div>${escapeHtml(cell.scope_target)}</div>` : ""}
         ${cell.label && cell.ms_per_iter == null ? `<div class="k">meaning</div><div>${escapeHtml(cell.label)}</div>` : ""}
-      ${fusionOwner ? `<div class="k">timing owner</div><div>${escapeHtml(irTargetLabel(fusionOwner))} <span style="color:var(--muted)">(${escapeHtml(fusionOwner)})</span></div>` : ""}
+      ${fusionOwner ? `<div class="k">timing owner</div><div>${fusionOwnerLinkHtml(fusionOwner, target, {showTarget: true})}</div>` : ""}
         ${fusionGroup ? `<div class="k">fusion group</div><div>${escapeHtml(fusionGroupId)}</div>
         <div class="k">owner timing</div><div>${fusionOwnerTiming == null ? "unavailable" : `${formatMs(fusionOwnerTiming)} ms`} · counted once</div>
         <div class="k">evidence scope</div><div>${escapeHtml(fusionScopeDescription(fusionGroup))}</div>
@@ -3856,7 +3954,8 @@ function showDetail(n, viewName) {
   }).join(' <span style="color:var(--muted); padding:0 4px">vs</span> ') +
     (isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : '');
 
-  document.getElementById("detail").innerHTML = `
+  const detail = document.getElementById("detail");
+  detail.innerHTML = `
     <h2>${escapeHtml(n.label || n.id)}</h2>
     ${variants ? `<div style="margin-bottom:8px">${variants}</div>` : ""}
     ${timelineBtn}
@@ -3887,10 +3986,20 @@ function showDetail(n, viewName) {
     ${stageRows ? `<h3>stages</h3><table class="kernels"><thead><tr><th class="name">label</th><th class="name">trace alias</th></tr></thead><tbody>${stageRows}</tbody></table>` : ""}
     ${kernelsHtml}
   `;
+  for (const link of detail.querySelectorAll("[data-fusion-owner]")) {
+    link.addEventListener("click", event => {
+      event.preventDefault();
+      showFusionOwnerInArchitecture(
+        link.dataset.fusionOwner || "",
+        link.dataset.fusionSource || target,
+      );
+    });
+  }
 }
 
 window.drillTo = drillTo;
 window.drillFrom = drillFrom;
+window.showFusionOwnerInArchitecture = showFusionOwnerInArchitecture;
 
 // ============================================================
 // pan / zoom (CSS transform on svg-root)

@@ -69,6 +69,10 @@ def main() -> int:
         "cross_links": 0,
         "runtime_support_details": 0,
         "double_click_drills": 0,
+        "fusion_owner_card_links": 0,
+        "fusion_owner_detail_links": 0,
+        "fusion_owner_navigations": 0,
+        "fusion_owner_dom_clicks": 0,
         "timeline_interaction_performance": 0,
         "real_timeline_gestures": 0,
     }
@@ -152,11 +156,27 @@ def main() -> int:
                 """() => {
                   const issues = [];
                   let checked = 0;
+                  let fusionLinks = 0;
                   for (const [viewName, view] of Object.entries(DATA.views)) {
                     for (const node of (view.nodes || [])) {
                       checked += 1;
                       showDetail(node, viewName);
-                      const text = document.getElementById('detail').innerText;
+                      const detail = document.getElementById('detail');
+                      const text = detail.innerText;
+                      const target = `${viewName}.${node.id}`;
+                      const cell = profileCellForTarget(target);
+                      if (cell?.status === 'fused') {
+                        const owner = fusionOwnerForTarget(target, cell);
+                        const architectureOwner = fusionArchitectureOwnerForTarget(target, owner);
+                        const link = [...detail.querySelectorAll('[data-fusion-owner]')]
+                          .find(candidate => candidate.dataset.fusionOwner === architectureOwner &&
+                            candidate.dataset.fusionSource === target);
+                        if (!owner || !irTargetExists(architectureOwner) || !link) {
+                          issues.push({view: viewName, node: node.id, missing: 'fusion owner detail link', owner, architectureOwner});
+                        } else {
+                          fusionLinks += 1;
+                        }
+                      }
                       for (const heading of ['Semantics', 'Inputs', 'Transition / Equation', 'Outputs']) {
                         if (!text.includes(heading)) issues.push({view: viewName, node: node.id, missing: heading});
                       }
@@ -179,10 +199,11 @@ def main() -> int:
                       }
                     }
                   }
-                  return {checked, issues};
+                  return {checked, fusionLinks, issues};
                 }"""
             )
             checks["nodes"] += int(detail_issues["checked"])
+            checks["fusion_owner_detail_links"] += int(detail_issues["fusionLinks"])
             for issue in detail_issues["issues"]:
                 fail("semantic_panel", profile=profile_id, **issue)
 
@@ -195,11 +216,25 @@ def main() -> int:
                       await renderView();
                       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                       const issues = [];
+                      let fusionLinks = 0;
                       for (const group of document.querySelectorAll('g.view-group')) {
                         const view = group.dataset.view;
                         const nodes = [...group.querySelectorAll('g.node')];
                         const rects = nodes.map(node => ({id: node.dataset.id, rect: node.getBoundingClientRect()}));
                         for (const node of nodes) {
+                          const target = `${view}.${node.dataset.id}`;
+                          const cell = profileCellForTarget(target);
+                          if (cell?.status === 'fused') {
+                            const owner = fusionOwnerForTarget(target, cell);
+                            const architectureOwner = fusionArchitectureOwnerForTarget(target, owner);
+                            const link = node.querySelector('a.fusion-owner-link');
+                            if (!owner || !irTargetExists(architectureOwner) || !link ||
+                                link.dataset.fusionOwner !== architectureOwner || link.dataset.fusionSource !== target) {
+                              issues.push({type: 'fusion_owner_card_link', view, node: node.dataset.id, owner, architectureOwner});
+                            } else {
+                              fusionLinks += 1;
+                            }
+                          }
                           const bg = node.querySelector('.node-bg');
                           if (!bg) { issues.push({type: 'missing_node_background', view, node: node.dataset.id}); continue; }
                           const box = bg.getBBox();
@@ -220,7 +255,7 @@ def main() -> int:
                           }
                         }
                       }
-                      return {issues, groups: document.querySelectorAll('g.view-group').length};
+                      return {issues, groups: document.querySelectorAll('g.view-group').length, fusionLinks};
                     }""",
                     {"path": path, "origins": origins},
                 )
@@ -232,6 +267,7 @@ def main() -> int:
                         expected=len(path),
                         actual=render["groups"],
                     )
+                checks["fusion_owner_card_links"] += int(render["fusionLinks"])
                 for issue in render["issues"]:
                     fail("geometry", profile=profile_id, path=path, **issue)
 
@@ -285,6 +321,69 @@ def main() -> int:
                             expected_path=path,
                             actual_path=page.evaluate("() => VIEW_STACK"),
                         )
+
+            # Every compiled fusion group gets one real navigation exercise.
+            # The destination is resolved from the owner target, never from
+            # the rendered label, and must finish on a visible selected leaf.
+            fusion_navigation = page.evaluate(
+                """async () => {
+                  const results = [];
+                  let exercisedDomClick = false;
+                  for (const [groupId, group] of Object.entries(currentFusionGroups())) {
+                    const architectureOwner = String(group.architecture_owner || group.owner);
+                    const source = (group.ir_nodes || []).find(target => {
+                      if (target === group.owner) return false;
+                      return profileCellForTarget(target)?.status === 'fused';
+                    });
+                    if (!source) continue;
+                    let navigated = false;
+                    let domClick = false;
+                    if (!exercisedDomClick) {
+                      await showTimelineEventInArchitecture({
+                        event: {_irNode: source, _irTargets: group.ir_nodes || [], _layerKind: source},
+                        preserveViewMode: true,
+                      });
+                      const [sourceView, sourceNodeId] = String(source).split('.', 2);
+                      const link = document.querySelector(
+                        `g.view-group[data-view="${CSS.escape(sourceView)}"] ` +
+                        `g.node[data-id="${CSS.escape(sourceNodeId)}"] a.fusion-owner-link`
+                      );
+                      if (link) {
+                        exercisedDomClick = true;
+                        domClick = true;
+                        link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                        const deadline = Date.now() + 5000;
+                        const [ownerView, ownerNodeId] = architectureOwner.split('.', 2);
+                        const ownerIsVisible = () => !!document.querySelector(
+                          `g.view-group[data-view="${CSS.escape(ownerView)}"] ` +
+                          `g.node[data-id="${CSS.escape(ownerNodeId)}"].selected`
+                        );
+                        while (Date.now() < deadline && !ownerIsVisible()) {
+                          await new Promise(resolve => setTimeout(resolve, 20));
+                        }
+                        navigated = SELECTED?.view === ownerView &&
+                          SELECTED?.nodeId === ownerNodeId && ownerIsVisible();
+                      }
+                    }
+                    if (!domClick) navigated = await showFusionOwnerInArchitecture(group.owner, source);
+                    const [view, nodeId] = architectureOwner.split('.', 2);
+                    const selected = SELECTED?.view === view && SELECTED?.nodeId === nodeId;
+                    const visible = !!document.querySelector(
+                      `g.view-group[data-view="${CSS.escape(view)}"] ` +
+                      `g.node[data-id="${CSS.escape(nodeId)}"].selected`
+                    );
+                    results.push({groupId, owner: group.owner, architectureOwner, source, navigated, selected, visible, domClick});
+                  }
+                  return results;
+                }"""
+            )
+            checks["fusion_owner_navigations"] += len(fusion_navigation)
+            checks["fusion_owner_dom_clicks"] += sum(
+                1 for result in fusion_navigation if result["domClick"]
+            )
+            for result in fusion_navigation:
+                if not result["navigated"] or not result["selected"] or not result["visible"]:
+                    fail("fusion_owner_navigation", profile=profile_id, **result)
 
             # A profile without a Timeline artifact is still a valid
             # Architecture/profile overlay. Audit every architecture route,
