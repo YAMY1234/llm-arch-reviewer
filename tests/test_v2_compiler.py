@@ -174,9 +174,10 @@ def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> Non
     assert compiled["execution_variant"] == fingerprint
     assert compiled["meta"]["generation_mode"] == "eagle_mtp"
     assert compiled["meta"]["entry_view"] == "mtp_generation"
+    assert list(compiled["data"]) == sorted(compiled["data"])
 
 
-def test_profile_data_order_is_deterministic_and_preserves_authored_states() -> None:
+def test_profile_data_order_is_canonical_and_complete() -> None:
     model_path = MODEL_ROOT / "model_ir.yaml"
     plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
     model = load_yaml(model_path)
@@ -202,19 +203,11 @@ def test_profile_data_order_is_deterministic_and_preserves_authored_states() -> 
         node_targets=node_targets,
         source=Path("profile.yaml"),
     )
-    expected = list(raw.get("node_states") or {})
-    expected.extend(
-        target
-        for target in sorted(node_targets)
-        if target.startswith("mtp_") and target not in expected
-    )
-    expected.extend(
-        target
-        for target in (raw.get("node_metrics") or {})
-        if target not in expected
-    )
+    expected = set(raw.get("node_states") or {})
+    expected.update(target for target in node_targets if target.startswith("mtp_"))
+    expected.update(raw.get("node_metrics") or {})
 
-    assert list(compiled["data"]) == expected
+    assert list(compiled["data"]) == sorted(expected)
 
 
 def test_fused_profile_states_compile_to_shared_interval_groups() -> None:

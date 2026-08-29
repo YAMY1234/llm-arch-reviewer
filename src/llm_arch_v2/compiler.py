@@ -911,7 +911,7 @@ def compile_profile(
         for target in (profile.get("node_metrics") or {})
         if target not in effective_states
     )
-    for target in targets:
+    for target in sorted(targets):
         cell = copy.deepcopy(effective_states.get(target, {}))
         cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
         if (
