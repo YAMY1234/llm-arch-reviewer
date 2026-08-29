@@ -170,7 +170,8 @@ node must name its payload and result.
 Fusion never rewrites Model or Execution IR. A profile may instead expose a
 `fusion_group` whose `ir_nodes` share one measured kernel interval. Consumers
 must treat that interval as shared evidence and must not sum it once for every
-covered semantic node.
+covered semantic node. Only the group owner displays measured timing; covered
+semantic nodes display `fused into <owner>` without copied timing scalars.
 
 The viewer exposes execution, implementation, profile, profile-variant, and
 Architecture/Timeline/Split selectors. Architecture-node selection filters every corresponding

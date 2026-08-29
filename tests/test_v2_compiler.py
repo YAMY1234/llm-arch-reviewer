@@ -70,6 +70,35 @@ def test_all_audited_catalogs_compile_without_placeholder_equations(
                     node["id"],
                 )
 
+    scalar_timing_fields = {
+        "ms_per_iter",
+        "active_gpu_ms",
+        "gpu_residency_ms",
+        "gpu_residency_ms_per_iter",
+        "gpu_elapsed_ms",
+        "module_gap_ms",
+        "device_idle_ms",
+        "other_gpu_work_ms",
+    }
+    for profile_id, profile in bundle["profiles"].items():
+        variant = profile["meta"]["variant_id"]
+        for target, variants in profile["data"].items():
+            cell = variants.get(variant) or {}
+            if cell.get("status") != "fused":
+                continue
+            assert cell["timing_role"] == "fused_member", (
+                model_root.name,
+                profile_id,
+                target,
+            )
+            assert cell["shared_timing_owner"] == cell["included_in"]
+            assert scalar_timing_fields.isdisjoint(cell), (
+                model_root.name,
+                profile_id,
+                target,
+                scalar_timing_fields.intersection(cell),
+            )
+
 
 def test_compile_qwen40_catalog() -> None:
     bundle = compile_catalog(MODEL_ROOT)
@@ -362,6 +391,24 @@ def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting
     assert cell["status"] == "fused"
     assert cell["included_in"] == "hyperconnection_mix.mix"
     assert cell["fusion_timing_semantics"] == "shared_interval"
+    assert cell["timing_role"] == "fused_member"
+    assert cell["shared_timing_owner"] == "hyperconnection_mix.mix"
+    for field in (
+        "ms_per_iter",
+        "active_gpu_ms",
+        "gpu_residency_ms",
+        "gpu_elapsed_ms",
+        "module_gap_ms",
+        "device_idle_ms",
+        "other_gpu_work_ms",
+    ):
+        assert field not in cell
+
+    owner = profile["data"]["hyperconnection_mix.mix"][
+        "tp4_cg_decode_bs1_8k1k"
+    ]
+    assert owner["timing_role"] == "fusion_owner"
+    assert owner["active_gpu_ms"] > 0
 
     node = next(
         item
@@ -654,6 +701,42 @@ def test_execution_fingerprint_excludes_labels_and_profiles() -> None:
         source=Path("profile.yaml"),
     )
     assert compiled["execution_variant"] == expected
+
+
+def test_profile_rejects_fused_state_with_independent_timing() -> None:
+    model_path = MODEL_ROOT / "model_ir.yaml"
+    plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(model_path)
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    fingerprint = execution_fingerprint(model, plan, views)
+    profile = load_yaml(
+        MODEL_ROOT
+        / "profiles"
+        / "tp_only"
+        / "sglang_f90a941aa"
+        / "cg_decode_bs001_8k1k.yaml"
+    )
+    profile.setdefault("node_states", {})["moe.topk"] = {
+        "status": "fused",
+        "included_in": "moe.routed_experts",
+    }
+
+    with pytest.raises(
+        CatalogError,
+        match="cannot also carry independent node_metrics",
+    ):
+        compile_profile(
+            profile,
+            plan=plan,
+            fingerprint=fingerprint,
+            node_targets={
+                f"{view_id}.{node['id']}"
+                for view_id, view in views.items()
+                for node in view["nodes"]
+            },
+            source=Path("profile.yaml"),
+        )
 
 
 def test_profile_cannot_create_architecture_nodes() -> None:

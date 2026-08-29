@@ -356,7 +356,7 @@ Multi-rank profile 保留每个 rank 的独立 measurement，绝不能把不同 
 
 Parent/child rollup 必须显式携带 `exclusive` 或 `inclusive` semantics；当 interval 存在重叠时，绝不能机械相加。
 
-Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 可以显示 timing owner 的 `shared aggregate` 数字，但必须明确标记为不可相加。
+Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 只显示 `fused into <timing owner>` 及其 fusion/evidence 链接，不能复制 owner 的标量时间；只有 timing owner 显示 measured value。Composite parent 可以单独显示明确标记的 `inclusive_rollup`，其含义是 descendant production event 的并集，不能与 descendant 相加。
 
 ### Stage 8 — 构建 Timeline Hierarchy
 
@@ -494,6 +494,7 @@ python3 scripts/run_pipeline_v2.py \
 - 每个 mapped production event 都保留 eager event ID、transfer rule、confidence 和 occurrence scope，并且 event-to-IR 双向索引完全闭合。
 - Raw timeline attribution audit 必须覆盖每个 production event：每项要么有 IR/fusion binding，要么同时具有 `support_class` 和 `support_reason`；疑似 GEMM、attention、MoE、normalization、convolution 或 collective 的语义 kernel 在 IR 外必须为零。
 - 每个 `fused` node 必须且只能属于一个 fusion group，group owner 与 `included_in` 一致；每个 group 都明确 exact interval 或 aggregate event set 语义以及可 review 的 evidence scope。
+- `fused` node 不得携带 standalone scalar timing field。每个 group 只有 owner 承载 measured production timing；如果同一节点同时声明 fused state 和独立 `node_metrics`，编译必须失败。
 - Viewer 的 node card 与详情必须显示 timing owner、covered semantic contract、mapping proof 和 occurrence/aggregate scope；泛化的 `fused implementation` 文字不能作为可交付结果。
 - 完整 candidate Execution IR 已经使用 eager stack、shape、invocation multiplicity、state transition 和 collective order 完成 reconciliation。
 - 每个 measured event 都属于以下状态之一：已映射、显式 fused/shared，或带类型和原因的 framework/runtime support。没有完成 production attribution closure 的 Model/Execution IR node 必须标记为 `mapping_incomplete`，不能伪装成 measured zero，也不能把 generic `unmapped` 当作 node 状态。

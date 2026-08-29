@@ -152,7 +152,7 @@ def test_viewer_renders_the_compiled_semantic_contract() -> None:
     assert "semantics.equation" in viewer
     assert "timing owner" in viewer
     assert "fusionScopeDescription" in viewer
-    assert "shared aggregate" in viewer
+    assert "fused into" in viewer
 
 
 def test_glm53_production_profiles_close_all_required_node_states() -> None:
@@ -219,8 +219,9 @@ def test_glm53_executable_decoder_modules_have_union_rollups() -> None:
         for target in shared_mhc:
             cell = profile["data"][target][variant]
             assert cell["status"] == "fused", (profile_id, target)
-            assert cell["attribution_status"] == "shared_fusion_owner"
-            assert cell["ms_per_iter"] > 0
+            assert cell["timing_role"] == "fused_member"
+            assert "ms_per_iter" not in cell
+            assert "active_gpu_ms" not in cell
             assert cell["shared_timing_owner"] == cell["included_in"]
 
 

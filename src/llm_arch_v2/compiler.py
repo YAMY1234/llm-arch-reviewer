@@ -1028,6 +1028,12 @@ def compile_profile(
         if not isinstance(state, dict) or not state.get("status"):
             raise CatalogError(f"{source}: state {target!r} requires status")
         if state.get("status") == "fused":
+            if target in (profile.get("node_metrics") or {}):
+                raise CatalogError(
+                    f"{source}: fused state {target!r} cannot also carry "
+                    "independent node_metrics; either make it a measured timing "
+                    "owner or remove the metric and point it at included_in"
+                )
             owner = state.get("included_in")
             if not owner:
                 raise CatalogError(
@@ -1212,33 +1218,23 @@ def compile_profile(
             cell["gpu_residency_ms"] = cell["gpu_residency_ms_per_iter"]
         group_id = fusion_group_for_target.get(target)
         if group_id:
+            group = fusion_groups[group_id]
             cell["fusion_group_id"] = group_id
-            cell["fusion_timing_semantics"] = fusion_groups[group_id][
-                "timing_semantics"
-            ]
-        # A fused semantic node has no independent timing, but hiding the
-        # production number entirely makes a measured architecture look empty.
-        # Surface only the owner's scalar timing fields and mark them shared so
-        # consumers cannot mistake them for additive leaf measurements.
-        if cell.get("status") == "fused" and cell.get("included_in"):
-            owner_metric = (profile.get("node_metrics") or {}).get(
-                cell["included_in"], {}
-            )
-            for field in (
-                "ms_per_iter",
-                "active_gpu_ms",
-                "gpu_residency_ms",
-                "gpu_residency_ms_per_iter",
-                "gpu_elapsed_ms",
-                "module_gap_ms",
-                "device_idle_ms",
-                "other_gpu_work_ms",
-            ):
-                if field in owner_metric and field not in cell:
-                    cell[field] = copy.deepcopy(owner_metric[field])
-            if any(field in cell for field in ("ms_per_iter", "active_gpu_ms")):
-                cell["attribution_status"] = "shared_fusion_owner"
-                cell["shared_timing_owner"] = cell["included_in"]
+            cell["fusion_timing_semantics"] = group["timing_semantics"]
+            if target == group["owner"]:
+                cell["timing_role"] = "fusion_owner"
+            else:
+                # Fine-grained Model IR remains visible, but only the fusion
+                # owner owns the measured production event(s).  Keeping the
+                # relationship instead of copying the owner's scalar metrics
+                # prevents one physical interval from looking like several
+                # independently timed semantic operations.
+                cell["timing_role"] = "fused_member"
+                cell["shared_timing_owner"] = group["owner"]
+        elif cell.get("attribution_status") == "inclusive_rollup":
+            cell["timing_role"] = "inclusive_rollup"
+        elif any(field in cell for field in ("ms_per_iter", "active_gpu_ms")):
+            cell["timing_role"] = "standalone"
         data[target] = {variant: cell}
     meta = {
             key: copy.deepcopy(profile[key])

@@ -585,8 +585,11 @@ collective) is excluded from the immediate Model IR module roll-up but included
 in the enclosing decoder/scheduler roll-up.
 If one detail view is reused by several parents, the compiler must not guess a
 parent; occurrence scope or an authored fusion/event-set binding must resolve
-the ambiguity. A fused semantic node may display its timing owner's scalar as
-`shared aggregate`, but that value is explicitly non-additive.
+the ambiguity. A fused semantic node displays `fused into <timing owner>` and
+the fusion/evidence link, never a copied scalar. The timing owner alone displays
+the measured value. A composite parent may separately display an explicitly
+marked `inclusive_rollup`, which is the union of descendant production events
+and is not additive with those descendants.
 
 ### Stage 8 — Build the Timeline hierarchy
 
@@ -771,6 +774,9 @@ never copied into another merely because their Model IR nodes share names.
 - Every `fused` node belongs to exactly one fusion group whose owner matches
   `included_in`; every group declares exact-interval versus aggregate-event-set
   semantics and a reviewable evidence scope.
+- A `fused` node carries no standalone scalar timing fields. Exactly one group
+  owner carries the measured production timing; a contradictory fused state
+  plus independent `node_metrics` fails compilation.
 - Viewer cards and details identify the timing owner, covered semantic
   contracts, mapping proof, and occurrence/aggregate scope; a generic
   `fused implementation` label is not an accepted deliverable.

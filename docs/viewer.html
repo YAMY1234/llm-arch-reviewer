@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-semantic-reconciliation-v1" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-fusion-timing-ownership-v2" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -3413,11 +3413,7 @@ function nodeStateSummary(cell, target = "") {
   if (cell.status === "fused") {
     const group = fusionGroupForTarget(target)?.[1] || null;
     const owner = group?.owner || cell.included_in || "unknown owner";
-    const prefix = group?.timing_semantics === "shared_event_set"
-      || group?.evidence_scope?.resolution === "profile_aggregate"
-      ? "shared aggregate"
-      : "shared timing";
-    return `${prefix} → ${shorten(irTargetLabel(owner), 28)}`;
+    return `fused into ${shorten(irTargetLabel(owner), 32)}`;
   }
   return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
 }
@@ -3465,11 +3461,7 @@ function formatMetricValue(value, metric = CURRENT_METRIC) {
 
 function metricDisplayText(value, metric, target = "", cell = null) {
   const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
-  const shared = (
-    cell?.status === "fused"
-    || cell?.attribution_status === "shared_fusion_owner"
-    || cell?.sol?.included_in_target
-  ) ? "shared " : "";
+  const shared = cell?.sol?.included_in_target ? "shared " : "";
   if (value != null) {
     return `${provenance}${shared}${metricLabel(metric)} ${formatMetricValue(value, metric)}${metricSuffix(metric)}`;
   }
@@ -3627,7 +3619,9 @@ function showDetail(n, viewName) {
   const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;
   const variants = Object.keys(visibleVariants).map(k => {
     const value = visibleVariants[k] || {};
-    const display = value.active_gpu_ms != null || value.ms_per_iter != null
+    const display = value.status === "fused"
+      ? `fused into ${irTargetLabel(value.shared_timing_owner || value.included_in || fusionOwner)}`
+      : value.active_gpu_ms != null || value.ms_per_iter != null
       ? (value.gpu_elapsed_ms != null
         ? `${formatMs(value.gpu_elapsed_ms)} ms elapsed · ${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · ${formatMs(value.device_idle_ms)} ms idle`
         : `${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · elapsed unavailable`)
@@ -3677,6 +3671,7 @@ function showDetail(n, viewName) {
     provenanceHtml = `<h3>timing & provenance</h3>
       <div class="kv">
         <div class="k">state</div><div>${escapeHtml(cell.status || cell.attribution_status || "measured")}</div>
+        ${cell.timing_role ? `<div class="k">timing role</div><div>${escapeHtml(cell.timing_role.replaceAll("_", " "))}</div>` : ""}
         ${cell.metric_kind ? `<div class="k">metric</div><div>${escapeHtml(cell.metric_kind)}</div>` : ""}
         ${cell.gpu_elapsed_ms != null ? `<div class="k">elapsed</div><div>${formatMs(cell.gpu_elapsed_ms)} ms (${escapeHtml(cell.elapsed_scope || "invocation envelope")})</div>` : ""}
         ${cell.active_gpu_ms != null ? `<div class="k">active GPU</div><div>${formatMs(cell.active_gpu_ms)} ms (overlap once)</div>` : ""}
