@@ -9,10 +9,13 @@
     "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
     "model_label": {"type": "string", "minLength": 1},
     "ir_version": {"type": "integer", "minimum": 1},
+    "semantic_revision": {"type": "integer", "minimum": 1},
     "default_view": {"type": "string", "minLength": 1},
     "default_execution_path": {"type": "string"},
     "dimensions": {"type": "object"},
     "facts": {"type": "object"},
+    "semantic_evidence": {"type": "object"},
+    "semantic_coverage": {"type": "object"},
     "semantic_contract": {"$ref": "#/$defs/semanticContract"},
     "boundary_contracts": {
       "type": "array",
@@ -78,6 +81,7 @@
       "required": ["nodes", "edges"],
       "properties": {
         "title": {"type": "string"},
+        "execution_contract": {"type": "boolean"},
         "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
         "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
       }
@@ -89,13 +93,113 @@
         "id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+$"},
         "label": {"type": "string"},
         "shape": {"enum": ["io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"]},
+        "operator_signature": {"$ref": "#/$defs/operator_signature"},
         "semantic_op": {"type": "string"},
+        "semantic_details": {"$ref": "#/$defs/semantic_details"},
         "drill": {"type": "string"},
         "ir_origin": {"enum": ["model_ir", "execution_plan"]},
         "node_kind": {"enum": ["semantic", "communication", "layout_transform"]},
         "boundary_role": {"enum": ["module_boundary", "module_internal"]},
         "boundary_direction": {"enum": ["input", "output", "handoff"]},
         "semantics": {"type": "object"}
+      }
+    },
+    "operator_signature": {
+      "type": "object",
+      "description": "Canonical symbolic operator transform plus an optional model-resolved concrete transform. Tensor layouts belong on edges, not in this field.",
+      "required": ["symbolic"],
+      "properties": {
+        "symbolic": {"type": "string", "minLength": 1},
+        "concrete": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "semantic_details": {
+      "type": "object",
+      "description": "Stable, implementation-independent semantic detail for a Model IR node.",
+      "properties": {
+        "operators": {"type": "array", "items": {"type": "string"}},
+        "math": {"type": "array", "items": {"type": "string"}},
+        "equation_exempt_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only for a primitive leaf that is execution support, metadata, or another explicitly non-mathematical operation."
+        },
+        "runtime_mapping": {
+          "type": "object",
+          "description": "Expected Binding/Profile disposition; this does not encode a framework or kernel in Model IR.",
+          "required": ["expectation"],
+          "properties": {
+            "expectation": {"enum": ["measured", "fused", "fused_state", "structural"]},
+            "profile_leaf": {"type": "string"},
+            "owner": {"type": "string"},
+            "reason": {"type": "string"}
+          }
+        },
+        "tensors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "role", "shape"],
+            "properties": {
+              "name": {"type": "string"},
+              "role": {"type": "string"},
+              "shape": {"type": "string"},
+              "dtype": {"type": "string"},
+              "lifecycle": {"type": "string"}
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "total": {"type": "integer", "minimum": 0},
+            "sharing": {"type": "string"},
+            "breakdown": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "count"],
+                "properties": {
+                  "name": {"type": "string"},
+                  "shape": {"type": "string"},
+                  "count": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          }
+        },
+        "state": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "shape", "lifecycle"],
+            "properties": {
+              "name": {"type": "string"},
+              "shape": {"type": "string"},
+              "dtype": {"type": "string"},
+              "lifecycle": {"type": "string"},
+              "update": {"type": "string"}
+            }
+          }
+        },
+        "invariants": {"type": "array", "items": {"type": "string"}},
+        "conditions": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "provenance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "source", "locator"],
+            "properties": {
+              "kind": {"enum": ["config", "source", "derived", "reference"]},
+              "source": {"type": "string"},
+              "revision": {"type": "string"},
+              "locator": {"type": "string"},
+              "derivation": {"type": "string"}
+            }
+          }
+        }
       }
     },
     "edge": {

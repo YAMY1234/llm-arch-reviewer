@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -54,6 +55,163 @@ def _validate_schema_version(
         raise CatalogError(f"{source}: expected schema_version={expected!r}, got {actual!r}")
 
 
+def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Require explicit semantic-closure evidence for enriched Model IRs."""
+
+    if int(model_ir.get("semantic_revision") or 0) < 3:
+        return
+    coverage = model_ir.get("semantic_coverage")
+    if not isinstance(coverage, dict):
+        raise CatalogError(
+            f"{source}: semantic_revision>=3 requires semantic_coverage"
+        )
+    required = (
+        "parameter_closure",
+        "state_closure",
+        "layer_variant_closure",
+        "config_field_disposition",
+    )
+    missing = [field for field in required if not coverage.get(field)]
+    if missing:
+        raise CatalogError(
+            f"{source}: semantic_coverage is missing: {', '.join(missing)}"
+        )
+    disposition = coverage["config_field_disposition"]
+    if not isinstance(disposition, dict):
+        raise CatalogError(
+            f"{source}: semantic_coverage.config_field_disposition must be a mapping"
+        )
+    buckets = ("model_ir", "execution_ir", "binding_profile", "excluded")
+    missing_buckets = [bucket for bucket in buckets if bucket not in disposition]
+    if missing_buckets:
+        raise CatalogError(
+            f"{source}: config_field_disposition is missing buckets: "
+            f"{', '.join(missing_buckets)}"
+        )
+    if int(model_ir.get("semantic_revision") or 0) >= 4 and not coverage.get(
+        "operator_dataflow_closure"
+    ):
+        raise CatalogError(
+            f"{source}: semantic_revision>=4 requires "
+            "semantic_coverage.operator_dataflow_closure"
+        )
+
+
+def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Reject compound leaves once operator/data-flow closure is claimed."""
+
+    if int(model_ir.get("semantic_revision") or 0) < 4:
+        return
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            operators = (node.get("semantic_details") or {}).get("operators") or []
+            if len(operators) > 1 and not node.get("drill"):
+                target = f"{view_id}.{node.get('id', '<missing>')}"
+                raise CatalogError(
+                    f"{source}: compound Model IR leaf {target} contains "
+                    f"{len(operators)} operators; split it into primitive nodes "
+                    "or add a drill view"
+                )
+
+
+def _validate_leaf_equation_coverage(
+    model_ir: dict[str, Any], *, source: Path
+) -> None:
+    """Require every primitive compute leaf to define its own mathematics.
+
+    A drill node may delegate its equation to the child data-flow view. A
+    primitive leaf may not fall back to the viewer's generic ``Composite
+    semantic module`` text: it must carry authored math, a canonical operator
+    signature, or a narrowly documented non-mathematical exemption.
+    """
+
+    if int(model_ir.get("semantic_revision") or 0) < 6:
+        return
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            if node.get("drill") or _inferred_semantic_kind(node) != "compute":
+                continue
+            target = f"{view_id}.{node.get('id', '<missing>')}"
+            semantic_details = node.get("semantic_details") or {}
+            has_math = bool(semantic_details.get("math"))
+            has_signature = bool(
+                (node.get("operator_signature") or {}).get("symbolic")
+            )
+            exemption = semantic_details.get("equation_exempt_reason")
+            if exemption is not None and (
+                not isinstance(exemption, str) or not exemption.strip()
+            ):
+                raise CatalogError(
+                    f"{source}: compute leaf {target} has an empty "
+                    "semantic_details.equation_exempt_reason"
+                )
+            if not (has_math or has_signature or exemption):
+                raise CatalogError(
+                    f"{source}: compute leaf {target} requires semantic_details.math, "
+                    "operator_signature, or an explicit equation_exempt_reason"
+                )
+
+
+_DIMENSION_TRANSFORM_IN_LABEL = re.compile(
+    r"(?:\[[A-Z0-9_, ×]+\]|(?:\d+|[A-Z][A-Za-z0-9_]*)(?:\s*×\s*(?:\d+|[A-Z][A-Za-z0-9_]*))?)"
+    r"\s*→\s*(?:\[[A-Z0-9_, ×]+\]|\d+|[A-Z][A-Za-z0-9_]*)"
+)
+_SIGNATURE_SYMBOL = re.compile(
+    r"(?<![A-Za-z0-9_])[A-Z][A-Za-z0-9_]*(?![A-Za-z0-9_])"
+)
+
+
+def _validate_notation_contract(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Keep tensor layouts, operator transforms, and visual classes orthogonal."""
+
+    if int(model_ir.get("semantic_revision") or 0) < 6:
+        return
+    dimensions = model_ir.get("dimensions")
+    if not isinstance(dimensions, dict) or not dimensions:
+        raise CatalogError(
+            f"{source}: semantic_revision>=6 requires a non-empty dimensions mapping"
+        )
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            target = f"{view_id}.{node.get('id', '<missing>')}"
+            signature = node.get("operator_signature")
+            if signature is not None:
+                if not isinstance(signature, dict) or not signature.get("symbolic"):
+                    raise CatalogError(
+                        f"{source}: node {target} operator_signature requires symbolic"
+                    )
+                if signature.get("concrete") is not None and not isinstance(
+                    signature["concrete"], str
+                ):
+                    raise CatalogError(
+                        f"{source}: node {target} "
+                        "operator_signature.concrete must be a string"
+                    )
+                undeclared = sorted(
+                    set(_SIGNATURE_SYMBOL.findall(signature["symbolic"]))
+                    - set(dimensions)
+                )
+                if undeclared:
+                    raise CatalogError(
+                        f"{source}: node {target} operator_signature uses undeclared "
+                        f"dimension symbols {undeclared}"
+                    )
+            if _DIMENSION_TRANSFORM_IN_LABEL.search(str(node.get("label") or "")):
+                raise CatalogError(
+                    f"{source}: node {target} embeds a dimension transform in label; "
+                    "move it to operator_signature"
+                )
+        for edge in view.get("edges", []) or []:
+            if edge.get("kind", "data") == "control":
+                continue
+            if not edge.get("shape") or not edge.get("dtype"):
+                raise CatalogError(
+                    f"{source}: tensor-carrying edge {view_id}."
+                    f"{edge.get('from')}->{edge.get('to')} requires shape and dtype; "
+                    "mark non-tensor dependencies as kind=control"
+                )
+
+
 def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     allowed_shapes = {"io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"}
@@ -71,6 +229,35 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                 if not node.get(field):
                     raise CatalogError(
                         f"{source}: node {view_id}.{node_id} is missing {field!r}"
+                    )
+            semantic_details = node.get("semantic_details")
+            if semantic_details is not None and not isinstance(semantic_details, dict):
+                raise CatalogError(
+                    f"{source}: node {view_id}.{node_id} "
+                    "semantic_details must be a mapping"
+                )
+            if isinstance(semantic_details, dict):
+                for field in (
+                    "operators",
+                    "math",
+                    "tensors",
+                    "state",
+                    "invariants",
+                    "conditions",
+                    "notes",
+                    "provenance",
+                ):
+                    value = semantic_details.get(field)
+                    if value is not None and not isinstance(value, list):
+                        raise CatalogError(
+                            f"{source}: node {view_id}.{node_id} "
+                            f"semantic_details.{field} must be a list"
+                        )
+                runtime_mapping = semantic_details.get("runtime_mapping")
+                if runtime_mapping is not None and not isinstance(runtime_mapping, dict):
+                    raise CatalogError(
+                        f"{source}: node {view_id}.{node_id} "
+                        "semantic_details.runtime_mapping must be a mapping"
                     )
             if node["shape"] not in allowed_shapes:
                 raise CatalogError(
@@ -96,6 +283,25 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                 raise CatalogError(
                     f"{source}: node {view_id}.{node['id']} drills into unknown view {drill!r}"
                 )
+    for target, node in index.items():
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping")
+        if not runtime_mapping:
+            continue
+        expectation = runtime_mapping.get("expectation")
+        if expectation not in {"measured", "fused", "fused_state", "structural"}:
+            raise CatalogError(
+                f"{source}: node {target} has unknown runtime-mapping expectation "
+                f"{expectation!r}"
+            )
+        if expectation == "measured" and runtime_mapping.get("profile_leaf") != target:
+            raise CatalogError(
+                f"{source}: measured node {target} must name itself as profile_leaf"
+            )
+        owner = runtime_mapping.get("owner")
+        if expectation in {"fused", "fused_state"} and owner not in index:
+            raise CatalogError(
+                f"{source}: fused node {target} references unknown owner {owner!r}"
+            )
     return index
 
 
@@ -332,6 +538,15 @@ def _compile_semantic_transitions(
 
         for node in view.get("nodes", []) or []:
             semantic_op = str(node["semantic_op"])
+            semantic_details = node.get("semantic_details") or {}
+            detail_math = [str(item) for item in semantic_details.get("math") or []]
+            equation_exemption = str(
+                semantic_details.get("equation_exempt_reason") or ""
+            )
+            signature = node.get("operator_signature") or {}
+            signature_equation = str(signature.get("symbolic") or "")
+            if signature.get("concrete"):
+                signature_equation += f" ({signature['concrete']})"
             inferred_kind = _inferred_semantic_kind(node)
             is_model_node = node.get("ir_origin") != "execution_plan"
             operation = operations.get(semantic_op)
@@ -372,9 +587,11 @@ def _compile_semantic_transitions(
                 "semantic_op": semantic_op,
                 "kind": str((operation or {}).get("kind") or inferred_kind),
                 "summary": str(node.get("label") or node["id"]).splitlines()[0],
-                "equation": equation or (
+                "equation": equation or "\n".join(detail_math) or signature_equation or (
                     execution_equation
                     if execution_equation
+                    else f"No model equation: {equation_exemption}"
+                    if equation_exemption
                     else
                     f"See {node['drill']} semantic data-flow"
                     if node.get("drill")
@@ -388,9 +605,28 @@ def _compile_semantic_transitions(
                 ),
                 "inputs": sorted(incoming[str(node["id"])], key=lambda item: (item["name"], item["source"])),
                 "outputs": sorted(outgoing[str(node["id"])], key=lambda item: (item["name"], item["target"])),
-                "invariants": copy.deepcopy((operation or {}).get("invariants", [])),
-                "contract_source": "model_ir.semantic_contract+edges",
-                **({"notes": str(operation["notes"])} if (operation or {}).get("notes") else {}),
+                "invariants": list(
+                    dict.fromkeys(
+                        [
+                            *copy.deepcopy((operation or {}).get("invariants", [])),
+                            *[str(item) for item in semantic_details.get("invariants") or []],
+                        ]
+                    )
+                ),
+                "contract_source": (
+                    "model_ir.semantic_contract+edges"
+                    if operation
+                    else "model_ir.semantic_details+edges"
+                    if semantic_details or signature
+                    else "model_ir.edges"
+                ),
+                **(
+                    {"notes": str(operation["notes"])}
+                    if (operation or {}).get("notes")
+                    else {"notes": "\n".join(str(item) for item in semantic_details.get("notes") or [])}
+                    if semantic_details.get("notes")
+                    else {}
+                ),
                 **({"drill_boundary": copy.deepcopy(drill_contract)} if drill_contract else {}),
             }
 
@@ -549,8 +785,15 @@ def _fingerprint_payload(
     topology or communication-graph changes produce a new fingerprint.
     """
 
+    semantic_only_views = {
+        view_id
+        for view_id, view in views.items()
+        if view.get("execution_contract") is False
+    }
     structural_views: dict[str, Any] = {}
     for view_id, view in sorted(views.items()):
+        if view_id in semantic_only_views:
+            continue
         structural_views[view_id] = {
             "nodes": [
                 {
@@ -563,6 +806,9 @@ def _fingerprint_payload(
                         "execution",
                     )
                     if key in node
+                    and not (
+                        key == "drill" and node.get("drill") in semantic_only_views
+                    )
                 }
                 for node in view.get("nodes", []) or []
             ],
@@ -680,6 +926,22 @@ def apply_binding(views: dict[str, Any], binding: dict[str, Any], *, source: Pat
                 node_binding.get("kernel_signatures", [])
             ),
         }
+    # Primitive Model IR nodes can share one fused implementation interval.
+    # Inherit the owner's source binding without duplicating timing ownership.
+    index = _node_index(views, source=source)
+    for target, node in index.items():
+        if node.get("implementation_binding"):
+            continue
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
+            continue
+        owner = index.get(str(runtime_mapping.get("owner") or ""))
+        if not owner or not owner.get("implementation_binding"):
+            continue
+        node["code_links"] = copy.deepcopy(owner.get("code_links", []))
+        node["implementation_binding"] = copy.deepcopy(owner["implementation_binding"])
+        node["implementation_binding"]["mapping_provenance"] = "shared_fused_owner"
+        node["implementation_binding"]["timing_owner"] = runtime_mapping["owner"]
 
 
 def _validate_parallelism(
@@ -705,6 +967,7 @@ def compile_profile(
     plan: dict[str, Any],
     fingerprint: str,
     node_targets: set[str],
+    node_index: dict[str, dict[str, Any]] | None = None,
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
@@ -719,6 +982,34 @@ def compile_profile(
                         "label": "MTP is disabled in this profile",
                     },
                 )
+    # Semantic refinement must not force every historical profile to duplicate
+    # a fused kernel interval. Runtime-mapping contracts synthesize explicit
+    # fused states while the measured owner remains the sole timing source.
+    for target, node in (node_index or {}).items():
+        if target in effective_states or target in (profile.get("node_metrics") or {}):
+            continue
+        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
+            continue
+        owner = str(runtime_mapping.get("owner") or "")
+        # A profile may fuse the semantic owner again into a larger runtime
+        # interval (for example beta/decay gating into the delta-rule kernel).
+        # Flatten that ownership chain so primitive children join the one
+        # physical event set instead of creating overlapping nested groups.
+        visited = {target}
+        while (
+            owner not in visited
+            and (effective_states.get(owner) or {}).get("status") == "fused"
+        ):
+            visited.add(owner)
+            owner = str(effective_states[owner].get("included_in") or "")
+        effective_states[target] = {
+            "status": "fused",
+            "included_in": owner,
+            "label": runtime_mapping.get("reason")
+            or "shares the fused runtime interval with its timing owner",
+            "provenance": "model_ir.runtime_mapping",
+        }
     unknown = sorted(set(profile.get("node_metrics") or {}) - node_targets)
     if unknown:
         raise CatalogError(f"{source}: profile references unknown nodes: {unknown}")
@@ -1028,6 +1319,10 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         source=model_path,
     )
     _node_index(model_ir["views"], source=model_path)
+    _validate_semantic_coverage(model_ir, source=model_path)
+    _validate_operator_granularity(model_ir, source=model_path)
+    _validate_leaf_equation_coverage(model_ir, source=model_path)
+    _validate_notation_contract(model_ir, source=model_path)
     _validate_boundary_contracts(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
@@ -1241,14 +1536,16 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                 f"{path}: evidence source_patch_sha256 {evidence_patch!r} does not "
                 f"match implementation {impl_id!r} patch {implementation_patch!r}"
             )
-        targets = set(
-            _node_index(execution_variants[fingerprint]["views"], source=plan_path)
+        target_index = _node_index(
+            execution_variants[fingerprint]["views"], source=plan_path
         )
+        targets = set(target_index)
         compiled_profile = compile_profile(
             raw_profile,
             plan=plan,
             fingerprint=fingerprint,
             node_targets=targets,
+            node_index=target_index,
             source=path,
         )
         profile_id = raw_profile["profile_id"]
@@ -1371,6 +1668,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             "model_label": model_ir["model_label"],
             "subtitle": "IR-first · execution-path variants · versioned profile overlays",
             "model_ir_version": model_ir["ir_version"],
+            "model_semantic_revision": model_ir.get("semantic_revision"),
             "catalog": f"catalog/{model_root.name}",
             "execution_variant_count": len(execution_variants),
             "implementation_count": len(implementations),
@@ -1386,6 +1684,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     "model_id",
                     "model_label",
                     "ir_version",
+                    "semantic_revision",
+                    "semantic_evidence",
+                    "semantic_coverage",
                     "dimensions",
                     "facts",
                     "default_view",

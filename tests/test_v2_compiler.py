@@ -16,6 +16,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from llm_arch_v2.compiler import (  # noqa: E402
     CatalogError,
+    _validate_leaf_equation_coverage,
+    _validate_notation_contract,
     apply_execution_plan,
     compile_catalog,
     compile_profile,
@@ -47,7 +49,26 @@ def test_all_audited_catalogs_compile_without_placeholder_equations(
         for node in view["nodes"]:
             equation = node["semantics"]["equation"]
             assert equation
-            assert "None" not in equation, (model_root.name, view_id, node["id"])
+            # ``None`` is valid inside authored indexing expressions such as
+            # ``x[:, None, :]``. Reject compiler placeholders, not that syntax.
+            assert equation not in {"None", "None = None(None)"}, (
+                model_root.name,
+                view_id,
+                node["id"],
+            )
+            equation_exemption = (node.get("semantic_details") or {}).get(
+                "equation_exempt_reason"
+            )
+            if (
+                int(bundle["model_ir"].get("semantic_revision") or 0) >= 6
+                and node["semantics"]["kind"] == "compute"
+                and not equation_exemption
+            ):
+                assert "Composite semantic module" not in equation, (
+                    model_root.name,
+                    view_id,
+                    node["id"],
+                )
 
 
 def test_compile_qwen40_catalog() -> None:
@@ -141,6 +162,238 @@ def test_model_ir_and_execution_ir_are_separate_graphs() -> None:
     assert collective["ir_origin"] == "execution_plan"
     assert collective["node_kind"] == "communication"
     assert collective["boundary_role"] == "module_boundary"
+
+
+def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    model_ir = bundle["model_ir"]
+
+    assert model_ir["semantic_revision"] == 6
+    assert model_ir["semantic_coverage"]["operator_dataflow_closure"] == (
+        "complete_against_pinned_source_089f8ac"
+    )
+    assert model_ir["semantic_coverage"]["parameter_closure"] == (
+        "complete_for_target_text_and_declared_mtp"
+    )
+    ledger = model_ir["facts"]["parameter_ledger"]
+    assert ledger["target_unique_total"] == 177392830576
+    assert ledger["target_text_total"] + ledger["vision_total"] == ledger[
+        "target_unique_total"
+    ]
+    assert ledger["target_unique_total"] + ledger["mtp_additional_unique"] == ledger[
+        "target_plus_mtp_unique_total"
+    ]
+    assert ledger["moe_per_layer"] * 48 == ledger["moe_all_48_layers"]
+    assert ledger["gdn_core_per_layer"] * 36 == ledger["gdn_core_all_36_layers"]
+    assert ledger["qsa_core_per_layer"] * 12 == ledger["qsa_core_all_12_layers"]
+    assert 51200245760 + 32768000 + 30720 + 40960 == ledger["ple_module_total"]
+    assert (10240 + 6553600 + 40960) * 2 == ledger[
+        "hyperconnection_per_layer"
+    ]
+    assert model_ir["facts"]["state_ledger"]["gdn_per_layer"]["growth"] == (
+        "fixed_per_request"
+    )
+    assert "qsa_indexer" in model_ir["views"]
+
+    assert model_ir["dimensions"]["H"] == 2560
+    assert model_ir["dimensions"]["E"] == "512 routed experts"
+    assert model_ir["dimensions"]["I"] == "640 expert intermediate dimension"
+    router = next(
+        node for node in model_ir["views"]["moe"]["nodes"] if node["id"] == "router"
+    )
+    assert router["operator_signature"] == {
+        "symbolic": "H → E",
+        "concrete": "2560 → 512",
+    }
+    for view in model_ir["views"].values():
+        for edge in view.get("edges", []):
+            if edge.get("kind", "data") == "control":
+                continue
+            assert edge.get("shape")
+            assert edge.get("dtype")
+
+    qsa_indexer = next(
+        node
+        for node in model_ir["views"]["qsa_attention"]["nodes"]
+        if node["id"] == "indexer"
+    )
+    assert qsa_indexer["drill"] == "qsa_indexer"
+    assert qsa_indexer["semantic_details"]["parameters"]["total"] == 1638656
+
+    gdn_state = next(
+        node
+        for node in model_ir["views"]["linear_attention"]["nodes"]
+        if node["id"] == "recurrent_state"
+    )
+    assert gdn_state["semantic_details"]["state"][0]["shape"] == (
+        "[B,48,128,128]"
+    )
+    moe = next(
+        node
+        for node in model_ir["views"]["full_layer"]["nodes"]
+        if node["id"] == "moe"
+    )
+    assert moe["semantic_details"]["parameters"]["total"] == 2522810880
+
+
+def test_checked_in_qwen40_bundle_matches_canonical_catalog() -> None:
+    """Prevent an enriched catalog from being published with a stale bundle."""
+
+    generated = json.loads(
+        (REPO_ROOT / "docs" / "qwen40_v2" / "arch_data.json").read_text()
+    )
+    compiled = compile_catalog(QWEN40_ROOT)
+
+    assert generated == compiled
+    assert generated["meta"]["model_semantic_revision"] == 6
+    assert "/Users/" not in json.dumps(generated["model_ir"]["semantic_evidence"])
+    for required_view in (
+        "hyperconnection_read",
+        "ple_grouped_norm_gate",
+        "linear_attention",
+        "qsa_indexer",
+        "moe_routed_expert",
+        "moe_shared_expert",
+        "mtp_generation",
+        "mtp_head",
+    ):
+        assert required_view in generated["model_ir"]["views"]
+
+
+def test_notation_contract_rejects_undeclared_symbols_and_untyped_edges() -> None:
+    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    broken = copy.deepcopy(model_ir)
+    broken["views"]["moe"]["nodes"][1]["operator_signature"]["symbolic"] = (
+        "H → UNKNOWN"
+    )
+    with pytest.raises(CatalogError, match="undeclared dimension symbols"):
+        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+
+    broken = copy.deepcopy(model_ir)
+    del broken["views"]["moe"]["edges"][0]["dtype"]
+    with pytest.raises(CatalogError, match="tensor-carrying edge"):
+        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+
+
+def test_qwen40_compute_leaf_requires_authored_equation_or_exemption() -> None:
+    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    broken = copy.deepcopy(model_ir)
+    target = next(
+        node
+        for node in broken["views"]["moe_routed_expert"]["nodes"]
+        if node["id"] == "silu"
+    )
+    target["semantic_details"].pop("math")
+    with pytest.raises(CatalogError, match="compute leaf moe_routed_expert.silu"):
+        _validate_leaf_equation_coverage(
+            broken, source=QWEN40_ROOT / "model_ir.yaml"
+        )
+
+
+def test_operator_signature_does_not_change_execution_fingerprint() -> None:
+    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    plan = load_yaml(QWEN40_ROOT / "execution_paths" / "tp_only.yaml")
+    baseline_views = apply_execution_plan(model_ir, plan, source=QWEN40_ROOT)
+    baseline = execution_fingerprint(model_ir, plan, baseline_views)
+
+    relabeled = copy.deepcopy(model_ir)
+    relabeled["views"]["moe"]["nodes"][1]["operator_signature"]["concrete"] = (
+        "resolved elsewhere"
+    )
+    relabeled_views = apply_execution_plan(relabeled, plan, source=QWEN40_ROOT)
+    assert execution_fingerprint(relabeled, plan, relabeled_views) == baseline
+
+
+def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    model_views = bundle["model_ir"]["views"]
+
+    # Revision 6 closes previously missing tensor-edge contracts. Its new
+    # fingerprint is the stable baseline; operator_signature itself remains
+    # presentation/semantic metadata and is excluded from the payload.
+    # The canonical MTP generation graph now includes the explicit
+    # proposal-update boundary retained from main, so the structural
+    # execution fingerprint differs from the pre-merge enrichment branch.
+    assert bundle["default_execution_variant"] == "exec_2ae15643d6883b58"
+
+    mix_gate = next(
+        node
+        for node in model_views["hyperconnection_mix"]["nodes"]
+        if node["id"] == "low_rank_gate"
+    )
+    assert mix_gate["drill"] == "hyperconnection_read"
+    assert _node_ids(bundle["model_ir"], "hyperconnection_read") == [
+        "normalized_branches",
+        "down_projection",
+        "scaled_silu",
+        "up_projection",
+        "sigmoid_view",
+        "weighted_apply",
+        "branch_mean",
+        "module_input",
+    ]
+
+    routed = next(
+        node
+        for node in model_views["moe"]["nodes"]
+        if node["id"] == "routed_experts"
+    )
+    assert routed["drill"] == "moe_routed_expert"
+    assert _node_ids(bundle["model_ir"], "moe_routed_expert")[1:-1] == [
+        "gate_projection",
+        "up_projection",
+        "silu",
+        "gated_product",
+        "down_projection",
+    ]
+
+
+def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    group = profile["fusion_groups"]["fusion:hyperconnection_mix.mix"]
+
+    assert group["owner"] == "hyperconnection_mix.mix"
+    assert "hyperconnection_read.down_projection" in group["ir_nodes"]
+    assert "hyperconnection_read.branch_mean" in group["ir_nodes"]
+    cell = profile["data"]["hyperconnection_read.down_projection"][
+        "tp4_cg_decode_bs1_8k1k"
+    ]
+    assert cell["status"] == "fused"
+    assert cell["included_in"] == "hyperconnection_mix.mix"
+    assert cell["fusion_timing_semantics"] == "shared_interval"
+
+    node = next(
+        item
+        for item in bundle["views"]["hyperconnection_read"]["nodes"]
+        if item["id"] == "down_projection"
+    )
+    assert node["implementation_binding"]["mapping_provenance"] == (
+        "shared_fused_owner"
+    )
+
+
+def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
+    bundle = compile_catalog(QWEN40_ROOT)
+    implementation = bundle["implementations"]["sglang_f90a941aa"]
+    for target in (
+        "qsa_indexer.qk_projection",
+        "qsa_indexer.q_norm_rope",
+        "qsa_indexer.compress",
+        "qsa_indexer.compressed_score",
+        "qsa_indexer.block_topk",
+        "qsa_indexer.expand_tail",
+    ):
+        assert target in implementation["node_bindings"]
+
+    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    cell = profile["data"]["qsa_attention.indexer"]["tp4_cg_decode_bs1_8k1k"]
+    assert cell["drill_view"] == "qsa_indexer"
+    assert cell["drill_mapping_coverage_pct"] == 100.0
+    assert cell["drill_metrics"]["raw_k_cache"]["status"] == "fused"
+    assert cell["drill_metrics"]["compressed_k_cache"]["included_in"] == (
+        "qsa_indexer.compress"
+    )
 
 
 def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> None:

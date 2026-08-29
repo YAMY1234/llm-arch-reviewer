@@ -830,6 +830,18 @@ never copied into another merely because their Model IR nodes share names.
 - Rebuilding the same catalog is deterministic.
 - At least one second framework or model fixture exercises the generic path
   before an adapter or viewer change is considered reusable.
+- A release is built from the canonical catalog, never copied from a generated
+  checkpoint or an older viewer bundle. CI rebuilds the bundle and fails when
+  checked-in generated output differs from that rebuild.
+- Semantic refinement is promoted atomically with its schema, source ledger,
+  compiler, bindings, mappings, tests, and generated bundle. The release gate
+  verifies the expected `semantic_revision`, semantic-ledger audit fingerprint,
+  and required primitive drill/view IDs; a branch that contains the refinement
+  but is not an ancestor of the release commit cannot silently satisfy the gate.
+- The published bundle must report the same semantic revision and primitive
+  view inventory as the source catalog. Release validation opens the published
+  artifact and checks representative primitive paths rather than trusting only
+  local source tests.
 
 ## 9. Human review gates
 

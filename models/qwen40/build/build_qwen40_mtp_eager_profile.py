@@ -35,6 +35,8 @@ from models.qwen40.build.qwen40_decode_attribution import (  # noqa: E402
     _metric,
     _map_moe,
     _map_qsa_attention,
+    attach_qsa_indexer_drill_metrics,
+    attach_qsa_indexer_drill_targets,
     collective_kind,
     communication_semantics,
     default_node_states,
@@ -1702,6 +1704,7 @@ def _mtp_rollup_groups(
 
 
 def build_metrics(events: list[dict[str, Any]], *, phase: str, n_iters: int) -> dict[str, Any]:
+    attach_qsa_indexer_drill_targets(events)
     # Never let the one-layer auxiliary model inflate target-model rollups such
     # as top.decoder_stack. Target and MTP reuse implementations, but they are
     # distinct semantic scopes and are joined only by generation-stage rollups.
@@ -1744,6 +1747,9 @@ def build_metrics(events: list[dict[str, Any]], *, phase: str, n_iters: int) -> 
         if communication is not None:
             metrics[target]["communication"] = communication
     _attach_mtp_hc_drill_metrics(metrics, events, phase=phase, n_iters=n_iters)
+    attach_qsa_indexer_drill_metrics(
+        metrics, events, n_iters=n_iters, all_events=events
+    )
     for metric in metrics.values():
         metric["source_rank"] = int(events[0]["rank"])
         metric["rank_policy"] = "stack-disabled MTP timing reference rank"

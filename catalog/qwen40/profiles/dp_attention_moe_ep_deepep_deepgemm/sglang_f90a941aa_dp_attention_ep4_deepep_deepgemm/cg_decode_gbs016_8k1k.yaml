@@ -2648,6 +2648,157 @@ node_metrics:
       envelope; device-idle cause is unclassified
     source_rank: 3
     rank_policy: one coherent critical reference rank
+    drill_view: qsa_indexer
+    drill_scope: qsa_attention.indexer
+    drill_mapping_coverage_pct: 100.0
+    drill_metrics:
+      index_in:
+        status: structural
+        label: hidden-state input boundary · no standalone kernel
+        scope_target: qsa_attention.indexer
+      qk_projection:
+        status: not_observed
+        label: index Q/K projection · no separately validated interval in this profile
+        scope_target: qsa_attention.indexer
+      q_norm_rope:
+        ms_per_iter: 0.067297
+        active_gpu_ms: 0.067297
+        gpu_residency_ms: 0.067297
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.067297
+        kernels:
+        - name: QSA index query preparation
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 5.608
+          total_us_per_iter: 67.297
+          share_in_node_pct: 100.0
+        display_label: index Q RMSNorm + MRoPE + raw-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 3
+        rank_policy: one coherent critical reference rank
+      raw_k_cache:
+        status: fused
+        label: raw index-K and MRoPE-position stores are fused into Q-prep
+        included_in: qsa_indexer.q_norm_rope
+        scope_target: qsa_attention.indexer
+      compress:
+        ms_per_iter: 0.057031
+        active_gpu_ms: 0.057031
+        gpu_residency_ms: 0.057031
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.057031
+        kernels:
+        - name: QSA index key compression
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 4.753
+          total_us_per_iter: 57.031
+          share_in_node_pct: 100.0
+        display_label: 4-token average + K norm/MRoPE + compressed-K store
+        scope_target: qsa_attention.indexer
+        source_rank: 3
+        rank_policy: one coherent critical reference rank
+      compressed_k_cache:
+        status: fused
+        label: compressed-K cache store is fused into key compression
+        included_in: qsa_indexer.compress
+        scope_target: qsa_attention.indexer
+      compressed_score:
+        ms_per_iter: 0.097274
+        active_gpu_ms: 0.097274
+        gpu_residency_ms: 0.097274
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_aligned
+        attribution:
+          direct_duration_pct: 0.0
+          methods:
+            validated_execution_sequence:
+              kernel_count: 180
+              gpu_residency_ms_per_iter: 0.097274
+        kernels:
+        - name: QSA index projection/support
+          count: 180
+          count_per_iter: 36.0
+          avg_us: 2.702
+          total_us_per_iter: 97.274
+          share_in_node_pct: 100.0
+        display_label: compressed MQA score
+        scope_target: qsa_attention.indexer
+        source_rank: 3
+        rank_policy: one coherent critical reference rank
+      block_topk:
+        ms_per_iter: 0.090094
+        active_gpu_ms: 0.090094
+        gpu_residency_ms: 0.090093
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.090093
+        kernels:
+        - name: QSA index top-k
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 7.508
+          total_us_per_iter: 90.093
+          share_in_node_pct: 100.0
+        display_label: Top-512 complete blocks
+        scope_target: qsa_attention.indexer
+        source_rank: 3
+        rank_policy: one coherent critical reference rank
+      expand_tail:
+        ms_per_iter: 0.028506
+        active_gpu_ms: 0.028506
+        gpu_residency_ms: 0.028506
+        gpu_overlap_ms: 0.0
+        metric_kind: exclusive_leaf
+        aggregation: kernel interval union inside the selected QSA-indexer scope
+        attribution_status: measured_direct
+        attribution:
+          direct_duration_pct: 100.0
+          methods:
+            direct_signature:
+              kernel_count: 60
+              gpu_residency_ms_per_iter: 0.028506
+        kernels:
+        - name: QSA block-index expansion
+          count: 60
+          count_per_iter: 12.0
+          avg_us: 2.375
+          total_us_per_iter: 28.506
+          share_in_node_pct: 100.0
+        display_label: block expansion + causal tail
+        scope_target: qsa_attention.indexer
+        source_rank: 3
+        rank_policy: one coherent critical reference rank
+      selected_indices:
+        status: structural
+        label: selected-token output boundary · materialized by expansion
+        scope_target: qsa_attention.indexer
   qsa_attention.kv_cache:
     ms_per_iter: 0.02135
     active_gpu_ms: 0.02135
@@ -3552,4 +3703,4 @@ timeline:
   step_count: 5
   event_count: 9345
   raw_trace_file: qwen40-dp_attention_ep4_deepep_deepgemm-cudagraph-gbs16-qwen40-dp_attention_ep4_deepep_deepgemm-cudagraph-gbs16-TP-3-DP-3-EP-3.trace.json.gz
-  sha256: 35eedc7a64cba454398f9adcf03c60f81936dd4ca02e0473bf84b5bb2448b87b
+  sha256: a361c066b031199e1f1d486688480841459a7a27eeb89321f3950d80c257a73d

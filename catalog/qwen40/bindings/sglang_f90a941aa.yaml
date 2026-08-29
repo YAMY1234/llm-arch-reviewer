@@ -425,6 +425,52 @@ node_bindings:
       - {file: python/sglang/srt/models/qwen4_exp.py, symbol: Qwen4ExpAttentionDecoderLayer._compute_qsa_topk_indices, display: qwen4_exp.py — QSA top-k indices}
       - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer, display: qsa_indexer.py — indexer implementation}
 
+  qsa_indexer.qk_projection:
+    symbols: [QSAIndexer.project_qk, QSAIndexer.index_qk_proj, ReplicatedLinear]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.project_qk, display: qsa_indexer.py — replicated index Q/K projection}
+
+  qsa_indexer.q_norm_rope:
+    symbols: [QSAIndexer.project_qk, qsa_index_q_norm_rope_store]
+    kernel_signatures: [qsa_index_q_prep_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.project_qk, display: qsa_indexer.py — Q RMSNorm/MRoPE and fused raw-K store}
+
+  qsa_indexer.raw_k_cache:
+    symbols: [QSAIndexer.update_key_state_and_compress, set_qsa_key_state_buffer]
+    kernel_signatures: [qsa_index_q_prep_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.update_key_state_and_compress, display: qsa_indexer.py — raw index-K and position-state update}
+
+  qsa_indexer.compress:
+    symbols: [QSAIndexer._fused_compress_store, qsa_index_k_compress_store]
+    kernel_signatures: [qsa_index_k_compress_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer._fused_compress_store, display: qsa_indexer.py — four-token average, K norm and MRoPE}
+
+  qsa_indexer.compressed_k_cache:
+    symbols: [QSAIndexer.update_key_state_and_compress, set_qsa_compressed_k_buffer]
+    kernel_signatures: [qsa_index_k_compress_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.update_key_state_and_compress, display: qsa_indexer.py — compressed index-K cache update}
+
+  qsa_indexer.compressed_score:
+    symbols: [QSAIndexer.select_prefill_tokens, QSAIndexer.select_decode_tokens, qsa_mqa_prefill, qsa_mqa_decode]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.select_decode_tokens, display: qsa_indexer.py — compressed MQA scoring}
+
+  qsa_indexer.block_topk:
+    symbols: [QSAIndexer.select_prefill_tokens, QSAIndexer.select_decode_tokens, qsa_fast_topk]
+    kernel_signatures: [fast_topk_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: QSAIndexer.select_decode_tokens, display: qsa_indexer.py — Top-512 compressed blocks}
+
+  qsa_indexer.expand_tail:
+    symbols: [expand_qsa_block_indices]
+    kernel_signatures: [expand_qsa_block_indices_kernel]
+    links:
+      - {file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, symbol: expand_qsa_block_indices, display: qsa_indexer.py — block expansion and causal tail append}
+
   qsa_attention.metadata:
     symbols: [Qwen4ExpAttentionDecoderLayer._compute_qsa_topk_indices, RadixAttention]
     kernel_signatures: [qsa_graph_layout_alloc_kernel, fa2_valid_counts]

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-semantic-reconciliation-v1" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -1257,6 +1258,7 @@ function initUI() {
   document.getElementById("btn-fit").onclick = () => fitToSvg();
   document.getElementById("btn-up").onclick = () => goUp();
   window.addEventListener("hashchange", parseHash);
+  window.addEventListener("popstate", parseHash);
 
   initTimelineUI();
   initSplitResizer();
@@ -1327,7 +1329,12 @@ function syncHash(replace = false) {
   if (replace) {
     history.replaceState(null, "", `${location.pathname}${location.search}#${hash}`);
   } else {
-    location.hash = hash;
+    // Push navigation history without emitting a second hashchange-driven
+    // render.  The old location.hash assignment raced the explicit render in
+    // drillFrom(), so a stale async ELK completion could collapse a deep path
+    // and make users double-click repeatedly. Back/forward navigation is
+    // handled by popstate above.
+    history.pushState(null, "", `${location.pathname}${location.search}#${hash}`);
   }
 }
 
@@ -3311,12 +3318,18 @@ function drillContext(viewName) {
   const parentNodeId = DRILL_FROM[index];
   if (!parentNodeId) return null;
   const parentCell = rawNodeCell(parentView, parentNodeId);
-  if (parentCell?.drill_view !== viewName || !parentCell.drill_metrics) return null;
+  const parentNode = (DATA.views[parentView]?.nodes || []).find(
+    item => item.id === parentNodeId
+  );
+  const callerIsolated = parentNode?.semantic_details?.runtime_scope === "caller_isolated";
+  if (parentCell?.drill_view && parentCell.drill_view !== viewName) return null;
+  if (!parentCell?.drill_metrics && !callerIsolated) return null;
   return {
     parentView,
     parentNodeId,
     parentCell,
-    scoped: parentCell.drill_metrics,
+    scoped: parentCell?.drill_metrics || {},
+    callerIsolated,
   };
 }
 
@@ -3355,18 +3368,42 @@ function nodeCell(n, viewName) {
   if (context && Object.prototype.hasOwnProperty.call(context.scoped, n.id)) {
     return context.scoped[n.id];
   }
+  if (context?.callerIsolated) {
+    const runtime = n?.semantic_details?.runtime_mapping || {};
+    const parentTarget = `${context.parentView}.${context.parentNodeId}`;
+    if (runtime.expectation === "fused" || runtime.expectation === "fused_state") {
+      return {
+        status: "fused",
+        included_in: parentTarget,
+        label: "shares the caller-scoped parent interval; no independent timing",
+        provenance: "model_ir.runtime_scope",
+      };
+    }
+    return {
+      status: "structural",
+      label: "semantic detail inside the caller-scoped parent interval",
+      provenance: "model_ir.runtime_scope",
+    };
+  }
   return rawNodeCell(viewName, n.id);
 }
 
 function profileNodeLabel(n, viewName) {
   const cell = nodeCell(n, viewName);
   const base = cell?.display_label || n.label || n.id;
+  const signature = n.operator_signature || null;
+  const signatureLine = signature?.symbolic
+    ? `${signature.symbolic}${signature.concrete ? `  (${signature.concrete})` : ""}`
+    : "";
+  const semanticBase = signatureLine && !base.includes(signatureLine)
+    ? `${base}\n${signatureLine}`
+    : base;
   const communication = cell?.communication;
   const kinds = [...new Set((communication?.observed_collectives || []).map(item =>
     String(item.kind || "").replaceAll("_", "-")
-  ).filter(kind => kind && !base.toLowerCase().includes(kind.toLowerCase())))];
-  if (!kinds.length) return base;
-  return `${base}\nobserved: ${kinds.join(" + ")}`;
+  ).filter(kind => kind && !semanticBase.toLowerCase().includes(kind.toLowerCase())))];
+  if (!kinds.length) return semanticBase;
+  return `${semanticBase}\nobserved: ${kinds.join(" + ")}`;
 }
 
 function nodeStateSummary(cell, target = "") {
@@ -3827,7 +3864,8 @@ function showDetail(n, viewName) {
     ${timelineBtn}
     <div class="kv">
       <div class="k">id</div><div>${escapeHtml(n.id)}</div>
-      <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
+      <div class="k">visual class</div><div>${escapeHtml(n.shape || "")}</div>
+      ${n.operator_signature?.symbolic ? `<div class="k">operator signature</div><div>${escapeHtml(n.operator_signature.symbolic)}${n.operator_signature.concrete ? ` (${escapeHtml(n.operator_signature.concrete)})` : ""}</div>` : ""}
       <div class="k">IR layer</div><div>${escapeHtml(n.ir_origin || "unknown")}</div>
       <div class="k">node kind</div><div>${escapeHtml(n.node_kind || "semantic")}</div>
       ${n.boundary_role ? `<div class="k">boundary role</div><div>${escapeHtml(n.boundary_role)}</div>` : ""}

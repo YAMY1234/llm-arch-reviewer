@@ -164,7 +164,17 @@ def main() -> int:
                       if (text.includes('Equation unavailable') || !equation.trim()) {
                         issues.push({view: viewName, node: node.id, missing: 'authored equation'});
                       }
-                      if (/\b(?:None|undefined|NaN|Infinity)\b/.test(equation)) {
+                      // ``None`` is valid in authored Python-style indexing
+                      // such as ``x[:, None, :]``.  Reject actual compiler
+                      // placeholders and non-finite tokens instead.
+                      const equationExemption = String(
+                        node?.semantic_details?.equation_exempt_reason || ''
+                      ).trim();
+                      const requiresPrimitiveEquation =
+                        node?.semantics?.kind === 'compute' && !equationExemption;
+                      if (equation.trim() === 'None' || equation.includes('None = None(None)') ||
+                          /\b(?:undefined|NaN|Infinity)\b/.test(equation) ||
+                          (requiresPrimitiveEquation && equation.includes('Composite semantic module'))) {
                         issues.push({view: viewName, node: node.id, invalidEquation: equation});
                       }
                     }

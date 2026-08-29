@@ -527,6 +527,9 @@ python3 scripts/run_pipeline_v2.py \
 - 记录 source/config/run/baseline-log/window-selection/trace hash 和 producer version。
 - 对同一个 catalog 的 rebuild 必须是 deterministic 的。
 - 在认定 adapter 或 viewer change 具有通用性之前，至少使用第二个 framework 或第二个 model fixture 验证 generic path。
+- Release 必须从 canonical catalog 重新构建，不能复制 generated checkpoint 或旧 viewer bundle。CI 必须重新 build，并在 checked-in generated output 与 rebuild 结果不一致时失败。
+- Semantic refinement 必须与对应的 schema、source ledger、compiler、binding、mapping、test 和 generated bundle 原子化进入 release。Release gate 必须校验预期的 `semantic_revision`、semantic-ledger audit fingerprint 和必需的 primitive drill/view ID；只存在于未进入 release ancestry 的分支不能被视为已经交付。
+- 发布 bundle 中的 semantic revision 和 primitive view inventory 必须与 source catalog 一致。Release validation 必须实际打开发布产物并检查代表性的 primitive path，不能只依赖本地 source test。
 
 ## 9. 人工 Review Gate
 

@@ -86,6 +86,9 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
 
     node = str(event.get("node") or "")
     targets: list[str] = [node] if node else []
+    qsa_indexer_drill_target = event.get("qsa_indexer_drill_target")
+    if qsa_indexer_drill_target:
+        targets.append(str(qsa_indexer_drill_target))
     layer_kind = event.get("layer_kind")
     substage = event.get("substage")
     layer_view = (
