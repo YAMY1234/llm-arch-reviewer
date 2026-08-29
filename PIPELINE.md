@@ -850,6 +850,10 @@ never copied into another merely because their Model IR nodes share names.
   selects one parent or an explicit many-to-many event-set binding is present.
 - Architecture selection highlights all matching timeline events; timeline
   selection expands, centers, and selects the exact architecture leaf.
+- Release acceptance exercises both directions through real browser clicks on
+  the rendered SVG node and Canvas kernel/owner lane. Calling navigation helper
+  functions directly is insufficient: the test must also prove that a clicked
+  kernel is the sole fully opaque kernel slice while unrelated slices are faded.
 - Stream, overlap, idle, module wall envelope, active GPU, and residency remain
   separately inspectable.
 - Raw trace/Perfetto handoff is content-hash checked.

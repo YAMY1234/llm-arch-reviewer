@@ -67,6 +67,7 @@ def main() -> int:
         "routes": 0,
         "nodes": 0,
         "cross_links": 0,
+        "bidirectional_dom_clicks": 0,
         "runtime_support_details": 0,
         "double_click_drills": 0,
         "fusion_owner_card_links": 0,
@@ -425,6 +426,139 @@ def main() -> int:
                     / f"{profile['implementation_id']}-{profile_id}-split.png",
                     full_page=False,
                 )
+
+            # Exercise the user-facing event bindings, not only the helper
+            # functions above.  This caught a real merge regression where the
+            # navigation helpers survived but the clicked-kernel selection
+            # state (one solid slice, all unrelated slices faded) disappeared.
+            dom_setup = page.evaluate(
+                """async () => {
+                  setViewMode('split', false, true);
+                  const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
+                    .find(candidate => candidate._irNode && architectureRouteForEvent(candidate).nodeId);
+                  if (!event) return {error: 'no_mapped_timeline_event'};
+                  const route = architectureRouteForEvent(event);
+                  await showTimelineEventInArchitecture({event, preserveViewMode: true, preserveDetail: true});
+                  const node = document.querySelector(
+                    `g.view-group[data-view="${CSS.escape(route.view)}"] ` +
+                    `g.node[data-id="${CSS.escape(route.nodeId)}"]`
+                  );
+                  if (!node) return {error: 'architecture_node_not_visible', route};
+                  node.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                  const target = `${route.view}.${route.nodeId}`;
+                  const expectedTarget = fusionGroupForTarget(target)?.[1]?.owner || target;
+                  const architectureClick = {
+                    selected: node.classList.contains('selected'),
+                    target: TIMELINE_IR_TARGET,
+                    expectedTarget,
+                    explicitSelectionCleared: TIMELINE_EXPLICIT_SELECTION == null,
+                    highlightedKernels: currentTimelineStep().events.filter(timelineEventIsHighlighted).length,
+                  };
+
+                  // Use the real detail-panel button to make a mapped kernel
+                  // comfortably clickable even in long decode windows.
+                  const centerButton = [...document.querySelectorAll('#detail button')]
+                    .find(button => button.innerText.includes('Center nearest measured kernel'));
+                  if (!centerButton) return {error: 'center_button_missing', architectureClick};
+                  centerButton.click();
+                  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                  const viewport = document.getElementById('timeline-viewport');
+                  const canvas = document.getElementById('timeline-canvas');
+                  let candidates = TIMELINE_HIT_RECTS.filter(hit =>
+                    hit.event._irNode && hit.width >= 2 &&
+                    hit.y + hit.height >= viewport.scrollTop &&
+                    hit.y <= viewport.scrollTop + viewport.clientHeight
+                  ).sort((left, right) => right.width - left.width);
+                  if (!candidates.length && TIMELINE_SELECTED_EVENT) {
+                    const selected = TIMELINE_SELECTED_EVENT;
+                    const center = Number(selected.start_us) + Number(selected.duration_us) / 2;
+                    const stepDuration = Number(currentTimelineStep().duration_us);
+                    const span = Math.min(
+                      stepDuration,
+                      Math.max(Number(selected.duration_us) * 12, 40),
+                    );
+                    const start = Math.max(0, Math.min(stepDuration - span, center - span / 2));
+                    TIMELINE_RANGE = {startUs: start, endUs: start + span};
+                    renderTimeline();
+                    centerTimelineEventVertically(selected);
+                    candidates = TIMELINE_HIT_RECTS.filter(hit =>
+                      hit.event._irNode && hit.width >= 2 &&
+                      hit.y + hit.height >= viewport.scrollTop &&
+                      hit.y <= viewport.scrollTop + viewport.clientHeight
+                    ).sort((left, right) => right.width - left.width);
+                  }
+                  const hit = candidates[0];
+                  if (!hit) return {error: 'no_clickable_kernel', architectureClick};
+                  window.__viewerAuditTimelineClickEvent = hit.event;
+                  const rect = canvas.getBoundingClientRect();
+                  return {
+                    architectureClick,
+                    click: {
+                      x: rect.left + hit.x + hit.width / 2,
+                      y: rect.top + hit.y + hit.height / 2,
+                    },
+                  };
+                }"""
+            )
+            if dom_setup.get("error"):
+                fail("bidirectional_dom_setup", profile=profile_id, **dom_setup)
+            else:
+                page.mouse.click(dom_setup["click"]["x"], dom_setup["click"]["y"])
+                try:
+                    page.wait_for_function(
+                        """() => {
+                          const event = window.__viewerAuditTimelineClickEvent;
+                          const route = architectureRouteForEvent(event);
+                          const node = document.querySelector(
+                            `g.view-group[data-view="${CSS.escape(route.view)}"] ` +
+                            `g.node[data-id="${CSS.escape(route.nodeId)}"].selected`
+                          );
+                          return TIMELINE_EXPLICIT_SELECTION?.kind === 'event' &&
+                            TIMELINE_EXPLICIT_SELECTION.event === event &&
+                            SELECTED?.view === route.view && SELECTED?.nodeId === route.nodeId &&
+                            !!node;
+                        }""",
+                        timeout=3000,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
+                dom_result = page.evaluate(
+                    """() => {
+                      const event = window.__viewerAuditTimelineClickEvent;
+                      const route = architectureRouteForEvent(event);
+                      const highlighted = currentTimelineStep().events.filter(timelineEventIsHighlighted);
+                      const selected = document.querySelector(
+                        `g.view-group[data-view="${CSS.escape(route.view)}"] ` +
+                        `g.node[data-id="${CSS.escape(route.nodeId)}"].selected`
+                      );
+                      return {
+                        explicitKind: TIMELINE_EXPLICIT_SELECTION?.kind || '',
+                        exactKernel: TIMELINE_EXPLICIT_SELECTION?.event === event,
+                        highlightedKernels: highlighted.length,
+                        architectureSelected: !!selected,
+                        selectedState: SELECTED,
+                        route,
+                      };
+                    }"""
+                )
+                checks["bidirectional_dom_clicks"] += 1
+                architecture_click = dom_setup["architectureClick"]
+                if (
+                    not architecture_click.get("selected")
+                    or architecture_click.get("target") != architecture_click.get("expectedTarget")
+                    or not architecture_click.get("explicitSelectionCleared")
+                    or architecture_click.get("highlightedKernels", 0) < 1
+                    or dom_result.get("explicitKind") != "event"
+                    or not dom_result.get("exactKernel")
+                    or dom_result.get("highlightedKernels") != 1
+                    or not dom_result.get("architectureSelected")
+                ):
+                    fail(
+                        "bidirectional_dom_click",
+                        profile=profile_id,
+                        architectureClick=architecture_click,
+                        timelineClick=dom_result,
+                    )
 
             # Runtime/support activity is deliberately outside Model IR, but it
             # must still be explainable.  Exercise the real kernel-detail path

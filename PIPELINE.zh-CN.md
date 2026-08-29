@@ -535,6 +535,7 @@ python3 scripts/run_pipeline_v2.py \
 - 任何拥有 measured descendants 的可执行 drill node 都必须有数值化的 `inclusive_rollup`；只有纯控制或 state boundary 可以没有 timing。
 - Rollup 测试必须证明重叠 descendant event 使用区间并集而不是求和；复用 detail view 时，在 profile scope 选定唯一 parent 或提供显式 many-to-many event-set binding 之前必须 fail closed。
 - 选择 Architecture node 时高亮所有匹配的 Timeline event；选择 Timeline event 时自动展开、居中并选中精确的 Architecture leaf。
+- 发布验收必须真实点击渲染后的 SVG node 和 Canvas kernel/owner lane，分别验证两个方向；只调用内部导航函数不算通过。测试还必须证明被点击的 kernel 是唯一保持实色的 kernel slice，其他无关 slice 均被淡化。
 - Stream、overlap、idle、module wall envelope、active GPU 和 residency 可以分别查看。
 - Raw trace/Perfetto handoff 必须经过 content-hash 校验。
 
