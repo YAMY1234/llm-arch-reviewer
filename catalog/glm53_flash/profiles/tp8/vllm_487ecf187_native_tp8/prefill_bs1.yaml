@@ -106,7 +106,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: prefill_bs1.timeline.json.gz
-  sha256: 3f713880f5f9bafb7182d5f74126e5bcdf9ab076b9d73a254028bc4976de4958
+  sha256: 4e43d6adb1adfed97f4d5e7293c32e0731ac7a67f9a9bc7fc7e2c2272f100e7f
   reference_rank: 1
   step_count: 1
   event_count: 3668
@@ -199,11 +199,6 @@ node_states:
   decoder_stack.schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.attn_mhc_pre:
-    status: fused
-    label: implementation-shared interval; semantic leaf remains explicit in Model IR
-    included_in: mhc_transform.pre_weights
-    fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
   decoder_stack.input_norm:
     status: fused
     label: implementation-shared interval; semantic leaf remains explicit in Model IR
@@ -212,16 +207,6 @@ node_states:
   decoder_stack.attention_schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.attn_mhc_combine:
-    status: fused
-    label: CUDA Graph fused mHC/TP boundary interval
-    included_in: mhc_transform.residual_mix
-    fusion_group_id: vllm_graph_mhc_tp_boundary
-  decoder_stack.ffn_mhc_pre:
-    status: fused
-    label: implementation-shared interval; semantic leaf remains explicit in Model IR
-    included_in: mhc_transform.pre_weights
-    fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
   decoder_stack.post_attention_norm:
     status: fused
     label: CUDA Graph fused mHC/TP boundary interval
@@ -230,11 +215,6 @@ node_states:
   decoder_stack.feed_forward_schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.ffn_mhc_combine:
-    status: fused
-    label: CUDA Graph fused mHC/TP boundary interval
-    included_in: mhc_transform.residual_mix
-    fusion_group_id: vllm_graph_mhc_tp_boundary
   decoder_stack.stack_out:
     status: structural
     label: semantic/state boundary without standalone timing
@@ -386,8 +366,6 @@ fusion_groups:
     - mhc_transform.pre_weights
     - top.hc_expand
     - decoder_stack.input_norm
-    - decoder_stack.attn_mhc_pre
-    - decoder_stack.ffn_mhc_pre
     - mhc_transform.coefficient_map
     - mhc_transform.flatten_norm
     - mhc_transform.combine_weights
@@ -537,14 +515,17 @@ fusion_groups:
       - layer_43.feed_forward
       - layer_44.attention
       - layer_44.feed_forward
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: 90 exact mHC-anchor-bounded production occurrences aligned to eager Python-stack evidence
   vllm_graph_mhc_tp_boundary:
     owner: mhc_transform.residual_mix
     ir_nodes:
     - mhc_transform.residual_mix
     - decoder_stack.post_attention_norm
-    - decoder_stack.attn_mhc_combine
-    - decoder_stack.ffn_mhc_combine
     - mhc_transform.sublayer_delta
     - mhc_transform.post_weights
     - mhc_transform.post_place
@@ -780,6 +761,11 @@ fusion_groups:
       - layer_41.attention
       - layer_42.attention
       - layer_44.attention
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: reviewed eager semantic fusion transferred only inside matching mHC-anchor-bounded production occurrences
   vllm_graph_dsa_qkv_a_projection:
     owner: dsa_attention.q_a_projection
@@ -817,6 +803,11 @@ fusion_groups:
       - layer_35.attention
       - layer_39.attention
       - layer_43.attention
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: reviewed eager semantic fusion transferred only inside matching mHC-anchor-bounded production occurrences
   vllm_graph_dsa_qkv_a_norm:
     owner: dsa_attention.q_a_norm
@@ -854,6 +845,11 @@ fusion_groups:
       - layer_35.attention
       - layer_39.attention
       - layer_43.attention
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: reviewed eager semantic fusion transferred only inside matching mHC-anchor-bounded production occurrences
   vllm_graph_moe_topk_bias:
     owner: moe.topk
@@ -953,6 +949,11 @@ fusion_groups:
       - layer_42.feed_forward
       - layer_43.feed_forward
       - layer_44.feed_forward
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: reviewed eager semantic fusion transferred only inside matching mHC-anchor-bounded production occurrences
 profile_summary:
   timing: *id001
@@ -2092,3 +2093,197 @@ node_metrics:
     - linear_attention.query_readout
     - linear_attention.recurrent_state
     - linear_attention.recurrent_update
+  decoder_stack.attn_mhc_pre:
+    ms_per_iter: 5.293436
+    active_gpu_ms: 5.293436
+    gpu_residency_ms: 5.293436
+    gpu_residency_ms_per_iter: 5.293436
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 90
+    rollup_sources:
+    - mhc_transform.pre_weights
+    timing_scope:
+      substage: attention
+    required_occurrence_count: 45
+    drill_view: mhc_transform
+    drill_metrics:
+      coefficient_map:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      combine_weights:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      flatten_norm:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      mhc_in:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      mhc_out:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      post_place:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+      post_weights:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+      pre_weights:
+        ms_per_iter: 5.293436
+        active_gpu_ms: 5.293436
+        gpu_residency_ms: 5.293436
+        gpu_residency_ms_per_iter: 5.293436
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 90
+        rollup_sources:
+        - mhc_transform.pre_weights
+        timing_scope:
+          substage: attention
+      residual_mix:
+        ms_per_iter: 181.275183
+        active_gpu_ms: 181.275183
+        gpu_residency_ms: 181.275183
+        gpu_residency_ms_per_iter: 181.275183
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 90
+        rollup_sources:
+        - mhc_transform.residual_mix
+        timing_scope:
+          substage: attention
+      stream_collapse:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      sublayer_delta:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+  decoder_stack.attn_mhc_combine:
+    ms_per_iter: 181.275183
+    active_gpu_ms: 181.275183
+    gpu_residency_ms: 181.275183
+    gpu_residency_ms_per_iter: 181.275183
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 90
+    rollup_sources:
+    - mhc_transform.residual_mix
+    timing_scope:
+      substage: attention
+    required_occurrence_count: 45
+  decoder_stack.ffn_mhc_pre:
+    ms_per_iter: 5.227104
+    active_gpu_ms: 5.227104
+    gpu_residency_ms: 5.227104
+    gpu_residency_ms_per_iter: 5.227104
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 89
+    rollup_sources:
+    - mhc_transform.pre_weights
+    timing_scope:
+      substage: feed_forward
+    required_occurrence_count: 45
+    drill_view: mhc_transform
+    drill_metrics:
+      coefficient_map:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      combine_weights:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      flatten_norm:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      mhc_in:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      mhc_out:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      post_place:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+      post_weights:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+      pre_weights:
+        ms_per_iter: 5.227104
+        active_gpu_ms: 5.227104
+        gpu_residency_ms: 5.227104
+        gpu_residency_ms_per_iter: 5.227104
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 89
+        rollup_sources:
+        - mhc_transform.pre_weights
+        timing_scope:
+          substage: feed_forward
+      residual_mix:
+        ms_per_iter: 114.95284
+        active_gpu_ms: 114.95284
+        gpu_residency_ms: 114.95284
+        gpu_residency_ms_per_iter: 114.95284
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 90
+        rollup_sources:
+        - mhc_transform.residual_mix
+        timing_scope:
+          substage: feed_forward
+      stream_collapse:
+        status: fused
+        label: implementation-shared interval; semantic leaf remains explicit in Model IR
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: vllm_graph_mhc_pre_profile_aggregate
+      sublayer_delta:
+        status: fused
+        label: CUDA Graph fused mHC/TP boundary interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: vllm_graph_mhc_tp_boundary
+  decoder_stack.ffn_mhc_combine:
+    ms_per_iter: 114.95284
+    active_gpu_ms: 114.95284
+    gpu_residency_ms: 114.95284
+    gpu_residency_ms_per_iter: 114.95284
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 90
+    rollup_sources:
+    - mhc_transform.residual_mix
+    timing_scope:
+      substage: feed_forward
+    required_occurrence_count: 45

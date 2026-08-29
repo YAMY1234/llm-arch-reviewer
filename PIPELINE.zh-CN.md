@@ -358,6 +358,20 @@ Parent/child rollup 必须显式携带 `exclusive` 或 `inclusive` semantics；�
 
 Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 只显示 `fused into <timing owner>` 及其 fusion/evidence 链接，不能复制 owner 的标量时间；只有 timing owner 显示 measured value。Composite parent 可以单独显示明确标记的 `inclusive_rollup`，其含义是 descendant production event 的并集，不能与 descendant 相加。
 
+凡是被 repeat 或多个上下文复用的模块边界，都必须声明
+`timing_scope_contract`。Contract 必须写明 composite target、真实 production
+owner、精确上下文过滤条件（例如 `layer_kind=attention` 与
+`substage=pre_weights`）、期望 occurrence 数量以及 drill view。Mapper 必须把
+这些坐标保留在每个 event 上；materializer 只能对满足过滤条件的真实物理
+区间做并集来生成 parent 时间，绝不能把一个 profile-wide owner 标量复制给
+多个 parent。Occurrence 缺失、重复或作用域不一致时，profile 必须 fail
+closed，不能静默生成数字。
+
+这套 contract 与测试必须是模型无关的。测试至少证明：每个已接受 parent
+具有准确的 occurrence 集合；改变任一上下文坐标会改变归属；active 等于匹配
+区间并集，residency 等于匹配 duration 总和；parent 不属于 leaf fusion
+group；drill view 展示的是同一份 scoped owner evidence。
+
 ### Stage 8 — 构建 Timeline Hierarchy
 
 每个真实 CUDA stream 都保持可见。在每个 stream 内：

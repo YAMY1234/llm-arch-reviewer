@@ -254,3 +254,85 @@ def direct_metrics_from_events(
             "overlap counted once"
         )
     return metrics
+
+
+def event_matches_scope(
+    event: dict[str, Any],
+    *,
+    event_filter: dict[str, Any],
+) -> bool:
+    """Return whether one decoded event belongs to an authored timing scope.
+
+    Scope fields are semantic execution coordinates carried by the production
+    trace (for example ``substage=attention``), not kernel-name guesses.  A
+    scalar value requires equality; a list means membership.  Missing event
+    coordinates fail closed.
+    """
+
+    for field, expected in event_filter.items():
+        actual = event.get(field)
+        if actual is None:
+            return False
+        if isinstance(expected, list):
+            if actual not in expected:
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
+def scoped_steps(
+    steps: Iterable[dict[str, Any]],
+    *,
+    event_filter: dict[str, Any],
+    source_nodes: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Select events by semantic occurrence scope and optional direct owners."""
+
+    result: list[dict[str, Any]] = []
+    for step in steps:
+        events = []
+        for event in step.get("events") or []:
+            if not event_matches_scope(event, event_filter=event_filter):
+                continue
+            node = str(event.get("ir_node") or "")
+            if source_nodes is not None and node not in source_nodes:
+                continue
+            events.append(event)
+        result.append({"events": events})
+    return result
+
+
+def scoped_rollup_metric_from_events(
+    steps: Iterable[dict[str, Any]],
+    *,
+    target: str,
+    source_nodes: set[str],
+    event_filter: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Compute one parent metric from its context-filtered owner intervals.
+
+    The result is an inclusive union.  It is intentionally not a copy of any
+    child scalar, and residency remains the sum of the selected physical
+    events so overlap is visible.
+    """
+
+    selected = scoped_steps(
+        steps,
+        event_filter=event_filter,
+        source_nodes=source_nodes,
+    )
+    prepared = []
+    for step in selected:
+        prepared.append(
+            {
+                "events": [
+                    {**event, "ir_targets": [target]}
+                    for event in step.get("events") or []
+                ]
+            }
+        )
+    return rollup_metrics_from_events(
+        prepared,
+        rollup_targets={target},
+    ).get(target)

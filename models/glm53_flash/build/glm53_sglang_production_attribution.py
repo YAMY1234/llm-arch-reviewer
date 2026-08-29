@@ -68,6 +68,32 @@ def segment_kind(segment_id: int) -> str:
     return "dense" if layer < 3 else "moe"
 
 
+def annotate_segment_scope(
+    segment: list[dict[str, Any]], segment_id: int
+) -> None:
+    """Persist the semantic occurrence used for bounded attribution.
+
+    The anchor boundary is part of the evidence, not a temporary matching
+    implementation detail.  Parent timing roll-ups require this coordinate to
+    separate attention from feed-forward occurrences without duplicating a
+    profile-wide fusion-owner scalar.
+    """
+
+    layer_id = segment_id // 2
+    substage = "attention" if segment_id % 2 == 0 else "feed_forward"
+    occurrence_id = f"layer_{layer_id:02d}.{substage}"
+    for row in segment:
+        row.update(
+            {
+                "layer_id": layer_id,
+                "layer_kind": segment_kind(segment_id),
+                "substage": substage,
+                "segment_id": segment_id,
+                "occurrence_id": occurrence_id,
+            }
+        )
+
+
 def _assign(
     row: dict[str, Any],
     node: str | None,
@@ -1195,6 +1221,8 @@ def attribute_sglang_production_events(
     ):
         production_segment = production_rows[p0:p1]
         source_segment = source_rows[s0:s1]
+        annotate_segment_scope(source_segment, segment_id)
+        annotate_segment_scope(production_segment, segment_id)
         segment_results[
             _bounded_transfer(
                 production_segment, source_segment, segment_id=segment_id

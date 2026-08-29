@@ -3,6 +3,7 @@ from models.common.profile_rollup import (
     direct_metrics_from_events,
     expand_rollup_targets,
     rollup_metrics_from_events,
+    scoped_rollup_metric_from_events,
     unique_drill_ancestors,
 )
 
@@ -99,3 +100,56 @@ def test_direct_metric_ignores_shared_targets_from_another_owner() -> None:
     assert metrics["top.expand"]["active_gpu_ms"] == 0.006
     assert metrics["top.expand"]["gpu_residency_ms"] == 0.006
     assert metrics["detail.fused_owner"]["active_gpu_ms"] == 0.1
+
+
+def test_scoped_parent_unions_only_matching_owner_occurrences() -> None:
+    steps = [
+        {
+            "events": [
+                {
+                    "start_us": 0.0,
+                    "duration_us": 10.0,
+                    "ir_node": "detail.owner",
+                    "ir_targets": ["detail.owner"],
+                    "substage": "attention",
+                    "occurrence_id": "layer_00.attention",
+                },
+                {
+                    "start_us": 5.0,
+                    "duration_us": 10.0,
+                    "ir_node": "detail.owner",
+                    "ir_targets": ["detail.owner"],
+                    "substage": "attention",
+                    "occurrence_id": "layer_01.attention",
+                },
+                {
+                    "start_us": 20.0,
+                    "duration_us": 100.0,
+                    "ir_node": "detail.owner",
+                    "ir_targets": ["detail.owner"],
+                    "substage": "feed_forward",
+                    "occurrence_id": "layer_00.feed_forward",
+                },
+                {
+                    "start_us": 130.0,
+                    "duration_us": 50.0,
+                    "ir_node": "detail.other",
+                    "ir_targets": ["detail.other"],
+                    "substage": "attention",
+                    "occurrence_id": "layer_02.attention",
+                },
+            ]
+        }
+    ]
+
+    metric = scoped_rollup_metric_from_events(
+        steps,
+        target="stack.attention_parent",
+        source_nodes={"detail.owner"},
+        event_filter={"substage": "attention"},
+    )
+
+    assert metric is not None
+    assert metric["active_gpu_ms"] == 0.015
+    assert metric["gpu_residency_ms"] == 0.02
+    assert metric["rollup_sources"] == ["detail.owner"]

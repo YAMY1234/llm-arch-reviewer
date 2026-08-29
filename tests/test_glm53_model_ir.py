@@ -153,6 +153,8 @@ def test_viewer_renders_the_compiled_semantic_contract() -> None:
     assert "timing owner" in viewer
     assert "fusionScopeDescription" in viewer
     assert "fused into" in viewer
+    assert "timing scope" in viewer
+    assert "required occurrences" in viewer
 
 
 def test_glm53_production_profiles_close_all_required_node_states() -> None:
@@ -195,11 +197,11 @@ def test_glm53_executable_decoder_modules_have_union_rollups() -> None:
         "decoder_stack.attention_schedule",
         "decoder_stack.feed_forward_schedule",
     }
-    shared_mhc = {
-        "decoder_stack.attn_mhc_pre",
-        "decoder_stack.attn_mhc_combine",
-        "decoder_stack.ffn_mhc_pre",
-        "decoder_stack.ffn_mhc_combine",
+    scoped_mhc = {
+        "decoder_stack.attn_mhc_pre": "attention",
+        "decoder_stack.attn_mhc_combine": "attention",
+        "decoder_stack.ffn_mhc_pre": "feed_forward",
+        "decoder_stack.ffn_mhc_combine": "feed_forward",
     }
 
     for profile_id, profile in bundle["profiles"].items():
@@ -216,13 +218,47 @@ def test_glm53_executable_decoder_modules_have_union_rollups() -> None:
             cell = profile["data"][target][variant]
             assert cell["status"] == "structural", (profile_id, target)
             assert "ms_per_iter" not in cell
-        for target in shared_mhc:
+        for target, substage in scoped_mhc.items():
             cell = profile["data"][target][variant]
-            assert cell["status"] == "fused", (profile_id, target)
-            assert cell["timing_role"] == "fused_member"
-            assert "ms_per_iter" not in cell
-            assert "active_gpu_ms" not in cell
-            assert cell["shared_timing_owner"] == cell["included_in"]
+            assert cell["attribution_status"] == "inclusive_rollup", (
+                profile_id,
+                target,
+            )
+            assert cell["timing_role"] == "inclusive_rollup"
+            assert cell["active_gpu_ms"] > 0
+            assert cell["gpu_residency_ms"] >= cell["active_gpu_ms"]
+            assert cell["timing_scope"] == {"substage": substage}
+            assert cell["required_occurrence_count"] == 45
+            assert "fusion_group_id" not in cell
+
+
+def test_glm53_mhc_scoped_parents_do_not_copy_profile_owner_scalars() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    for profile_id, profile in bundle["profiles"].items():
+        variant = profile["meta"]["variant_id"]
+        data = profile["data"]
+        pre_owner = data["mhc_transform.pre_weights"][variant]
+        post_owner = data["mhc_transform.residual_mix"][variant]
+        attn_pre = data["decoder_stack.attn_mhc_pre"][variant]
+        ffn_pre = data["decoder_stack.ffn_mhc_pre"][variant]
+        attn_post = data["decoder_stack.attn_mhc_combine"][variant]
+        ffn_post = data["decoder_stack.ffn_mhc_combine"][variant]
+
+        assert attn_pre["active_gpu_ms"] < pre_owner["active_gpu_ms"]
+        assert ffn_pre["active_gpu_ms"] < pre_owner["active_gpu_ms"]
+        assert attn_post["active_gpu_ms"] < post_owner["active_gpu_ms"]
+        assert ffn_post["active_gpu_ms"] < post_owner["active_gpu_ms"]
+        assert attn_pre["rollup_sources"] == ["mhc_transform.pre_weights"]
+        assert attn_post["rollup_sources"] == ["mhc_transform.residual_mix"]
+
+        for parent, substage in ((attn_pre, "attention"), (ffn_pre, "feed_forward")):
+            assert parent["drill_view"] == "mhc_transform"
+            assert parent["drill_metrics"]["pre_weights"]["timing_scope"] == {
+                "substage": substage
+            }
+            assert parent["drill_metrics"]["residual_mix"]["timing_scope"] == {
+                "substage": substage
+            }
 
 
 def test_glm53_tp_collectives_roll_up_to_decoder_not_local_model_modules() -> None:
@@ -285,13 +321,15 @@ def test_vllm_fused_states_have_one_scoped_timing_owner() -> None:
         assert target in group["ir_nodes"], target
 
     residual = profile["fusion_groups"]["vllm_graph_mhc_tp_boundary"]
-    assert "decoder_stack.attn_mhc_combine" in residual["ir_nodes"]
+    assert "decoder_stack.attn_mhc_combine" not in residual["ir_nodes"]
+    assert "decoder_stack.ffn_mhc_combine" not in residual["ir_nodes"]
     assert "mhc_transform.post_weights" in residual["ir_nodes"]
     assert residual["timing_semantics"] == "shared_event_set"
     assert residual["evidence_scope"]["resolution"] == "profile_aggregate"
 
     pre = profile["fusion_groups"]["vllm_graph_mhc_pre_profile_aggregate"]
-    assert "decoder_stack.attn_mhc_pre" in pre["ir_nodes"]
+    assert "decoder_stack.attn_mhc_pre" not in pre["ir_nodes"]
+    assert "decoder_stack.ffn_mhc_pre" not in pre["ir_nodes"]
     assert "mhc_transform.flatten_norm" in pre["ir_nodes"]
 
 
@@ -351,7 +389,7 @@ def test_glm53_validated_catalog_compile_is_deterministic() -> None:
     assert first["meta"]["view_count"] == 10
     assert first["meta"]["execution_variant_count"] == 1
     assert first["meta"]["implementation_count"] == 2
-    assert first["meta"]["profile_count"] == 6
+    assert first["meta"]["profile_count"] == 10
 
 
 def test_glm53_bindings_cover_model_and_execution_nodes() -> None:

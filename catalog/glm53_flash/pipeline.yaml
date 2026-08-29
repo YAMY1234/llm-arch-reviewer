@@ -70,6 +70,10 @@ capture_policy:
       global_batch_sizes: [1, 16, 64, 256]
       profiler: torch_2.13.0_gpu_activity
       require_all_tp_rank_traces: true
+      invocation_segment: cuda_graph_model_forward_children
+      graph_id_selection: single_nonzero_graph_id
+      outside_segment_policy: graph_id_zero_framework_runtime_diagnostics
+      vllm_outside_segment_kernel_count_per_rank: 87
   post_capture_validation:
     require_actual_window_match: true
     require_realized_lengths: [8192, 1024]
@@ -87,6 +91,8 @@ acceptance:
 
 stage1_result:
   status: accepted
-  measured_profile_count: 6
-  unsupported_profile_count: 4
+  measured_profile_count: 10
+  unsupported_profile_count: 0
   pending_profile_count: 0
+  final_validation: current/glm53-flash-cross-framework-ir-profile/validation/final-validation.json
+  deterministic_bundle_sha256: 6682cad056c25211eac55bbee522b84dda1c7d406c933343254aec7d05c9e1a9

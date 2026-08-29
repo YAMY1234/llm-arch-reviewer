@@ -493,6 +493,83 @@ def _validate_boundary_contracts(model_ir: dict[str, Any], *, source: Path) -> N
                 )
 
 
+def _validate_timing_scope_contracts(
+    model_ir: dict[str, Any], *, source: Path
+) -> None:
+    """Validate semantic occurrence scopes used for parent timing roll-ups.
+
+    These contracts are framework-independent.  They name Model-IR owners and
+    semantic execution coordinates (layer/substage/occurrence), never kernel
+    names or stream IDs.  Production evidence must carry every requested
+    coordinate or materialization fails closed with no parent metric.
+    """
+
+    nodes = _node_index(model_ir.get("views") or {}, source=source)
+    allowed_filter_fields = {
+        "layer_id",
+        "layer_kind",
+        "substage",
+        "segment_id",
+        "occurrence_id",
+    }
+    seen_targets: set[str] = set()
+    for contract in model_ir.get("timing_scope_contracts") or []:
+        if not isinstance(contract, dict):
+            raise CatalogError(
+                f"{source}: timing_scope_contracts entries must be mappings"
+            )
+        target = str(contract.get("target_node") or "")
+        if target not in nodes:
+            raise CatalogError(
+                f"{source}: timing scope references unknown target {target!r}"
+            )
+        if target in seen_targets:
+            raise CatalogError(
+                f"{source}: duplicate timing scope target {target!r}"
+            )
+        seen_targets.add(target)
+        sources = [str(item) for item in contract.get("source_nodes") or []]
+        if not sources or any(item not in nodes for item in sources):
+            raise CatalogError(
+                f"{source}: timing scope {target!r} requires known source_nodes"
+            )
+        event_filter = contract.get("event_filter")
+        if not isinstance(event_filter, dict) or not event_filter:
+            raise CatalogError(
+                f"{source}: timing scope {target!r} requires event_filter"
+            )
+        unknown_fields = sorted(set(event_filter) - allowed_filter_fields)
+        if unknown_fields:
+            raise CatalogError(
+                f"{source}: timing scope {target!r} has unsupported event "
+                f"coordinates: {unknown_fields}"
+            )
+        if contract.get("metric_kind") != "inclusive_event_union":
+            raise CatalogError(
+                f"{source}: timing scope {target!r} requires "
+                "metric_kind='inclusive_event_union'"
+            )
+        required_occurrences = contract.get("required_occurrence_count")
+        if not isinstance(required_occurrences, int) or required_occurrences <= 0:
+            raise CatalogError(
+                f"{source}: timing scope {target!r} requires a positive "
+                "required_occurrence_count"
+            )
+        drill_view = contract.get("drill_view")
+        if drill_view is not None:
+            if drill_view not in (model_ir.get("views") or {}):
+                raise CatalogError(
+                    f"{source}: timing scope {target!r} references unknown "
+                    f"drill_view {drill_view!r}"
+                )
+            target_node = nodes[target]
+            if target_node.get("drill") != drill_view:
+                raise CatalogError(
+                    f"{source}: timing scope {target!r} drill_view must match "
+                    "the Model-IR drill target"
+                )
+
+
 def _compile_semantic_transitions(
     model_ir: dict[str, Any], views: dict[str, Any], *, source: Path
 ) -> None:
@@ -1320,6 +1397,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     _validate_leaf_equation_coverage(model_ir, source=model_path)
     _validate_notation_contract(model_ir, source=model_path)
     _validate_boundary_contracts(model_ir, source=model_path)
+    _validate_timing_scope_contracts(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"
@@ -1691,6 +1769,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             },
             "semantic_contract": copy.deepcopy(model_ir.get("semantic_contract", {})),
             "boundary_contracts": copy.deepcopy(model_ir.get("boundary_contracts", [])),
+            "timing_scope_contracts": copy.deepcopy(
+                model_ir.get("timing_scope_contracts", [])
+            ),
             "views": _model_views_with_provenance(
                 model_ir["views"], model_ir=model_ir, source=model_path
             ),

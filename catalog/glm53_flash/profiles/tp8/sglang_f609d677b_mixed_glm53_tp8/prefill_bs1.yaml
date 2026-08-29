@@ -135,7 +135,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: prefill_bs1.timeline.json.gz
-  sha256: f5ecabddcd09d9f8ce115e67a52dc21de2e671e5f25b927756f55aae06ae51da
+  sha256: 31b2f5284168f51b8d1241e4db8807ec3b00954721a2dad50c8134bc498e708e
   reference_rank: 0
   step_count: 1
   event_count: 2564
@@ -228,11 +228,6 @@ node_states:
   decoder_stack.schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.attn_mhc_pre:
-    status: fused
-    label: attention and feed-forward mHC-pre timing is one validated profile-level event set
-    included_in: mhc_transform.pre_weights
-    fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
   decoder_stack.input_norm:
     status: fused
     label: RMSNorm is executed in the fused attention mHC-pre interval
@@ -241,16 +236,6 @@ node_states:
   decoder_stack.attention_schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.attn_mhc_combine:
-    status: fused
-    label: attention and feed-forward mHC-post timing is one validated profile-level event set
-    included_in: mhc_transform.residual_mix
-    fusion_group_id: sglang_graph_mhc_post_profile_aggregate
-  decoder_stack.ffn_mhc_pre:
-    status: fused
-    label: attention and feed-forward mHC-pre timing is one validated profile-level event set
-    included_in: mhc_transform.pre_weights
-    fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
   decoder_stack.post_attention_norm:
     status: fused
     label: RMSNorm is executed in the fused feed-forward mHC-pre interval
@@ -259,11 +244,6 @@ node_states:
   decoder_stack.feed_forward_schedule:
     status: structural
     label: semantic/state boundary without standalone timing
-  decoder_stack.ffn_mhc_combine:
-    status: fused
-    label: attention and feed-forward mHC-post timing is one validated profile-level event set
-    included_in: mhc_transform.residual_mix
-    fusion_group_id: sglang_graph_mhc_post_profile_aggregate
   decoder_stack.stack_out:
     status: structural
     label: semantic/state boundary without standalone timing
@@ -392,8 +372,6 @@ fusion_groups:
     - top.hc_expand
     - decoder_stack.input_norm
     - decoder_stack.post_attention_norm
-    - decoder_stack.attn_mhc_pre
-    - decoder_stack.ffn_mhc_pre
     - mhc_transform.flatten_norm
     - mhc_transform.coefficient_map
     - mhc_transform.post_weights
@@ -404,13 +382,16 @@ fusion_groups:
     confidence: high
     evidence_scope:
       resolution: profile_aggregate
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: 90 validated decoder sublayer occurrences; non-additive shared mHC-pre event set
   sglang_graph_mhc_post_profile_aggregate:
     owner: mhc_transform.residual_mix
     ir_nodes:
     - mhc_transform.residual_mix
-    - decoder_stack.attn_mhc_combine
-    - decoder_stack.ffn_mhc_combine
     - mhc_transform.sublayer_delta
     - mhc_transform.post_place
     timing_semantics: shared_event_set
@@ -418,6 +399,11 @@ fusion_groups:
     confidence: high
     evidence_scope:
       resolution: profile_aggregate
+      semantic_occurrence_coordinates:
+      - layer_id
+      - substage
+      - segment_id
+      - occurrence_id
     provenance: 90 validated decoder sublayer occurrences; non-additive shared mHC-post event set
 profile_summary:
   timing: *id001
@@ -1377,3 +1363,197 @@ node_metrics:
     - linear_attention.qkv_short_conv
     - linear_attention.recurrent_state
     - linear_attention.recurrent_update
+  decoder_stack.attn_mhc_pre:
+    ms_per_iter: 5.265223
+    active_gpu_ms: 5.265223
+    gpu_residency_ms: 5.265223
+    gpu_residency_ms_per_iter: 5.265223
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 90
+    rollup_sources:
+    - mhc_transform.pre_weights
+    timing_scope:
+      substage: attention
+    required_occurrence_count: 45
+    drill_view: mhc_transform
+    drill_metrics:
+      coefficient_map:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      combine_weights:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      flatten_norm:
+        status: fused
+        label: shared fused mHC-pre normalization interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      mhc_in:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      mhc_out:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      post_place:
+        status: fused
+        label: shared fused mHC-post placement interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: sglang_graph_mhc_post_profile_aggregate
+      post_weights:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      pre_weights:
+        ms_per_iter: 5.265223
+        active_gpu_ms: 5.265223
+        gpu_residency_ms: 5.265223
+        gpu_residency_ms_per_iter: 5.265223
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 90
+        rollup_sources:
+        - mhc_transform.pre_weights
+        timing_scope:
+          substage: attention
+      residual_mix:
+        ms_per_iter: 3.978748
+        active_gpu_ms: 3.978748
+        gpu_residency_ms: 3.978748
+        gpu_residency_ms_per_iter: 3.978748
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 45
+        rollup_sources:
+        - mhc_transform.residual_mix
+        timing_scope:
+          substage: attention
+      stream_collapse:
+        status: fused
+        label: shared fused mHC-pre stream-collapse interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      sublayer_delta:
+        status: fused
+        label: semantic sublayer handoff placed by the fused mHC-post interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: sglang_graph_mhc_post_profile_aggregate
+  decoder_stack.attn_mhc_combine:
+    ms_per_iter: 3.978748
+    active_gpu_ms: 3.978748
+    gpu_residency_ms: 3.978748
+    gpu_residency_ms_per_iter: 3.978748
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 45
+    rollup_sources:
+    - mhc_transform.residual_mix
+    timing_scope:
+      substage: attention
+    required_occurrence_count: 45
+  decoder_stack.ffn_mhc_pre:
+    ms_per_iter: 5.255908
+    active_gpu_ms: 5.255908
+    gpu_residency_ms: 5.255908
+    gpu_residency_ms_per_iter: 5.255908
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 89
+    rollup_sources:
+    - mhc_transform.pre_weights
+    timing_scope:
+      substage: feed_forward
+    required_occurrence_count: 45
+    drill_view: mhc_transform
+    drill_metrics:
+      coefficient_map:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      combine_weights:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      flatten_norm:
+        status: fused
+        label: shared fused mHC-pre normalization interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      mhc_in:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      mhc_out:
+        status: structural
+        label: semantic/state boundary without standalone timing
+      post_place:
+        status: fused
+        label: shared fused mHC-post placement interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: sglang_graph_mhc_post_profile_aggregate
+      post_weights:
+        status: fused
+        label: shared fused mHC-pre coefficient interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      pre_weights:
+        ms_per_iter: 5.255908
+        active_gpu_ms: 5.255908
+        gpu_residency_ms: 5.255908
+        gpu_residency_ms_per_iter: 5.255908
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 89
+        rollup_sources:
+        - mhc_transform.pre_weights
+        timing_scope:
+          substage: feed_forward
+      residual_mix:
+        ms_per_iter: 3.973787
+        active_gpu_ms: 3.973787
+        gpu_residency_ms: 3.973787
+        gpu_residency_ms_per_iter: 3.973787
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 45
+        rollup_sources:
+        - mhc_transform.residual_mix
+        timing_scope:
+          substage: feed_forward
+      stream_collapse:
+        status: fused
+        label: shared fused mHC-pre stream-collapse interval
+        included_in: mhc_transform.pre_weights
+        fusion_group_id: sglang_graph_mhc_pre_profile_aggregate
+      sublayer_delta:
+        status: fused
+        label: semantic sublayer handoff placed by the fused mHC-post interval
+        included_in: mhc_transform.residual_mix
+        fusion_group_id: sglang_graph_mhc_post_profile_aggregate
+  decoder_stack.ffn_mhc_combine:
+    ms_per_iter: 3.973787
+    active_gpu_ms: 3.973787
+    gpu_residency_ms: 3.973787
+    gpu_residency_ms_per_iter: 3.973787
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 45
+    rollup_sources:
+    - mhc_transform.residual_mix
+    timing_scope:
+      substage: feed_forward
+    required_occurrence_count: 45

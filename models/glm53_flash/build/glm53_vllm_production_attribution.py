@@ -16,6 +16,7 @@ from typing import Any
 from models.glm52.build.build_glm52_production_profile import (
     kernel_base,
     kernel_exact_identity,
+    schedule_family,
     unique_source_index,
 )
 from models.glm53_flash.build.glm53_sglang_production_attribution import (
@@ -329,6 +330,28 @@ def _transfer_matching_scope(
             )
         return assigned, "exact"
 
+    # Decode CUDA graphs are separately compiled for each batch shape.  NVJet
+    # and DeepGEMM encode those shapes (and schedule digits) in the kernel
+    # symbol even when the complete kernel-family schedule is unchanged.  A
+    # full occurrence-local family-sequence match is therefore admissible:
+    # the surrounding mHC anchors preserve layer/substage scope and only
+    # shape/version digits are normalized.  This remains fail-closed for any
+    # inserted, removed, or reordered kernel family.
+    source_families = [
+        schedule_family(str(row.get("kernel_name") or "")) for row in source
+    ]
+    production_families = [
+        schedule_family(str(row.get("kernel_name") or "")) for row in production
+    ]
+    if source_families == production_families:
+        for source_row, production_row in zip(source, production):
+            assigned += _assign(
+                production_row,
+                source_row,
+                method=f"{method_prefix}_shape_family_sequence",
+            )
+        return assigned, "shape_family"
+
     # CUDA Graph auxiliary streams may append work after an otherwise stable
     # main-stream tail.  Transfer only the verified common prefix; never align
     # the remainder positionally.
@@ -344,6 +367,22 @@ def _transfer_matching_scope(
             production_row,
             source_row,
             method=f"{method_prefix}_exact_base_prefix",
+        )
+
+    family_prefix = 0
+    for source_family, production_family in zip(
+        source_families, production_families
+    ):
+        if source_family != production_family:
+            break
+        family_prefix += 1
+    for source_row, production_row in zip(
+        source[:family_prefix], production[:family_prefix]
+    ):
+        assigned += _assign(
+            production_row,
+            source_row,
+            method=f"{method_prefix}_shape_family_prefix",
         )
 
     # A mismatched scope is not positionally transferred.  Only identities
@@ -365,6 +404,7 @@ def _transfer_matching_scope(
     for key_fn, suffix in (
         (kernel_exact_identity, "repeated_exact_occurrence"),
         (kernel_base, "repeated_function_occurrence"),
+        (schedule_family, "repeated_shape_family_occurrence"),
     ):
         source_groups: dict[str, list[dict[str, Any]]] = {}
         production_groups: dict[str, list[dict[str, Any]]] = {}
@@ -651,6 +691,197 @@ def _assign_unanchored_production_schedules(events: list[dict[str, Any]]) -> int
     return assigned
 
 
+def _assign_decode_graph_segment_schedules(events: list[dict[str, Any]]) -> int:
+    """Close batch-specialized decode schedules inside exact mHC scopes.
+
+    The decode graph uses update kernels and batch-specific NVJet symbols that
+    intentionally differ from the graph-off eager trace.  We admit only the
+    complete 34-KDA update schedule, then use the already-validated 90 mHC
+    segments and model-unique landmarks.  No rule crosses an attention/FFN
+    occurrence boundary.
+    """
+
+    update_count = sum(
+        "_causal_conv1d_update_kernel"
+        in str(row.get("kernel_name") or "").lower()
+        for row in events
+    )
+    if update_count != 34:
+        return 0
+
+    _, segments = _segments(events)
+    assigned = 0
+
+    def assign(
+        row: dict[str, Any], node: str, method: str, *, force: bool = False
+    ) -> None:
+        nonlocal assigned
+        if force:
+            changed = row.get("node") != node
+            row.update(
+                {
+                    "node": node,
+                    "kernel_label": node,
+                    "attribution_method": method,
+                    "confidence": "high",
+                    "eager_event_id": None,
+                }
+            )
+            if changed:
+                assigned += 1
+            return
+        if _assign(
+            row,
+            {"selected_node": node, "confidence": "high"},
+            method=method,
+        ):
+            assigned += 1
+
+    for segment_id, segment in enumerate(segments):
+        kind = segment_kind(segment_id)
+        names = [str(row.get("kernel_name") or "").lower() for row in segment]
+        method = f"mhc_anchor_bounded_decode_{kind}_schedule"
+        if kind == "kda":
+            nvjet = [
+                index for index, name in enumerate(names) if name.startswith("nvjet_")
+            ]
+            if len(nvjet) >= 4:
+                for index, node in zip(
+                    (nvjet[0], nvjet[1], nvjet[2], nvjet[-1]),
+                    (
+                        "linear_attention.qkv_projection",
+                        "linear_attention.forget_projection",
+                        "linear_attention.beta_projection",
+                        "linear_attention.output_projection",
+                    ),
+                ):
+                    assign(segment[index], node, method, force=True)
+            conv = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "_causal_conv1d_update_kernel" in name
+                ),
+                None,
+            )
+            recurrent = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "fused_recurrent_gated_delta_rule_fwd_kernel" in name
+                ),
+                None,
+            )
+            if conv is not None:
+                assign(segment[conv], "linear_attention.qkv_short_conv", method)
+            if conv is not None and recurrent is not None and conv < recurrent:
+                for row in segment[conv + 1 : recurrent + 1]:
+                    assign(row, "linear_attention.recurrent_update", method)
+
+        elif kind == "dsa":
+            for index, name in enumerate(names):
+                if "_kpool_decode_update_batched_kernel" in name:
+                    assign(segment[index], "dsa_attention.key_pool_compression", method)
+                elif "sm100_paged_mqa_logits" in name:
+                    assign(segment[index], "dsa_attention.index_logits", method)
+                elif "filteredtopkunifiedkernel" in name or "persistent_topk_kernel" in name:
+                    assign(segment[index], "dsa_attention.top_pool_selection", method)
+
+            qnorm = next(
+                (index for index, name in enumerate(names) if "_fused_q_kv_rmsnorm" in name),
+                None,
+            )
+            kpool = next(
+                (index for index, name in enumerate(names) if "_kpool_decode_update" in name),
+                None,
+            )
+            if qnorm is not None:
+                before = [
+                    index
+                    for index, name in enumerate(names[:qnorm])
+                    if name.startswith("nvjet_")
+                ]
+                if len(before) == 1:
+                    assign(segment[before[0]], "dsa_attention.q_a_projection", method)
+            if qnorm is not None and kpool is not None:
+                after = [
+                    index
+                    for index in range(qnorm + 1, kpool)
+                    if names[index].startswith("nvjet_")
+                ]
+                if len(after) >= 3:
+                    assign(segment[after[0]], "dsa_attention.q_b_projection", method)
+                    assign(segment[after[1]], "dsa_attention.index_q_projection", method)
+                    assign(segment[after[2]], "dsa_attention.index_k_projection", method)
+                    for index in after[3:]:
+                        assign(
+                            segment[index],
+                            "dsa_attention.index_weight_projection",
+                            method,
+                        )
+            allreduce = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "multimem_all_reduce_kernel" in name
+                ),
+                None,
+            )
+            if allreduce is not None:
+                output_nvjet = [
+                    index
+                    for index in range(max(0, allreduce - 8), allreduce)
+                    if names[index].startswith("nvjet_")
+                ]
+                if len(output_nvjet) == 2:
+                    assign(
+                        segment[output_nvjet[0]],
+                        "dsa_attention.latent_kv_reconstruction",
+                        method,
+                    )
+                    assign(
+                        segment[output_nvjet[1]],
+                        "dsa_attention.output_projection",
+                        method,
+                    )
+
+        elif kind == "moe":
+            dispatch_quant = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "per_token_group_quant_8bit_kernel" in name
+                ),
+                None,
+            )
+            if dispatch_quant is not None:
+                for row in segment[1:dispatch_quant]:
+                    assign(row, "moe.router", method)
+            for index, name in enumerate(names):
+                if "routingindicesclusterkernel" in name:
+                    assign(segment[index], "moe.dispatch", method)
+                elif (
+                    "routingindicesblockkernel" in name
+                    or "routingindicesdynblockkernel" in name
+                ):
+                    assign(segment[index], "moe.topk", method)
+                elif "act_and_mul_kernel" in name:
+                    assign(segment[index], "moe.shared_activation", method)
+            topk = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "routingindicesblockscoreskernel" in name
+                ),
+                None,
+            )
+            if dispatch_quant is not None and topk is not None:
+                for row in segment[dispatch_quant + 1 : topk]:
+                    assign(row, "moe.correction_bias", method)
+
+    return assigned
+
+
 def _classify_runtime_support(events: list[dict[str, Any]]) -> None:
     """Classify every intentionally non-architectural production interval."""
 
@@ -768,6 +999,7 @@ def attribute_vllm_production_events(
         segment_states[state] += 1
 
     assigned += _assign_unanchored_production_schedules(events)
+    assigned += _assign_decode_graph_segment_schedules(events)
     _classify_runtime_support(events)
 
     mapped = [row for row in events if row.get("node")]

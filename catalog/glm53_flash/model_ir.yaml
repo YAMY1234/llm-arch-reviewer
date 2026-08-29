@@ -231,6 +231,34 @@ boundary_contracts:
   - {parent_node: mtp_extension.nextn_dsa, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
   - {parent_node: mtp_extension.nextn_moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
 
+# Parent timing is derived from production events inside one semantic
+# occurrence scope.  This is deliberately independent of framework/kernel
+# fusion: a leaf event keeps one physical owner, while these four composite
+# nodes display interval unions filtered by the attention/FFN lifecycle.
+timing_scope_contracts:
+  - target_node: decoder_stack.attn_mhc_pre
+    source_nodes: [mhc_transform.pre_weights]
+    event_filter: {substage: attention}
+    required_occurrence_count: 45
+    metric_kind: inclusive_event_union
+    drill_view: mhc_transform
+  - target_node: decoder_stack.attn_mhc_combine
+    source_nodes: [mhc_transform.residual_mix]
+    event_filter: {substage: attention}
+    required_occurrence_count: 45
+    metric_kind: inclusive_event_union
+  - target_node: decoder_stack.ffn_mhc_pre
+    source_nodes: [mhc_transform.pre_weights]
+    event_filter: {substage: feed_forward}
+    required_occurrence_count: 45
+    metric_kind: inclusive_event_union
+    drill_view: mhc_transform
+  - target_node: decoder_stack.ffn_mhc_combine
+    source_nodes: [mhc_transform.residual_mix]
+    event_filter: {substage: feed_forward}
+    required_occurrence_count: 45
+    metric_kind: inclusive_event_union
+
 views:
   top:
     title: GLM-5.3-Flash stable multimodal model path

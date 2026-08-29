@@ -591,6 +591,22 @@ the measured value. A composite parent may separately display an explicitly
 marked `inclusive_rollup`, which is the union of descendant production events
 and is not additive with those descendants.
 
+Repeated or context-reused module boundaries require an authored
+`timing_scope_contract`. The contract names the composite target, its physical
+production owner, the exact context filter (for example
+`substage=attention`), the expected occurrence count, and its drill view.
+The mapper must preserve these coordinates on every event; materialization then
+computes the parent from the union of only the matching physical intervals.
+It must never copy a profile-wide owner scalar into several parents. Missing,
+duplicate, or mis-scoped occurrences fail the profile closed rather than
+silently producing a number.
+
+The contract and its tests are model-independent. Tests must prove: every
+accepted parent has exactly the required occurrence set; changing a context
+coordinate changes membership; active time equals the matching interval union;
+residency equals the matching duration sum; the parent is not a member of a
+leaf fusion group; and the drill view exposes the same scoped owner evidence.
+
 ### Stage 8 — Build the Timeline hierarchy
 
 Each physical CUDA stream remains visible. Inside a stream:
