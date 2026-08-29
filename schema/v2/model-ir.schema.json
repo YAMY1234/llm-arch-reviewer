@@ -13,6 +13,11 @@
     "default_execution_path": {"type": "string"},
     "dimensions": {"type": "object"},
     "facts": {"type": "object"},
+    "semantic_contract": {"$ref": "#/$defs/semanticContract"},
+    "boundary_contracts": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/boundaryContract"}
+    },
     "views": {
       "type": "object",
       "minProperties": 1,
@@ -20,6 +25,54 @@
     }
   },
   "$defs": {
+    "semanticContract": {
+      "type": "object",
+      "required": ["version", "operations"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "require_explicit_equations": {"type": "boolean"},
+        "operations": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/operationContract"}
+        }
+      }
+    },
+    "operationContract": {
+      "type": "object",
+      "required": ["kind", "equation"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "embedding", "projection", "normalization", "activation",
+            "attention", "routing", "reduction", "composition",
+            "transform", "state", "control", "boundary", "module"
+          ]
+        },
+        "equation": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"},
+        "invariants": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "boundaryContract": {
+      "type": "object",
+      "required": ["parent_node", "child_view", "input_shape", "output_shape"],
+      "properties": {
+        "parent_node": {"type": "string"},
+        "scope_nodes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        },
+        "boundary_mode": {"enum": ["exact_node", "exact_lifecycle", "external_entry"]},
+        "child_view": {"type": "string"},
+        "input_shape": {"type": "string"},
+        "output_shape": {"type": "string"},
+        "handoff_shape": {"type": "string"}
+      }
+    },
     "view": {
       "type": "object",
       "required": ["nodes", "edges"],
@@ -40,7 +93,9 @@
         "drill": {"type": "string"},
         "ir_origin": {"enum": ["model_ir", "execution_plan"]},
         "node_kind": {"enum": ["semantic", "communication", "layout_transform"]},
-        "boundary_role": {"enum": ["module_boundary", "module_internal"]}
+        "boundary_role": {"enum": ["module_boundary", "module_internal"]},
+        "boundary_direction": {"enum": ["input", "output", "handoff"]},
+        "semantics": {"type": "object"}
       }
     },
     "edge": {
@@ -52,7 +107,10 @@
         "kind": {"type": "string"},
         "shape": {"type": "string"},
         "dtype": {"type": "string"},
-        "label": {"type": "string"}
+        "label": {"type": "string"},
+        "identity": {"type": "string"},
+        "layout": {"type": "string"},
+        "state": {"type": "string"}
       }
     }
   }

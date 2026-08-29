@@ -96,8 +96,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         action="append",
         help=(
-            "allowlisted raw-trace root; repeatable (defaults to "
-            "the ../current/qwen40-* task directories, searched recursively)"
+            "allowlisted raw-trace root; repeatable. No local trace files are "
+            "exposed unless a root is explicitly provided."
         ),
     )
     return parser.parse_args()
@@ -105,25 +105,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    current_root = REPO_ROOT.parent / "current"
-    # A profiling task may promote traces from ``raw/`` into a validated
-    # layout such as ``final/cg/raw/<job>/``.  Index the task directory rather
-    # than only its top-level raw child so the viewer and the finalized profile
-    # descriptor cannot silently disagree about which traces are available.
-    default_trace_roots = sorted(
-        root for root in current_root.glob("qwen40-*") if root.is_dir()
-    )
-    trace_roots = args.trace_root or default_trace_roots
+    trace_roots = args.trace_root or []
     ViewerHandler.trace_index = build_trace_index(trace_roots)
     handler = partial(ViewerHandler, directory=str(args.docs_root.resolve()))
     server = ThreadingHTTPServer((args.host, args.port), handler)
     trace_count = sum(len(paths) for paths in ViewerHandler.trace_index.values())
-    print(f"viewer: http://{args.host}:{args.port}/viewer.html?model=qwen40_v2", flush=True)
-    print(
-        f"Perfetto trace endpoint: {trace_count} allowlisted files under "
-        + ", ".join(str(root.resolve()) for root in trace_roots),
-        flush=True,
-    )
+    print(f"viewer: http://{args.host}:{args.port}/", flush=True)
+    if trace_roots:
+        print(
+            f"Perfetto trace endpoint: {trace_count} allowlisted files under "
+            + ", ".join(str(root.resolve()) for root in trace_roots),
+            flush=True,
+        )
+    else:
+        print("Perfetto trace endpoint: disabled (no --trace-root)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

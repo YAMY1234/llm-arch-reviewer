@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +27,27 @@ from llm_arch_v2.compiler import (  # noqa: E402
 MODEL_ROOT = REPO_ROOT / "catalog" / "qwen40"
 QWEN40_ROOT = MODEL_ROOT
 QWEN35_ROOT = REPO_ROOT / "catalog" / "qwen35"
+AUDITED_MODEL_ROOTS = sorted(
+    path
+    for path in (REPO_ROOT / "catalog").iterdir()
+    if path.is_dir() and (path / "model_ir.yaml").is_file()
+)
 
 
 def _node_ids(bundle: dict, view_id: str) -> list[str]:
     return [node["id"] for node in bundle["views"][view_id]["nodes"]]
+
+
+@pytest.mark.parametrize("model_root", AUDITED_MODEL_ROOTS, ids=lambda path: path.name)
+def test_all_audited_catalogs_compile_without_placeholder_equations(
+    model_root: Path,
+) -> None:
+    bundle = compile_catalog(model_root)
+    for view_id, view in bundle["model_ir"]["views"].items():
+        for node in view["nodes"]:
+            equation = node["semantics"]["equation"]
+            assert equation
+            assert "None" not in equation, (model_root.name, view_id, node["id"])
 
 
 def test_compile_qwen40_catalog() -> None:
@@ -158,6 +176,47 @@ def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> Non
     assert compiled["meta"]["entry_view"] == "mtp_generation"
 
 
+def test_profile_data_order_is_deterministic_and_preserves_authored_states() -> None:
+    model_path = MODEL_ROOT / "model_ir.yaml"
+    plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(model_path)
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    fingerprint = execution_fingerprint(model, plan, views)
+    raw = load_yaml(
+        MODEL_ROOT
+        / "profiles"
+        / "tp_only"
+        / "sglang_f90a941aa"
+        / "cg_decode_bs001_8k1k.yaml"
+    )
+    node_targets = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in views.items()
+        for node in view["nodes"]
+    }
+    compiled = compile_profile(
+        raw,
+        plan=plan,
+        fingerprint=fingerprint,
+        node_targets=node_targets,
+        source=Path("profile.yaml"),
+    )
+    expected = list(raw.get("node_states") or {})
+    expected.extend(
+        target
+        for target in sorted(node_targets)
+        if target.startswith("mtp_") and target not in expected
+    )
+    expected.extend(
+        target
+        for target in (raw.get("node_metrics") or {})
+        if target not in expected
+    )
+
+    assert list(compiled["data"]) == expected
+
+
 def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
     bundle = compile_catalog(QWEN40_ROOT)
     profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
@@ -244,6 +303,42 @@ def test_qwen40_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
     assert "/blob/32e9cb5" in binding["node_bindings"][
         "mtp_generation.target_verify"
     ]["code_links"][0]["url"]
+
+
+def test_binding_validation_attestation_is_preserved_and_fingerprint_checked(
+    tmp_path: Path,
+) -> None:
+    model_root = tmp_path / "qwen40"
+    import shutil
+
+    shutil.copytree(QWEN40_ROOT, model_root)
+    binding_path = model_root / "bindings" / "sglang_f90a941aa.yaml"
+    binding = load_yaml(binding_path)
+    plan_path = model_root / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(model_root / "model_ir.yaml")
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    fingerprint = execution_fingerprint(model, plan, views)
+    binding["binding_status"] = "draft"
+    binding["source_lock_status"] = "provisional"
+    binding["execution_validation"] = {
+        "status": "pending",
+        "execution_fingerprint": fingerprint,
+        "required_phases": ["prefill", "decode"],
+        "cuda_graph_enabled": False,
+    }
+    binding_path.write_text(yaml.safe_dump(binding, sort_keys=False))
+
+    compiled = compile_catalog(model_root)["implementations"][
+        binding["implementation_id"]
+    ]
+    assert compiled["binding_status"] == "draft"
+    assert compiled["execution_validation"]["status"] == "pending"
+
+    binding["execution_validation"]["execution_fingerprint"] = "exec_0000000000000000"
+    binding_path.write_text(yaml.safe_dump(binding, sort_keys=False))
+    with pytest.raises(CatalogError, match="execution_validation fingerprint"):
+        compile_catalog(model_root)
 
 
 def test_insert_after_redirects_existing_output_edge() -> None:

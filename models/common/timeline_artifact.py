@@ -501,11 +501,16 @@ def build_timeline_artifact(
                     "layer_id": event.get("layer_id"),
                     "layer_kind": strings.add(event.get("layer_kind")),
                     "substage": strings.add(event.get("substage")),
+                    "segment_id": event.get("segment_id"),
+                    "occurrence_id": strings.add(event.get("occurrence_id")),
+                    "eager_event_id": strings.add(event.get("eager_event_id")),
                     "kernel_kind": strings.add(_kernel_kind(event)),
                     "attribution_method": strings.add(
                         event.get("attribution_method")
                     ),
                     "confidence": strings.add(event.get("confidence")),
+                    "support_class": strings.add(event.get("support_class")),
+                    "support_reason": strings.add(event.get("support_reason")),
                     "cpu_op_name": strings.add(event.get("cpu_op_name")),
                     "stack_id": encode_stack(event),
                 }

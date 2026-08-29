@@ -74,6 +74,7 @@
   #execution-select { max-width: 220px; }
   #implementation-select { max-width: 250px; }
   #profile-select { max-width: 330px; }
+  #sol-select { max-width: 300px; }
   #variant-select { max-width: 190px; }
   #model-subtitle { display: none; }
   header button { cursor: pointer; }
@@ -377,16 +378,47 @@
     <label>profile:
       <select id="profile-select"></select>
     </label>
+    <label id="sol-control" style="display:none" title="A framework-independent Speed-of-Light comparison baseline matched to the selected measured profile.">comparison:
+      <select id="sol-select"></select>
+    </label>
     <label>variant:
       <select id="variant-select"></select>
     </label>
-    <label>heat:
+    <label title="Primary metric; controls node heat colors">metric:
       <select id="metric-select">
-        <option value="active">active GPU</option>
-        <option value="elapsed">elapsed</option>
-        <option value="gap">module gap</option>
-        <option value="idle">device idle</option>
-        <option value="residency">residency</option>
+        <optgroup label="Measured">
+          <option value="active">active GPU</option>
+          <option value="elapsed">elapsed</option>
+          <option value="gap">module gap</option>
+          <option value="idle">device idle</option>
+          <option value="residency">residency</option>
+        </optgroup>
+        <optgroup label="SoL / gap">
+          <option value="sol_ideal">physical ideal</option>
+          <option value="sol_attainable">attainable projection P50</option>
+          <option value="sol_efficiency">physical coverage</option>
+          <option value="sol_attainable_coverage">attainable coverage</option>
+          <option value="sol_impl_gap">implementation gap</option>
+        </optgroup>
+      </select>
+    </label>
+    <label title="Optional second metric shown alongside the primary metric; heat colors still follow the primary metric">compare:
+      <select id="compare-metric-select">
+        <option value="">none</option>
+        <optgroup label="Measured">
+          <option value="active">active GPU</option>
+          <option value="elapsed">elapsed</option>
+          <option value="gap">module gap</option>
+          <option value="idle">device idle</option>
+          <option value="residency">residency</option>
+        </optgroup>
+        <optgroup label="SoL / gap">
+          <option value="sol_ideal">physical ideal</option>
+          <option value="sol_attainable">attainable projection P50</option>
+          <option value="sol_efficiency">physical coverage</option>
+          <option value="sol_attainable_coverage">attainable coverage</option>
+          <option value="sol_impl_gap">implementation gap</option>
+        </optgroup>
       </select>
     </label>
     <button id="btn-fit">fit</button>
@@ -468,7 +500,9 @@ let CURRENT_EXECUTION = "";
 let CURRENT_IMPLEMENTATION = "";
 let CURRENT_GENERATION = "";
 let CURRENT_PHASE = "";
+let CURRENT_SOL_PROFILE = "";
 let CURRENT_METRIC = "active";
+let CURRENT_COMPARE_METRIC = "";
 let CURRENT_VIEW_MODE = "architecture";
 let CURRENT_IR_LAYER = "execution";
 let SPLIT_RATIO = 0.44;
@@ -487,6 +521,20 @@ let TIMELINE_RANGE = {startUs: 0, endUs: 1};
 let TIMELINE_HIT_RECTS = [];
 let TIMELINE_OWNER_HIT_RECTS = [];
 let TIMELINE_LOAD_TOKEN = 0;
+let TIMELINE_RENDER_FRAME = 0;
+let TIMELINE_TRACK_LAYOUT_CACHE = new WeakMap();
+let TIMELINE_LAST_GESTURE_AT = null;
+let TIMELINE_LAST_GESTURE_RENDER_AT = null;
+// Timeline canvases can be extremely tall (one profile currently has 119
+// streams).  Using the native Retina DPR for the entire scroll surface turns
+// a ~23M CSS-pixel timeline into a ~93M backing store.  The architecture side
+// is SVG and does not have this cost.  Keep timeline rendering at CSS-pixel
+// resolution and additionally bound unusually wide/tall canvases so moving a
+// window between DPR=1 and DPR=2 displays cannot change interaction latency by
+// 4x or allocate hundreds of MB for one frame.
+const TIMELINE_MAX_EFFECTIVE_DPR = 1;
+const TIMELINE_MAX_BACKING_PIXELS = 24_000_000;
+let TIMELINE_LAST_RENDER_STATS = null;
 let PERFETTO_TRACE_BUFFER = null;
 let PERFETTO_TRACE_FILE = "";
 
@@ -495,6 +543,8 @@ let PERFETTO_TRACE_FILE = "";
 let VIEW_STACK = [];
 let DRILL_FROM = [null];   // DRILL_FROM[i] = parent view 里 node id; [0] 是 null
 let SELECTED = null;       // {view, nodeId}
+let ARCHITECTURE_RENDER_TOKEN = 0;
+let ARCHITECTURE_RENDER_FRAME = 0;
 const VIEW_GAP = 110;      // 多张图之间水平间距 (放虚线)
 
 // drill 树 — 从 build 时派生, 后端会注入 DATA.parent. 这里保留 fallback 空对象.
@@ -509,9 +559,12 @@ function getModelId() {
   const qs = new URLSearchParams(location.search);
   const m = qs.get("model");
   if (m && /^[a-zA-Z0-9_-]+$/.test(m)) return m;
-  return "dsv4";   // 默认; landing page 应该总是带 ?model=
+  return "";
 }
 const MODEL_ID = getModelId();
+if (!MODEL_ID) {
+  location.replace(new URL("./", location.href).href);
+} else {
 const DATA_URL = `${MODEL_ID}/arch_data.json?t=${Date.now()}`;
 
 fetch(DATA_URL, {cache: "no-store"}).then(r => {
@@ -520,14 +573,15 @@ fetch(DATA_URL, {cache: "no-store"}).then(r => {
 }).then(d => {
   RAW_DATA = d;
   DATA = d;
-  if (isV2Bundle()) {
-    const qs = new URLSearchParams(location.search);
-    CURRENT_IR_LAYER = qs.get("irLayer") === "model" ? "model" : "execution";
-    activateV2Selection(
-      qs.get("execution") || d.default_execution_variant,
-      qs.get("implementation") || d.default_implementation,
-    );
+  if (!isV2Bundle()) {
+    throw new Error(`Unsupported non-V2 bundle for ${MODEL_ID}; rebuild it with scripts/build_v2.py`);
   }
+  const qs = new URLSearchParams(location.search);
+  CURRENT_IR_LAYER = qs.get("irLayer") === "model" ? "model" : "execution";
+  activateV2Selection(
+    qs.get("execution") || d.default_execution_variant,
+    qs.get("implementation") || d.default_implementation,
+  );
   // 注入 PARENT (build 时派生); 旧数据没有就回退到从 views 现算
   PARENT = DATA.parent || derivePARENT(DATA.views);
   // header
@@ -545,15 +599,16 @@ Load failed: ${e}
   tried: ${DATA_URL}
 
 Usage:
-  ${location.origin}${location.pathname}?model=dsv4
+  ${location.origin}${location.pathname}?model=qwen40_v2
 
 Local development:
   git clone git@github.com:YAMY1234/llm-arch-reviewer.git
   cd llm-arch-reviewer
   python3 -m http.server -d docs 8765
-  open http://localhost:8765/viewer.html?model=dsv4
+  open http://localhost:8765/viewer.html?model=qwen40_v2
 </pre>`;
 });
+}
 
 function derivePARENT(views) {
   const p = {};
@@ -642,6 +697,8 @@ function activateV2Selection(executionId, implementationId = "") {
     default_view: graph?.default_view || execution.default_view || RAW_DATA.default_view,
   };
   PARENT = DATA.parent;
+  // Ownership labels are derived from the active Model/Execution IR.
+  TIMELINE_TRACK_LAYOUT_CACHE = new WeakMap();
 }
 
 function profileEntryViewName() {
@@ -803,6 +860,45 @@ function fusionGroupForTarget(target) {
   ) || null;
 }
 
+function irTargetLabel(target) {
+  const value = String(target || "");
+  const dot = value.indexOf(".");
+  if (dot < 1) return value;
+  const viewName = value.slice(0, dot);
+  const nodeId = value.slice(dot + 1);
+  const node = (DATA?.views?.[viewName]?.nodes || []).find(item => item.id === nodeId);
+  return String(node?.label || nodeId || value).split("\n")[0];
+}
+
+function profileCellForTarget(target) {
+  const variants = DATA?.profiles?.[CURRENT_PROFILE]?.data?.[target];
+  return currentVariantCell(variants);
+}
+
+function fusionTimingDescription(group) {
+  if (!group) return "";
+  const aggregate = group.timing_semantics === "shared_event_set"
+    || group.evidence_scope?.resolution === "profile_aggregate";
+  return aggregate
+    ? "validated shared production-event set; the owner is the only additive timing value"
+    : "one validated shared production interval; never sum once per covered IR node";
+}
+
+function fusionScopeDescription(group) {
+  const scope = group?.evidence_scope || {};
+  const parts = [];
+  if (scope.resolution) parts.push(String(scope.resolution).replaceAll("_", " "));
+  if ((scope.layer_ids || []).length) {
+    const layers = scope.layer_ids;
+    parts.push(layers.length > 8
+      ? `${layers.length} layers (${layers[0]}–${layers[layers.length - 1]})`
+      : `layers ${layers.join(", ")}`);
+  }
+  if ((scope.substages || []).length) parts.push(scope.substages.join(" + "));
+  if ((scope.occurrence_ids || []).length) parts.push(`${scope.occurrence_ids.length} occurrences`);
+  return parts.join(" · ") || "scope not recorded (legacy evidence)";
+}
+
 function refreshPhaseOptions(preferred = "") {
   const control = document.getElementById("phase-control");
   const select = document.getElementById("phase-select");
@@ -825,20 +921,106 @@ function refreshPhaseOptions(preferred = "") {
   control.style.display = phases.length ? "" : "none";
 }
 
+function solProfileIdsForMeasuredProfile(profileId = CURRENT_PROFILE) {
+  return Object.entries(DATA?.sol_profiles || {})
+    .filter(([, sol]) => sol?.measured_profile_id === profileId)
+    .map(([solProfileId]) => solProfileId);
+}
+
+function currentSolProfile() {
+  return DATA?.sol_profiles?.[CURRENT_SOL_PROFILE] || null;
+}
+
+function currentGapReport() {
+  if (!CURRENT_SOL_PROFILE) return null;
+  return Object.values(DATA?.gap_reports || {}).find(report =>
+    report?.sol_profile_id === CURRENT_SOL_PROFILE
+  ) || null;
+}
+
+function currentSolEstimate(target) {
+  return currentSolProfile()?.node_estimates?.[target] || null;
+}
+
+function currentSolGap(target) {
+  return currentGapReport()?.nodes?.[target] || null;
+}
+
+function refreshSolOptions(preferred = "") {
+  const control = document.getElementById("sol-control");
+  const select = document.getElementById("sol-select");
+  if (!control || !select || !isV2Bundle()) {
+    if (control) control.style.display = "none";
+    CURRENT_SOL_PROFILE = "";
+    return;
+  }
+
+  const solProfileIds = solProfileIdsForMeasuredProfile();
+  select.innerHTML = "";
+  if (!solProfileIds.length) {
+    control.style.display = "none";
+    CURRENT_SOL_PROFILE = "";
+    return;
+  }
+
+  for (const solProfileId of solProfileIds) {
+    const sol = DATA.sol_profiles[solProfileId] || {};
+    const opt = document.createElement("option");
+    opt.value = solProfileId;
+    opt.textContent = `${sol.label || solProfileId}${sol.status ? ` · ${sol.status}` : ""}`;
+    select.appendChild(opt);
+  }
+
+  const requested = new URLSearchParams(location.search).get("sol") || "";
+  CURRENT_SOL_PROFILE = solProfileIds.includes(preferred)
+    ? preferred
+    : (solProfileIds.includes(requested)
+      ? requested
+      : (solProfileIds.includes(CURRENT_SOL_PROFILE) ? CURRENT_SOL_PROFILE : solProfileIds[0]));
+  select.value = CURRENT_SOL_PROFILE;
+  select.disabled = solProfileIds.length <= 1;
+  control.style.display = "";
+}
+
 function updateProfileSummary() {
   const profile = DATA?.profiles?.[CURRENT_PROFILE];
   const meta = profile?.meta || {};
   const summary = meta.profile_summary || {};
   const accounting = meta.evidence?.accounting || {};
   const timing = summary.timing || {};
+  const elapsedMs = Number(timing.elapsed_ms);
+  const activeGpuMs = Number(timing.active_gpu_ms);
+  const declaredBusyPct = Number(timing.gpu_busy_pct);
+  const gpuBusyPct = timing.gpu_busy_pct != null && Number.isFinite(declaredBusyPct)
+    ? declaredBusyPct
+    : (Number.isFinite(elapsedMs) && elapsedMs > 0 && Number.isFinite(activeGpuMs)
+      ? (100 * activeGpuMs / elapsedMs)
+      : null);
   const timingBits = timing.elapsed_ms != null ? [
     `elapsed ${formatMs(timing.elapsed_ms)} ms`,
     `active ${formatMs(timing.active_gpu_ms)} ms`,
     `device gap ${formatMs(timing.device_gap_ms)} ms`,
-    `GPU busy ${Number(timing.gpu_busy_pct).toFixed(1)}%`,
+    gpuBusyPct != null ? `GPU busy ${gpuBusyPct.toFixed(1)}%` : "",
     `residency ${formatMs(timing.gpu_residency_ms)} ms`,
     timing.gap_count_per_step != null
       ? `${Number(timing.gap_count_per_step).toFixed(0)} gaps/step · p50 ${Number(timing.gap_median_us).toFixed(1)} µs · p95 ${Number(timing.gap_p95_us).toFixed(1)} µs`
+      : "",
+  ] : [];
+  const sol = currentSolProfile();
+  const solCoverage = sol?.coverage || {};
+  const solBits = sol ? [
+    `SoL ${sol.status || "unknown"}`,
+    solCoverage.declared_node_count != null
+      ? `ideal ${solCoverage.ideal_estimated_node_count || 0}/${solCoverage.declared_node_count} nodes`
+      : "",
+    solCoverage.declared_node_count != null
+      ? `transition ${solCoverage.transition_simulated_node_count || 0}/${solCoverage.declared_node_count}`
+      : "",
+    solCoverage.declared_node_count != null
+      ? `kernel plan ${solCoverage.plan_identified_node_count || 0}/${solCoverage.declared_node_count}`
+      : "",
+    solCoverage.declared_node_count != null
+      ? `calibrated ${solCoverage.calibrated_node_count || 0}/${solCoverage.declared_node_count}`
       : "",
   ] : [];
   const bits = [
@@ -852,6 +1034,7 @@ function updateProfileSummary() {
     summary.reference_rank != null ? `rank ${summary.reference_rank}` : "",
     ...timingBits,
     timingBits.length ? "" : summary.node_time,
+    ...solBits,
   ].filter(Boolean);
   document.getElementById("profile-summary").textContent = bits.join(" · ");
 }
@@ -866,6 +1049,7 @@ function refreshProfileOptions(preferred = "") {
     psel.appendChild(opt);
     psel.disabled = true;
     CURRENT_PROFILE = "";
+    refreshSolOptions("");
     refreshVariantOptions(false);
     updateProfileSummary();
     return;
@@ -883,6 +1067,7 @@ function refreshProfileOptions(preferred = "") {
     : (profileIds.find(p => p.includes("prefill")) || profileIds[0]);
   psel.value = pref;
   CURRENT_PROFILE = pref;
+  refreshSolOptions("");
   refreshVariantOptions(false);
   updateProfileSummary();
 }
@@ -919,7 +1104,11 @@ function syncV2SelectionQuery() {
   if (CURRENT_GENERATION) url.searchParams.set("generation", CURRENT_GENERATION);
   if (CURRENT_PHASE) url.searchParams.set("phase", CURRENT_PHASE);
   if (CURRENT_PROFILE) url.searchParams.set("profile", CURRENT_PROFILE);
+  if (CURRENT_SOL_PROFILE) url.searchParams.set("sol", CURRENT_SOL_PROFILE);
+  else url.searchParams.delete("sol");
   if (CURRENT_METRIC) url.searchParams.set("metric", CURRENT_METRIC);
+  if (CURRENT_COMPARE_METRIC) url.searchParams.set("compareMetric", CURRENT_COMPARE_METRIC);
+  else url.searchParams.delete("compareMetric");
   if (CURRENT_VIEW_MODE) url.searchParams.set("viewMode", CURRENT_VIEW_MODE);
   if (CURRENT_IR_LAYER) url.searchParams.set("irLayer", CURRENT_IR_LAYER);
   history.replaceState(null, "", url);
@@ -1017,6 +1206,7 @@ function initUI() {
   const psel = document.getElementById("profile-select");
   psel.onchange = () => {
     CURRENT_PROFILE = psel.value;
+    refreshSolOptions("");
     refreshVariantOptions(true);
     updateProfileSummary();
     syncV2SelectionQuery();
@@ -1027,6 +1217,14 @@ function initUI() {
   const vsel = document.getElementById("variant-select");
   vsel.onchange = () => { CURRENT_VARIANT = vsel.value; renderView(); };
 
+  const solSelect = document.getElementById("sol-select");
+  solSelect.onchange = () => {
+    CURRENT_SOL_PROFILE = solSelect.value;
+    updateProfileSummary();
+    syncV2SelectionQuery();
+    renderView();
+  };
+
   const metricSelect = document.getElementById("metric-select");
   const requestedMetric = new URLSearchParams(location.search).get("metric") || "active";
   CURRENT_METRIC = Array.from(metricSelect.options).some(option => option.value === requestedMetric)
@@ -1034,6 +1232,24 @@ function initUI() {
   metricSelect.value = CURRENT_METRIC;
   metricSelect.onchange = () => {
     CURRENT_METRIC = metricSelect.value;
+    if (CURRENT_COMPARE_METRIC === CURRENT_METRIC) {
+      CURRENT_COMPARE_METRIC = "";
+      document.getElementById("compare-metric-select").value = "";
+    }
+    syncV2SelectionQuery();
+    renderView();
+  };
+
+  const compareMetricSelect = document.getElementById("compare-metric-select");
+  const requestedCompareMetric = new URLSearchParams(location.search).get("compareMetric") || "";
+  CURRENT_COMPARE_METRIC = Array.from(compareMetricSelect.options).some(
+    option => option.value === requestedCompareMetric
+  ) && requestedCompareMetric !== CURRENT_METRIC ? requestedCompareMetric : "";
+  compareMetricSelect.value = CURRENT_COMPARE_METRIC;
+  compareMetricSelect.onchange = () => {
+    CURRENT_COMPARE_METRIC = compareMetricSelect.value === CURRENT_METRIC
+      ? "" : compareMetricSelect.value;
+    compareMetricSelect.value = CURRENT_COMPARE_METRIC;
     syncV2SelectionQuery();
     renderView();
   };
@@ -1192,11 +1408,20 @@ function renderCrumbs() {
 // ============================================================
 async function renderView() {
   if (!DATA) return;
+  // An explicit render (for example Timeline -> Architecture navigation)
+  // supersedes any requestAnimationFrame render queued by a mode change.
+  if (ARCHITECTURE_RENDER_FRAME) {
+    cancelAnimationFrame(ARCHITECTURE_RENDER_FRAME);
+    ARCHITECTURE_RENDER_FRAME = 0;
+  }
+  const renderToken = ++ARCHITECTURE_RENDER_TOKEN;
+  const viewStack = [...VIEW_STACK];
+  const drillFrom = [...DRILL_FROM];
   renderCrumbs();
 
   // 1) 给每个栈里的 view 算独立 layout
   const layouts = [];
-  for (const vName of VIEW_STACK) {
+  for (const vName of viewStack) {
     const view = DATA.views[vName];
     if (!view) continue;
     const elkGraph = {
@@ -1224,6 +1449,9 @@ async function renderView() {
       })),
     };
     const lay = await elk.layout(elkGraph);
+    // ELK is asynchronous. A later navigation may already be rendering a new
+    // path; never let this stale completion overwrite or append to that view.
+    if (renderToken !== ARCHITECTURE_RENDER_TOKEN) return;
     layouts.push({viewName: vName, view, layout: lay});
   }
 
@@ -1241,18 +1469,47 @@ async function renderView() {
     item.yOffset = (maxH - (item.layout.height || 0)) / 2;
   }
 
-  drawAllViews(layouts, xOff - VIEW_GAP, maxH);
+  if (renderToken !== ARCHITECTURE_RENDER_TOKEN) return;
+  drawAllViews(layouts, xOff - VIEW_GAP, maxH, drillFrom);
 }
 
 function nodeWidth(n, viewName) {
-  // 估宽: 看 label 行长 / shape 类型
+  // Size from every visible row, not only the authored title. Profile-state
+  // labels and shared/inclusive timing can be wider than a compact semantic
+  // node; ignoring them caused clipped text in otherwise valid model views.
   const lbl = profileNodeLabel(n, viewName);
   const lines = lbl.split("\n");
-  const longest = Math.max(...lines.map(l => l.length));
-  let w = Math.min(260, Math.max(120, longest * 7.2));
-  if (n.shape === "io") w = Math.max(100, longest * 6.5);
-  if (n.shape === "block" || n.shape === "moe") w = Math.max(180, longest * 7.5);
-  if (nodeCell(n, viewName)?.gpu_elapsed_ms != null) w = Math.max(w, 250);
+  const target = `${viewName}.${n.id}`;
+  const cell = nodeCell(n, viewName);
+  const visibleRows = [...lines];
+  const currentValue = cellMetricValue(cell, CURRENT_METRIC, target);
+  if (CURRENT_COMPARE_METRIC) {
+    visibleRows.push(...[CURRENT_METRIC, CURRENT_COMPARE_METRIC]
+      .map(metric => metricDisplayText(cellMetricValue(cell, metric, target), metric, target, cell)));
+  } else if (cell?.gpu_elapsed_ms != null && ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC)) {
+    const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
+    visibleRows.push(`${provenance}elapsed ${formatMs(cell.gpu_elapsed_ms)} · active ${formatMs(cell.active_gpu_ms)} ms`);
+    visibleRows.push(`idle ${formatMs(cell.device_idle_ms)} · other GPU ${formatMs(cell.other_gpu_work_ms)} ms`);
+  } else if (currentValue != null) {
+    visibleRows.push(metricDisplayText(currentValue, CURRENT_METRIC, target, cell));
+  } else if (CURRENT_METRIC.startsWith("sol_")) {
+    visibleRows.push(solMetricUnavailableText(target));
+  } else if (cell?.status) {
+    visibleRows.push(nodeStateSummary(cell, target));
+  } else if (n.note) {
+    visibleRows.push(n.note);
+  }
+  const longest = Math.max(...visibleRows.map(line => String(line).length));
+  let w = Math.min(460, Math.max(120, longest * 7.5 + 18));
+  if (n.shape === "io") w = Math.max(110, w);
+  if (n.shape === "block" || n.shape === "moe") w = Math.max(180, w);
+  if (cell?.gpu_elapsed_ms != null) w = Math.max(w, 250);
+  if (CURRENT_COMPARE_METRIC) {
+    const timingWidth = [CURRENT_METRIC, CURRENT_COMPARE_METRIC]
+      .map(metric => metricDisplayText(cellMetricValue(cell, metric, target), metric, target, cell).length)
+      .reduce((maximum, length) => Math.max(maximum, length), 0) * 6.4 + 18;
+    w = Math.max(w, Math.min(460, timingWidth));
+  }
   return w;
 }
 function nodeHeight(n, viewName) {
@@ -1260,10 +1517,16 @@ function nodeHeight(n, viewName) {
   const lineCount = lbl.split("\n").length;
   let h = 36 + (lineCount - 1) * 14;
   if (n.note) h += 12;
-  // 给 ms / heat 留点空间
+  // Reserve independent rows for measured/SoL comparisons. Without this the
+  // second metric collides with the title on compact structural and IO nodes.
   if (n.stage_keys && n.stage_keys.length) h += 10;
-  if (nodeCell(n, viewName)?.gpu_elapsed_ms != null) h += 13;
-  if (n.shape === "io") h = Math.max(28, 18 + lineCount * 12);
+  const cell = nodeCell(n, viewName);
+  const measuredMetric = ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC);
+  const timingLineCount = CURRENT_COMPARE_METRIC
+    ? 2
+    : (cell?.gpu_elapsed_ms != null && measuredMetric ? 2 : 1);
+  h += timingLineCount * 12;
+  if (n.shape === "io") h = Math.max(h, 18 + lineCount * 12 + timingLineCount * 12);
   return h;
 }
 
@@ -1277,7 +1540,7 @@ function edgeLabels(e) {
 // ============================================================
 // SVG 绘制 — 多 view 横排
 // ============================================================
-function drawAllViews(layouts, totalW, totalH) {
+function drawAllViews(layouts, totalW, totalH, drillFrom) {
   const root = document.getElementById("svg-root");
   root.innerHTML = "";
 
@@ -1348,12 +1611,12 @@ function drawAllViews(layouts, totalW, totalH) {
   }
 
   // 跨 view 虚线连接 (parent.drillNode → child.left-mid)
-  drawCrossViewBeams(root, layouts, viewBoxes);
+  drawCrossViewBeams(root, layouts, viewBoxes, drillFrom);
 }
 
-function drawCrossViewBeams(root, layouts, viewBoxes) {
+function drawCrossViewBeams(root, layouts, viewBoxes, drillFrom) {
   for (let i = 1; i < layouts.length; i++) {
-    const fromNodeId = DRILL_FROM[i];
+    const fromNodeId = drillFrom[i];
     if (!fromNodeId) continue;
     const parent = viewBoxes[i - 1];
     const child = viewBoxes[i];
@@ -1461,6 +1724,19 @@ function midPoint(pts) {
   return {x: (best.a.x + best.b.x) / 2, y: (best.a.y + best.b.y) / 2};
 }
 
+function updateArchitectureSelection(viewName, nodeId) {
+  // A click only changes selection state; it must not trigger a fresh ELK
+  // layout.  Replacing the SVG between the first and second click causes the
+  // browser's native dblclick gesture to lose its original target.
+  for (const selected of document.querySelectorAll("g.view-group g.node.selected")) {
+    selected.classList.remove("selected");
+  }
+  const target = document.querySelector(
+    `g.view-group[data-view="${CSS.escape(viewName)}"] g.node[data-id="${CSS.escape(nodeId)}"]`,
+  );
+  target?.classList.add("selected");
+}
+
 function drawNode(root, n, c, viewName) {
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   const kind = n.shape || "block";
@@ -1471,7 +1747,11 @@ function drawNode(root, n, c, viewName) {
   // heatmap
   const ms = nodeMs(n, viewName);
   const cell = nodeCell(n, viewName);
-  const heat = heatLevel(ms, viewName);
+  // A shared parent interval is useful provenance, but duplicating its heat
+  // color across every fused semantic leaf falsely looks like independent
+  // leaf-level measurements.
+  const heat = (cell?.status === "fused" || cell?.sol?.included_in_target)
+    ? null : heatLevel(ms, viewName);
   if (heat) cls += " " + heat;
 
   if (SELECTED && SELECTED.view === viewName && SELECTED.nodeId === n.id) cls += " selected";
@@ -1501,7 +1781,21 @@ function drawNode(root, n, c, viewName) {
   // Timing: elapsed is an invocation envelope. Its non-module portion is
   // split into other GPU work and true device idle instead of calling all of
   // it idle.
-  if (cell?.gpu_elapsed_ms != null) {
+  const measuredTimingMetric = ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC);
+  if (CURRENT_COMPARE_METRIC) {
+    const target = `${viewName}.${n.id}`;
+    const metrics = [CURRENT_METRIC, CURRENT_COMPARE_METRIC];
+    metrics.forEach((metric, index) => {
+      const value = cellMetricValue(cell, metric, target);
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("class", value == null ? "node-note" : "node-ms");
+      t.setAttribute("x", c.width / 2);
+      t.setAttribute("y", c.height - 17 + index * 11);
+      t.setAttribute("text-anchor", "middle");
+      t.textContent = metricDisplayText(value, metric, target, cell);
+      g.appendChild(t);
+    });
+  } else if (cell?.gpu_elapsed_ms != null && measuredTimingMetric) {
     const first = document.createElementNS("http://www.w3.org/2000/svg", "text");
     first.setAttribute("class", "node-ms");
     first.setAttribute("x", c.width / 2);
@@ -1524,8 +1818,20 @@ function drawNode(root, n, c, viewName) {
     t.setAttribute("x", c.width / 2);
     t.setAttribute("y", c.height - 6);
     t.setAttribute("text-anchor", "middle");
-    const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
-    t.textContent = `${provenance}${metricLabel(CURRENT_METRIC)} ${formatMs(ms)} ms`;
+    t.textContent = metricDisplayText(
+      ms,
+      CURRENT_METRIC,
+      `${viewName}.${n.id}`,
+      cell,
+    );
+    g.appendChild(t);
+  } else if (CURRENT_METRIC.startsWith("sol_")) {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("class", "node-note");
+    t.setAttribute("x", c.width / 2);
+    t.setAttribute("y", c.height - 6);
+    t.setAttribute("text-anchor", "middle");
+    t.textContent = solMetricUnavailableText(`${viewName}.${n.id}`);
     g.appendChild(t);
   } else if (cell?.status) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1533,7 +1839,7 @@ function drawNode(root, n, c, viewName) {
     t.setAttribute("x", c.width / 2);
     t.setAttribute("y", c.height - 6);
     t.setAttribute("text-anchor", "middle");
-    t.textContent = nodeStateSummary(cell);
+    t.textContent = nodeStateSummary(cell, `${viewName}.${n.id}`);
     g.appendChild(t);
   } else if (n.note) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1565,10 +1871,10 @@ function drawNode(root, n, c, viewName) {
   g.addEventListener("click", (ev) => {
     ev.stopPropagation();
     SELECTED = {view: viewName, nodeId: n.id};
+    updateArchitectureSelection(viewName, n.id);
     highlightNodeOnTimeline(viewName, n.id);
     // 总是先显示 detail (block aggregate 也需要看), drill 通过 detail 里
     // 的大 button 或者下面的双击 / shift+click 触发.
-    renderView();
     showDetail(n, viewName);
   });
   g.addEventListener("dblclick", (ev) => {
@@ -1649,7 +1955,9 @@ function setViewMode(mode, sync = true, shouldRender = true) {
   if (mode === "split") requestAnimationFrame(() => applySplitRatio(SPLIT_RATIO));
   if (sync) syncV2SelectionQuery();
   if (shouldRender) {
-    requestAnimationFrame(() => {
+    if (ARCHITECTURE_RENDER_FRAME) cancelAnimationFrame(ARCHITECTURE_RENDER_FRAME);
+    ARCHITECTURE_RENDER_FRAME = requestAnimationFrame(() => {
+      ARCHITECTURE_RENDER_FRAME = 0;
       if (mode !== "timeline") renderView();
       if (mode !== "architecture") renderTimeline();
     });
@@ -1801,14 +2109,21 @@ function decodeTimelineArtifact(artifact) {
         const covered = group.ir_nodes || [];
         if (covered.some(target => event._irTargets.includes(target))) {
           event._fusionGroupIds.push(groupId);
-          event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+          if (group.timing_semantics === "shared_interval"
+              && group.evidence_scope?.resolution === "exact_occurrence") {
+            event._irTargets = Array.from(new Set([...event._irTargets, ...covered]));
+          }
         }
       }
       event._layerKind = timelineStringFrom(artifact, event.layer_kind);
       event._substage = timelineStringFrom(artifact, event.substage);
+      event._occurrenceId = timelineStringFrom(artifact, event.occurrence_id);
+      event._eagerEventId = timelineStringFrom(artifact, event.eager_event_id);
       event._kernelKind = timelineStringFrom(artifact, event.kernel_kind);
       event._attributionMethod = timelineStringFrom(artifact, event.attribution_method);
       event._confidence = timelineStringFrom(artifact, event.confidence);
+      event._supportClass = timelineStringFrom(artifact, event.support_class);
+      event._supportReason = timelineStringFrom(artifact, event.support_reason);
       event._cpuOpName = timelineStringFrom(artifact, event.cpu_op_name);
       event._stack = event.stack_id == null ? null : artifact.stacks?.[event.stack_id];
     }
@@ -1865,6 +2180,7 @@ async function loadTimelineForCurrentProfile() {
       throw new Error("timeline identity does not match selected profile");
     }
     TIMELINE_DATA = decodeTimelineArtifact(artifact);
+    TIMELINE_TRACK_LAYOUT_CACHE = new WeakMap();
     TIMELINE_PROFILE_ID = CURRENT_PROFILE;
     TIMELINE_STEP_INDEX = 0;
     refreshTimelineControls();
@@ -2247,18 +2563,38 @@ function buildTimelineTrackLayouts(step, tracks) {
   return layouts;
 }
 
+function cachedTimelineTrackLayouts(step, tracks) {
+  let layouts = TIMELINE_TRACK_LAYOUT_CACHE.get(step);
+  if (!layouts) {
+    layouts = buildTimelineTrackLayouts(step, tracks);
+    TIMELINE_TRACK_LAYOUT_CACHE.set(step, layouts);
+  }
+  return layouts;
+}
+
+function scheduleTimelineRender() {
+  if (TIMELINE_RENDER_FRAME) return;
+  TIMELINE_RENDER_FRAME = requestAnimationFrame(() => {
+    TIMELINE_RENDER_FRAME = 0;
+    renderTimeline();
+  });
+}
+
 function renderTimeline() {
+  if (TIMELINE_RENDER_FRAME) {
+    cancelAnimationFrame(TIMELINE_RENDER_FRAME);
+    TIMELINE_RENDER_FRAME = 0;
+  }
   if (!TIMELINE_DATA || CURRENT_VIEW_MODE === "architecture") return;
   const step = currentTimelineStep();
   const viewport = document.getElementById("timeline-viewport");
   const canvas = document.getElementById("timeline-canvas");
   if (!step || viewport.clientWidth < 10) return;
   const tracks = step.tracks || [];
-  const dpr = window.devicePixelRatio || 1;
   const cssWidth = Math.max(600, viewport.clientWidth);
   const top = 36;
   const idleRowHeight = 38;
-  const trackLayouts = buildTimelineTrackLayouts(step, tracks);
+  const trackLayouts = cachedTimelineTrackLayouts(step, tracks);
   let nextTrackY = top;
   for (const layout of trackLayouts) {
     layout.y = nextTrackY;
@@ -2266,10 +2602,26 @@ function renderTimeline() {
   }
   const idleY = nextTrackY;
   const cssHeight = Math.max(viewport.clientHeight, idleY + idleRowHeight + 24);
-  canvas.style.width = `${cssWidth}px`;
-  canvas.style.height = `${cssHeight}px`;
-  canvas.width = Math.round(cssWidth * dpr);
-  canvas.height = Math.round(cssHeight * dpr);
+  const nativeDpr = window.devicePixelRatio || 1;
+  const cssPixels = Math.max(1, cssWidth * cssHeight);
+  const budgetDpr = Math.sqrt(TIMELINE_MAX_BACKING_PIXELS / cssPixels);
+  const dpr = Math.min(nativeDpr, TIMELINE_MAX_EFFECTIVE_DPR, budgetDpr);
+  const pixelWidth = Math.round(cssWidth * dpr);
+  const pixelHeight = Math.round(cssHeight * dpr);
+  TIMELINE_LAST_RENDER_STATS = {
+    nativeDpr,
+    effectiveDpr: dpr,
+    cssWidth,
+    cssHeight,
+    pixelWidth,
+    pixelHeight,
+    backingPixels: pixelWidth * pixelHeight,
+    trackCount: tracks.length,
+  };
+  if (canvas.style.width !== `${cssWidth}px`) canvas.style.width = `${cssWidth}px`;
+  if (canvas.style.height !== `${cssHeight}px`) canvas.style.height = `${cssHeight}px`;
+  if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+  if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
@@ -2419,6 +2771,9 @@ function renderTimeline() {
     `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${tracks.length} streams · ` +
     `max ${maxLayerLanes} layer / ${maxModuleLanes} module / ${maxKernelLanes} kernel lanes per stream · ` +
     `${matching}/${step.events.length} kernels visible`;
+  if (TIMELINE_LAST_GESTURE_AT != null) {
+    TIMELINE_LAST_GESTURE_RENDER_AT = performance.now();
+  }
 }
 
 function timelineEventAt(x, y) {
@@ -2491,21 +2846,25 @@ function showTimelineEventDetail(event) {
   document.getElementById("detail").innerHTML = `
     <h2>${escapeHtml(event._kernelLabel || event._irNode || "kernel")}</h2>
     <div>
-      <button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>
+      ${event._irTargets?.length ? `<button class="detail-action primary" onclick="showTimelineEventInArchitecture()">Show in architecture</button>` : ""}
       <button class="detail-action" onclick="openSelectedRangeInPerfetto()">Open exact slice in Perfetto ↗</button>
     </div>
     <div class="kv">
       <div class="k">IR node</div><div>${escapeHtml(event._irNode)}</div>
       <div class="k">IR targets</div><div>${escapeHtml(event._irTargets.join(", "))}</div>
-      ${event._fusionGroupIds?.length ? `<div class="k">fusion</div><div>${escapeHtml(event._fusionGroupIds.join(", "))} · one shared kernel interval</div>` : ""}
+      ${event._fusionGroupIds?.length ? `<div class="k">fusion evidence</div><div>${escapeHtml(event._fusionGroupIds.join(", "))}</div>` : ""}
       <div class="k">kernel</div><div style="word-break:break-all">${escapeHtml(event._kernelName)}</div>
       <div class="k">residency</div><div>${Number(event.duration_us).toFixed(3)} µs (one kernel interval)</div>
       <div class="k">trace time</div><div>${traceTsUs.toFixed(3)} µs</div>
       <div class="k">stream</div><div>${escapeHtml(track?.label || event.stream_id)}</div>
       <div class="k">layer</div><div>${event.layer_id == null ? "—" : event.layer_id} · ${escapeHtml(event._layerKind || "")}</div>
       <div class="k">substage</div><div>${escapeHtml(event._substage || "—")}</div>
+      ${event._occurrenceId ? `<div class="k">occurrence</div><div>${escapeHtml(event._occurrenceId)}</div>` : ""}
+      ${event._eagerEventId ? `<div class="k">eager evidence</div><div>${escapeHtml(event._eagerEventId)}</div>` : ""}
       <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
       <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
+      ${event._supportClass ? `<div class="k">runtime/support class</div><div>${escapeHtml(event._supportClass)}</div>` : ""}
+      ${event._supportReason ? `<div class="k">outside-IR reason</div><div>${escapeHtml(event._supportReason)}</div>` : ""}
       <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>
     </div>
     ${frames ? `<h3>mapped Python stack</h3><ol class="stack-frames">${frames}</ol>` : ""}
@@ -2515,72 +2874,44 @@ function showTimelineEventDetail(event) {
 
 function architectureRouteForEvent(event) {
   const direct = event._irNode || "";
-  const [view, nodeId] = direct.split(".", 2);
-  const mtpProfile = profileGenerationMode(DATA?.profiles?.[CURRENT_PROFILE]) === "eagle_mtp";
-  const mtpOrigin = String(event._substage || "").includes("prefill")
-    ? "mtp_prefill" : "mtp_draft_extend";
-  const targetOrigin = CURRENT_PHASE === "prefill" ? "target_prefill" : "target_verify";
-  const targetRootViews = mtpProfile ? ["mtp_generation", "top"] : ["top"];
-  const targetRootFrom = mtpProfile ? [null, targetOrigin] : [null];
-  if (view === "mtp_generation") {
-    return {views: ["mtp_generation"], from: [null], view, nodeId};
+  let [view, nodeId] = direct.split(".", 2);
+  // Older attribution artifacts used one semantic hyperconnection alias for
+  // two canonical drill views. Resolve the alias from event semantics, then
+  // use the same catalog-driven route search as every other model.
+  if (!(view in (DATA.views || {})) && view === "hyperconnection") {
+    view = String(event._substage || "").includes("combine")
+      ? "hyperconnection_combine" : "hyperconnection_mix";
   }
-  if (view === "mtp_head") {
-    return {views: ["mtp_generation", "mtp_head"], from: [null, mtpOrigin], view, nodeId};
-  }
-  if (view === "mtp_layer") {
-    return {views: ["mtp_generation", "mtp_head", "mtp_layer"], from: [null, mtpOrigin, "decoder_layer"], view, nodeId};
-  }
-  if (view === "mtp_qsa_attention" || view === "mtp_moe") {
-    const origin = view === "mtp_qsa_attention" ? "qsa_attention" : "moe";
-    return {
-      views: ["mtp_generation", "mtp_head", "mtp_layer", view],
-      from: [null, mtpOrigin, "decoder_layer", origin],
-      view,
-      nodeId,
-    };
-  }
-  if (view === "top") return {views: targetRootViews, from: targetRootFrom, view, nodeId};
-  if (view === "stack") return {
-    views: [...targetRootViews, "stack"],
-    from: [...targetRootFrom, "decoder_stack"],
-    view,
-    nodeId,
-  };
-  if (view === "ple") return {
-    views: [...targetRootViews, "stack", "ple"],
-    from: [...targetRootFrom, "decoder_stack", "ple_injection"],
-    view,
-    nodeId,
-  };
-  const layerView = event._layerKind === "full" ? "full_layer" : "linear_layer";
-  const baseViews = [...targetRootViews, "stack", layerView];
-  const baseFrom = [...targetRootFrom, "decoder_stack", layerView];
-  if (view === "linear_attention" || view === "qsa_attention" || view === "moe") {
-    return {views: [...baseViews, view], from: [...baseFrom, view], view, nodeId};
-  }
-  if (view === "hyperconnection") {
-    const isCombine = String(event._substage).includes("combine");
-    const childView = isCombine ? "hyperconnection_combine" : "hyperconnection_mix";
-    const mtpEvent = event._layerKind === "mtp";
-    const normalizedSubstage = String(event._substage || "")
-      .replace(/^mtp_(?:prefill|draft_extend)_/, "");
-    const normalizedIsMoe = normalizedSubstage.startsWith("mlp_");
-    const origin = `${normalizedIsMoe ? "mlp" : "attn"}_hc_${isCombine ? "combine" : "mix"}`;
-    if (mtpEvent) {
-      return {
-        views: ["mtp_generation", "mtp_head", "mtp_layer", childView],
-        from: [null, mtpOrigin, "decoder_layer", origin],
-        view: childView,
-        nodeId,
-      };
+
+  const root = profileEntryViewName();
+  const candidates = [];
+  const visit = (current, views, origins) => {
+    if (current === view) candidates.push({views, from: [null, ...origins]});
+    for (const node of (DATA.views?.[current]?.nodes || [])) {
+      const child = node.drill;
+      if (!child || views.includes(child)) continue;
+      visit(child, [...views, child], [...origins, node.id]);
     }
-    return {views: [...baseViews, childView], from: [...baseFrom, origin], view: childView, nodeId};
-  }
-  if (view === "linear_layer" || view === "full_layer") {
-    return {views: baseViews, from: baseFrom, view, nodeId};
-  }
-  return {views: [view], from: [null], view, nodeId};
+  };
+  if (root in (DATA.views || {})) visit(root, [root], []);
+
+  const hintText = [
+    event._layerKind,
+    event._substage,
+    event._occurrenceId,
+    ...(event._irTargets || []),
+  ].filter(Boolean).join(" ").toLowerCase();
+  const hintTokens = hintText.split(/[^a-z0-9]+/).filter(token => token.length >= 3);
+  const scored = candidates.map(route => {
+    const routeText = [...route.views, ...route.from.filter(Boolean)].join(" ").toLowerCase();
+    const score = hintTokens.reduce(
+      (total, token) => total + (routeText.includes(token) ? 1 : 0),
+      0,
+    );
+    return {route, score};
+  }).sort((left, right) => right.score - left.score || left.route.views.length - right.route.views.length);
+  const selectedRoute = scored[0]?.route || {views: [view], from: [null]};
+  return {...selectedRoute, view, nodeId};
 }
 
 function captureArchitectureSnapshot() {
@@ -2690,7 +3021,11 @@ async function showTimelineEventInArchitecture(options = {}) {
 }
 
 function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
-  TIMELINE_IR_TARGET = `${viewName}.${nodeId}`;
+  const target = `${viewName}.${nodeId}`;
+  // A fused semantic leaf has no independent production interval. Highlight
+  // the group's single timing owner instead of making the timeline appear
+  // empty or copying the owner's events onto every covered leaf.
+  TIMELINE_IR_TARGET = fusionGroupForTarget(target)?.[1]?.owner || target;
   document.getElementById("timeline-search").value = "";
   TIMELINE_SEARCH = "";
   TIMELINE_LAYER = "";
@@ -2851,7 +3186,7 @@ function initTimelineUI() {
     let start = drag.range.startUs + shift;
     start = Math.max(0, Math.min(duration - span, start));
     TIMELINE_RANGE = {startUs: start, endUs: start + span};
-    renderTimeline();
+    scheduleTimelineRender();
   });
   window.addEventListener("mouseup", event => {
     if (!drag) return;
@@ -2910,28 +3245,38 @@ function initTimelineUI() {
     const step = currentTimelineStep();
     const duration = Number(step.duration_us);
     const span = TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs;
-    if (event.ctrlKey || event.metaKey || event.altKey) {
+    const lineScale = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+    const deltaX = Number(event.deltaX || 0) * lineScale;
+    const deltaY = Number(event.deltaY || 0) * lineScale;
+    const horizontalGesture = event.shiftKey || Math.abs(deltaX) > Math.abs(deltaY);
+    const zoomGesture = (event.ctrlKey || event.metaKey) && !horizontalGesture && deltaY;
+    if (zoomGesture) {
       event.preventDefault();
-      // Anchor zoom at the mouse / trackpad gesture position and preserve the
-      // original profiler-like fixed zoom step.
+      TIMELINE_LAST_GESTURE_AT = performance.now();
+      TIMELINE_LAST_GESTURE_RENDER_AT = null;
+      // Ctrl/Cmd + wheel and browser trackpad-pinch events zoom around the
+      // pointer.  Unmodified deltaY is deliberately left to the scroll
+      // container so users can move through long stream lists normally.
       const rect = canvas.getBoundingClientRect();
       const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
       const plotWidth = Math.max(100, rect.width - labelWidth - 14);
       const ratio = Math.max(0, Math.min(1, (event.offsetX - labelWidth) / plotWidth));
       const anchor = TIMELINE_RANGE.startUs + ratio * span;
-      if (!event.deltaY) return;
-      const zoomFactor = event.deltaY < 0 ? 0.85 : 1.18;
+      const zoomStep = Math.min(0.14, Math.max(0.01, Math.abs(deltaY) * 0.0025));
+      const zoomFactor = Math.exp(deltaY < 0 ? -zoomStep : zoomStep);
       const nextSpan = Math.max(2, Math.min(duration, span * zoomFactor));
       let start = anchor - ratio * nextSpan;
       start = Math.max(0, Math.min(duration - nextSpan, start));
       TIMELINE_RANGE = {startUs: start, endUs: start + nextSpan};
-      renderTimeline();
-    } else if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      scheduleTimelineRender();
+    } else if (horizontalGesture && (deltaX || deltaY)) {
       event.preventDefault();
-      const shift = (event.deltaX || event.deltaY) / 600 * span;
+      TIMELINE_LAST_GESTURE_AT = performance.now();
+      TIMELINE_LAST_GESTURE_RENDER_AT = null;
+      const shift = (deltaX || deltaY) / 600 * span;
       let start = Math.max(0, Math.min(duration - span, TIMELINE_RANGE.startUs + shift));
       TIMELINE_RANGE = {startUs: start, endUs: start + span};
-      renderTimeline();
+      scheduleTimelineRender();
     }
   }, {passive: false});
   window.addEventListener("resize", () => {
@@ -3024,12 +3369,18 @@ function profileNodeLabel(n, viewName) {
   return `${base}\nobserved: ${kinds.join(" + ")}`;
 }
 
-function nodeStateSummary(cell) {
+function nodeStateSummary(cell, target = "") {
   if (!cell?.status) return "";
   if (cell.status === "out_of_scope") return "not in selected stage";
   if (cell.status === "structural") return "structural boundary";
-  if (cell.status === "fused" && cell.included_in === "hyperconnection.mix") {
-    return "fused into mix";
+  if (cell.status === "fused") {
+    const group = fusionGroupForTarget(target)?.[1] || null;
+    const owner = group?.owner || cell.included_in || "unknown owner";
+    const prefix = group?.timing_semantics === "shared_event_set"
+      || group?.evidence_scope?.resolution === "profile_aggregate"
+      ? "shared aggregate"
+      : "shared timing";
+    return `${prefix} → ${shorten(irTargetLabel(owner), 28)}`;
   }
   return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
 }
@@ -3037,6 +3388,7 @@ function nodeStateSummary(cell) {
 function formatMs(ms) {
   if (ms == null || Number.isNaN(Number(ms))) return "—";
   const value = Number(ms);
+  if (value > 0 && value < 0.0001) return value.toExponential(2);
   if (value >= 10) return value.toFixed(2);
   if (value >= 0.1) return value.toFixed(3);
   return value.toFixed(4);
@@ -3049,10 +3401,90 @@ function metricLabel(metric) {
     gap: "module gap",
     idle: "device idle",
     residency: "residency",
+    sol_ideal: "physical ideal",
+    sol_attainable: "attainable projection P50",
+    sol_efficiency: "physical coverage",
+    sol_attainable_coverage: "attainable coverage",
+    sol_impl_gap: "implementation gap",
   })[metric] || "active";
 }
 
-function cellMetricValue(cell, metric = CURRENT_METRIC) {
+function metricSuffix(metric) {
+  return [
+    "sol_efficiency",
+    "sol_attainable_coverage",
+  ].includes(metric) ? "%" : " ms";
+}
+
+function formatMetricValue(value, metric = CURRENT_METRIC) {
+  if ([
+    "sol_efficiency",
+    "sol_attainable_coverage",
+  ].includes(metric)) {
+    return value == null || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(1);
+  }
+  return formatMs(value);
+}
+
+function metricDisplayText(value, metric, target = "", cell = null) {
+  const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
+  const shared = (
+    cell?.status === "fused"
+    || cell?.attribution_status === "shared_fusion_owner"
+    || cell?.sol?.included_in_target
+  ) ? "shared " : "";
+  if (value != null) {
+    return `${provenance}${shared}${metricLabel(metric)} ${formatMetricValue(value, metric)}${metricSuffix(metric)}`;
+  }
+  if (metric.startsWith("sol_")) {
+    const estimate = currentSolEstimate(target);
+    if (estimate?.status === "structural") return `${metricLabel(metric)} · structural`;
+    if (!estimate) return `${metricLabel(metric)} · not modeled`;
+    return `${metricLabel(metric)} · unavailable`;
+  }
+  return `${metricLabel(metric)} —`;
+}
+
+function solMetricValue(target, metric = CURRENT_METRIC) {
+  if (!target || !currentSolProfile()) return null;
+  const estimate = currentSolEstimate(target) || {};
+  const gap = currentSolGap(target) || {};
+  const value = ({
+    sol_ideal: estimate.ideal_ms,
+    sol_attainable: estimate.attainable_ms,
+    sol_efficiency: gap.physical_coverage_pct ?? gap.ideal_efficiency_pct,
+    sol_attainable_coverage: gap.attainable_coverage_pct,
+    sol_impl_gap: gap.implementation_gap_ms,
+  })[metric];
+  return value == null ? null : Number(value);
+}
+
+function solMetricUnavailableText(target, metric = CURRENT_METRIC) {
+  if (!currentSolProfile()) return "no matching SoL baseline";
+  const estimate = currentSolEstimate(target);
+  if (!estimate) return "SoL not modeled for this node";
+  if (estimate.status === "structural") return "structural boundary · cost included downstream";
+  if (estimate.status === "unsupported") return "SoL unsupported for this node";
+  if (metric === "sol_attainable" || metric === "sol_attainable_coverage" || metric === "sol_impl_gap") return "plan-identified exact-shape projection missing";
+  return "SoL value unavailable";
+}
+
+function cellMetricValue(cell, metric = CURRENT_METRIC, target = "") {
+  if (metric.startsWith("sol_")) {
+    const selectedValue = solMetricValue(target, metric);
+    if (selectedValue != null) return selectedValue;
+    if (cell?.sol?.sol_profile_id === CURRENT_SOL_PROFILE) {
+      const value = ({
+        sol_ideal: cell.sol.ideal_ms,
+        sol_attainable: cell.sol.attainable_ms,
+        sol_efficiency: cell.sol.physical_coverage_pct ?? cell.sol.ideal_efficiency_pct,
+        sol_attainable_coverage: cell.sol.attainable_coverage_pct,
+        sol_impl_gap: cell.sol.implementation_gap_ms,
+      })[metric];
+      return value == null ? null : Number(value);
+    }
+    return null;
+  }
   if (!cell) return null;
   const field = ({
     active: "active_gpu_ms",
@@ -3066,7 +3498,7 @@ function cellMetricValue(cell, metric = CURRENT_METRIC) {
 }
 
 function nodeMs(n, viewName) {
-  return cellMetricValue(nodeCell(n, viewName));
+  return cellMetricValue(nodeCell(n, viewName), CURRENT_METRIC, `${viewName}.${n.id}`);
 }
 
 function heatLevel(ms, viewName) {
@@ -3075,7 +3507,7 @@ function heatLevel(ms, viewName) {
   if (!view) return null;
   let mx = 0;
   for (const node of (view.nodes || [])) {
-    const v = cellMetricValue(nodeCell(node, viewName));
+    const v = cellMetricValue(nodeCell(node, viewName), CURRENT_METRIC, `${viewName}.${node.id}`);
     if (v && v > mx) mx = v;
   }
   if (mx <= 0) return null;
@@ -3102,6 +3534,15 @@ function showDetail(n, viewName) {
   const fusionEntry = fusionGroupForTarget(target);
   const fusionGroupId = fusionEntry?.[0] || "";
   const fusionGroup = fusionEntry?.[1] || null;
+  const fusionOwner = fusionGroup?.owner || scopedCell?.included_in || "";
+  const fusionOwnerCell = fusionOwner ? profileCellForTarget(fusionOwner) : null;
+  const fusionMembers = (fusionGroup?.ir_nodes || []).map(member =>
+    `${irTargetLabel(member)} (${member})`
+  );
+  const fusionOwnerTiming = fusionOwnerCell?.active_gpu_ms
+    ?? fusionOwnerCell?.ms_per_iter
+    ?? fusionOwnerCell?.gpu_residency_ms_per_iter
+    ?? null;
   const executionRows = Object.entries(n.execution || {}).map(([key, value]) =>
     `<tr><td class="name">${escapeHtml(key)}</td><td class="name" style="color:var(--muted)">${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</td></tr>`
   ).join("");
@@ -3112,6 +3553,39 @@ function showDetail(n, viewName) {
   const kernelSignatures = (implementationBinding.kernel_signatures || []).map(signature =>
     `<span class="codelink">${escapeHtml(signature)}</span>`
   ).join("");
+  const semantics = n.semantics || null;
+  const tensorContractTable = (items, endpoint) => {
+    if (!items?.length) {
+      return `<div style="color:var(--muted); font-size:11px">No ${endpoint === "source" ? "incoming" : "outgoing"} tensor/state edge.</div>`;
+    }
+    const rows = items.map(item => `<tr>
+      <td class="name">${escapeHtml(item.name || "")}</td>
+      <td>${escapeHtml(item.shape || "")}</td>
+      <td>${escapeHtml(item.dtype || "")}</td>
+      <td class="name" title="${escapeHtml(item.layout || "")}">${escapeHtml(shorten(item.layout || "", 28))}</td>
+      <td class="name" title="${escapeHtml(item.state || "")}">${escapeHtml(shorten(item.state || "", 24))}</td>
+      <td>${escapeHtml(item[endpoint] || "")}</td>
+    </tr>`).join("");
+    return `<table class="kernels semantic-contract"><thead><tr>
+      <th class="name">tensor/state</th><th>shape</th><th>dtype</th><th class="name">layout</th><th class="name">lifetime</th><th>${endpoint}</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  };
+  const semanticsHtml = semantics ? `<h3>Semantics</h3>
+    <div class="kv">
+      <div class="k">semantic op</div><div>${escapeHtml(semantics.semantic_op || n.semantic_op || "")}</div>
+      <div class="k">kind</div><div>${escapeHtml(semantics.kind || "")}</div>
+      <div class="k">contract</div><div>${escapeHtml(semantics.contract_source || "")}</div>
+    </div>
+    <h3>Inputs</h3>
+    ${tensorContractTable(semantics.inputs || [], "source")}
+    <h3>Transition / Equation</h3>
+    <div style="border:1px solid var(--border); border-radius:6px; padding:9px 10px; background:var(--panel); overflow-wrap:anywhere">
+      <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap">${escapeHtml(semantics.equation || "Equation unavailable")}</div>
+      ${semantics.notes ? `<div style="color:var(--muted); margin-top:7px; white-space:pre-wrap">${escapeHtml(semantics.notes)}</div>` : ""}
+      ${(semantics.invariants || []).length ? `<div style="color:var(--muted); margin-top:7px"><b>invariants:</b> ${escapeHtml(semantics.invariants.join("; "))}</div>` : ""}
+    </div>
+    <h3>Outputs</h3>
+    ${tensorContractTable(semantics.outputs || [], "target")}` : "";
 
   const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;
   const variants = Object.keys(visibleVariants).map(k => {
@@ -3142,7 +3616,7 @@ function showDetail(n, viewName) {
     return `<tr><td class="name">${escapeHtml(s.label)}</td><td class="name" style="color:var(--muted)">${(s.trace_aliases||[]).join(", ")}</td></tr>`;
   }).join("");
 
-  // 当前 variant cell; DSV4 通常是 HCA/CSA/ALL, Qwen3.5 decode 是 MTP/noMTP variants.
+  // Current profile-variant cell selected from the compiled V2 profile metadata.
   const cell = scopedCell;
   const isAggregate = !!(cell && cell.from_aggregate);
 
@@ -3180,15 +3654,78 @@ function showDetail(n, viewName) {
         ${cell.source_rank != null ? `<div class="k">source rank</div><div>${escapeHtml(cell.source_rank)}</div>` : ""}
         ${cell.scope_target ? `<div class="k">drill scope</div><div>${escapeHtml(cell.scope_target)}</div>` : ""}
         ${cell.label && cell.ms_per_iter == null ? `<div class="k">meaning</div><div>${escapeHtml(cell.label)}</div>` : ""}
-      ${cell.included_in ? `<div class="k">included in</div><div>${escapeHtml(cell.included_in)}</div>` : ""}
+      ${fusionOwner ? `<div class="k">timing owner</div><div>${escapeHtml(irTargetLabel(fusionOwner))} <span style="color:var(--muted)">(${escapeHtml(fusionOwner)})</span></div>` : ""}
         ${fusionGroup ? `<div class="k">fusion group</div><div>${escapeHtml(fusionGroupId)}</div>
-        <div class="k">fused coverage</div><div>${escapeHtml((fusionGroup.ir_nodes || []).join(", "))}</div>
-        <div class="k">fusion timing</div><div>one shared kernel interval; never sum once per covered node</div>` : ""}
+        <div class="k">owner timing</div><div>${fusionOwnerTiming == null ? "unavailable" : `${formatMs(fusionOwnerTiming)} ms`} · counted once</div>
+        <div class="k">evidence scope</div><div>${escapeHtml(fusionScopeDescription(fusionGroup))}</div>
+        <div class="k">fusion timing</div><div>${escapeHtml(fusionTimingDescription(fusionGroup))}</div>
+        ${fusionGroup.mapping_method ? `<div class="k">mapping proof</div><div>${escapeHtml(fusionGroup.mapping_method)}${fusionGroup.confidence ? ` · ${escapeHtml(fusionGroup.confidence)}` : ""}</div>` : ""}
+        ${fusionGroup.provenance ? `<div class="k">provenance</div><div>${escapeHtml(fusionGroup.provenance)}</div>` : ""}
+        <div class="k">covered IR</div><div><details><summary>${fusionMembers.length} semantic contracts</summary><div style="margin-top:5px; color:var(--muted); overflow-wrap:anywhere">${fusionMembers.map(escapeHtml).join("<br>")}</div></details></div>` : ""}
         ${collectiveText ? `<div class="k">observed op</div><div>${escapeHtml(collectiveText)}</div>` : ""}
         ${communication?.payload ? `<div class="k">payload</div><div>${escapeHtml(communication.payload)}</div>` : ""}
       </div>
       ${methodRows ? `<table class="kernels"><thead><tr><th class="name">attribution</th><th>kernels</th><th>residency ms</th></tr></thead><tbody>${methodRows}</tbody></table>` : ""}`;
   }
+
+  const selectedSolProfile = currentSolProfile();
+  const selectedSolEstimate = currentSolEstimate(target);
+  const selectedSolGap = currentSolGap(target);
+  const attachedSol = cell?.sol?.sol_profile_id === CURRENT_SOL_PROFILE ? cell.sol : {};
+  const sol = selectedSolProfile ? {
+    sol_profile_id: CURRENT_SOL_PROFILE,
+    status: selectedSolEstimate?.status || "not_modeled",
+    ideal_ms: selectedSolEstimate?.ideal_ms,
+    attainable_ms: selectedSolEstimate?.attainable_ms,
+    attainable_interval_ms: selectedSolEstimate?.attainable_interval_ms,
+    operator_family: selectedSolEstimate?.operator_family,
+    cost_ir: selectedSolEstimate?.cost_ir,
+    physical_plan: selectedSolEstimate?.physical_plan,
+    kernel_plan: selectedSolEstimate?.kernel_plan,
+    kernel_plan_fingerprint: selectedSolEstimate?.kernel_plan_fingerprint,
+    limiting_resource: selectedSolEstimate?.limiting_resource,
+    critical_transition: selectedSolEstimate?.critical_transition,
+    limiter_vector: selectedSolEstimate?.limiter_vector || [],
+    confidence: selectedSolEstimate?.confidence || "none",
+    physical_coverage_pct: selectedSolGap?.physical_coverage_pct ?? selectedSolGap?.ideal_efficiency_pct,
+    attainable_coverage_pct: selectedSolGap?.attainable_coverage_pct,
+    implementation_gap_ms: selectedSolGap?.implementation_gap_ms,
+    diagnosis: selectedSolGap?.diagnosis || (selectedSolEstimate ? "requires_calibration" : "extend_sol_manifest_coverage"),
+    ...attachedSol,
+    reason: selectedSolEstimate?.reason || attachedSol.reason || "No cost adapter for this IR node in the selected SoL manifest.",
+  } : null;
+  const solCost = sol?.cost_ir?.resources || {};
+  const solProblem = sol?.cost_ir?.problem || {};
+  const solTransitions = sol?.physical_plan?.transitions || solCost?.transition_plan?.transitions || [];
+  const transitionSummary = solTransitions.map(transition => {
+    const limiters = (transition.limiter_vector || []).slice(0, 2).map(item => `${item.resource} ${formatMs(item.time_ms)} ms`).join(", ");
+    return `${transition.id}: ${formatMs(transition.duration_ms)} ms${limiters ? ` (${limiters})` : ""}`;
+  }).join("; ");
+  const attainableInterval = sol?.attainable_interval_ms;
+  const solHtml = sol ? `<h3>Speed-of-Light gap</h3>
+    <div class="kv">
+      <div class="k">SoL profile</div><div>${escapeHtml(sol.sol_profile_id || "")}</div>
+      <div class="k">status</div><div>${escapeHtml(sol.status || "")}</div>
+      ${sol.ideal_ms != null ? `<div class="k">physical ideal</div><div>${formatMs(sol.ideal_ms)} ms · hard resource lower bound</div>` : `<div class="k">physical ideal</div><div>unavailable: ${escapeHtml(sol.reason)}</div>`}
+      ${sol.attainable_ms != null ? `<div class="k">attainable projection</div><div>P50 ${formatMs(sol.attainable_ms)} ms${attainableInterval ? ` · P10–P90 ${formatMs(attainableInterval.p10_ms)}–${formatMs(attainableInterval.p90_ms)} ms` : ""}</div>` : `<div class="k">attainable projection</div><div>unavailable: ${sol.status === "estimated" ? "no exact-shape surface for a matching kernel-plan fingerprint" : escapeHtml(sol.reason)}</div>`}
+      ${sol.physical_coverage_pct != null ? `<div class="k">physical coverage</div><div>${Number(sol.physical_coverage_pct).toFixed(1)}% of measured active GPU</div>` : ""}
+      ${sol.included_in_target ? `<div class="k">SoL allocation</div><div>shared with ${escapeHtml(sol.included_in_target)} · non-additive</div>` : ""}
+      ${sol.attainable_coverage_pct != null ? `<div class="k">attainable coverage</div><div>${Number(sol.attainable_coverage_pct).toFixed(1)}% of measured active GPU</div>` : ""}
+      ${sol.implementation_gap_ms != null ? `<div class="k">implementation gap</div><div>${formatMs(sol.implementation_gap_ms)} ms</div>` : ""}
+      ${sol.limiting_resource ? `<div class="k">ideal limiter</div><div>${escapeHtml(sol.limiting_resource)}</div>` : ""}
+      ${sol.critical_transition ? `<div class="k">critical transition</div><div>${escapeHtml(sol.critical_transition)}</div>` : ""}
+      ${transitionSummary ? `<div class="k">transition DAG</div><div>${escapeHtml(transitionSummary)}</div>` : ""}
+      ${sol.operator_family ? `<div class="k">operator family</div><div>${escapeHtml(sol.operator_family)}</div>` : ""}
+      ${sol.kernel_plan?.plan_id ? `<div class="k">kernel plan</div><div>${escapeHtml(sol.kernel_plan.plan_id)} · ${escapeHtml(sol.kernel_plan.algorithm || "")}</div>` : `<div class="k">kernel plan</div><div>unavailable · physical lower bound only</div>`}
+      ${sol.kernel_plan_fingerprint ? `<div class="k">plan fingerprint</div><div>${escapeHtml(sol.kernel_plan_fingerprint)}</div>` : ""}
+      ${solCost.useful_ops != null ? `<div class="k">useful operations</div><div>${Number(solCost.useful_ops).toExponential(3)}</div>` : ""}
+      ${solCost.compulsory_hbm_bytes != null ? `<div class="k">compulsory HBM bytes</div><div>${Number(solCost.compulsory_hbm_bytes).toExponential(3)}</div>` : ""}
+      ${sol.cost_ir?.repetitions != null ? `<div class="k">repetitions</div><div>${escapeHtml(sol.cost_ir.repetitions)}</div>` : ""}
+      ${Object.keys(solProblem).length ? `<div class="k">resolved problem</div><div>${escapeHtml(Object.entries(solProblem).map(([key, value]) => `${key}=${value}`).join(", "))}</div>` : ""}
+      ${sol.confidence ? `<div class="k">confidence</div><div>${escapeHtml(sol.confidence)}</div>` : ""}
+      ${sol.diagnosis ? `<div class="k">diagnosis</div><div>${escapeHtml(sol.diagnosis)}</div>` : ""}
+      ${sol.reason ? `<div class="k">coverage note</div><div>${escapeHtml(sol.reason)}</div>` : ""}
+    </div>` : "";
 
   // kernels (top kernels for this node / aggregate)
   // Kernel shares use residency as the denominator; using active GPU time
@@ -3272,9 +3809,17 @@ function showDetail(n, viewName) {
     : "";
 
   // ms badge (含 aggregate 标记)
-  const msBadge = ms != null
-    ? `${formatMs(ms)} ms ${escapeHtml(metricLabel(CURRENT_METRIC))}${isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : ''}`
-    : escapeHtml(cell?.label || cell?.status || "—");
+  const badgeMetrics = [CURRENT_METRIC, CURRENT_COMPARE_METRIC].filter(Boolean);
+  const msBadge = badgeMetrics.map(metric => {
+    const value = cellMetricValue(cell, metric, target);
+    if (value != null) {
+      return `${escapeHtml(metricLabel(metric))} ${formatMetricValue(value, metric)}${metricSuffix(metric)}`;
+    }
+    return escapeHtml(metric.startsWith("sol_")
+      ? `${metricLabel(metric)} · ${solMetricUnavailableText(target, metric)}`
+      : `${metricLabel(metric)} unavailable`);
+  }).join(' <span style="color:var(--muted); padding:0 4px">vs</span> ') +
+    (isAggregate ? ' <span style="color:var(--muted); font-size:10px">(aggregate)</span>' : '');
 
   document.getElementById("detail").innerHTML = `
     <h2>${escapeHtml(n.label || n.id)}</h2>
@@ -3283,7 +3828,7 @@ function showDetail(n, viewName) {
     <div class="kv">
       <div class="k">id</div><div>${escapeHtml(n.id)}</div>
       <div class="k">shape</div><div>${escapeHtml(n.shape || "")}</div>
-      <div class="k">IR layer</div><div>${escapeHtml(n.ir_origin || (isV2Bundle() ? "model_ir" : "legacy"))}</div>
+      <div class="k">IR layer</div><div>${escapeHtml(n.ir_origin || "unknown")}</div>
       <div class="k">node kind</div><div>${escapeHtml(n.node_kind || "semantic")}</div>
       ${n.boundary_role ? `<div class="k">boundary role</div><div>${escapeHtml(n.boundary_role)}</div>` : ""}
       ${n.drill ? `<div class="k">drill →</div><div><a href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">${n.drill}</a></div>` : ""}
@@ -3292,7 +3837,9 @@ function showDetail(n, viewName) {
       ${CURRENT_IMPLEMENTATION ? `<div class="k">implementation</div><div>${escapeHtml(CURRENT_IMPLEMENTATION)}</div>` : ""}
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
+    ${semanticsHtml}
     ${provenanceHtml}
+    ${solHtml}
     ${drillBtn}
     ${n.short_doc ? `<h3>about</h3><div style="color:var(--muted); white-space: pre-wrap">${escapeHtml(n.short_doc)}</div>` : ""}
     ${n.note ? `<h3>note</h3><div style="color:var(--muted)">${escapeHtml(n.note)}</div>` : ""}

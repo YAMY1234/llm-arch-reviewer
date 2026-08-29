@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sol-manifest.schema.json",
+  "title": "llm-arch-reviewer SoL analysis manifest",
+  "type": "object",
+  "required": ["schema_version", "sol_profile_id", "gap_report_id", "model_id", "execution_path_id", "measured_profile_id", "hardware_spec_id", "phase", "assumptions", "nodes"],
+  "properties": {
+    "schema_version": {"const": "sol-manifest.v1"},
+    "sol_profile_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "gap_report_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "model_id": {"type": "string"},
+    "execution_path_id": {"type": "string"},
+    "measured_profile_id": {"type": "string"},
+    "hardware_spec_id": {"type": "string"},
+    "phase": {"type": "string"},
+    "correctness_tolerance_pct": {"type": "number", "minimum": 0},
+    "variables": {"type": "object"},
+    "assumptions": {
+      "type": "object",
+      "required": ["semantic_math", "fusion_policy", "overlap_policy"],
+      "properties": {
+        "semantic_math": {"type": "string"},
+        "fusion_policy": {"type": "string"},
+        "overlap_policy": {"type": "string"}
+      }
+    },
+    "schedule": {"type": "object"},
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["model"],
+        "properties": {
+          "model": {"enum": ["gemm", "memory", "elementwise", "roofline", "attention", "collective", "aggregate", "structural", "unsupported"]},
+          "operator_family": {"type": "string"},
+          "depends_on": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "members": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "scale": {"type": ["number", "string"]},
+          "calibration_surface": {"type": "string"},
+          "kernel_plan": {"$ref": "kernel-plan.schema.json"},
+          "legacy_sensitivity": {"type": "boolean", "default": false}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

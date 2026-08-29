@@ -1,0 +1,107 @@
+schema_version: hardware-spec.v1
+hardware_spec_id: nvidia_gb300_nvl72_per_gpu_v1
+label: NVIDIA Blackwell Ultra GPU in GB300 NVL72 · theoretical ceilings
+architecture: Blackwell Ultra
+scope: per_gpu
+aliases: [GB300, B300, GB300-288GB]
+status: theoretical_only
+
+theoretical:
+  compute:
+    tensor_core:
+      # NVIDIA publishes 360 PFLOP/s BF16 for the 72-GPU rack with sparsity.
+      # The dense per-GPU value below is the explicit derivation
+      # 360e15 / 72 / 2. It is kept separate from the published sparse value.
+      bf16_sparse_flops_per_s: 5000000000000000
+      bf16_dense_flops_per_s: 2500000000000000
+      bf16_dense_derivation: published rack sparse peak / 72 GPUs / 2:1 sparsity factor
+    cuda_core: {}
+    sfu: {}
+  memory:
+    # Published rack aggregate is up to 576 TB/s across 72 GPUs.
+    hbm_bytes_per_s: 8000000000000
+    hbm_capacity_bytes: 288000000000
+  interconnect:
+    nvlink:
+      # Published fifth-generation NVLink bandwidth is up to 1,800 GB/s/GPU.
+      # This is a physical aggregate ceiling, not an NCCL efficiency claim.
+      bandwidth_bytes_per_s: 1800000000000
+      latency_floor_us: null
+      topology: fully_connected_72_gpu_nvlink_domain
+
+# Legacy sensitivity envelopes retained only so old experiments remain
+# reproducible. They are disabled by default and are not projection models.
+# New projections require a versioned kernel plan plus an exact/holdout-
+# validated calibration surface.
+methodologies:
+  gb300_methodology_optimistic_seed_v0:
+    label: GB300 legacy optimistic sensitivity seed v0
+    enabled: false
+    role: optimistic
+    status: hypothesis
+    defaults:
+      tensor_core_efficiency: 0.80
+      memory_efficiency: 0.80
+      interconnect_efficiency: 0.85
+      launch_us: 1.5
+      sync_us: 0.0
+    operator_families:
+      memory: {memory_efficiency: 0.78, launch_us: 1.2}
+      elementwise: {memory_efficiency: 0.74, launch_us: 1.5}
+      attention: {tensor_core_efficiency: 0.70, memory_efficiency: 0.72, launch_us: 2.5}
+      qsa_indexer: {tensor_core_efficiency: 0.65, memory_efficiency: 0.68, launch_us: 3.0}
+      qsa_attention: {tensor_core_efficiency: 0.68, memory_efficiency: 0.70, launch_us: 3.0}
+      gated_delta_rule: {tensor_core_efficiency: 0.68, memory_efficiency: 0.70, launch_us: 2.5}
+      moe_grouped_gemm: {tensor_core_efficiency: 0.68, memory_efficiency: 0.72, launch_us: 2.5}
+      collective: {interconnect_efficiency: 0.80, launch_us: 3.0, sync_us: 0.5}
+      hyperconnection: {memory_efficiency: 0.72, launch_us: 1.5}
+      ple: {memory_efficiency: 0.70, launch_us: 2.0}
+    provenance:
+      basis: DLSim-inspired fixed-overhead plus resource-critical-envelope form
+      coefficient_state: uncalibrated seed hypothesis
+      intended_use: sensitivity analysis and calibration planning only
+  gb300_methodology_conservative_seed_v0:
+    label: GB300 legacy conservative sensitivity seed v0
+    enabled: false
+    role: conservative
+    status: hypothesis
+    defaults:
+      tensor_core_efficiency: 0.60
+      memory_efficiency: 0.65
+      interconnect_efficiency: 0.65
+      launch_us: 3.0
+      sync_us: 0.5
+    operator_families:
+      memory: {memory_efficiency: 0.62, launch_us: 2.5}
+      elementwise: {memory_efficiency: 0.58, launch_us: 3.0}
+      attention: {tensor_core_efficiency: 0.50, memory_efficiency: 0.55, launch_us: 5.0}
+      qsa_indexer: {tensor_core_efficiency: 0.45, memory_efficiency: 0.50, launch_us: 6.0}
+      qsa_attention: {tensor_core_efficiency: 0.48, memory_efficiency: 0.52, launch_us: 6.0}
+      gated_delta_rule: {tensor_core_efficiency: 0.48, memory_efficiency: 0.52, launch_us: 5.0}
+      moe_grouped_gemm: {tensor_core_efficiency: 0.48, memory_efficiency: 0.55, launch_us: 5.0}
+      collective: {interconnect_efficiency: 0.60, launch_us: 5.0, sync_us: 1.5}
+      hyperconnection: {memory_efficiency: 0.55, launch_us: 3.0}
+      ple: {memory_efficiency: 0.52, launch_us: 4.0}
+    provenance:
+      basis: DLSim-inspired fixed-overhead plus resource-critical-envelope form
+      coefficient_state: uncalibrated seed hypothesis
+      intended_use: sensitivity analysis and calibration planning only
+
+calibration:
+  policy: exact_shape_only
+  surfaces: {}
+  missing_data_behavior: unavailable
+
+provenance:
+  vendor: NVIDIA
+  product_page: https://www.nvidia.com/en-us/data-center/gb300-nvl72/
+  reference_architecture: https://docs.nvidia.com/enterprise-reference-architectures/nvl72-ai-factory/latest/components.html
+  published_system_gpu_count: 72
+  published_bf16_sparse_flops_per_s: 360000000000000000
+  published_hbm_bandwidth_bytes_per_s: 576000000000000
+  published_nvlink_bandwidth_bytes_per_s_per_gpu: 1800000000000
+  notes:
+    - Vendor Tensor Core specifications are sparse unless otherwise noted.
+    - No CUTLASS, attention, launch-latency, or collective calibration has been attached yet.
+    - Do not interpret theoretical interconnect bandwidth as attainable collective performance.
+    - Legacy methodology seed v0 is disabled and is not an attainable projection.

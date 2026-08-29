@@ -1,0 +1,90 @@
+schema_version: profile.v2
+profile_id: qwen35_tp4_prefill_c256_p1f
+label: "GB300 · TP4 · prefill c256 · P1f"
+model_id: qwen35
+execution_path_id: tp_only
+implementation_id: sglang_88f88fc06
+variant_id: prefill_c256_tp4
+phase: prefill
+
+execution_parameters:
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 1
+
+workload:
+  isl: 1000
+  osl: 1
+  concurrency: 256
+  chunked_prefill_size: 16384
+  max_prefill_tokens: 16384
+  radix_cache: disabled
+  warmup_prompt_multiplier: 2
+  formal_prompt_multiplier: 10
+
+profiler:
+  type: torch
+  rank: 0
+  selected_iterations: 2
+  forward_window: [145, 175]
+  cuda_graph_enabled: true
+  measured_phase_uses_cuda_graph: false
+
+evidence:
+  job_id: 1672695
+  source_commit: 88f88fc0620fe4d32afbcbb3225ee64928f5e509
+  mapping_policy: high-confidence semantic nodes only
+  mapped_duration_ratio: 0.947
+
+node_metrics:
+  linear_attention.causal_conv:
+    ms_per_iter: 2.993
+    kernels:
+      - {name: causal_conv1d, count: 88, count_per_iter: 44.0, avg_us: 68.024, total_us: 2993.052, share_in_stage_pct: 100.0}
+
+  linear_attention.delta_rule:
+    ms_per_iter: 19.662
+    kernels:
+      - {name: chunk gated delta rule h, count: 90, count_per_iter: 45.0, avg_us: 126.950, total_us: 5712.740, share_in_stage_pct: 29.05}
+      - {name: chunk gated delta rule kkt, count: 90, count_per_iter: 45.0, avg_us: 124.464, total_us: 5600.867, share_in_stage_pct: 28.49}
+      - {name: GDN chunk output, count: 90, count_per_iter: 45.0, avg_us: 111.536, total_us: 5019.133, share_in_stage_pct: 25.53}
+      - {name: GDN recompute_w_u, count: 90, count_per_iter: 45.0, avg_us: 59.994, total_us: 2699.739, share_in_stage_pct: 13.73}
+      - {name: L2Norm, count: 180, count_per_iter: 90.0, avg_us: 6.999, total_us: 629.944, share_in_stage_pct: 3.20}
+
+  linear_attention.gating:
+    ms_per_iter: 0.789
+    kernels:
+      - {name: fused GDN gating, count: 88, count_per_iter: 44.0, avg_us: 17.940, total_us: 789.366, share_in_stage_pct: 100.0}
+
+  linear_attention.split_pack:
+    ms_per_iter: 2.429
+    kernels:
+      - {name: fused qkvz/ba split+pack, count: 88, count_per_iter: 44.0, avg_us: 55.198, total_us: 2428.725, share_in_stage_pct: 100.0}
+
+  moe.combine:
+    ms_per_iter: 16.355
+    kernels:
+      - {name: MoE finalize, count: 120, count_per_iter: 60.0, avg_us: 272.579, total_us: 16354.711, share_in_stage_pct: 100.0}
+
+  moe.routed_experts:
+    ms_per_iter: 87.516
+    kernels:
+      - {name: MoE grouped GEMM FP8, count: 120, count_per_iter: 60.0, avg_us: 689.133, total_us: 41348.009, share_in_stage_pct: 47.25}
+      - {name: MoE grouped GEMM BF16/FP8, count: 120, count_per_iter: 60.0, avg_us: 551.909, total_us: 33114.525, share_in_stage_pct: 37.84}
+      - {name: MoE routed activation, count: 120, count_per_iter: 60.0, avg_us: 217.565, total_us: 13053.912, share_in_stage_pct: 14.92}
+
+  moe.shared_expert_up:
+    ms_per_iter: 1.108
+    kernels:
+      - {name: SiluAndMul, count: 120, count_per_iter: 60.0, avg_us: 18.472, total_us: 1108.333, share_in_stage_pct: 100.0}
+
+  moe.topk:
+    ms_per_iter: 3.466
+    kernels:
+      - {name: MoE routing, count: 360, count_per_iter: 180.0, avg_us: 19.256, total_us: 3466.015, share_in_stage_pct: 100.0}

@@ -1,0 +1,293 @@
+schema_version: execution-plan.v2
+execution_path_id: tp8
+label: Pure tensor parallel TP8
+model_id: glm52
+plan_version: 2
+
+parallelism_axes:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+default_parameters:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+constraints:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  attention_dp: false
+  serving_mode: aggregated
+
+transforms:
+  - op: annotate_node
+    target: top.embedding
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: vocabulary_rows_sharded
+        parallelism: TP8
+
+  - op: insert_after
+    after: top.embedding
+    node:
+      id: tp_embedding_output_collective
+      label: "TP embedding output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.embedding_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: local vocabulary-shard embedding partials · bf16 [B,T,H]
+        result: replicated embedding hidden states · bf16 [B,T,H]
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: dsa_attention.q_a_projection
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated_query_latent_features
+        parallelism: TP8
+
+  - op: annotate_node
+    target: dsa_attention.kv_a_projection
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated_kv_latent_features
+        parallelism: TP8
+
+  - op: annotate_node
+    target: dsa_attention.q_b_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: attention_heads_sharded_8_way
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: dsa_attention.latent_kv_reconstruction
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: attention_heads_sharded_8_way
+        parallelism: column_parallel_or_absorbed_equivalent
+
+  - op: annotate_node
+    target: dsa_attention.index_q_projection
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated_index_heads
+        parallelism: TP8
+
+  - op: annotate_node
+    target: dsa_attention.index_k_gate_projection
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated_index_key_and_gates
+        parallelism: TP8
+
+  - op: annotate_node
+    target: dsa_attention.latent_kv_cache
+    set:
+      execution:
+        placement: replicated_per_tp_rank
+        tensor_layout: full_sequence_latent_kv_state
+        state_owner: each_tp_rank
+
+  - op: annotate_node
+    target: dsa_attention.index_k_cache
+    set:
+      execution:
+        placement: replicated_per_tp_rank
+        tensor_layout: owner_layer_index_k_state
+        state_owner: each_tp_rank
+
+  - op: annotate_node
+    target: dsa_attention.index_topk_state
+    set:
+      execution:
+        placement: replicated_per_tp_rank
+        tensor_layout: full_topk_indices_for_local_batch
+        state_owner: each_tp_rank
+
+  - op: annotate_node
+    target: dsa_attention.output_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: input_attention_heads_sharded_8_way
+        parallelism: row_parallel
+
+  - op: insert_after
+    after: dsa_attention.output_projection
+    node:
+      id: tp_attention_output_collective
+      label: "TP attention output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.attention_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: row-parallel attention output partials · bf16 [B,T,H]
+        result: replicated attention output · bf16 [B,T,H]
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: dense_mlp.gate_up_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: output_features_sharded_8_way
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: dense_mlp.down_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: input_features_sharded_8_way
+        parallelism: row_parallel
+
+  - op: insert_after
+    after: dense_mlp.down_projection
+    node:
+      id: tp_dense_mlp_output_collective
+      label: "TP dense-MLP output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.dense_mlp_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: row-parallel dense-MLP output partials · bf16 [B,T,H]
+        result: replicated dense-MLP output · bf16 [B,T,H]
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: moe.router
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated_router_logits
+        parallelism: TP8
+
+  - op: annotate_node
+    target: moe.dispatch
+    set:
+      execution:
+        placement: local_within_each_tp_rank
+        tensor_layout: local_tokens_to_tp_sharded_expert_intermediates
+        parallelism: TP8_EP1
+
+  - op: annotate_node
+    target: moe.routed_experts
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: expert_intermediate_features_sharded_8_way
+        parallelism: tensor_parallel_experts
+
+  - op: annotate_node
+    target: moe.shared_expert_up
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: output_features_sharded_8_way
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: moe.shared_expert_down
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: input_features_sharded_8_way
+        parallelism: row_parallel
+
+  - op: annotate_node
+    target: moe.combine
+    set:
+      execution:
+        placement: local_on_each_tp_rank
+        tensor_layout: local_routed_plus_shared_output_partials
+        parallelism: TP8_EP1
+
+  - op: insert_after
+    after: moe.combine
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: routed plus shared expert output partials · bf16 [B,T,H]
+        result: replicated combined MoE output · bf16 [B,T,H]
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: top.lm_head
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: vocabulary_rows_sharded_8_way
+        parallelism: column_parallel
+
+  - op: insert_after
+    after: top.lm_head
+    node:
+      id: tp_logits_all_gather
+      label: "TP logits materialization\nall-gather"
+      shape: elem
+      semantic_op: execution.tp.logits_all_gather
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_gather
+        parallelism: TP8
+        payload: local vocabulary logits · fp32 [B,T,V/8] with padding as required
+        result: replicated full-vocabulary logits · fp32 [B,T,V]
+    edge:
+      shape: "[B,T,V]"
+      dtype: fp32
+
+  - op: annotate_node
+    target: top.mtp_extension
+    set:
+      execution:
+        selection: not_selected_for_autoregressive_baseline
+        topology_contract: deferred_to_separate_mtp_profile

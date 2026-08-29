@@ -1,0 +1,1153 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f609d677b_mixed_glm53_tp8
+label: SGLang f609d677b mixed-snapshot GLM-5.3-Flash TP8
+model_id: glm53_flash
+execution_path_id: tp8
+source_repo: https://github.com/sgl-project/sglang
+source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+container: sglang-glm53-flash-arm64-73f9294b.sqsh@sha256:28e9545e312e344bbbf80c575b928be53c9aba6296ae55f292ce0f10750c6971
+backend: sglang_native_dsa_trtllm_moe_flashinfer_trtllm
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_33146d70b2060232
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  evidence:
+  - current/glm53-flash-cross-framework-ir-profile/evidence/runtime-preflight/slurm-3333958.out
+  - current/glm53-flash-cross-framework-ir-profile/evidence/sglang-eager/3336985
+  - current/glm53-flash-cross-framework-ir-profile/eager/sglang/3336985/prefill-attestation.json
+  - current/glm53-flash-cross-framework-ir-profile/eager/sglang/3336985/decode-attestation.json
+  notes: Package base is f609d677b; runtime glm5_next.py matches inspected PR head 033446bb and exact per-module hashes are source-locked. Exact graph-off prefill and decode both pass with 8192/1024 realized lengths, the expected 34 KDA/11 DSA/3 dense/42 MoE schedule, exact TP collectives, FP8 weights/KV, BF16 activations, and MTP off. One asynchronous decode DSA launch has a stale cache-management Python span; its exact implementation-unique H512 kernel signature preserves the eleventh DSA attribution explicitly.
+node_bindings:
+  top.token_ids:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextModel
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 1203
+      display: glm5_next.py - native conditional-generation wrapper
+  top.embedding:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextModel
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 1203
+      display: glm5_next.py - native conditional-generation wrapper
+  top.vision_inputs:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  top.vision_frontend:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  top.multimodal_injection:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  top.hc_expand:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  top.decoder_stack:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  top.hc_contract:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  top.final_norm:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextModel
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 1203
+      display: glm5_next.py - native conditional-generation wrapper
+  top.lm_head:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextModel
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 1203
+      display: glm5_next.py - native conditional-generation wrapper
+  top.logits:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextModel
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 1203
+      display: glm5_next.py - native conditional-generation wrapper
+  top.mtp_extension:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  vision_frontend.vision_in:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.patch_projection:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.position_encoding:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.vision_blocks:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.post_norm:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.spatial_group:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.spatial_downsample:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.merger:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_frontend.vision_out:
+    symbols:
+    - Glm5NextVisionModel
+    - Glm5NextVisionPatchMerger
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionModel
+      line: 246
+      display: glm5_next.py - optional native vision frontend
+  vision_block.block_in:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.norm1:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.qkv_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.qk_norm_rotary:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.attention:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.attention_output:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.attention_residual:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.norm2:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.gate_up_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.clamped_swiglu:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.down_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  vision_block.block_out:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionMLP
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextVisionBlock
+      line: 204
+      display: glm5_next.py - one vision transformer block
+  decoder_stack.stack_in:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.attn_mhc_pre:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  decoder_stack.input_norm:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.attention_schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.linear_attention:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  decoder_stack.dsa_attention:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  decoder_stack.attn_mhc_combine:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  decoder_stack.ffn_mhc_pre:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  decoder_stack.post_attention_norm:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.feed_forward_schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.dense_mlp:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  decoder_stack.moe:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  decoder_stack.ffn_mhc_combine:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  decoder_stack.stack_out:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextDecoderLayer
+      line: 605
+      display: glm5_next.py - hybrid KDA/DSA and mHC decoder schedule
+  mhc_transform.mhc_in:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.flatten_norm:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.coefficient_map:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.pre_weights:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.post_weights:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.combine_weights:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.stream_collapse:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.sublayer_delta:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.post_place:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.residual_mix:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  mhc_transform.mhc_out:
+    symbols:
+    - MHCLayerCommunicator
+    - MHCState
+    links:
+    - file: python/sglang/srt/layers/communicator_mhc.py
+      symbol: MHCLayerCommunicator
+      line: 400
+      display: communicator_mhc.py - mHC coefficient, stream and collective schedule
+  linear_attention.attn_in:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.qkv_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.qkv_short_conv:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.qk_l2_norm:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.forget_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.forget_decay:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.beta_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.conv_state:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.recurrent_state:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.recurrent_update:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+    kernel_signatures:
+    - chunk_kda_fwd_kernel_intra_sub_chunk
+    - chunk_gated_delta_rule_fwd_kernel_h_blockdim64
+  linear_attention.query_readout:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.output_gate:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.gated_norm:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.output_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  linear_attention.attn_out:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: python/sglang/srt/models/glm5_next.py
+      symbol: Glm5NextLinearAttention
+      line: 323
+      display: glm5_next.py - KDA projections, conv and recurrent update
+  dsa_attention.attn_in:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.q_a_projection:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.q_a_norm:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.q_b_projection:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.kv_a_projection:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.kv_a_norm:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.latent_kv_cache:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.latent_kv_reconstruction:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.index_q_projection:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.index_k_projection:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.index_weight_projection:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.key_pool_compression:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.index_k_cache:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.index_logits:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+    kernel_signatures:
+    - deep_gemm::sm100_mqa_logits
+    - deep_gemm::sm100_paged_mqa_logits
+  dsa_attention.top_pool_selection:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+    kernel_signatures:
+    - kpool_topk_transform_kernel<512>
+  dsa_attention.token_expansion:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.selected_indices:
+    symbols:
+    - Indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+      symbol: Indexer
+      line: 200
+      display: dsa_indexer.py - DSA index projections, cache and top-k
+  dsa_attention.sparse_mla_core:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+    kernel_signatures:
+    - fmhaSm100fKernel_QkvE4m3OBfloat16H512PagedKvDenseDynamicTokenSparse
+  dsa_attention.output_projection:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dsa_attention.attn_out:
+    symbols:
+    - DeepseekV2AttentionMLA
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2AttentionMLA
+      line: 1717
+      display: deepseek_v2.py - sparse MLA projection and attention path
+  dense_mlp.mlp_in:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  dense_mlp.gate_up_projection:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  dense_mlp.clamped_swiglu:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  dense_mlp.down_projection:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  dense_mlp.mlp_out:
+    symbols:
+    - DeepseekV2MLP
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MLP
+      line: 263
+      display: deepseek_v2.py - dense clamped-SwiGLU MLP
+  moe.moe_in:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.router:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.correction_bias:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.topk:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.dispatch:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.routed_gate_up:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+    kernel_signatures:
+    - bmm_E4m3_E4m3E4m3_Fp32
+  moe.routed_activation:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.routed_down:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.routed_weighted_combine:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+    kernel_signatures:
+    - moe::dev::finalize::finalizeKernel
+  moe.shared_gate_up:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.shared_activation:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.shared_down:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.combine:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  moe.moe_out:
+    symbols:
+    - DeepseekV2MoE
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE
+      line: 561
+      display: deepseek_v2.py - router, routed experts and shared expert
+  mtp_extension.candidate_token_ids:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.candidate_embedding:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.target_hidden_state:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.embedding_norm:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.hidden_norm:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.concatenate:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.eh_projection:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.nextn_dsa:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.nextn_moe:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.shared_head_norm:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.nextn_lm_head:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  mtp_extension.draft_logits:
+    symbols:
+    - Glm5NextForConditionalGenerationNextN
+    - DeepseekV3ForCausalLMNextN
+    links:
+    - file: python/sglang/srt/models/glm5_next_nextn.py
+      symbol: Glm5NextForConditionalGenerationNextN
+      line: 26
+      display: glm5_next_nextn.py - optional NextN extension, disabled by Stage-1
+  top.tp_embedding_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1407
+      display: linear.py - TP row-parallel output collective
+  linear_attention.tp_kda_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1407
+      display: linear.py - TP row-parallel output collective
+  dsa_attention.tp_dsa_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1407
+      display: linear.py - TP row-parallel output collective
+  dense_mlp.tp_dense_mlp_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1407
+      display: linear.py - TP row-parallel output collective
+  moe.tp_moe_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1407
+      display: linear.py - TP row-parallel output collective
+  top.tp_logits_all_gather:
+    symbols:
+    - LogitsProcessor
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: LogitsProcessor
+      line: 287
+      display: logits_processor.py - TP vocabulary logits materialization
+    kernel_signatures:
+    - ncclDevKernel_AllGather_RING_LL

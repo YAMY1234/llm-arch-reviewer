@@ -1,0 +1,153 @@
+schema_version: implementation-binding.v2
+implementation_id: trtllm_4358fb5d_dsa
+label: TensorRT-LLM 1.3.0rc22.post1 GLM-5.2 DSA
+model_id: glm52
+execution_path_id: tp8_trtllm
+source_repo: https://github.com/NVIDIA/TensorRT-LLM
+source_commit: 4358fb5d5222f76ba133c3ae630aa2c06e62d073
+container: nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc22.post1
+backend: trtllm
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_db02928814880580
+  required_phases: [prefill, decode]
+  cuda_graph_enabled: false
+  evidence:
+    - current/glm52-cross-framework-ir-profile/evidence/3255318
+    - current/glm52-cross-framework-ir-profile/evidence/3262941
+    - current/glm52-cross-framework-ir-profile/evidence/3266640
+    - current/glm52-cross-framework-ir-profile/evidence/3266947
+  notes: Graph-off prefill/decode semantics, TensorRT-LLM-specific embedding/index-row collectives, correlated CUDA launches, and representative all-rank native operator stacks reconciled on CMH GB300; exact-token 3+1 requests all realized 8192/1024.
+
+node_bindings:
+  top.token_ids: &trt_model
+    symbols: [DeepseekV3ForCausalLM, DeepseekV3Model]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: register_auto_model("GlmMoeDsaForCausalLM"), line: 1890, display: modeling_deepseekv3.py — GLM production model registration}
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3ForCausalLM, line: 1893, display: modeling_deepseekv3.py — causal LM runtime path}
+  top.embedding: &trt_embedding
+    symbols: [DeepseekV3Model, Embedding]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3Model, line: 1818, display: modeling_deepseekv3.py — decoder model and embedding ownership}
+      - {file: tensorrt_llm/_torch/modules/embedding.py, symbol: Embedding, line: 249, display: embedding.py — TP embedding}
+  top.decoder_stack: &trt_stack
+    symbols: [DeepseekV3Model, DeepseekV3DecoderLayer]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3Model, line: 1818, display: modeling_deepseekv3.py — decoder stack}
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3DecoderLayer, line: 1234, display: modeling_deepseekv3.py — decoder layer}
+  top.final_norm: *trt_stack
+  top.lm_head: &trt_lm_head
+    symbols: [DeepseekV3ForCausalLM, LMHead]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3ForCausalLM, line: 1893, display: modeling_deepseekv3.py — LM head ownership}
+      - {file: tensorrt_llm/_torch/modules/embedding.py, symbol: LMHead, line: 17, display: embedding.py — TP LM head}
+  top.tp_logits_all_gather: &trt_logits
+    symbols: [LMHead, Mapping.tp_size]
+    links:
+      - {file: tensorrt_llm/_torch/modules/embedding.py, symbol: LMHead, line: 17, display: embedding.py — sharded LM head and logits output}
+  top.logits: *trt_logits
+  top.mtp_extension: &trt_mtp
+    symbols: [DeepseekV3MTP, DeepseekV3MTPHead]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3MTP, line: 1668, display: modeling_deepseekv3.py — optional MTP layer; disabled in baseline}
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3MTPHead, line: 638, display: modeling_deepseekv3.py — optional MTP head; disabled in baseline}
+
+  stack.stack_in: *trt_stack
+  stack.schedule: *trt_stack
+  stack.input_norm: &trt_layer
+    symbols: [DeepseekV3DecoderLayer]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3DecoderLayer, line: 1234, display: modeling_deepseekv3.py — norms and residual schedule}
+  stack.dsa_attention: &trt_mla
+    symbols: [DeepseekV3Attention, MLA]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3Attention, line: 749, display: modeling_deepseekv3.py — GLM/DeepSeek DSA attention construction}
+      - {file: tensorrt_llm/_torch/modules/mla.py, symbol: MLA, line: 410, display: mla.py — production MLA runtime}
+  stack.attention_residual: *trt_layer
+  stack.post_attention_norm: *trt_layer
+  stack.feed_forward_schedule: *trt_layer
+  stack.dense_mlp: &trt_dense
+    symbols: [GatedMLP]
+    links:
+      - {file: tensorrt_llm/_torch/modules/gated_mlp.py, symbol: GatedMLP, line: 19, display: gated_mlp.py — dense SwiGLU MLP}
+  stack.moe: &trt_moe
+    symbols: [Deepseekv3MoE, DeepseekV3Gate]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: Deepseekv3MoE, line: 945, display: modeling_deepseekv3.py — routed and shared-expert MoE}
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: DeepseekV3Gate, line: 847, display: modeling_deepseekv3.py — router}
+  stack.feed_forward_residual: *trt_layer
+  stack.stack_out: *trt_stack
+
+  dsa_attention.attn_in: *trt_mla
+  dsa_attention.q_a_projection: *trt_mla
+  dsa_attention.kv_a_projection: *trt_mla
+  dsa_attention.q_a_norm: *trt_mla
+  dsa_attention.q_b_projection: *trt_mla
+  dsa_attention.q_split_rope: *trt_mla
+  dsa_attention.kv_latent_split: *trt_mla
+  dsa_attention.kv_a_norm: *trt_mla
+  dsa_attention.latent_kv_cache: *trt_mla
+  dsa_attention.latent_kv_reconstruction: *trt_mla
+  dsa_attention.indexer_mode: &trt_indexer
+    symbols: [Indexer, DSATrtllmAttention]
+    links:
+      - {file: tensorrt_llm/_torch/attention_backend/sparse/dsa.py, symbol: Indexer, line: 1733, display: dsa.py — index projections, cache, scores and top-k}
+      - {file: tensorrt_llm/_torch/attention_backend/sparse/dsa.py, symbol: DSATrtllmAttention, line: 3059, display: dsa.py — DSA attention backend}
+  dsa_attention.index_q_projection: *trt_indexer
+  dsa_attention.index_k_gate_projection: *trt_indexer
+  dsa_attention.index_k_norm_rope: *trt_indexer
+  dsa_attention.index_k_cache: *trt_indexer
+  dsa_attention.index_logits: *trt_indexer
+  dsa_attention.index_topk: *trt_indexer
+  dsa_attention.tp_prefill_index_topk_all_gather:
+    symbols: [Indexer.sparse_attn_indexer, allgather]
+    links:
+      - {file: tensorrt_llm/_torch/attention_backend/sparse/dsa.py, symbol: Indexer.sparse_attn_indexer, line: 2410, display: dsa.py — 8K prefill query-row split and top-k all-gather}
+      - {file: tensorrt_llm/_torch/distributed/ops.py, symbol: allgather, line: 280, display: ops.py — TP all-gather implementation}
+  dsa_attention.index_topk_state: *trt_indexer
+  dsa_attention.sparse_mla_core: *trt_mla
+  dsa_attention.output_projection: *trt_mla
+  dsa_attention.tp_attention_output_collective: &trt_reduce
+    symbols: [MLA, AllReduce]
+    links:
+      - {file: tensorrt_llm/_torch/modules/mla.py, symbol: MLA, line: 410, display: mla.py — row-parallel attention output}
+      - {file: tensorrt_llm/_torch/distributed/ops.py, symbol: AllReduce, line: 654, display: ops.py — TP all-reduce}
+  dsa_attention.attn_out: *trt_mla
+
+  dense_mlp.mlp_in: *trt_dense
+  dense_mlp.gate_up_projection: *trt_dense
+  dense_mlp.swiglu: *trt_dense
+  dense_mlp.down_projection: *trt_dense
+  dense_mlp.tp_dense_mlp_output_collective: *trt_reduce
+  dense_mlp.mlp_out: *trt_dense
+
+  moe.moe_in: *trt_moe
+  moe.router: *trt_moe
+  moe.topk: *trt_moe
+  moe.dispatch: *trt_moe
+  moe.routed_experts: *trt_moe
+  moe.routed_weighted_combine: *trt_moe
+  moe.shared_expert_up: *trt_moe
+  moe.shared_expert_activation: *trt_moe
+  moe.shared_expert_down: *trt_moe
+  moe.combine: *trt_moe
+  moe.tp_moe_output_collective:
+    symbols: [Deepseekv3MoE, MoEAllReduce]
+    links:
+      - {file: tensorrt_llm/_torch/models/modeling_deepseekv3.py, symbol: Deepseekv3MoE, line: 945, display: modeling_deepseekv3.py — TP MoE result path}
+      - {file: tensorrt_llm/_torch/distributed/ops.py, symbol: MoEAllReduce, line: 935, display: ops.py — TP MoE all-reduce}
+  moe.moe_out: *trt_moe
+
+  mtp_extension.candidate_token_ids: *trt_mtp
+  mtp_extension.candidate_embedding: *trt_mtp
+  mtp_extension.target_hidden_state: *trt_mtp
+  mtp_extension.embedding_norm: *trt_mtp
+  mtp_extension.hidden_norm: *trt_mtp
+  mtp_extension.concatenate: *trt_mtp
+  mtp_extension.eh_projection: *trt_mtp
+  mtp_extension.nextn_decoder: *trt_mtp
+  mtp_extension.shared_head_norm: *trt_mtp
+  mtp_extension.nextn_lm_head: *trt_mtp
+  mtp_extension.draft_logits: *trt_mtp

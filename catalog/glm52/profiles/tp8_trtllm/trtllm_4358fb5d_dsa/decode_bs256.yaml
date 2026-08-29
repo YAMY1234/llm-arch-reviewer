@@ -1,0 +1,424 @@
+schema_version: profile.v2
+profile_id: glm52_tp8_trtllm_cg_decode_bs256_8k1k
+label: GB300 · trtllm · pure TP8 · CUDA Graph decode · BS256 · 8k→1k
+model_id: glm52
+execution_path_id: tp8_trtllm
+implementation_id: trtllm_4358fb5d_dsa
+variant_id: cg_decode_bs256_8k1k
+phase: decode
+generation_mode: autoregressive
+entry_view: top
+execution_parameters:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 2
+  cluster: CMH
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 256
+  concurrency: 256
+  warmup_requests: 768
+  formal_requests: 256
+  request_trajectory:
+  - 1
+  - 16
+  - 64
+  - 256
+  prompt_source: deterministic_random_token_ids
+  prompt_seed: 0
+  ignore_eos: true
+  prefix_cache_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+profiler:
+  type: nsight_systems
+  representative_rank: 1
+  cuda_graph_enabled: true
+  with_stack: false
+  capture_control:
+    capture_range_end: repeat:1:async
+    capture_start_step: 16484
+    capture_stop_step: 16487
+    profiler_rank_policy: reference_rank_only
+    profiler_trace_ranks:
+    - 1
+    trailing_guard_steps: 3
+    trigger: cudaProfilerApi
+  selected_runtime_coordinate:
+    context_requests: 0
+    context_tokens: 0
+    generation_requests: 256
+    step: 16484
+  activity_boundary:
+    captured_executor_steps: 3
+    graph_id: 6566
+    method: selected_cuda_graph_replay_by_root_graph_node_recurrence
+    root_graph_node_id: 28200755265536
+    selected_graph_launch_correlation_id: 512
+    start_ns: 38444613
+    stop_ns: 67167523
+  gpu_metric_semantics: same-rank active interval union per selected step
+evidence:
+  job_id: '3269305'
+  source_commit: 4358fb5d5222f76ba133c3ae630aa2c06e62d073
+  model_revision: aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa
+  container: nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc22.post1
+  validation_file: selected-rank-validation.json
+  validation_sha256: 31953bebf79350dfa5ab3d52a245e5b96ffe7898a3e4a92502f580cc5d696d58
+  rank_rollup_file: rank-rollup.json
+  rank_rollup_sha256: 4f81b2505bf06741f09dcd7c17d28c0a99e23b5d0dd0f80e430468c023a7b502
+  rank_aggregation_policy: representative_gpu_worker_rank1_no_cross_rank_sum
+  validated_rank_count: 1
+  full_step_rank_count: 1
+  reference_rank: 1
+  raw_trace_sha256: 2d9ef5dda5a3901bf8b582a3a5c0774b9cb714e87cbd76d492e1f9e54c328dc4
+  eager_mapping_sha256: 4cfd28d326ed4ad3fbd205daa6aa133acbf175485214fb339358a1228022cc70
+  mapping_policy: 78-layer hard-anchor bounded exact/normalized sequence and occurrence
+    order, eager-unique identity, reviewed GLM semantic signatures, and eager-validated
+    collective order; no greedy matching
+  mapped_kernel_count_ratio: 0.36584362
+  mapped_kernel_duration_ratio: 0.34199962
+  timing:
+    elapsed_ms: 28.434814
+    active_gpu_ms: 28.353342
+    gpu_residency_ms: 32.855899
+    device_gap_ms: 0.081472
+    gpu_overlap_ms: 4.502557
+    semantics: selected reference-rank executor-step GPU activity envelope
+timeline:
+  schema_version: timeline.v1
+  artifact: decode_bs256.timeline.json.gz
+  sha256: afe89509c41a9c7dcf19a2f91a63710723251ded9d87746bd4c5848cc7bdf388
+  reference_rank: 1
+  step_count: 1
+  event_count: 2435
+  raw_trace_file: nvl72d140-T10_agg_w0_profile_rank1.1.nsys-rep
+node_states:
+  top.token_ids:
+    status: structural
+    label: input tensor boundary
+  top.decoder_stack:
+    status: structural
+    label: semantic container; timing is shown in drilled decoder nodes
+  top.logits:
+    status: structural
+    label: output tensor/materialization boundary
+  stack.stack_in:
+    status: structural
+    label: tensor boundary
+  stack.schedule:
+    status: structural
+    label: layer schedule control; no standalone GPU interval
+  stack.dsa_attention:
+    status: structural
+    label: semantic container; timing is shown in drilled attention nodes
+  stack.feed_forward_schedule:
+    status: structural
+    label: layer-conditioned control; no standalone GPU interval
+  stack.dense_mlp:
+    status: structural
+    label: semantic container; timing is shown in drilled dense-MLP nodes
+  stack.moe:
+    status: structural
+    label: semantic container; timing is shown in drilled MoE nodes
+  stack.stack_out:
+    status: structural
+    label: tensor boundary
+  dsa_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  dsa_attention.indexer_mode:
+    status: structural
+    label: owner/reuse schedule control; no standalone GPU interval
+  dsa_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  dense_mlp.mlp_in:
+    status: structural
+    label: tensor boundary
+  dense_mlp.mlp_out:
+    status: structural
+    label: tensor boundary
+  moe.moe_in:
+    status: structural
+    label: tensor boundary
+  moe.moe_out:
+    status: structural
+    label: tensor boundary
+  dsa_attention.latent_kv_cache:
+    status: state
+    label: persistent FP8 latent-KV state read/write
+  dsa_attention.index_k_cache:
+    status: state
+    label: persistent owner-layer index-K state read/write
+  dsa_attention.index_topk_state:
+    status: state
+    label: cross-layer top-k state read/write
+  stack.attention_residual:
+    status: fused
+    label: residual dataflow boundary; no independently attributable production interval
+    included_in: stack.post_attention_norm
+  stack.feed_forward_residual:
+    status: fused
+    label: residual dataflow boundary; no independently attributable production interval
+    included_in: stack.input_norm
+  dsa_attention.kv_a_projection:
+    status: fused
+    label: implementation-fused DSA latent projection interval
+    included_in: dsa_attention.q_a_projection
+  dsa_attention.kv_latent_split:
+    status: fused
+    label: implementation-fused Q/KV split and RoPE interval
+    included_in: dsa_attention.q_split_rope
+  top.mtp_extension:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.target_hidden_state:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.shared_head_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.draft_logits:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_lm_head:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.concatenate:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.eh_projection:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.embedding_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_embedding:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.hidden_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_decoder:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_token_ids:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  moe.dispatch:
+    status: fused
+    label: decode token routing is fused into the routed-expert runner
+    included_in: moe.routed_experts
+  dsa_attention.tp_prefill_index_topk_all_gather:
+    status: not_selected
+    label: prefill-only TP index-row all-gather
+  moe.shared_expert_activation:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  top.lm_head:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.index_q_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.q_a_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.routed_weighted_combine:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.shared_expert_down:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  stack.post_attention_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.index_k_norm_rope:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.combine:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.sparse_mla_core:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.kv_a_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.topk:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  top.final_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.index_topk:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.output_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.q_b_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dense_mlp.swiglu:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dense_mlp.down_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.router:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.shared_expert_up:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  top.embedding:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.index_k_gate_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.latent_kv_reconstruction:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+node_metrics:
+  dense_mlp.gate_up_projection:
+    ms_per_iter: 0.65744
+    gpu_residency_ms_per_iter: 0.65744
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 171
+      count_per_iter: 171.0
+      avg_us: 3.844678
+      total_us_per_iter: 657.44
+      share_in_node_residency_pct: 100.0
+  dense_mlp.tp_dense_mlp_output_collective:
+    ms_per_iter: 0.047328
+    gpu_residency_ms_per_iter: 0.065312
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::mnnvl_fusion_allreduce
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 10.885333
+      total_us_per_iter: 65.312
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_logits:
+    ms_per_iter: 1.170592
+    gpu_residency_ms_per_iter: 1.170592
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::mla_dsa_attn_inplace
+      count: 21
+      count_per_iter: 21.0
+      avg_us: 55.742476
+      total_us_per_iter: 1170.592
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_a_projection:
+    ms_per_iter: 0.930144
+    gpu_residency_ms_per_iter: 1.013376
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 231
+      count_per_iter: 231.0
+      avg_us: 4.386909
+      total_us_per_iter: 1013.376
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_split_rope:
+    ms_per_iter: 0.363008
+    gpu_residency_ms_per_iter: 0.363008
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::mla_rope_generation
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 4.653949
+      total_us_per_iter: 363.008
+      share_in_node_residency_pct: 100.0
+  dsa_attention.tp_attention_output_collective:
+    ms_per_iter: 1.452384
+    gpu_residency_ms_per_iter: 2.11696
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::mnnvl_fusion_allreduce
+      count: 153
+      count_per_iter: 153.0
+      avg_us: 13.83634
+      total_us_per_iter: 2116.96
+      share_in_node_residency_pct: 100.0
+  moe.routed_experts:
+    ms_per_iter: 3.78176
+    gpu_residency_ms_per_iter: 3.78176
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::fp4_block_scale_moe_runner
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 50.423467
+      total_us_per_iter: 3781.76
+      share_in_node_residency_pct: 100.0
+  moe.tp_moe_output_collective:
+    ms_per_iter: 1.242816
+    gpu_residency_ms_per_iter: 1.892384
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::mnnvl_fusion_allreduce
+      count: 150
+      count_per_iter: 150.0
+      avg_us: 12.615893
+      total_us_per_iter: 1892.384
+      share_in_node_residency_pct: 100.0
+  stack.input_norm:
+    ms_per_iter: 0.027264
+    gpu_residency_ms_per_iter: 0.027264
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::flashinfer_fused_add_rmsnorm
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 9.088
+      total_us_per_iter: 27.264
+      share_in_node_residency_pct: 100.0
+  top.tp_logits_all_gather:
+    ms_per_iter: 0.147263
+    gpu_residency_ms_per_iter: 0.147263
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: trtllm::allgather
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 147.263
+      total_us_per_iter: 147.263
+      share_in_node_residency_pct: 100.0

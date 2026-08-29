@@ -75,8 +75,27 @@
         "properties": {
           "owner": {"type": "string"},
           "ir_nodes": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string"}},
-          "timing_semantics": {"const": "shared_interval"},
-          "provenance": {"type": "string"}
+          "timing_semantics": {
+            "enum": ["shared_interval", "shared_event_set"],
+            "description": "shared_interval is one production interval; shared_event_set is a validated aggregate of multiple production intervals. Covered IR nodes never receive additive copies of either value."
+          },
+          "provenance": {"type": "string"},
+          "mapping_method": {"type": "string"},
+          "confidence": {"enum": ["exact", "high", "medium", "low", "review_required"]},
+          "evidence_scope": {
+            "description": "Occurrence scope and eager/production event closure proving the many-to-many fusion relation.",
+            "type": "object",
+            "required": ["resolution"],
+            "properties": {
+              "resolution": {"enum": ["exact_occurrence", "profile_aggregate"]},
+              "layer_ids": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0}},
+              "substages": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "occurrence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "production_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "eager_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+            },
+            "additionalProperties": true
+          }
         }
       }
     },

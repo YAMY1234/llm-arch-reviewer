@@ -19,6 +19,7 @@ from models.common.trace_mapping import (  # noqa: E402
     find_eagle_mtp_cudagraph_substages,
     find_eagle_mtp_decode_windows,
     find_eagle_mtp_prefill_windows,
+    find_vllm_execute_context_windows,
 )
 
 
@@ -63,6 +64,37 @@ TOY_RULES = TraceMappingRules(
 
 
 class CommonTraceMappingTest(unittest.TestCase):
+    def test_vllm_execute_context_preserves_chunked_prefill_and_decode(self):
+        def annotation(name, ts, dur, tid=19):
+            return {
+                "ph": "X",
+                "cat": "gpu_user_annotation",
+                "name": name,
+                "pid": 0,
+                "tid": tid,
+                "ts": ts,
+                "dur": dur,
+            }
+
+        events = [
+            annotation("execute_context_1(8064)_generation_0(0)", 10, 40),
+            annotation("execute_context_1(128)_generation_0(0)", 55, 20),
+            annotation("execute_context_0(0)_generation_1(1)", 80, 5),
+            annotation("execute_context_1(128)_generation_0(0)", 57, 3, tid=31),
+        ]
+
+        prefill = find_vllm_execute_context_windows(events, phase="vllm_prefill")
+        decode = find_vllm_execute_context_windows(events, phase="vllm_decode")
+
+        self.assertEqual(
+            [(window.start_us, window.end_us) for window in prefill],
+            [(10, 50), (55, 75)],
+        )
+        self.assertEqual(
+            [(window.start_us, window.end_us) for window in decode],
+            [(80, 85)],
+        )
+
     def test_eagle_mtp_prefill_pairs_target_and_auxiliary_extend(self):
         events = [
             {

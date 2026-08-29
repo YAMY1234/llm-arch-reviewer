@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sol-profile.schema.json",
+  "title": "llm-arch-reviewer immutable Speed-of-Light overlay",
+  "type": "object",
+  "required": ["schema_version", "sol_profile_id", "model_id", "execution_fingerprint", "execution_path_id", "measured_profile_id", "hardware_spec_id", "phase", "status", "assumptions", "workload_ir", "workload_fingerprint", "coverage", "critical_path", "cost_ir", "node_estimates", "provenance"],
+  "properties": {
+    "schema_version": {"const": "sol-profile.v1"},
+    "sol_profile_id": {"type": "string"},
+    "status": {"enum": ["invalid", "partial", "calibrated"]},
+    "workload_ir": {"$ref": "workload-ir.schema.json"},
+    "workload_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "cost_ir": {
+      "type": "object",
+      "additionalProperties": {"$ref": "cost-ir.schema.json"}
+    },
+    "node_estimates": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["target", "status", "confidence"],
+        "properties": {
+          "status": {"enum": ["estimated", "structural", "unsupported"]},
+          "ideal_ms": {"type": ["number", "null"], "minimum": 0},
+          "attainable_ms": {"type": ["number", "null"], "minimum": 0},
+          "attainable_interval_ms": {
+            "type": ["object", "null"],
+            "properties": {
+              "p10_ms": {"type": "number", "exclusiveMinimum": 0},
+              "p50_ms": {"type": "number", "exclusiveMinimum": 0},
+              "p90_ms": {"type": "number", "exclusiveMinimum": 0}
+            }
+          },
+          "physical_plan": {"$ref": "transition-plan.schema.json"},
+          "kernel_plan": {"type": ["object", "null"]},
+          "kernel_plan_fingerprint": {"type": ["string", "null"]},
+          "methodology_optimistic_ms": {"type": ["number", "null"], "minimum": 0},
+          "methodology_conservative_ms": {"type": ["number", "null"], "minimum": 0},
+          "observed_active_ms": {"type": ["number", "null"], "minimum": 0}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

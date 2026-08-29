@@ -1,0 +1,155 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_fdebc938_dsa
+label: SGLang v0.5.16 GLM-5.2 DSA
+model_id: glm52
+execution_path_id: tp8
+source_repo: https://github.com/sgl-project/sglang
+source_commit: fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1
+container: lmsysorg/sglang:v0.5.16-cu130
+backend: sglang
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_be5389acc67e933c
+  required_phases: [prefill, decode]
+  cuda_graph_enabled: false
+  evidence:
+    - current/glm52-cross-framework-ir-profile/evidence/3253033
+    - current/glm52-cross-framework-ir-profile/evidence/3254069
+    - current/glm52-cross-framework-ir-profile/evidence/3254883
+    - current/glm52-cross-framework-ir-profile/evidence/3267330
+    - current/glm52-cross-framework-ir-profile/evidence/symbolization/3255940.log
+  notes: Graph-off prefill/decode semantics, collectives, rank/stream state, and representative CUDA C++ launch stacks reconciled on CMH GB300.
+
+node_bindings:
+  top.token_ids: &sg_model
+    symbols: [GlmMoeDsaForCausalLM, DeepseekV2ForCausalLM]
+    links:
+      - {file: python/sglang/srt/models/glm4_moe.py, symbol: GlmMoeDsaForCausalLM, line: 1466, display: glm4_moe.py — GLM DSA model registration}
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2ForCausalLM, line: 2680, display: deepseek_v2.py — causal LM runtime path}
+  top.embedding: &sg_embedding
+    symbols: [DeepseekV2Model.embed_tokens, VocabParallelEmbedding]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2Model, line: 2354, display: deepseek_v2.py — decoder model and embedding ownership}
+      - {file: python/sglang/srt/layers/vocab_parallel_embedding.py, symbol: VocabParallelEmbedding, line: 188, display: vocab_parallel_embedding.py — TP vocabulary embedding}
+  top.tp_embedding_output_collective:
+    symbols: [VocabParallelEmbedding.forward, tensor_model_parallel_all_reduce]
+    links:
+      - {file: python/sglang/srt/layers/vocab_parallel_embedding.py, symbol: VocabParallelEmbedding.forward, line: 562, line_end: 574, display: vocab_parallel_embedding.py — embedding output all-reduce}
+  top.decoder_stack: &sg_stack
+    symbols: [DeepseekV2Model, DeepseekV2DecoderLayer]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2Model, line: 2354, display: deepseek_v2.py — decoder stack}
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2DecoderLayer, line: 2044, display: deepseek_v2.py — decoder layer}
+  top.final_norm: *sg_stack
+  top.lm_head: &sg_lm_head
+    symbols: [DeepseekV2ForCausalLM.lm_head, ParallelLMHead]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2ForCausalLM, line: 2680, display: deepseek_v2.py — LM head ownership}
+      - {file: python/sglang/srt/layers/vocab_parallel_embedding.py, symbol: ParallelLMHead, line: 587, display: vocab_parallel_embedding.py — TP LM head}
+  top.tp_logits_all_gather: &sg_logits
+    symbols: [LogitsProcessor._get_logits]
+    links:
+      - {file: python/sglang/srt/layers/logits_processor.py, symbol: LogitsProcessor._get_logits, line: 683, display: logits_processor.py — TP vocabulary logits materialization}
+  top.logits: *sg_logits
+  top.mtp_extension: &sg_nextn
+    symbols: [GlmMoeDsaForCausalLMNextN, DeepseekModelNextN]
+    links:
+      - {file: python/sglang/srt/models/glm4_moe.py, symbol: GlmMoeDsaForCausalLMNextN, line: 1471, display: glm4_moe.py — optional GLM NextN wrapper}
+      - {file: python/sglang/srt/models/deepseek_nextn.py, symbol: DeepseekModelNextN, line: 100, display: deepseek_nextn.py — optional NextN model; disabled in baseline}
+
+  stack.stack_in: *sg_stack
+  stack.schedule: *sg_stack
+  stack.input_norm: &sg_layer
+    symbols: [DeepseekV2DecoderLayer]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2DecoderLayer, line: 2044, display: deepseek_v2.py — norms and residual schedule}
+  stack.dsa_attention: &sg_mla
+    symbols: [DeepseekV2AttentionMLA]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2AttentionMLA, line: 1548, display: deepseek_v2.py — MLA/DSA attention}
+  stack.attention_residual: *sg_layer
+  stack.post_attention_norm: *sg_layer
+  stack.feed_forward_schedule: *sg_layer
+  stack.dense_mlp: &sg_dense
+    symbols: [DeepseekV2MLP]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2MLP, line: 242, display: deepseek_v2.py — dense SwiGLU MLP}
+  stack.moe: &sg_moe
+    symbols: [DeepseekV2MoE]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2MoE, line: 539, display: deepseek_v2.py — routed and shared-expert MoE}
+  stack.feed_forward_residual: *sg_layer
+  stack.stack_out: *sg_stack
+
+  dsa_attention.attn_in: *sg_mla
+  dsa_attention.q_a_projection: *sg_mla
+  dsa_attention.kv_a_projection: *sg_mla
+  dsa_attention.q_a_norm: *sg_mla
+  dsa_attention.q_b_projection: *sg_mla
+  dsa_attention.q_split_rope: *sg_mla
+  dsa_attention.kv_latent_split: *sg_mla
+  dsa_attention.kv_a_norm: *sg_mla
+  dsa_attention.latent_kv_cache: &sg_radix_attention
+    symbols: [DeepseekV2AttentionMLA, RadixAttention]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2AttentionMLA, line: 1548, display: deepseek_v2.py — latent KV preparation}
+      - {file: python/sglang/srt/layers/radix_attention.py, symbol: RadixAttention, display: radix_attention.py — paged KV attention state}
+  dsa_attention.latent_kv_reconstruction: *sg_mla
+  dsa_attention.indexer_mode: &sg_indexer
+    symbols: [Indexer]
+    links:
+      - {file: python/sglang/srt/layers/attention/dsa/dsa_indexer.py, symbol: Indexer, line: 355, display: dsa_indexer.py — DSA index projections, cache, scores and top-k}
+  dsa_attention.index_q_projection: *sg_indexer
+  dsa_attention.index_k_gate_projection: *sg_indexer
+  dsa_attention.index_k_norm_rope: *sg_indexer
+  dsa_attention.index_k_cache: *sg_indexer
+  dsa_attention.index_logits: *sg_indexer
+  dsa_attention.index_topk: *sg_indexer
+  dsa_attention.index_topk_state: *sg_indexer
+  dsa_attention.sparse_mla_core: *sg_mla
+  dsa_attention.output_projection: *sg_mla
+  dsa_attention.tp_attention_output_collective: &sg_tp_reduce
+    symbols: [RowParallelLinear, tensor_model_parallel_all_reduce]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2AttentionMLA.o_proj, line: 1720, display: deepseek_v2.py — row-parallel attention output}
+  dsa_attention.attn_out: *sg_mla
+
+  dense_mlp.mlp_in: *sg_dense
+  dense_mlp.gate_up_projection: *sg_dense
+  dense_mlp.swiglu: *sg_dense
+  dense_mlp.down_projection: *sg_dense
+  dense_mlp.tp_dense_mlp_output_collective: *sg_tp_reduce
+  dense_mlp.mlp_out: *sg_dense
+
+  moe.moe_in: *sg_moe
+  moe.router: *sg_moe
+  moe.topk: *sg_moe
+  moe.dispatch: *sg_moe
+  moe.routed_experts: *sg_moe
+  moe.routed_weighted_combine: *sg_moe
+  moe.shared_expert_up: *sg_moe
+  moe.shared_expert_activation: *sg_moe
+  moe.shared_expert_down: *sg_moe
+  moe.combine: *sg_moe
+  moe.tp_moe_output_collective:
+    symbols: [DeepseekV2MoE.forward_normal, DeepseekV2MoE.forward_normal_dual_stream, tensor_model_parallel_all_reduce]
+    links:
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2MoE.forward_normal, line: 1024, display: deepseek_v2.py — graph-off normal MoE path}
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: tensor_model_parallel_all_reduce, line: 1139, display: deepseek_v2.py — graph-off TP MoE result reduction}
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: DeepseekV2MoE.forward_normal_dual_stream, line: 923, display: deepseek_v2.py — possible capture-mode dual-stream path}
+      - {file: python/sglang/srt/models/deepseek_v2.py, symbol: tensor_model_parallel_all_reduce, line: 1017, display: deepseek_v2.py — dual-stream TP MoE result reduction}
+  moe.moe_out: *sg_moe
+
+  mtp_extension.candidate_token_ids: *sg_nextn
+  mtp_extension.candidate_embedding: *sg_nextn
+  mtp_extension.target_hidden_state: *sg_nextn
+  mtp_extension.embedding_norm: *sg_nextn
+  mtp_extension.hidden_norm: *sg_nextn
+  mtp_extension.concatenate: *sg_nextn
+  mtp_extension.eh_projection: *sg_nextn
+  mtp_extension.nextn_decoder: *sg_nextn
+  mtp_extension.shared_head_norm: *sg_nextn
+  mtp_extension.nextn_lm_head: *sg_nextn
+  mtp_extension.draft_logits: *sg_nextn

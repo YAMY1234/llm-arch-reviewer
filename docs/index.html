@@ -92,24 +92,6 @@
   <h2>models</h2>
   <div class="grid">
 
-    <a class="card" href="viewer.html?model=dsv4">
-      <div class="name">DeepSeek-V4</div>
-      <div class="label">62 layers · MoE · sparse-MLA · mHC</div>
-      <div class="desc">
-        Highly Compressed Attention (HCA, c=128) × 31 + Compressed Sparse Attention
-        (CSA, c=4 + indexer) × 30 + 1 SWA-dense + NextN MTP. Profile: sglang prefill / decode
-        on H200 / B200, plus PDF DLSim projection.
-      </div>
-      <div class="tags">
-        <span class="tag hca">HCA</span>
-        <span class="tag csa">CSA</span>
-        <span class="tag swa">SWA</span>
-        <span class="tag">MoE</span>
-        <span class="tag">mHC</span>
-        <span class="tag">NextN</span>
-      </div>
-    </a>
-
     <a class="card" href="viewer.html?model=qwen40_v2">
       <div class="name">Qwen 4.0 Air Example · IR-first V2</div>
       <div class="label">48 layers · PLE · QSA · TP4 / Attention DP4 / DeepEP</div>
@@ -149,47 +131,43 @@
       </div>
     </a>
 
-    <a class="card" href="viewer.html?model=qwen35">
-      <div class="name">Qwen3.5-397B-A17B</div>
-      <div class="label">pipeline-generated · source/config canonical · prefill trace backed</div>
+    <a class="card" href="viewer.html?model=glm52_v2">
+      <div class="name">GLM-5.2 NVFP4 · IR-first V2</div>
+      <div class="label">pure TP8 · SGLang / TensorRT-LLM · CMH GB300</div>
       <div class="desc">
-        Generated from PyTorch profiler stack attribution, SGLang source at a fixed commit,
-        and the exact <code>Qwen/Qwen3.5-397B-A17B</code> config. It now includes
-        top-level multimodal, language-model, vision, MTP, and trace-derived text
-        subviews, with conservative P1f prefill profile overlay.
+        Shared stable Model IR with separately validated framework execution contracts and
+        bindings. Seven fixed 8K/1K production profiles are available across SGLang and
+        TensorRT-LLM; three TensorRT-LLM capture points remain explicitly unsupported rather
+        than carrying substituted or empty timing.
       </div>
       <div class="tags">
-        <span class="tag">Generated</span>
-        <span class="tag">Trace-backed</span>
-        <span class="tag">Source-verified</span>
-        <span class="tag">VL</span>
-        <span class="tag">MTP</span>
-        <span class="tag">MoE</span>
+        <span class="tag">V2</span>
+        <span class="tag">NVFP4</span>
+        <span class="tag">TP8</span>
+        <span class="tag">SGLang</span>
+        <span class="tag">TRT-LLM</span>
+        <span class="tag">GB300</span>
       </div>
     </a>
 
-    <a class="card" href="viewer.html?model=qwen35_manual">
-      <div class="name">Qwen3.5-397B-A17B Manual</div>
-      <div class="label">manual baseline · full multimodal view · decode + prefill overlays</div>
+    <a class="card" href="viewer.html?model=glm53_flash_v2">
+      <div class="name">GLM-5.3-Flash · IR-first V2</div>
+      <div class="label">pure TP8 · SGLang / vLLM · CMH GB300</div>
       <div class="desc">
-        Previous hand-authored Qwen3.5 dashboard view kept as a separate baseline:
-        top-level multimodal wrapper, 27-block vision encoder, 60-layer hybrid text stack,
-        optional 1-layer MTP path, annotated decode profile and generated prefill overlay.
+        One stable multimodal Model IR with separately validated SGLang and vLLM
+        bindings. Six measured 8K/1K production profiles cover SGLang prefill and
+        CUDA Graph decode BS1/16/64/256 plus the accepted vLLM capture point;
+        unavailable matrix points remain explicit instead of receiving proxy timing.
       </div>
       <div class="tags">
-        <span class="tag">Manual</span>
-        <span class="tag">Baseline</span>
-        <span class="tag">VL</span>
-        <span class="tag">MTP</span>
+        <span class="tag">V2</span>
+        <span class="tag">TP8</span>
+        <span class="tag">SGLang</span>
+        <span class="tag">vLLM</span>
+        <span class="tag">mHC</span>
+        <span class="tag">GB300</span>
       </div>
     </a>
-
-    <div class="card placeholder">
-      <div class="name">Llama-4</div>
-      <div class="label">— coming soon —</div>
-      <div class="desc">Llama-4 MoE.</div>
-      <div class="tags"><span class="tag coming">planned</span></div>
-    </div>
 
   </div>
 
@@ -197,13 +175,13 @@
   <div class="intro" style="font-size: 13px;">
     <p>
       V2 diagrams are compiled from stable model semantics and execution plans; implementation
-      bindings and profile measurements are independent overlays. Legacy diagrams remain available
-      while catalogs migrate to the new contract.
+      bindings and profile measurements are independent overlays. New models use one canonical
+      IR-first pipeline and the viewer consumes its compiled metadata.
     </p>
     <p>
-      profile data uses sglang traces (prefill / decode) post-processed with kernel-name
-      classification; numbers are rolled up per architectural block, with both
-      <em>per-stage</em> and <em>per-block</em> percentages exposed in the detail panel.
+      Eager traces provide stack-backed semantic attribution and production traces provide
+      timing, stream, overlap, and idle evidence. Measurements are accepted only against a
+      matching execution fingerprint and cannot redefine the architecture.
     </p>
   </div>
 </main>

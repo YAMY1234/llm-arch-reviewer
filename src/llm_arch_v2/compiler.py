@@ -20,6 +20,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from .sol import SolError, attach_sol_to_profile, build_sol_artifacts
+
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover - exercised by the CLI
@@ -114,7 +116,297 @@ def _find_node(views: dict[str, Any], target: str, *, source: Path) -> dict[str,
     raise CatalogError(f"{source}: target {target!r} references unknown node")
 
 
-def _model_views_with_provenance(views: dict[str, Any]) -> dict[str, Any]:
+_EDGE_CONTRACT_FIELDS = ("identity", "shape", "layout", "dtype", "state")
+
+
+def _tensor_contract(edge: dict[str, Any], *, endpoint: str) -> dict[str, Any]:
+    """Return the canonical tensor/state payload carried by one graph edge."""
+
+    endpoint_key = {"source": "from", "target": "to"}[endpoint]
+    return {
+        "name": str(edge.get("identity") or f"{edge.get('from')}_to_{edge.get('to')}"),
+        "shape": str(edge.get("shape") or "unspecified"),
+        "layout": str(edge.get("layout") or "unspecified"),
+        "dtype": str(edge.get("dtype") or "unspecified"),
+        "state": str(edge.get("state") or "unspecified"),
+        endpoint: str(edge[endpoint_key]),
+        **({"kind": str(edge["kind"])} if edge.get("kind") else {}),
+    }
+
+
+def _inferred_semantic_kind(node: dict[str, Any]) -> str:
+    semantic_op = str(node.get("semantic_op") or "")
+    if node.get("shape") == "io":
+        return "boundary"
+    if node.get("shape") == "cache":
+        return "state"
+    if "schedule" in semantic_op or semantic_op.endswith(".block_stack"):
+        return "control"
+    if node.get("drill") or node.get("shape") == "block":
+        return "module"
+    return "compute"
+
+
+def _compact_contract_text(value: Any) -> str:
+    return "".join(str(value or "").split())
+
+
+def _validate_boundary_contracts(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Validate that every drill-down exposes an explicit shape boundary.
+
+    ``exact_node`` contracts must agree with both the parent graph edges and
+    the child view's declared boundary nodes. ``exact_lifecycle`` is used when
+    one semantic drill spans a pre/sublayer/post lifecycle (for example mHC);
+    the scope and handoff are explicit instead of pretending one node owns the
+    whole transformation. ``external_entry`` marks a generation/runtime entry
+    that has inputs supplied outside the selected parent view.
+    """
+
+    if not model_ir.get("semantic_contract"):
+        return
+    views = model_ir["views"]
+    node_index = _node_index(views, source=source)
+    drills = {
+        f"{view_id}.{node['id']}": str(node["drill"])
+        for view_id, view in views.items()
+        for node in view.get("nodes", []) or []
+        if node.get("drill")
+    }
+    contracts = model_ir.get("boundary_contracts") or []
+    by_parent = {
+        str(contract.get("parent_node")): contract
+        for contract in contracts
+        if isinstance(contract, dict)
+    }
+    missing = sorted(set(drills) - set(by_parent))
+    extra = sorted(set(by_parent) - set(drills))
+    if missing or extra:
+        raise CatalogError(
+            f"{source}: drill boundary contracts differ from drill nodes; "
+            f"missing={missing}, extra={extra}"
+        )
+
+    for parent_target, child_view_id in drills.items():
+        contract = by_parent[parent_target]
+        if contract.get("child_view") != child_view_id:
+            raise CatalogError(
+                f"{source}: boundary contract {parent_target} names child "
+                f"{contract.get('child_view')!r}, expected {child_view_id!r}"
+            )
+        mode = str(contract.get("boundary_mode") or "")
+        if mode not in {"exact_node", "exact_lifecycle", "external_entry"}:
+            raise CatalogError(
+                f"{source}: boundary contract {parent_target} requires boundary_mode"
+            )
+        input_text = _compact_contract_text(contract.get("input_shape"))
+        output_text = _compact_contract_text(contract.get("output_shape"))
+        handoff_text = _compact_contract_text(contract.get("handoff_shape"))
+        if not input_text or not output_text:
+            raise CatalogError(
+                f"{source}: boundary contract {parent_target} requires input/output shapes"
+            )
+
+        child_view = views[child_view_id]
+        child_nodes = {str(node["id"]): node for node in child_view.get("nodes", []) or []}
+        directions = {
+            node_id: str(node.get("boundary_direction"))
+            for node_id, node in child_nodes.items()
+            if node.get("boundary_direction")
+        }
+        if not directions:
+            raise CatalogError(
+                f"{source}: child view {child_view_id!r} requires explicit "
+                "boundary_direction nodes"
+            )
+        for node_id, direction in directions.items():
+            if direction in {"input", "handoff"}:
+                shapes = {
+                    _compact_contract_text(edge.get("shape"))
+                    for edge in child_view.get("edges", []) or []
+                    if edge.get("from") == node_id
+                }
+                declared = input_text if direction == "input" else handoff_text
+            else:
+                shapes = {
+                    _compact_contract_text(edge.get("shape"))
+                    for edge in child_view.get("edges", []) or []
+                    if edge.get("to") == node_id
+                }
+                declared = output_text
+            for shape in shapes:
+                if shape and shape not in declared:
+                    raise CatalogError(
+                        f"{source}: {parent_target} {direction} contract does not "
+                        f"contain child boundary shape {shape!r} from "
+                        f"{child_view_id}.{node_id}"
+                    )
+
+        if mode == "exact_node":
+            parent_view_id, parent_node_id = _split_target(parent_target, source=source)
+            parent_view = views[parent_view_id]
+            parent_inputs = {
+                _compact_contract_text(edge.get("shape"))
+                for edge in parent_view.get("edges", []) or []
+                if edge.get("to") == parent_node_id and edge.get("kind") != "dashed"
+            }
+            parent_outputs = {
+                _compact_contract_text(edge.get("shape"))
+                for edge in parent_view.get("edges", []) or []
+                if edge.get("from") == parent_node_id
+                and edge.get("kind") != "dashed"
+                and edge.get("state") != "captured_optional_state"
+            }
+            for shape in parent_inputs:
+                if shape and shape not in input_text:
+                    raise CatalogError(
+                        f"{source}: {parent_target} input contract omits parent edge "
+                        f"shape {shape!r}"
+                    )
+            for shape in parent_outputs:
+                if shape and shape not in output_text:
+                    raise CatalogError(
+                        f"{source}: {parent_target} output contract omits parent edge "
+                        f"shape {shape!r}"
+                    )
+        elif mode == "exact_lifecycle":
+            scope_nodes = [str(target) for target in contract.get("scope_nodes") or []]
+            if parent_target not in scope_nodes or len(scope_nodes) < 2:
+                raise CatalogError(
+                    f"{source}: lifecycle contract {parent_target} requires a "
+                    "multi-node scope containing its parent"
+                )
+            unknown_scope = sorted(set(scope_nodes) - set(node_index))
+            if unknown_scope:
+                raise CatalogError(
+                    f"{source}: lifecycle contract {parent_target} has unknown "
+                    f"scope nodes {unknown_scope}"
+                )
+            if not handoff_text:
+                raise CatalogError(
+                    f"{source}: lifecycle contract {parent_target} requires handoff_shape"
+                )
+
+
+def _compile_semantic_transitions(
+    model_ir: dict[str, Any], views: dict[str, Any], *, source: Path
+) -> None:
+    """Attach node-local semantic transitions derived from canonical edges.
+
+    Edges remain the single source of truth for tensor/state contracts.  The
+    model-level operation table owns mathematics.  The compiled node combines
+    both, so the viewer and validators never rely on prose embedded in labels.
+    """
+
+    config = model_ir.get("semantic_contract") or {}
+    strict = int(config.get("version") or 0) >= 1
+    require_equations = bool(config.get("require_explicit_equations", strict))
+    operations = config.get("operations") or {}
+    if strict and not isinstance(operations, dict):
+        raise CatalogError(f"{source}: semantic_contract.operations must be a mapping")
+
+    used_operations: set[str] = set()
+    boundary_contracts = {
+        str(entry.get("parent_node")): entry
+        for entry in (model_ir.get("boundary_contracts") or [])
+        if isinstance(entry, dict)
+    }
+
+    for view_id, view in views.items():
+        incoming: dict[str, list[dict[str, Any]]] = {
+            str(node["id"]): [] for node in view.get("nodes", []) or []
+        }
+        outgoing: dict[str, list[dict[str, Any]]] = {
+            str(node["id"]): [] for node in view.get("nodes", []) or []
+        }
+        for edge in view.get("edges", []) or []:
+            if strict:
+                missing = [field for field in _EDGE_CONTRACT_FIELDS if not edge.get(field)]
+                if missing:
+                    raise CatalogError(
+                        f"{source}: edge {view_id}.{edge.get('from')} -> "
+                        f"{edge.get('to')} is missing semantic contract fields: "
+                        f"{', '.join(missing)}"
+                    )
+            incoming[str(edge["to"])].append(_tensor_contract(edge, endpoint="source"))
+            outgoing[str(edge["from"])].append(_tensor_contract(edge, endpoint="target"))
+
+        for node in view.get("nodes", []) or []:
+            semantic_op = str(node["semantic_op"])
+            inferred_kind = _inferred_semantic_kind(node)
+            is_model_node = node.get("ir_origin") != "execution_plan"
+            operation = operations.get(semantic_op)
+            if operation is not None and not isinstance(operation, dict):
+                raise CatalogError(
+                    f"{source}: operation contract {semantic_op!r} must be a mapping"
+                )
+            if operation:
+                used_operations.add(semantic_op)
+            if strict and is_model_node and require_equations and not operation:
+                raise CatalogError(
+                    f"{source}: model node {view_id}.{node['id']} requires an "
+                    f"explicit operation contract for {semantic_op!r}"
+                )
+            equation = str((operation or {}).get("equation") or "")
+            if (
+                strict
+                and is_model_node
+                and require_equations
+                and not equation
+            ):
+                raise CatalogError(
+                    f"{source}: model node {view_id}.{node['id']} requires an equation"
+                )
+
+            target = f"{view_id}.{node['id']}"
+            drill_contract = boundary_contracts.get(target)
+            execution = node.get("execution")
+            execution_equation = ""
+            if isinstance(execution, dict) and all(
+                execution.get(field) for field in ("result", "collective", "payload")
+            ):
+                execution_equation = (
+                    f"{execution['result']} = "
+                    f"{execution['collective']}({execution['payload']})"
+                )
+            node["semantics"] = {
+                "semantic_op": semantic_op,
+                "kind": str((operation or {}).get("kind") or inferred_kind),
+                "summary": str(node.get("label") or node["id"]).splitlines()[0],
+                "equation": equation or (
+                    execution_equation
+                    if execution_equation
+                    else
+                    f"See {node['drill']} semantic data-flow"
+                    if node.get("drill")
+                    else "No value transformation; semantic boundary"
+                    if inferred_kind == "boundary"
+                    else "Persistent state read/write"
+                    if inferred_kind == "state"
+                    else "Execution path selection"
+                    if inferred_kind == "control"
+                    else "Composite semantic module"
+                ),
+                "inputs": sorted(incoming[str(node["id"])], key=lambda item: (item["name"], item["source"])),
+                "outputs": sorted(outgoing[str(node["id"])], key=lambda item: (item["name"], item["target"])),
+                "invariants": copy.deepcopy((operation or {}).get("invariants", [])),
+                "contract_source": "model_ir.semantic_contract+edges",
+                **({"notes": str(operation["notes"])} if (operation or {}).get("notes") else {}),
+                **({"drill_boundary": copy.deepcopy(drill_contract)} if drill_contract else {}),
+            }
+
+    unused = sorted(set(operations) - used_operations)
+    if strict and unused:
+        raise CatalogError(
+            f"{source}: semantic_contract has operations not used by any node: {unused}"
+        )
+
+
+def _model_views_with_provenance(
+    views: dict[str, Any],
+    *,
+    model_ir: dict[str, Any] | None = None,
+    source: Path | None = None,
+) -> dict[str, Any]:
     """Return the stable semantic graph with explicit compiled provenance.
 
     Persisted Model IR stays implementation-independent.  The compiled bundle
@@ -128,6 +420,12 @@ def _model_views_with_provenance(views: dict[str, Any]) -> dict[str, Any]:
         for node in view.get("nodes", []) or []:
             node["ir_origin"] = "model_ir"
             node.setdefault("node_kind", "semantic")
+    if model_ir is not None:
+        _compile_semantic_transitions(
+            model_ir,
+            compiled,
+            source=source or Path("model_ir.yaml"),
+        )
     return compiled
 
 
@@ -237,6 +535,7 @@ def apply_execution_plan(
         else:
             raise CatalogError(f"{source}: unsupported execution transform {op!r}")
     _node_index(views, source=source)
+    _compile_semantic_transitions(model_ir, views, source=source)
     return views
 
 
@@ -344,6 +643,9 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
             "source_patch_sha256",
             "container",
             "backend",
+            "binding_status",
+            "source_lock_status",
+            "execution_validation",
             "extends",
             "binding_compatible_base_commit",
         )
@@ -408,7 +710,7 @@ def compile_profile(
     _validate_parallelism(profile, plan, source=source)
     effective_states = copy.deepcopy(profile.get("node_states") or {})
     if profile.get("generation_mode", "autoregressive") != "eagle_mtp":
-        for target in node_targets:
+        for target in sorted(node_targets):
             if target.startswith("mtp_"):
                 effective_states.setdefault(
                     target,
@@ -470,6 +772,8 @@ def compile_profile(
     }
     fusion_groups: dict[str, dict[str, Any]] = {}
     covered_by_authored: set[str] = set()
+    authored_group_by_owner: dict[str, str] = {}
+    authored_group_for_target: dict[str, str] = {}
     for group_id, raw_group in (profile.get("fusion_groups") or {}).items():
         if not isinstance(raw_group, dict):
             raise CatalogError(f"{source}: fusion group {group_id!r} must be a mapping")
@@ -486,10 +790,36 @@ def compile_profile(
                 f"{source}: fusion group {group_id!r} references unknown nodes: "
                 f"{unknown_fusion_nodes}"
             )
-        if raw_group.get("timing_semantics") != "shared_interval":
+        if raw_group.get("timing_semantics") not in {
+            "shared_interval",
+            "shared_event_set",
+        }:
             raise CatalogError(
                 f"{source}: fusion group {group_id!r} requires "
-                "timing_semantics='shared_interval'"
+                "timing_semantics='shared_interval' or 'shared_event_set'"
+            )
+        evidence_scope = raw_group.get("evidence_scope") or {}
+        resolution = evidence_scope.get("resolution")
+        if raw_group.get("timing_semantics") == "shared_event_set" and resolution not in {
+            "exact_occurrence",
+            "profile_aggregate",
+        }:
+            raise CatalogError(
+                f"{source}: shared_event_set fusion group {group_id!r} requires "
+                "an evidence_scope resolution"
+            )
+        if (
+            raw_group.get("timing_semantics") == "shared_interval"
+            and resolution == "profile_aggregate"
+        ):
+            raise CatalogError(
+                f"{source}: fusion group {group_id!r} cannot call a profile "
+                "aggregate one shared_interval"
+            )
+        if owner in authored_group_by_owner:
+            raise CatalogError(
+                f"{source}: fusion owner {owner!r} appears in multiple authored "
+                "groups; one owner must have one unambiguous event-set closure"
             )
         overlap = covered_by_authored.intersection(ir_nodes)
         if overlap:
@@ -499,28 +829,125 @@ def compile_profile(
             )
         covered_by_authored.update(ir_nodes)
         fusion_groups[str(group_id)] = copy.deepcopy(raw_group)
+        authored_group_by_owner[owner] = str(group_id)
+        authored_group_for_target.update(
+            {target: str(group_id) for target in ir_nodes}
+        )
     for group_id, group in derived_fusion_groups.items():
-        if covered_by_authored.intersection(group["ir_nodes"]):
+        owner = group["owner"]
+        members = group["ir_nodes"][1:]
+        requested_group_ids = {
+            str(effective_states[target].get("fusion_group_id"))
+            for target in members
+            if effective_states[target].get("fusion_group_id")
+        }
+        if len(requested_group_ids) > 1:
+            raise CatalogError(
+                f"{source}: fused nodes for owner {owner!r} request multiple "
+                f"fusion groups: {sorted(requested_group_ids)}"
+            )
+        selected_group_id = next(iter(requested_group_ids), None)
+        selected_group_id = selected_group_id or authored_group_by_owner.get(owner)
+        if selected_group_id:
+            if selected_group_id not in fusion_groups:
+                raise CatalogError(
+                    f"{source}: fused nodes for owner {owner!r} reference unknown "
+                    f"fusion group {selected_group_id!r}"
+                )
+            selected_group = fusion_groups[selected_group_id]
+            if selected_group["owner"] != owner:
+                raise CatalogError(
+                    f"{source}: fusion group {selected_group_id!r} owns "
+                    f"{selected_group['owner']!r}, not included_in owner {owner!r}"
+                )
+            conflicts = {
+                target: authored_group_for_target[target]
+                for target in members
+                if target in authored_group_for_target
+                and authored_group_for_target[target] != selected_group_id
+            }
+            if conflicts:
+                raise CatalogError(
+                    f"{source}: fused nodes for owner {owner!r} conflict with "
+                    f"authored groups: {conflicts}"
+                )
+            selected_group["ir_nodes"] = list(
+                dict.fromkeys([*selected_group["ir_nodes"], *members])
+            )
+            selected_group.setdefault("derived_from_node_states", True)
             continue
+        overlap = covered_by_authored.intersection(group["ir_nodes"])
+        if overlap:
+            raise CatalogError(
+                f"{source}: derived fusion group {group_id!r} overlaps authored "
+                f"coverage at {sorted(overlap)} without a matching owner/group"
+            )
         fusion_groups[group_id] = group
     fusion_group_for_target = {
         target: group_id
         for group_id, group in fusion_groups.items()
         for target in group["ir_nodes"]
     }
+    for target, state in effective_states.items():
+        if state.get("status") != "fused":
+            continue
+        group_id = fusion_group_for_target.get(target)
+        if not group_id:
+            raise CatalogError(
+                f"{source}: fused state {target!r} has no compiled fusion group"
+            )
+        group = fusion_groups[group_id]
+        if group["owner"] != state["included_in"]:
+            raise CatalogError(
+                f"{source}: fused state {target!r} points to {state['included_in']!r} "
+                f"but compiled fusion group owns {group['owner']!r}"
+            )
 
     variant = profile["variant_id"]
     data = {}
-    targets = set(effective_states) | set(
-        profile.get("node_metrics") or {}
+    targets = list(effective_states)
+    targets.extend(
+        target
+        for target in (profile.get("node_metrics") or {})
+        if target not in effective_states
     )
     for target in targets:
         cell = copy.deepcopy(effective_states.get(target, {}))
         cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
+        if (
+            "gpu_residency_ms" not in cell
+            and "gpu_residency_ms_per_iter" in cell
+        ):
+            cell["gpu_residency_ms"] = cell["gpu_residency_ms_per_iter"]
         group_id = fusion_group_for_target.get(target)
         if group_id:
             cell["fusion_group_id"] = group_id
-            cell["fusion_timing_semantics"] = "shared_interval"
+            cell["fusion_timing_semantics"] = fusion_groups[group_id][
+                "timing_semantics"
+            ]
+        # A fused semantic node has no independent timing, but hiding the
+        # production number entirely makes a measured architecture look empty.
+        # Surface only the owner's scalar timing fields and mark them shared so
+        # consumers cannot mistake them for additive leaf measurements.
+        if cell.get("status") == "fused" and cell.get("included_in"):
+            owner_metric = (profile.get("node_metrics") or {}).get(
+                cell["included_in"], {}
+            )
+            for field in (
+                "ms_per_iter",
+                "active_gpu_ms",
+                "gpu_residency_ms",
+                "gpu_residency_ms_per_iter",
+                "gpu_elapsed_ms",
+                "module_gap_ms",
+                "device_idle_ms",
+                "other_gpu_work_ms",
+            ):
+                if field in owner_metric and field not in cell:
+                    cell[field] = copy.deepcopy(owner_metric[field])
+            if any(field in cell for field in ("ms_per_iter", "active_gpu_ms")):
+                cell["attribution_status"] = "shared_fusion_owner"
+                cell["shared_timing_owner"] = cell["included_in"]
         data[target] = {variant: cell}
     meta = {
             key: copy.deepcopy(profile[key])
@@ -601,6 +1028,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         source=model_path,
     )
     _node_index(model_ir["views"], source=model_path)
+    _validate_boundary_contracts(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"
@@ -612,6 +1040,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
 
     binding_paths = _catalog_files(model_root, "bindings/*.yaml")
     profile_paths = _catalog_files(model_root, "profiles/*/*/*.yaml")
+    sol_manifest_paths = _catalog_files(model_root, "sol_manifests/*.yaml")
     raw_bindings: list[tuple[Path, dict[str, Any]]] = []
     for path in binding_paths:
         binding = load_yaml(path)
@@ -765,6 +1194,22 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         merged_binding["node_bindings"] = merged_nodes
         compiled = compile_binding(merged_binding, source=path)
         compiled["execution_variant"] = fingerprint
+        validation = compiled.get("execution_validation")
+        if validation:
+            validation_fingerprint = validation.get("execution_fingerprint")
+            if validation_fingerprint != fingerprint:
+                raise CatalogError(
+                    f"{path}: execution_validation fingerprint "
+                    f"{validation_fingerprint!r} does not match compiled "
+                    f"Execution IR {fingerprint!r}"
+                )
+            if compiled.get("binding_status") == "validated" and validation.get(
+                "status"
+            ) != "pass":
+                raise CatalogError(
+                    f"{path}: binding_status='validated' requires "
+                    "execution_validation.status='pass'"
+                )
         implementations[compiled["implementation_id"]] = compiled
 
     profiles: dict[str, Any] = {}
@@ -810,6 +1255,69 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         if profile_id in profiles:
             raise CatalogError(f"{path}: duplicate profile_id {profile_id!r}")
         profiles[profile_id] = compiled_profile
+
+    hardware_specs: dict[str, tuple[Path, dict[str, Any]]] = {}
+    hardware_catalog_dir = model_root.parent / "hardware"
+    for hardware_path in _catalog_files(model_root.parent, "hardware/*.yaml"):
+        hardware = load_yaml(hardware_path)
+        hardware_id = hardware.get("hardware_spec_id")
+        if not hardware_id:
+            raise CatalogError(f"{hardware_path}: missing hardware_spec_id")
+        if hardware_id in hardware_specs:
+            raise CatalogError(
+                f"{hardware_path}: duplicate hardware_spec_id {hardware_id!r}"
+            )
+        hardware_specs[str(hardware_id)] = (hardware_path, hardware)
+
+    sol_profiles: dict[str, Any] = {}
+    gap_reports: dict[str, Any] = {}
+    sol_diagnostics: list[dict[str, Any]] = []
+    manifests_to_compile = sol_manifest_paths
+    if sol_manifest_paths and not hardware_catalog_dir.is_dir():
+        manifests_to_compile = []
+        sol_diagnostics.append(
+            {
+                "status": "skipped",
+                "reason": "missing_hardware_catalog",
+                "manifest_count": len(sol_manifest_paths),
+                "expected_directory": str(hardware_catalog_dir),
+            }
+        )
+    for manifest_path in manifests_to_compile:
+        manifest = load_yaml(manifest_path)
+        hardware_id = str(manifest.get("hardware_spec_id") or "")
+        if hardware_id not in hardware_specs:
+            raise CatalogError(
+                f"{manifest_path}: unknown hardware_spec_id {hardware_id!r}"
+            )
+        hardware_path, hardware = hardware_specs[hardware_id]
+        try:
+            sol_profile, gap_report = build_sol_artifacts(
+                model_ir=model_ir,
+                execution_variants=execution_variants,
+                profiles=profiles,
+                hardware=hardware,
+                manifest=manifest,
+                manifest_source=manifest_path,
+                hardware_source=hardware_path,
+            )
+        except SolError as exc:
+            raise CatalogError(str(exc)) from exc
+        sol_profile_id = sol_profile["sol_profile_id"]
+        gap_report_id = gap_report["gap_report_id"]
+        if sol_profile_id in sol_profiles:
+            raise CatalogError(
+                f"{manifest_path}: duplicate sol_profile_id {sol_profile_id!r}"
+            )
+        if gap_report_id in gap_reports:
+            raise CatalogError(
+                f"{manifest_path}: duplicate gap_report_id {gap_report_id!r}"
+            )
+        sol_profiles[sol_profile_id] = sol_profile
+        gap_reports[gap_report_id] = gap_report
+        attach_sol_to_profile(
+            profiles[sol_profile["measured_profile_id"]], sol_profile, gap_report
+        )
 
     for fingerprint, variant in execution_variants.items():
         compatible_profiles = {
@@ -867,6 +1375,8 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             "execution_variant_count": len(execution_variants),
             "implementation_count": len(implementations),
             "profile_count": len(profiles),
+            "sol_profile_count": len(sol_profiles),
+            "gap_report_count": len(gap_reports),
             "view_count": len(default_variant["views"]),
         },
         "model_ir": {
@@ -882,12 +1392,19 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                 )
                 if key in model_ir
             },
-            "views": _model_views_with_provenance(model_ir["views"]),
+            "semantic_contract": copy.deepcopy(model_ir.get("semantic_contract", {})),
+            "boundary_contracts": copy.deepcopy(model_ir.get("boundary_contracts", [])),
+            "views": _model_views_with_provenance(
+                model_ir["views"], model_ir=model_ir, source=model_path
+            ),
             "parent": derive_parent_map(model_ir["views"]),
         },
         "execution_variants": execution_variants,
         "implementations": implementations,
         "profiles": profiles,
+        "sol_profiles": sol_profiles,
+        "gap_reports": gap_reports,
+        "sol_diagnostics": sol_diagnostics,
         # Compatibility projection for the existing viewer and downstream readers.
         "views": projected_views,
         "parent": copy.deepcopy(default_variant["parent"]),

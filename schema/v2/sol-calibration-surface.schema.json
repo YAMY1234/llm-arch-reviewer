@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sol-calibration-surface.schema.json",
+  "title": "Exact-shape hardware calibration surface import",
+  "type": "object",
+  "required": ["schema_version", "hardware_spec_id", "surface_id", "kernel_plan_fingerprint", "match_fields", "evidence", "points"],
+  "properties": {
+    "schema_version": {"const": "sol-calibration-surface.v1"},
+    "hardware_spec_id": {"type": "string"},
+    "surface_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "kernel_plan_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "match_fields": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "evidence": {
+      "type": "object",
+      "required": ["benchmark", "artifact_sha256", "methodology"],
+      "properties": {
+        "benchmark": {"type": "string"},
+        "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "methodology": {"type": "string"}
+      }
+    },
+    "points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["match"],
+        "properties": {
+          "match": {"type": "object"},
+          "attainable_ms": {"type": "number", "exclusiveMinimum": 0},
+          "attainable_interval_ms": {
+            "type": "object",
+            "required": ["p10", "p50", "p90"],
+            "properties": {
+              "p10": {"type": "number", "exclusiveMinimum": 0},
+              "p50": {"type": "number", "exclusiveMinimum": 0},
+              "p90": {"type": "number", "exclusiveMinimum": 0}
+            },
+            "additionalProperties": false
+          },
+          "efficiency": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+        },
+        "oneOf": [
+          {"required": ["attainable_ms"]},
+          {"required": ["attainable_interval_ms"]},
+          {"required": ["efficiency"]}
+        ]
+      }
+    }
+  },
+  "additionalProperties": false
+}

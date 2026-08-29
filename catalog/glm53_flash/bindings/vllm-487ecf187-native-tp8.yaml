@@ -1,0 +1,1207 @@
+schema_version: implementation-binding.v2
+implementation_id: vllm_487ecf187_native_tp8
+label: vLLM 0.1.dev20051 GLM-5.3-Flash native TP8
+model_id: glm53_flash
+execution_path_id: tp8
+source_repo: https://github.com/vllm-project/vllm
+source_commit: 487ecf187d3dfe74d2cf6119a92881dba403c219
+container: vllm-glm53-flash-arm64-905c0293.sqsh@sha256:efdfe25952dc672d4415032e2755df7d7f2bab549992a2e3f2c429334f366756
+backend: vllm_native_multi_node_mp
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_33146d70b2060232
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  evidence:
+  - current/glm53-flash-cross-framework-ir-profile/evidence/runtime-preflight/slurm-3333958.out
+  - current/glm53-flash-cross-framework-ir-profile/evidence/vllm-eager/3334542
+  - current/glm53-flash-cross-framework-ir-profile/eager/vllm/3334542/prefill-attestation.json
+  - current/glm53-flash-cross-framework-ir-profile/evidence/vllm-eager/3335407
+  - current/glm53-flash-cross-framework-ir-profile/eager/vllm/3335407/decode-rank0/attestation.json
+  notes: Exact graph-off prefill and decode passed. The 8192-token prefill executed as 8064+128 worker chunks; the separate delay=3 capture selected exactly the first pure-decode worker step. Both phases attest the expected 34 KDA/11 DSA/3 dense/42 MoE schedule per forward, exact TP collectives, BF16 activation ops, FP8 weights/KV, and MTP off.
+node_bindings:
+  top.token_ids:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextForCausalLM
+    - Glm5NextModel
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 989
+      display: model.py - native conditional-generation wrapper
+  top.embedding:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextForCausalLM
+    - Glm5NextModel
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 989
+      display: model.py - native conditional-generation wrapper
+  top.vision_inputs:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  top.vision_frontend:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  top.multimodal_injection:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  top.hc_expand:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  top.decoder_stack:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  top.hc_contract:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  top.final_norm:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextForCausalLM
+    - Glm5NextModel
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 989
+      display: model.py - native conditional-generation wrapper
+  top.lm_head:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextForCausalLM
+    - Glm5NextModel
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 989
+      display: model.py - native conditional-generation wrapper
+  top.logits:
+    symbols:
+    - Glm5NextForConditionalGeneration
+    - Glm5NextForCausalLM
+    - Glm5NextModel
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextForConditionalGeneration
+      line: 989
+      display: model.py - native conditional-generation wrapper
+  top.mtp_extension:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  vision_frontend.vision_in:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.patch_projection:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.position_encoding:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.vision_blocks:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.post_norm:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.spatial_group:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.spatial_downsample:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.merger:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_frontend.vision_out:
+    symbols:
+    - Glm5NextVisionTransformer
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionTransformer
+      line: 352
+      display: multimodal.py - optional native vision frontend
+  vision_block.block_in:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.norm1:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.qkv_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.qk_norm_rotary:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.attention:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.attention_output:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.attention_residual:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.norm2:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.gate_up_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.clamped_swiglu:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.down_projection:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  vision_block.block_out:
+    symbols:
+    - Glm5NextVisionBlock
+    - Glm5NextVisionAttention
+    - Glm5NextVisionMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/multimodal.py
+      symbol: Glm5NextVisionBlock
+      line: 247
+      display: multimodal.py - one vision transformer block
+  decoder_stack.stack_in:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.attn_mhc_pre:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  decoder_stack.input_norm:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.attention_schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.linear_attention:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  decoder_stack.dsa_attention:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  decoder_stack.attn_mhc_combine:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  decoder_stack.ffn_mhc_pre:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  decoder_stack.post_attention_norm:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.feed_forward_schedule:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  decoder_stack.dense_mlp:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  decoder_stack.moe:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  decoder_stack.ffn_mhc_combine:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  decoder_stack.stack_out:
+    symbols:
+    - Glm5NextDecoderLayer
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextDecoderLayer
+      line: 278
+      display: model.py - hybrid KDA/DSA and mHC decoder schedule
+  mhc_transform.mhc_in:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.flatten_norm:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.coefficient_map:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.pre_weights:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.post_weights:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.combine_weights:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.stream_collapse:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.sublayer_delta:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.post_place:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.residual_mix:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  mhc_transform.mhc_out:
+    symbols:
+    - MHCPreOp
+    - MHCPostOp
+    - MHCFusedPostPreOp
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp
+      line: 34
+      display: mhc.py - mHC coefficient, stream collapse and residual mixing
+  linear_attention.attn_in:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.qkv_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.qkv_short_conv:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.qk_l2_norm:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.forget_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.forget_decay:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.beta_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.conv_state:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.recurrent_state:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.recurrent_update:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+    kernel_signatures:
+    - chunk_gated_delta_rule_fwd_kernel_h_blockdim64
+    - chunk_kda_scaled_dot_kkt_fwd_kernel
+  linear_attention.query_readout:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.output_gate:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.gated_norm:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.output_projection:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  linear_attention.attn_out:
+    symbols:
+    - Glm5NextLinearAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/kda.py
+      symbol: Glm5NextLinearAttention
+      line: 131
+      display: kda.py - KDA projections, conv and recurrent update
+  dsa_attention.attn_in:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.q_a_projection:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.q_a_norm:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.q_b_projection:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.kv_a_projection:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.kv_a_norm:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.latent_kv_cache:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.latent_kv_reconstruction:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.index_q_projection:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.index_k_projection:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.index_weight_projection:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.key_pool_compression:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.index_k_cache:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.index_logits:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+    kernel_signatures:
+    - deep_gemm::sm100_mqa_logits
+  dsa_attention.top_pool_selection:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+    kernel_signatures:
+    - vllm::topKPerRowPrefill<512
+  dsa_attention.token_expansion:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.selected_indices:
+    symbols:
+    - Indexer
+    - Glm5NextIndexerCache
+    - Glm5NextTailCache
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Indexer
+      line: 206
+      display: attention.py - DSA index projections, cache and top-pool selection
+  dsa_attention.sparse_mla_core:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+    kernel_signatures:
+    - fmhaSm100fKernel_QkvE4m3OBfloat16H512PagedKvDenseDynamicTokenSparse
+  dsa_attention.output_projection:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dsa_attention.attn_out:
+    symbols:
+    - Glm5NextMLAAttention
+    links:
+    - file: vllm/models/glm5next/nvidia/attention.py
+      symbol: Glm5NextMLAAttention
+      line: 414
+      display: attention.py - sparse MLA projection and attention path
+  dense_mlp.mlp_in:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  dense_mlp.gate_up_projection:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  dense_mlp.clamped_swiglu:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  dense_mlp.down_projection:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  dense_mlp.mlp_out:
+    symbols:
+    - Glm5NextMLP
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMLP
+      line: 98
+      display: model.py - dense clamped-SwiGLU MLP
+  moe.moe_in:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.router:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.correction_bias:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.topk:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.dispatch:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.routed_gate_up:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+    kernel_signatures:
+    - bmm_E4m3_E4m3E4m3_Fp32
+  moe.routed_activation:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.routed_down:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.routed_weighted_combine:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+    kernel_signatures:
+    - moe::dev::finalize::finalizeKernel
+  moe.shared_gate_up:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.shared_activation:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.shared_down:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.combine:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  moe.moe_out:
+    symbols:
+    - Glm5NextMoE
+    links:
+    - file: vllm/models/glm5next/nvidia/model.py
+      symbol: Glm5NextMoE
+      line: 151
+      display: model.py - router, routed experts and shared expert
+  mtp_extension.candidate_token_ids:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.candidate_embedding:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.target_hidden_state:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.embedding_norm:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.hidden_norm:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.concatenate:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.eh_projection:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.nextn_dsa:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.nextn_moe:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.shared_head_norm:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.nextn_lm_head:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  mtp_extension.draft_logits:
+    symbols:
+    - Glm5NextMultiTokenPredictor
+    - Glm5NextMultiTokenPredictorLayer
+    - Glm5NextMTP
+    links:
+    - file: vllm/models/glm5next/nvidia/mtp.py
+      symbol: Glm5NextMultiTokenPredictor
+      line: 125
+      display: mtp.py - optional NextN extension, disabled by the Stage-1 contract
+  top.tp_embedding_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: linear.py - TP row-parallel output collective
+  linear_attention.tp_kda_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: linear.py - TP row-parallel output collective
+  dsa_attention.tp_dsa_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: linear.py - TP row-parallel output collective
+  dense_mlp.tp_dense_mlp_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: linear.py - TP row-parallel output collective
+  moe.tp_moe_output_collective:
+    symbols:
+    - RowParallelLinear
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: linear.py - TP row-parallel output collective
+  top.tp_logits_all_gather:
+    symbols:
+    - LogitsProcessor
+    - tensor_model_parallel_all_gather
+    links:
+    - file: vllm/model_executor/layers/logits_processor.py
+      symbol: LogitsProcessor
+      line: 23
+      display: logits_processor.py - TP vocabulary logits materialization
+    kernel_signatures:
+    - ncclDevKernel_AllGather_RING_LL

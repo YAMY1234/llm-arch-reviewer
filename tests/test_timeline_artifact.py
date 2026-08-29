@@ -39,6 +39,9 @@ def _event(
         "layer_id": 3,
         "layer_kind": "linear",
         "substage": substage,
+        "segment_id": 6,
+        "occurrence_id": "layer_03.attention",
+        "eager_event_id": "eager-r0-k42",
         "attribution_method": "validated_execution_sequence",
         "confidence": "high",
         "python_stack": [
@@ -76,6 +79,53 @@ def test_targets_include_direct_node_and_architecture_rollups() -> None:
         "top.decoder_stack",
         "linear_layer.attn_hc_mix",
     ]
+
+
+def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
+    artifact = build_timeline_artifact(
+        profile_id="p",
+        phase="decode",
+        reference_rank=0,
+        steps=[{
+            "step_index": 0,
+            "trace_start_us": 0.0,
+            "duration_us": 10.0,
+            "events": [_event("linear_attention.recurrent_update", timestamp=1.0, duration=2.0, stream=7)],
+        }],
+        timing_summary={},
+        raw_trace={},
+        stack_source={},
+    )
+    event = artifact["steps"][0]["events"][0]
+    strings = artifact["strings"]
+    assert event["segment_id"] == 6
+    assert strings[event["occurrence_id"]] == "layer_03.attention"
+    assert strings[event["eager_event_id"]] == "eager-r0-k42"
+
+
+def test_timeline_persists_explicit_runtime_support_contract() -> None:
+    event = _event("", timestamp=1.0, duration=2.0, stream=7)
+    event["node"] = None
+    event["support_class"] = "request_batch_metadata"
+    event["support_reason"] = "shape/index preparation"
+    artifact = build_timeline_artifact(
+        profile_id="p",
+        phase="decode",
+        reference_rank=0,
+        steps=[{
+            "step_index": 0,
+            "trace_start_us": 0.0,
+            "duration_us": 10.0,
+            "events": [event],
+        }],
+        timing_summary={},
+        raw_trace={},
+        stack_source={},
+    )
+    encoded = artifact["steps"][0]["events"][0]
+    strings = artifact["strings"]
+    assert strings[encoded["support_class"]] == "request_batch_metadata"
+    assert strings[encoded["support_reason"]] == "shape/index preparation"
 
 
 def test_ple_scope_takes_precedence_over_enclosing_decoder_layer() -> None:

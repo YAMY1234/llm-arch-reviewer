@@ -1,0 +1,954 @@
+schema_version: model-ir.v2
+model_id: glm53_flash
+model_label: GLM-5.3-Flash mixed FP8/BF16 multimodal
+ir_version: 2
+default_view: top
+default_execution_path: tp8
+
+dimensions:
+  B: request batch
+  T: text token count
+  S: cached sequence length
+  H: 4096 text hidden width
+  R: 4 mHC residual streams
+  V: 154880 vocabulary entries
+  L: 45 target decoder layers
+  Lkda: 34 KDA linear-attention layers
+  Ldsa: 11 DSA sparse-attention layers
+  N: 64 text attention heads
+  Dkda: 128 KDA head width
+  Dqk: 256 DSA NoPE query/key width per head
+  Dv: 256 DSA value width per head
+  Cq: 1536 query latent width
+  Ckv: 512 KV latent width
+  Qi: 32 index heads
+  Di: 128 index head width
+  P: 4 tokens per compressed index-key pool
+  Kp: 512 selected index-key pools
+  Ki: 2048 selected KV positions before incomplete-tail union
+  E: 288 routed experts
+  K: 8 selected experts per token
+  Hv: 1024 vision hidden width
+  M: merged vision-token count
+
+facts:
+  checkpoint: zai-org/GLM-5.3-Flash
+  checkpoint_revision: 3f1971b7b5f7a528c9c4ef6212c8785298a8c24a
+  checkpoint_config_sha256: bb8f01c42cb92a52ca72e65afb4d5bd8d11aef083cd210e8de25dfb904f23e9f
+  architecture: Glm5NextForConditionalGeneration
+  model_type: glm5_next
+  target_layers: 45
+  linear_attention_layers: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 16, 17, 18, 20, 21, 22, 24, 25, 26, 28, 29, 30, 32, 33, 34, 36, 37, 38, 40, 41, 42, 44]
+  sparse_attention_layers: [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43]
+  dense_layers: [0, 1, 2]
+  moe_layer_range: "3..44"
+  mhc_streams: 4
+  mhc_sinkhorn_iterations: 20
+  kda_heads: 64
+  kda_head_dim: 128
+  kda_short_conv_kernel: 4
+  kda_forget_gate_lower_bound: -5.0
+  dsa_indexer_mode: full_on_each_dsa_layer
+  dsa_indexer_count: 11
+  index_pool_size: 4
+  selected_index_pools: 512
+  index_topk: 2048
+  index_always_select_incomplete_tail: true
+  routed_experts: 288
+  experts_per_token: 8
+  shared_experts: 1
+  routed_scaling_factor: 2.5
+  swiglu_limit: 10.0
+  vision_depth: 24
+  vision_patch_size: 14
+  vision_temporal_patch_size: 2
+  vision_spatial_merge_size: 2
+  nextn_layers: 1
+  max_position_embeddings: 1048576
+  checkpoint_quantization: FP8 E4M3 block 128x128 with dynamic activations and explicit BF16 exclusions
+  model_weight_precision: mixed native FP8 E4M3 and BF16 per checkpoint exclusions
+  runtime_activation_precision: execution binding and profile fact
+  kv_cache_precision: execution binding and profile fact
+
+# Mathematical semantics are authored independently of any framework or
+# kernel fusion.  Edge contracts below remain the single source of truth for
+# tensor identity, shape, layout, dtype and state lifetime.  The compiler joins
+# both sources into the right-hand Semantics panel and rejects missing leaf
+# equations or incomplete edge contracts.
+semantic_contract:
+  version: 1
+  require_explicit_equations: true
+  operations:
+    model.input_ids: {kind: boundary, equation: 'token_ids := request token ids with shape [B,T]'}
+    model.optional_vision_inputs: {kind: boundary, equation: 'pixel_values, grid_metadata := optional request media inputs'}
+    model.embedding: {kind: embedding, equation: 'X = Embedding[token_ids]'}
+    model.vision_frontend: {kind: module, equation: 'media_features = VisionEncoder(pixel_values, grid_metadata)'}
+    model.multimodal_injection: {kind: composition, equation: 'X[media_mask] = media_features; all other positions retain token_embeddings'}
+    model.hc_expand: {kind: transform, equation: 'X_streams[b,t,r,h] = X[b,t,h] for r = 0..R-1'}
+    model.decoder_stack: {kind: module, equation: 'X_streams_out = DecoderStack_45(X_streams_in; 34 KDA layers, 11 DSA layers)'}
+    model.hc_contract: {kind: reduction, equation: 'X[b,t,h] = (1/R) * sum_r X_streams[b,t,r,h]'}
+    model.final_norm: {kind: normalization, equation: 'Y = RMSNorm(X; gamma, epsilon)'}
+    model.lm_head: {kind: projection, equation: 'logits = Y * W_vocab^T'}
+    model.logits: {kind: boundary, equation: 'response_logits := logits with shape [B,T,V]'}
+    model.optional_nextn_extension: {kind: module, equation: 'draft_logits = NextN(candidate_token_ids, target_hidden_state) when NextN generation is enabled'}
+
+    vision.input: {kind: boundary, equation: 'vision_input := packed pixel patches and grid metadata'}
+    vision.patch_projection: {kind: projection, equation: 'X_patch = Conv3D(pixel_patches; kernel=(2,14,14), stride=(2,14,14))'}
+    vision.position_encoding: {kind: transform, equation: 'X_pos = Apply2DRotary(X_patch, grid_coordinates)'}
+    vision.block_stack: {kind: module, equation: 'X_encoded = VisionBlock_24(X_pos)'}
+    vision.post_norm: {kind: normalization, equation: 'Y = RMSNorm(X; gamma, epsilon)'}
+    vision.spatial_group: {kind: transform, equation: 'Y[m] = Concat(X[p] for p in one 2x2 spatial group)'}
+    vision.spatial_downsample: {kind: projection, equation: 'Y = X_grouped * W_down^T'}
+    vision.merger: {kind: module, equation: 'Y = W_down * ClampedSwiGLU(W_gate_up * RMSNorm(X))'}
+    vision.output: {kind: boundary, equation: 'media_features := encoded and merged vision tokens with shape [M,H]'}
+
+    vision_block.input: {kind: boundary, equation: 'X := input patch states with shape [Patches,Hv]'}
+    vision_block.norm1: {kind: normalization, equation: 'Xn = RMSNorm(X; gamma_1, epsilon)'}
+    vision_block.qkv_projection: {kind: projection, equation: '[Q,K,V] = Xn * W_qkv^T'}
+    vision_block.qk_norm_rotary: {kind: transform, equation: 'Qp = RoPE(RMSNorm(Q)); Kp = RoPE(RMSNorm(K)); Vp = V'}
+    vision_block.attention: {kind: attention, equation: 'C = Softmax(Qp * Kp^T / sqrt(d)) * Vp'}
+    vision_block.attention_output: {kind: projection, equation: 'Delta_attn = C * W_o^T'}
+    vision_block.attention_residual: {kind: composition, equation: 'X_attn = X + Delta_attn'}
+    vision_block.norm2: {kind: normalization, equation: 'Xn2 = RMSNorm(X_attn; gamma_2, epsilon)'}
+    vision_block.gate_up_projection: {kind: projection, equation: '[G,U] = Xn2 * W_gate_up^T'}
+    vision_block.clamped_swiglu: {kind: activation, equation: 'M = SiLU(Clamp(G)) elementwise_mul Clamp(U)'}
+    vision_block.down_projection: {kind: projection, equation: 'Delta_mlp = M * W_down^T'}
+    vision_block.output: {kind: boundary, equation: 'X_out = X_attn + Delta_mlp'}
+
+    decoder_stack.input: {kind: boundary, equation: 'X_streams := decoder input residual streams [B,T,R,H]'}
+    decoder_stack.layer_schedule: {kind: control, equation: 'for layer l in 0..44: apply KDA when l mod 4 != 3 or l = 44; otherwise apply DSA'}
+    decoder.attention_mhc_pre: {kind: module, equation: '[X_attn, post_attn, comb_attn] = mHCPre(X_streams)'}
+    decoder.input_norm: {kind: normalization, equation: 'X_attn = RMSNorm(X_collapsed; gamma_attn, epsilon)'}
+    decoder.attention_schedule: {kind: control, equation: 'Delta_attn = KDA(X_attn) on 34 configured layers; Delta_attn = DSA(X_attn) on 11 configured layers'}
+    decoder.linear_attention: {kind: module, equation: 'Delta_attn, KDA_state_next = KDA(X_attn, KDA_state_prev)'}
+    decoder.dsa_attention: {kind: module, equation: 'Delta_attn, DSA_cache_next = DSA(X_attn, DSA_cache_prev)'}
+    decoder.attention_mhc_combine: {kind: composition, equation: 'Y_r = post_r * Delta_attn + sum_s(comb[r,s] * X_s)'}
+    decoder.ffn_mhc_pre: {kind: module, equation: '[X_ffn, post_ffn, comb_ffn] = mHCPre(X_streams_after_attention)'}
+    decoder.post_attention_norm: {kind: normalization, equation: 'X_ffn = RMSNorm(X_collapsed; gamma_ffn, epsilon)'}
+    decoder.feed_forward_schedule: {kind: control, equation: 'Delta_ffn = DenseMLP(X_ffn) for layers 0..2; otherwise Delta_ffn = MoE(X_ffn)'}
+    decoder.dense_mlp: {kind: module, equation: 'Delta_ffn = DenseClampedSwiGLU(X_ffn)'}
+    decoder.moe: {kind: module, equation: 'Delta_ffn = RoutedSharedMoE(X_ffn)'}
+    decoder.ffn_mhc_combine: {kind: composition, equation: 'Y_r = post_r * Delta_ffn + sum_s(comb[r,s] * X_s)'}
+    decoder_stack.output: {kind: boundary, equation: 'X_streams_out := final decoder residual streams [B,T,R,H]'}
+
+    mhc.input: {kind: boundary, equation: 'X_streams := residual streams [B,T,R,H]'}
+    mhc.flatten_norm: {kind: normalization, equation: 'Xn = RMSNorm_fp32(Reshape(X_streams, [B,T,R*H]))'}
+    mhc.coefficient_map: {kind: projection, equation: '[pre_logits, post_logits, combine_logits] = Xn * W_mhc^T + b_mhc'}
+    mhc.pre_weights: {kind: activation, equation: 'pre = sigmoid(pre_logits) + epsilon'}
+    mhc.post_weights: {kind: activation, equation: 'post = 2 * sigmoid(post_logits)'}
+    mhc.combine_weights: {kind: transform, equation: 'comb = Sinkhorn20(exp(combine_logits))'}
+    mhc.stream_collapse: {kind: reduction, equation: 'X_collapsed[b,t,h] = sum_r(pre[b,t,r] * X_streams[b,t,r,h])'}
+    mhc.sublayer_delta: {kind: boundary, equation: 'Delta := attention or feed-forward sublayer result [B,T,H]'}
+    mhc.post_place: {kind: composition, equation: 'placed[b,t,r,h] = post[b,t,r] * Delta[b,t,h]'}
+    mhc.residual_mix: {kind: composition, equation: 'mixed[b,t,r,h] = sum_s(comb[b,t,r,s] * X_streams[b,t,s,h])'}
+    mhc.output: {kind: boundary, equation: 'X_streams_out = placed + mixed'}
+
+    linear_attention.input: {kind: boundary, equation: 'X := normalized KDA input hidden states [B,T,H]'}
+    linear_attention.qkv_projection: {kind: projection, equation: '[Q_raw,K_raw,V_raw] = X * W_qkv^T'}
+    linear_attention.qkv_short_conv: {kind: transform, equation: 'Q,K,V = SiLU(CausalDepthwiseConv1D(Q_raw,K_raw,V_raw; width=4, state=conv_state))'}
+    linear_attention.qk_l2_norm: {kind: normalization, equation: 'Q = Q / L2Norm(Q); K = K / L2Norm(K); V is unchanged'}
+    linear_attention.forget_projection: {kind: projection, equation: 'A_logits = W_a2 * SiLU(W_a1 * X) + dt_bias'}
+    linear_attention.forget_decay: {kind: activation, equation: 'log_decay = -exp(clamp(A_logits, min=-5))'}
+    linear_attention.beta_projection: {kind: projection, equation: 'beta[b,t,n] = sigmoid((X * W_beta^T)[b,t,n])'}
+    linear_attention.conv_state: {kind: state, equation: 'conv_state_next = ShiftAppend(conv_state_prev, [Q_raw,K_raw,V_raw], history=3)'}
+    linear_attention.recurrent_state: {kind: state, equation: 'recurrent_state_next := S_t written by recurrent_update; recurrent_state_read := S_(t-1)'}
+    linear_attention.recurrent_update:
+      kind: state
+      equation: 'S_t = exp(log_decay_t) elementwise_mul S_(t-1) + beta_t * k_t outer (v_t - S_(t-1)^T * k_t)'
+      invariants: ['beta has shape [B,T,N] and broadcasts over Dkda', 'state has shape [B,N,Dkda,Dkda]']
+    linear_attention.query_readout: {kind: attention, equation: 'O_t = S_t^T * q_t / sqrt(Dkda)'}
+    linear_attention.output_gate: {kind: projection, equation: 'G_out = sigmoid(X * W_gate^T)'}
+    linear_attention.gated_norm: {kind: normalization, equation: 'Y = G_out elementwise_mul RMSNorm(O)'}
+    linear_attention.output_projection: {kind: projection, equation: 'Delta_attn = Reshape(Y) * W_o^T'}
+    linear_attention.output: {kind: boundary, equation: 'Delta_attn := KDA output with shape [B,T,H]'}
+
+    dsa_attention.input: {kind: boundary, equation: 'X := normalized DSA input hidden states [B,T,H]'}
+    dsa_attention.q_a_projection: {kind: projection, equation: 'Q_latent_raw = X * W_qa^T'}
+    dsa_attention.q_a_norm: {kind: normalization, equation: 'Q_latent = RMSNorm(Q_latent_raw)'}
+    dsa_attention.q_b_projection: {kind: projection, equation: 'Q_nope = Reshape(Q_latent * W_qb^T, [B,T,N,Dqk])'}
+    dsa_attention.kv_a_projection: {kind: projection, equation: 'KV_latent_raw = X * W_kva^T'}
+    dsa_attention.kv_a_norm: {kind: normalization, equation: 'KV_latent = RMSNorm(KV_latent_raw)'}
+    dsa_attention.latent_kv_cache: {kind: state, equation: 'KV_cache_next = Append(KV_cache_prev, KV_latent); cached_kv_latent := KV_cache_next'}
+    dsa_attention.latent_kv_reconstruction: {kind: projection, equation: '[K_nope,V] = Reshape(KV_latent * W_kvb^T, [B,S,N,Dqk+Dv])'}
+    dsa_attention.index_q_projection: {kind: projection, equation: 'Q_index = Reshape(Q_latent_raw * W_iq^T, [B,T,Qi,Di])'}
+    dsa_attention.index_k_projection: {kind: projection, equation: 'K_index = LayerNorm(X * W_ik^T)'}
+    dsa_attention.index_weight_projection: {kind: projection, equation: '[pool_gate, head_weight] = IndexWeightProjection(X)'}
+    dsa_attention.key_pool_compression: {kind: reduction, equation: 'K_pool[p] = sum_j(pool_gate[p,j] * K_index[p,j]) + pool_position[p] for j in a P-token pool'}
+    dsa_attention.index_k_cache: {kind: state, equation: 'index_K_cache_next = Append(index_K_cache_prev, K_pool); cached_K_pool := index_K_cache_next'}
+    dsa_attention.index_logits: {kind: attention, equation: 'score[p] = sum_i(head_weight[i] * dot(Q_index[i], K_pool[p]))'}
+    dsa_attention.top_pool_selection: {kind: routing, equation: 'pool_ids = TopK(score, Kp)'}
+    dsa_attention.token_expansion: {kind: transform, equation: 'token_ids = Union(ExpandEachPool(pool_ids, P), incomplete_tail_tokens)'}
+    dsa_attention.selected_indices: {kind: state, equation: 'selected_token_ids := Union(ExpandEachPool(pool_ids, P), incomplete_tail_tokens)'}
+    dsa_attention.sparse_mla_core: {kind: attention, equation: 'C = Softmax(Gather(Q_nope * K_nope^T, token_ids) / sqrt(Dqk)) * Gather(V, token_ids)'}
+    dsa_attention.output_projection: {kind: projection, equation: 'Delta_attn = Reshape(C) * W_o^T'}
+    dsa_attention.output: {kind: boundary, equation: 'Delta_attn := DSA output with shape [B,T,H]'}
+
+    dense_mlp.input: {kind: boundary, equation: 'X := normalized dense-MLP input [B,T,H]'}
+    dense_mlp.gate_up_projection: {kind: projection, equation: '[G,U] = X * W_gate_up^T'}
+    dense_mlp.clamped_swiglu: {kind: activation, equation: 'M = SiLU(Clamp(G, max=limit)) elementwise_mul Clamp(U, min=-limit, max=limit)'}
+    dense_mlp.down_projection: {kind: projection, equation: 'Delta_ffn = M * W_down^T'}
+    dense_mlp.output: {kind: boundary, equation: 'Delta_ffn := dense-MLP output [B,T,H]'}
+
+    moe.input: {kind: boundary, equation: 'X := normalized MoE input [B,T,H]'}
+    moe.router: {kind: routing, equation: 'p = sigmoid(X * W_router^T)'}
+    moe.correction_bias: {kind: routing, equation: 'selection_score = p + correction_bias'}
+    moe.topk: {kind: routing, equation: 'expert_ids = TopK(selection_score, K); weights = Normalize(Gather(p, expert_ids)) * routed_scale'}
+    moe.dispatch: {kind: routing, equation: 'X_expert = StableGroupByExpert(X, expert_ids)'}
+    moe.routed_gate_up: {kind: projection, equation: '[G_e,U_e] = X_expert * W_gate_up[e]^T'}
+    moe.routed_activation: {kind: activation, equation: 'M_e = SiLU(Clamp(G_e)) elementwise_mul Clamp(U_e)'}
+    moe.routed_down: {kind: projection, equation: 'Y_e = M_e * W_down[e]^T'}
+    moe.routed_weighted_combine: {kind: reduction, equation: 'Y_routed[b,t] = sum_j(weights[b,t,j] * Y_expert[b,t,j])'}
+    moe.shared_gate_up: {kind: projection, equation: '[G_s,U_s] = X * W_shared_gate_up^T'}
+    moe.shared_activation: {kind: activation, equation: 'M_s = SiLU(Clamp(G_s)) elementwise_mul Clamp(U_s)'}
+    moe.shared_down: {kind: projection, equation: 'Y_shared = M_s * W_shared_down^T'}
+    moe.combine: {kind: composition, equation: 'Delta_ffn = Y_routed + Y_shared'}
+    moe.output: {kind: boundary, equation: 'Delta_ffn := routed-plus-shared MoE output [B,T,H]'}
+
+    mtp.candidate_token_ids: {kind: boundary, equation: 'candidate_token_ids := NextN candidate ids [B,T]'}
+    mtp.candidate_embedding: {kind: embedding, equation: 'E_candidate = Embedding[candidate_token_ids]'}
+    mtp.target_hidden_state: {kind: state, equation: 'H_target := captured target-model hidden state [B,T,H]'}
+    mtp.embedding_norm: {kind: normalization, equation: 'E_norm = RMSNorm(E_candidate)'}
+    mtp.hidden_norm: {kind: normalization, equation: 'H_norm = RMSNorm(H_target)'}
+    mtp.concatenate: {kind: composition, equation: 'EH = Concat(E_norm, H_norm, axis=hidden)'}
+    mtp.eh_projection: {kind: projection, equation: 'X_nextn = EH * W_eh^T'}
+    mtp.dsa_attention: {kind: module, equation: 'X_nextn_attn = DSA(X_nextn) without mHC'}
+    mtp.moe: {kind: module, equation: 'X_nextn_out = RoutedSharedMoE(X_nextn_attn)'}
+    mtp.shared_head_norm: {kind: normalization, equation: 'Y_nextn = RMSNorm(X_nextn_out)'}
+    mtp.lm_head: {kind: projection, equation: 'draft_logits = Y_nextn * W_vocab^T'}
+    mtp.draft_logits: {kind: boundary, equation: 'draft_logits := NextN vocabulary logits [B,T,V]'}
+
+boundary_contracts:
+  - {parent_node: top.vision_frontend, boundary_mode: exact_node, child_view: vision_frontend, input_shape: "[Patches,3,2,14,14] + grid", output_shape: "[M,H]"}
+  - {parent_node: top.decoder_stack, boundary_mode: exact_node, child_view: decoder_stack, input_shape: "[B,T,R,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: top.mtp_extension, boundary_mode: external_entry, child_view: mtp_extension, input_shape: "candidate ids [B,T] + target hidden [B,T,H]", output_shape: "[B,T,V]"}
+  - {parent_node: vision_frontend.vision_blocks, boundary_mode: exact_node, child_view: vision_block, input_shape: "[Patches,Hv]", output_shape: "[Patches,Hv]"}
+  - {parent_node: decoder_stack.attn_mhc_pre, scope_nodes: [decoder_stack.attn_mhc_pre, decoder_stack.attn_mhc_combine], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "residual streams [B,T,R,H] + attention delta [B,T,H]", handoff_shape: "collapsed attention input [B,T,H] -> attention delta [B,T,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: decoder_stack.linear_attention, boundary_mode: exact_node, child_view: linear_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: decoder_stack.dsa_attention, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: decoder_stack.ffn_mhc_pre, scope_nodes: [decoder_stack.ffn_mhc_pre, decoder_stack.ffn_mhc_combine], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "residual streams [B,T,R,H] + feed-forward delta [B,T,H]", handoff_shape: "collapsed feed-forward input [B,T,H] -> feed-forward delta [B,T,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: decoder_stack.dense_mlp, boundary_mode: exact_node, child_view: dense_mlp, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: decoder_stack.moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: mtp_extension.nextn_dsa, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: mtp_extension.nextn_moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+
+views:
+  top:
+    title: GLM-5.3-Flash stable multimodal model path
+    nodes:
+      - id: token_ids
+        label: "token ids\n[B,T]"
+        shape: io
+        semantic_op: model.input_ids
+      - id: embedding
+        label: "token embedding\n[V,H]"
+        shape: gemm
+        semantic_op: model.embedding
+      - id: vision_inputs
+        label: "optional image/video pixels + grid metadata"
+        shape: io
+        semantic_op: model.optional_vision_inputs
+      - id: vision_frontend
+        label: "optional 24-block vision frontend\nfeatures [M,H]"
+        shape: block
+        semantic_op: model.vision_frontend
+        drill: vision_frontend
+      - id: multimodal_injection
+        label: "masked feature injection at media placeholders"
+        shape: elem
+        semantic_op: model.multimodal_injection
+      - id: hc_expand
+        label: "replicate embedding into four mHC streams\n[B,T,R,H]"
+        shape: elem
+        semantic_op: model.hc_expand
+      - id: decoder_stack
+        label: "45-layer hybrid decoder\n34 KDA + 11 DSA"
+        shape: block
+        semantic_op: model.decoder_stack
+        drill: decoder_stack
+      - id: hc_contract
+        label: "unweighted mean across four streams\n[B,T,H]"
+        shape: elem
+        semantic_op: model.hc_contract
+      - id: final_norm
+        label: "final RMSNorm\nH=4096"
+        shape: norm
+        semantic_op: model.final_norm
+      - id: lm_head
+        label: "language-model head\n[H,V]"
+        shape: gemm
+        semantic_op: model.lm_head
+      - id: logits
+        label: "full-vocabulary logits\n[B,T,V]"
+        shape: io
+        semantic_op: model.logits
+      - id: mtp_extension
+        label: "optional one-layer NextN head\nnot selected in Stage 1"
+        shape: block
+        semantic_op: model.optional_nextn_extension
+        drill: mtp_extension
+    edges:
+      - {from: token_ids, to: embedding, identity: token_ids, shape: "[B,T]", layout: batch_sequence, dtype: int32, state: ephemeral_input}
+      - {from: embedding, to: multimodal_injection, identity: token_embeddings, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: checkpoint_embedding_dtype, state: ephemeral_activation}
+      - {from: vision_inputs, to: vision_frontend, kind: conditional, label: media_present, identity: pixel_values_and_grid, shape: "[Patches,3,2,14,14] + grid", layout: packed_media_patches, dtype: input_float, state: ephemeral_input}
+      - {from: vision_frontend, to: multimodal_injection, kind: conditional, label: media_present, identity: media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: checkpoint_vision_dtype, state: ephemeral_activation}
+      - {from: multimodal_injection, to: hc_expand, identity: text_or_media_embeddings, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: hc_expand, to: decoder_stack, identity: hidden_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: decoder_stack, to: hc_contract, identity: final_hidden_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: hc_contract, to: final_norm, identity: contracted_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: final_norm, to: lm_head, identity: normalized_final_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: lm_head, to: logits, identity: vocabulary_logits, shape: "[B,T,V]", layout: batch_sequence_vocabulary, dtype: logits_dtype, state: ephemeral_output}
+      - {from: decoder_stack, to: mtp_extension, kind: dashed, label: optional_generation_mode, identity: target_hidden_state, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: captured_optional_state}
+
+  vision_frontend:
+    title: Optional native vision encoder and text-width merger
+    nodes:
+      - id: vision_in
+        label: "packed image/video patches + grid"
+        shape: io
+        semantic_op: vision.input
+        boundary_direction: input
+      - id: patch_projection
+        label: "3D patch projection\n3×2×14×14 → Hv"
+        shape: gemm
+        semantic_op: vision.patch_projection
+      - id: position_encoding
+        label: "2D rotary position assignment from grid"
+        shape: elem
+        semantic_op: vision.position_encoding
+      - id: vision_blocks
+        label: "repeat 24 vision attention/MLP blocks"
+        shape: block
+        semantic_op: vision.block_stack
+        drill: vision_block
+      - id: post_norm
+        label: "vision post RMSNorm"
+        shape: norm
+        semantic_op: vision.post_norm
+      - id: spatial_group
+        label: "group each 2×2 spatial neighborhood"
+        shape: elem
+        semantic_op: vision.spatial_group
+      - id: spatial_downsample
+        label: "learned 2×2 spatial downsample\n4Hv → H"
+        shape: gemm
+        semantic_op: vision.spatial_downsample
+      - id: merger
+        label: "projection norm + clamped SwiGLU merger\nH → 10240 → H"
+        shape: block
+        semantic_op: vision.merger
+      - id: vision_out
+        label: "media features\n[M,H]"
+        shape: io
+        semantic_op: vision.output
+        boundary_direction: output
+    edges:
+      - {from: vision_in, to: patch_projection, identity: packed_pixel_patches, shape: "[Patches,3,2,14,14]", layout: packed_patch_channels_time_height_width, dtype: input_float, state: ephemeral_input}
+      - {from: patch_projection, to: position_encoding, identity: patch_embeddings, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: position_encoding, to: vision_blocks, identity: positioned_patch_embeddings, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: vision_blocks, to: post_norm, identity: encoded_patch_embeddings, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: post_norm, to: spatial_group, identity: normalized_patch_embeddings, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: spatial_group, to: spatial_downsample, identity: grouped_patch_embeddings, shape: "[M,4Hv]", layout: merged_patch_group_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: spatial_downsample, to: merger, identity: downsampled_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: merger, to: vision_out, identity: media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
+  vision_block:
+    title: One semantic vision transformer block
+    nodes:
+      - id: block_in
+        label: "patch states\n[Patches,Hv]"
+        shape: io
+        semantic_op: vision_block.input
+        boundary_direction: input
+      - id: norm1
+        label: "pre-attention RMSNorm"
+        shape: norm
+        semantic_op: vision_block.norm1
+      - id: qkv_projection
+        label: "Q/K/V projection\nHv → 3Hv"
+        shape: gemm
+        semantic_op: vision_block.qkv_projection
+      - id: qk_norm_rotary
+        label: "per-head Q/K norm + 2D rotary"
+        shape: norm
+        semantic_op: vision_block.qk_norm_rotary
+      - id: attention
+        label: "full vision self-attention"
+        shape: attn
+        semantic_op: vision_block.attention
+      - id: attention_output
+        label: "attention output projection"
+        shape: gemm
+        semantic_op: vision_block.attention_output
+      - id: attention_residual
+        label: "attention residual add"
+        shape: elem
+        semantic_op: vision_block.attention_residual
+      - id: norm2
+        label: "pre-MLP RMSNorm"
+        shape: norm
+        semantic_op: vision_block.norm2
+      - id: gate_up_projection
+        label: "gate/up projection\nHv → 2×4096"
+        shape: gemm
+        semantic_op: vision_block.gate_up_projection
+      - id: clamped_swiglu
+        label: "clamped SwiGLU\nlimit=10"
+        shape: elem
+        semantic_op: vision_block.clamped_swiglu
+      - id: down_projection
+        label: "down projection\n4096 → Hv"
+        shape: gemm
+        semantic_op: vision_block.down_projection
+      - id: block_out
+        label: "updated patch states\n[Patches,Hv]"
+        shape: io
+        semantic_op: vision_block.output
+        boundary_direction: output
+    edges:
+      - {from: block_in, to: norm1, identity: vision_residual, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: residual_activation}
+      - {from: norm1, to: qkv_projection, identity: normalized_patch_states, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: qkv_projection, to: qk_norm_rotary, identity: vision_qkv, shape: "[Patches,3,16,Hv/16]", layout: packed_patch_qkv_head_dim, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: qk_norm_rotary, to: attention, identity: positioned_vision_qkv, shape: "[Patches,3,16,Hv/16]", layout: packed_patch_qkv_head_dim, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: attention, to: attention_output, identity: vision_context, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: attention_output, to: attention_residual, identity: vision_attention_delta, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: block_in, to: attention_residual, kind: residual, identity: vision_attention_residual, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: residual_activation}
+      - {from: attention_residual, to: norm2, identity: post_attention_patch_states, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: residual_activation}
+      - {from: norm2, to: gate_up_projection, identity: normalized_post_attention_states, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: gate_up_projection, to: clamped_swiglu, identity: vision_gate_up, shape: "[Patches,2,4096]", layout: packed_patch_gate_up_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: clamped_swiglu, to: down_projection, identity: vision_mlp_intermediate, shape: "[Patches,4096]", layout: packed_patch_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: down_projection, to: block_out, identity: vision_mlp_delta, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: attention_residual, to: block_out, kind: residual, identity: vision_mlp_residual, shape: "[Patches,Hv]", layout: packed_patch_hidden, dtype: vision_activation_dtype, state: residual_activation}
+
+  decoder_stack:
+    title: GLM-5.3-Flash hybrid decoder schedule with mHC at both sublayers
+    nodes:
+      - id: stack_in
+        label: "hidden streams\n[B,T,R,H]"
+        shape: io
+        semantic_op: decoder_stack.input
+        boundary_direction: input
+      - id: schedule
+        label: "repeat 45 layers\nKDA,KDA,KDA,DSA"
+        shape: elem
+        semantic_op: decoder_stack.layer_schedule
+      - id: attn_mhc_pre
+        label: "attention mHC map + stream collapse"
+        shape: block
+        semantic_op: decoder.attention_mhc_pre
+        drill: mhc_transform
+      - id: input_norm
+        label: "pre-attention RMSNorm"
+        shape: norm
+        semantic_op: decoder.input_norm
+      - id: attention_schedule
+        label: "layer-conditioned attention selection"
+        shape: elem
+        semantic_op: decoder.attention_schedule
+      - id: linear_attention
+        label: "KDA recurrent linear attention\n34 layers"
+        shape: attn
+        semantic_op: decoder.linear_attention
+        drill: linear_attention
+      - id: dsa_attention
+        label: "NoPE MLA + per-layer DSA indexer\n11 layers"
+        shape: attn
+        semantic_op: decoder.dsa_attention
+        drill: dsa_attention
+      - id: attn_mhc_combine
+        label: "place attention delta + mix residual streams"
+        shape: elem
+        semantic_op: decoder.attention_mhc_combine
+      - id: ffn_mhc_pre
+        label: "feed-forward mHC map + stream collapse"
+        shape: block
+        semantic_op: decoder.ffn_mhc_pre
+        drill: mhc_transform
+      - id: post_attention_norm
+        label: "pre-feed-forward RMSNorm"
+        shape: norm
+        semantic_op: decoder.post_attention_norm
+      - id: feed_forward_schedule
+        label: "layer-conditioned dense/MoE selection"
+        shape: elem
+        semantic_op: decoder.feed_forward_schedule
+      - id: dense_mlp
+        label: "dense clamped SwiGLU\nlayers 0–2"
+        shape: block
+        semantic_op: decoder.dense_mlp
+        drill: dense_mlp
+      - id: moe
+        label: "288 routed + one shared expert\nlayers 3–44"
+        shape: moe
+        semantic_op: decoder.moe
+        drill: moe
+      - id: ffn_mhc_combine
+        label: "place FFN delta + mix residual streams"
+        shape: elem
+        semantic_op: decoder.ffn_mhc_combine
+      - id: stack_out
+        label: "hidden streams\n[B,T,R,H]"
+        shape: io
+        semantic_op: decoder_stack.output
+        boundary_direction: output
+    edges:
+      - {from: stack_in, to: schedule, identity: layer_input_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: schedule, to: attn_mhc_pre, identity: scheduled_attention_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: attn_mhc_pre, to: input_norm, identity: collapsed_attention_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: input_norm, to: attention_schedule, identity: normalized_attention_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_schedule, to: linear_attention, kind: conditional, label: "layers 0,1,2 mod 4 plus layer 44", identity: kda_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_schedule, to: dsa_attention, kind: conditional, label: "layers 3 mod 4", identity: dsa_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: linear_attention, to: attn_mhc_combine, identity: attention_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dsa_attention, to: attn_mhc_combine, identity: attention_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_mhc_pre, to: attn_mhc_combine, kind: residual, label: post_and_comb, identity: attention_mhc_coefficients_and_residual_streams, shape: "post [B,T,R], comb [B,T,R,R], streams [B,T,R,H]", layout: batch_sequence_mhc_coefficients_and_stream_hidden, dtype: coefficient_fp32_and_model_activation, state: residual_stream_state}
+      - {from: attn_mhc_combine, to: ffn_mhc_pre, identity: post_attention_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: ffn_mhc_pre, to: post_attention_norm, identity: collapsed_ffn_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: post_attention_norm, to: feed_forward_schedule, identity: normalized_ffn_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: feed_forward_schedule, to: dense_mlp, kind: conditional, label: "layers 0–2", identity: dense_mlp_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: feed_forward_schedule, to: moe, kind: conditional, label: "layers 3–44", identity: moe_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dense_mlp, to: ffn_mhc_combine, identity: feed_forward_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: moe, to: ffn_mhc_combine, identity: feed_forward_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ffn_mhc_pre, to: ffn_mhc_combine, kind: residual, label: post_and_comb, identity: ffn_mhc_coefficients_and_residual_streams, shape: "post [B,T,R], comb [B,T,R,R], streams [B,T,R,H]", layout: batch_sequence_mhc_coefficients_and_stream_hidden, dtype: coefficient_fp32_and_model_activation, state: residual_stream_state}
+      - {from: ffn_mhc_combine, to: stack_out, identity: layer_output_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+
+  mhc_transform:
+    title: One mHC pre-collapse and post-sublayer stream recombination
+    nodes:
+      - id: mhc_in
+        label: "residual streams\n[B,T,R,H]"
+        shape: io
+        semantic_op: mhc.input
+        boundary_direction: input
+      - id: flatten_norm
+        label: "flatten R×H + unweighted RMSNorm in FP32"
+        shape: norm
+        semantic_op: mhc.flatten_norm
+      - id: coefficient_map
+        label: "learned map\nR·H → (2+R)R = 24"
+        shape: gemm
+        semantic_op: mhc.coefficient_map
+      - id: pre_weights
+        label: "sigmoid pre-collapse weights + ε\n[B,T,R]"
+        shape: elem
+        semantic_op: mhc.pre_weights
+      - id: post_weights
+        label: "2×sigmoid post-placement weights\n[B,T,R]"
+        shape: elem
+        semantic_op: mhc.post_weights
+      - id: combine_weights
+        label: "softmax + 20-step Sinkhorn\n[B,T,R,R]"
+        shape: elem
+        semantic_op: mhc.combine_weights
+      - id: stream_collapse
+        label: "weighted sum across streams\n[B,T,H]"
+        shape: elem
+        semantic_op: mhc.stream_collapse
+      - id: sublayer_delta
+        label: "attention or feed-forward result\n[B,T,H]"
+        shape: io
+        semantic_op: mhc.sublayer_delta
+        boundary_direction: handoff
+      - id: post_place
+        label: "place sublayer result into R streams"
+        shape: elem
+        semantic_op: mhc.post_place
+      - id: residual_mix
+        label: "combine transpose × residual streams"
+        shape: elem
+        semantic_op: mhc.residual_mix
+      - id: mhc_out
+        label: "updated residual streams\n[B,T,R,H]"
+        shape: io
+        semantic_op: mhc.output
+        boundary_direction: output
+    edges:
+      - {from: mhc_in, to: flatten_norm, identity: input_hidden_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: flatten_norm, to: coefficient_map, identity: normalized_flat_streams, shape: "[B,T,R*H]", layout: batch_sequence_flat_stream_hidden, dtype: fp32, state: ephemeral_activation}
+      - {from: coefficient_map, to: pre_weights, identity: pre_logits, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: coefficient_map, to: post_weights, identity: post_logits, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: coefficient_map, to: combine_weights, identity: combine_logits, shape: "[B,T,R,R]", layout: batch_sequence_output_stream_input_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: pre_weights, to: stream_collapse, identity: pre_coefficients, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: mhc_in, to: stream_collapse, identity: streams_to_collapse, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: stream_collapse, to: sublayer_delta, kind: dashed, label: module_boundary, identity: collapsed_sublayer_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: sublayer_delta, to: post_place, identity: sublayer_output_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: post_weights, to: post_place, identity: post_coefficients, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: combine_weights, to: residual_mix, identity: doubly_stochastic_combine, shape: "[B,T,R,R]", layout: batch_sequence_output_stream_input_stream, dtype: fp32, state: ephemeral_coefficient}
+      - {from: mhc_in, to: residual_mix, identity: streams_to_mix, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: post_place, to: mhc_out, identity: placed_sublayer_delta, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: residual_mix, to: mhc_out, identity: mixed_residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+
+  linear_attention:
+    title: KDA recurrent linear-attention semantics
+    nodes:
+      - id: attn_in
+        label: "normalized hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: linear_attention.input
+        boundary_direction: input
+      - id: qkv_projection
+        label: "Q/K/V projections\n64×128 each"
+        shape: gemm
+        semantic_op: linear_attention.qkv_projection
+      - id: qkv_short_conv
+        label: "independent depthwise causal conv + SiLU\nwidth=4"
+        shape: elem
+        semantic_op: linear_attention.qkv_short_conv
+      - id: qk_l2_norm
+        label: "per-head Q/K L2 normalization"
+        shape: norm
+        semantic_op: linear_attention.qk_l2_norm
+      - id: forget_projection
+        label: "low-rank forget projection + dt bias"
+        shape: gemm
+        semantic_op: linear_attention.forget_projection
+      - id: forget_decay
+        label: "negative sigmoid forget rate\nlower bound=-5"
+        shape: elem
+        semantic_op: linear_attention.forget_decay
+      - id: beta_projection
+        label: "sigmoid beta projection\nH → N=64"
+        shape: gemm
+        semantic_op: linear_attention.beta_projection
+      - id: conv_state
+        label: "Q/K/V convolution histories\nread/write"
+        shape: cache
+        semantic_op: linear_attention.conv_state
+      - id: recurrent_state
+        label: "per-head K×V recurrent matrix\nread/write"
+        shape: cache
+        semantic_op: linear_attention.recurrent_state
+      - id: recurrent_update
+        label: "decay state; beta·K·(V−state·K) update"
+        shape: attn
+        semantic_op: linear_attention.recurrent_update
+      - id: query_readout
+        label: "state·Q / sqrt(128)"
+        shape: attn
+        semantic_op: linear_attention.query_readout
+      - id: output_gate
+        label: "learned sigmoid output gate"
+        shape: gemm
+        semantic_op: linear_attention.output_gate
+      - id: gated_norm
+        label: "gated RMSNorm over readout"
+        shape: norm
+        semantic_op: linear_attention.gated_norm
+      - id: output_projection
+        label: "attention output projection\n64×128 → H"
+        shape: gemm
+        semantic_op: linear_attention.output_projection
+      - id: attn_out
+        label: "KDA output\n[B,T,H]"
+        shape: io
+        semantic_op: linear_attention.output
+        boundary_direction: output
+    edges:
+      - {from: attn_in, to: qkv_projection, identity: kda_hidden_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: qkv_projection, to: qkv_short_conv, identity: raw_qkv, shape: "[B,T,3,N,Dkda]", layout: batch_sequence_qkv_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: conv_state, to: qkv_short_conv, kind: cache_read, identity: previous_qkv_conv_history, shape: "[B,3,N,Dkda,3]", layout: batch_qkv_head_dim_history, dtype: model_activation_dtype, state: persistent_autoregressive_state}
+      - {from: qkv_short_conv, to: conv_state, kind: cache_write, identity: updated_qkv_conv_history, shape: "[B,3,N,Dkda,3]", layout: batch_qkv_head_dim_history, dtype: model_activation_dtype, state: persistent_autoregressive_state}
+      - {from: qkv_short_conv, to: qk_l2_norm, identity: convolved_qkv, shape: "[B,T,3,N,Dkda]", layout: batch_sequence_qkv_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: forget_projection, identity: forget_gate_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: forget_projection, to: forget_decay, identity: forget_logits, shape: "[B,T,N,Dkda]", layout: batch_sequence_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: beta_projection, identity: beta_gate_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: qk_l2_norm, to: recurrent_update, identity: normalized_qkv, shape: "[B,T,3,N,Dkda]", layout: batch_sequence_qkv_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: forget_decay, to: recurrent_update, identity: log_forget_decay, shape: "[B,T,N,Dkda]", layout: batch_sequence_head_dim, dtype: recurrent_compute_dtype, state: ephemeral_coefficient}
+      - {from: beta_projection, to: recurrent_update, identity: beta, shape: "[B,T,N]", layout: batch_sequence_head, dtype: model_activation_dtype, state: ephemeral_coefficient}
+      - {from: recurrent_state, to: recurrent_update, kind: cache_read, identity: previous_recurrent_matrix, shape: "[B,N,Dkda,Dkda]", layout: batch_head_key_dim_value_dim, dtype: recurrent_state_dtype, state: persistent_autoregressive_state}
+      - {from: recurrent_update, to: recurrent_state, kind: cache_write, identity: updated_recurrent_matrix, shape: "[B,N,Dkda,Dkda]", layout: batch_head_key_dim_value_dim, dtype: recurrent_state_dtype, state: persistent_autoregressive_state}
+      - {from: recurrent_update, to: query_readout, identity: updated_state_and_query, shape: "state [B,N,Dkda,Dkda], Q [B,T,N,Dkda]", layout: state_plus_batch_sequence_head_dim, dtype: recurrent_compute_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: output_gate, identity: output_gate_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: query_readout, to: gated_norm, identity: kda_readout, shape: "[B,T,N,Dkda]", layout: batch_sequence_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: output_gate, to: gated_norm, identity: output_gate, shape: "[B,T,N,Dkda]", layout: batch_sequence_head_dim, dtype: model_activation_dtype, state: ephemeral_coefficient}
+      - {from: gated_norm, to: output_projection, identity: normalized_gated_readout, shape: "[B,T,N,Dkda]", layout: batch_sequence_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: output_projection, to: attn_out, identity: kda_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
+  dsa_attention:
+    title: NoPE multi-head latent attention with a full per-layer DSA indexer
+    nodes:
+      - id: attn_in
+        label: "normalized hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: dsa_attention.input
+        boundary_direction: input
+      - id: q_a_projection
+        label: "query latent projection\nH → Cq=1536"
+        shape: gemm
+        semantic_op: dsa_attention.q_a_projection
+      - id: q_a_norm
+        label: "query-latent RMSNorm"
+        shape: norm
+        semantic_op: dsa_attention.q_a_norm
+      - id: q_b_projection
+        label: "query expansion\n64×256 NoPE"
+        shape: gemm
+        semantic_op: dsa_attention.q_b_projection
+      - id: kv_a_projection
+        label: "KV latent projection\nH → Ckv=512"
+        shape: gemm
+        semantic_op: dsa_attention.kv_a_projection
+      - id: kv_a_norm
+        label: "KV-latent RMSNorm"
+        shape: norm
+        semantic_op: dsa_attention.kv_a_norm
+      - id: latent_kv_cache
+        label: "latent KV cache\nread/write"
+        shape: cache
+        semantic_op: dsa_attention.latent_kv_cache
+      - id: latent_kv_reconstruction
+        label: "latent K/V expansion\n64×(256+256); may be absorbed"
+        shape: gemm
+        semantic_op: dsa_attention.latent_kv_reconstruction
+      - id: index_q_projection
+        label: "index query projection\n32×128"
+        shape: gemm
+        semantic_op: dsa_attention.index_q_projection
+      - id: index_k_projection
+        label: "index key projection + LayerNorm\nH → 128"
+        shape: gemm
+        semantic_op: dsa_attention.index_k_projection
+      - id: index_weight_projection
+        label: "per-index-head score weights\nH → 32"
+        shape: gemm
+        semantic_op: dsa_attention.index_weight_projection
+      - id: key_pool_compression
+        label: "learned four-token key pooling + positional embedding"
+        shape: elem
+        semantic_op: dsa_attention.key_pool_compression
+      - id: index_k_cache
+        label: "compressed index-key cache\nread/write"
+        shape: cache
+        semantic_op: dsa_attention.index_k_cache
+      - id: index_logits
+        label: "ReLU index scores + per-head weighting"
+        shape: attn
+        semantic_op: dsa_attention.index_logits
+      - id: top_pool_selection
+        label: "top 512 compressed pools"
+        shape: elem
+        semantic_op: dsa_attention.top_pool_selection
+      - id: token_expansion
+        label: "expand pools to 2048 token positions + incomplete tail"
+        shape: elem
+        semantic_op: dsa_attention.token_expansion
+      - id: selected_indices
+        label: "selected KV token indices"
+        shape: cache
+        semantic_op: dsa_attention.selected_indices
+      - id: sparse_mla_core
+        label: "sparse MLA over selected KV positions"
+        shape: attn
+        semantic_op: dsa_attention.sparse_mla_core
+      - id: output_projection
+        label: "attention output projection\n64×256 → H"
+        shape: gemm
+        semantic_op: dsa_attention.output_projection
+      - id: attn_out
+        label: "DSA output\n[B,T,H]"
+        shape: io
+        semantic_op: dsa_attention.output
+        boundary_direction: output
+    edges:
+      - {from: attn_in, to: q_a_projection, identity: dsa_hidden_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a_projection, to: q_a_norm, identity: query_latent, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a_norm, to: q_b_projection, identity: normalized_query_latent, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_b_projection, to: sparse_mla_core, identity: nope_queries, shape: "[B,T,N,Dqk]", layout: batch_sequence_head_nope_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: kv_a_projection, identity: kv_latent_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: kv_a_projection, to: kv_a_norm, identity: kv_latent, shape: "[B,T,Ckv]", layout: batch_sequence_kv_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: kv_a_norm, to: latent_kv_cache, kind: cache_write, identity: normalized_kv_latent, shape: "[B,T,Ckv]", layout: batch_sequence_kv_latent, dtype: runtime_kv_cache_dtype, state: persistent_autoregressive_state}
+      - {from: latent_kv_cache, to: latent_kv_reconstruction, kind: cache_read, identity: cached_kv_latent, shape: "[B,S,Ckv]", layout: batch_cached_sequence_kv_latent, dtype: runtime_kv_cache_dtype, state: persistent_autoregressive_state}
+      - {from: latent_kv_reconstruction, to: sparse_mla_core, identity: reconstructed_keys_values, shape: "[B,S,N,Dqk+Dv]", layout: batch_cached_sequence_head_key_value_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a_projection, to: index_q_projection, identity: raw_query_latent_for_index, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: index_k_projection, identity: index_key_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: index_weight_projection, identity: index_weight_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: index_k_projection, to: key_pool_compression, identity: token_index_keys, shape: "[B,T,Di]", layout: batch_sequence_index_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: index_weight_projection, to: key_pool_compression, identity: pool_gates, shape: "[B,T,Di]", layout: batch_sequence_index_dim, dtype: model_activation_dtype, state: ephemeral_coefficient}
+      - {from: key_pool_compression, to: index_k_cache, kind: cache_write, identity: compressed_index_keys, shape: "[B,ceil(T/P),Di]", layout: batch_index_pool_index_dim, dtype: runtime_index_cache_dtype, state: persistent_autoregressive_state}
+      - {from: index_k_cache, to: index_logits, kind: cache_read, identity: cached_compressed_index_keys, shape: "[B,ceil(S/P),Di]", layout: batch_cached_index_pool_index_dim, dtype: runtime_index_cache_dtype, state: persistent_autoregressive_state}
+      - {from: index_q_projection, to: index_logits, identity: index_queries, shape: "[B,T,Qi,Di]", layout: batch_sequence_index_head_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: index_weight_projection, to: index_logits, identity: index_head_weights, shape: "[B,T,Qi]", layout: batch_sequence_index_head, dtype: model_activation_dtype, state: ephemeral_coefficient}
+      - {from: index_logits, to: top_pool_selection, identity: weighted_index_scores, shape: "[B,T,ceil(S/P)]", layout: batch_sequence_index_pool, dtype: score_dtype, state: ephemeral_activation}
+      - {from: top_pool_selection, to: token_expansion, identity: selected_pool_indices, shape: "[B,T,Kp]", layout: batch_sequence_selected_pool, dtype: int32, state: ephemeral_selection}
+      - {from: token_expansion, to: selected_indices, identity: selected_token_indices, shape: "[B,T,Ki+tail<=3]", layout: batch_sequence_selected_token, dtype: int32, state: ephemeral_selection}
+      - {from: selected_indices, to: sparse_mla_core, kind: cache_read, identity: selected_token_indices, shape: "[B,T,Ki+tail<=3]", layout: batch_sequence_selected_token, dtype: int32, state: per_invocation_selection_state}
+      - {from: sparse_mla_core, to: output_projection, identity: sparse_attention_context, shape: "[B,T,N,Dv]", layout: batch_sequence_head_value_dim, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: output_projection, to: attn_out, identity: dsa_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
+  dense_mlp:
+    title: Dense clamped-SwiGLU feed-forward semantics
+    nodes:
+      - id: mlp_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: dense_mlp.input
+        boundary_direction: input
+      - id: gate_up_projection
+        label: "gate/up projection\nH → 2×12288"
+        shape: gemm
+        semantic_op: dense_mlp.gate_up_projection
+      - id: clamped_swiglu
+        label: "SiLU(min(gate,10)) × clamp(up,-10,10)"
+        shape: elem
+        semantic_op: dense_mlp.clamped_swiglu
+      - id: down_projection
+        label: "down projection\n12288 → H"
+        shape: gemm
+        semantic_op: dense_mlp.down_projection
+      - id: mlp_out
+        label: "dense MLP output\n[B,T,H]"
+        shape: io
+        semantic_op: dense_mlp.output
+        boundary_direction: output
+    edges:
+      - {from: mlp_in, to: gate_up_projection, identity: dense_mlp_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: gate_up_projection, to: clamped_swiglu, identity: dense_gate_up, shape: "[B,T,2,12288]", layout: batch_sequence_gate_up_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: clamped_swiglu, to: down_projection, identity: dense_mlp_intermediate, shape: "[B,T,12288]", layout: batch_sequence_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: down_projection, to: mlp_out, identity: dense_mlp_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
+  moe:
+    title: Corrected sigmoid top-8 routed plus shared-expert MoE
+    nodes:
+      - id: moe_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: moe.input
+        boundary_direction: input
+      - id: router
+        label: "FP32 sigmoid router\nH → E=288"
+        shape: gemm
+        semantic_op: moe.router
+      - id: correction_bias
+        label: "selection-only expert correction bias"
+        shape: elem
+        semantic_op: moe.correction_bias
+      - id: topk
+        label: "top-8 selection; renormalize; scale=2.5"
+        shape: elem
+        semantic_op: moe.topk
+      - id: dispatch
+        label: "token-to-expert dispatch"
+        shape: elem
+        semantic_op: moe.dispatch
+      - id: routed_gate_up
+        label: "288 routed expert gate/up projections\nH → 2×2048"
+        shape: moe
+        semantic_op: moe.routed_gate_up
+      - id: routed_activation
+        label: "routed clamped SwiGLU"
+        shape: elem
+        semantic_op: moe.routed_activation
+      - id: routed_down
+        label: "routed expert down projections\n2048 → H"
+        shape: moe
+        semantic_op: moe.routed_down
+      - id: routed_weighted_combine
+        label: "weighted routed-expert combine"
+        shape: elem
+        semantic_op: moe.routed_weighted_combine
+      - id: shared_gate_up
+        label: "shared expert gate/up projection\nH → 2×2048"
+        shape: gemm
+        semantic_op: moe.shared_gate_up
+      - id: shared_activation
+        label: "shared clamped SwiGLU"
+        shape: elem
+        semantic_op: moe.shared_activation
+      - id: shared_down
+        label: "shared expert down projection\n2048 → H"
+        shape: gemm
+        semantic_op: moe.shared_down
+      - id: combine
+        label: "routed + shared output sum"
+        shape: elem
+        semantic_op: moe.combine
+      - id: moe_out
+        label: "MoE output\n[B,T,H]"
+        shape: io
+        semantic_op: moe.output
+        boundary_direction: output
+    edges:
+      - {from: moe_in, to: router, identity: moe_router_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: router, to: correction_bias, identity: sigmoid_router_probabilities, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: correction_bias, to: topk, identity: corrected_selection_scores, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: router, to: topk, kind: dashed, label: uncorrected_weights, identity: uncorrected_router_probabilities, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: topk, to: dispatch, identity: selected_experts_and_weights, shape: "[B,T,K] ids + weights", layout: batch_sequence_selected_expert, dtype: int32_and_fp32, state: ephemeral_selection}
+      - {from: moe_in, to: dispatch, identity: tokens_to_dispatch, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dispatch, to: routed_gate_up, identity: expert_grouped_tokens, shape: "[Tokens_per_expert,H]", layout: expert_grouped_token_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_gate_up, to: routed_activation, identity: routed_gate_up, shape: "[Dispatched,2,2048]", layout: dispatched_gate_up_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_activation, to: routed_down, identity: routed_intermediate, shape: "[Dispatched,2048]", layout: dispatched_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_down, to: routed_weighted_combine, identity: routed_expert_outputs, shape: "[Dispatched,H]", layout: dispatched_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: topk, to: routed_weighted_combine, kind: dashed, label: routing_weights, identity: selected_expert_weights, shape: "[B,T,K]", layout: batch_sequence_selected_expert, dtype: fp32, state: ephemeral_coefficient}
+      - {from: moe_in, to: shared_gate_up, identity: shared_expert_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_gate_up, to: shared_activation, identity: shared_gate_up, shape: "[B,T,2,2048]", layout: batch_sequence_gate_up_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_activation, to: shared_down, identity: shared_intermediate, shape: "[B,T,2048]", layout: batch_sequence_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_weighted_combine, to: combine, identity: routed_moe_result, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_down, to: combine, identity: shared_moe_result, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: combine, to: moe_out, identity: moe_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
+  mtp_extension:
+    title: Optional single-layer NextN extension retained outside the Stage-1 path
+    nodes:
+      - id: candidate_token_ids
+        label: "candidate token ids"
+        shape: io
+        semantic_op: mtp.candidate_token_ids
+        boundary_direction: input
+      - id: candidate_embedding
+        label: "candidate token embedding"
+        shape: gemm
+        semantic_op: mtp.candidate_embedding
+      - id: target_hidden_state
+        label: "captured target hidden state"
+        shape: cache
+        semantic_op: mtp.target_hidden_state
+        boundary_direction: input
+      - id: embedding_norm
+        label: "candidate embedding RMSNorm"
+        shape: norm
+        semantic_op: mtp.embedding_norm
+      - id: hidden_norm
+        label: "target hidden RMSNorm"
+        shape: norm
+        semantic_op: mtp.hidden_norm
+      - id: concatenate
+        label: "concatenate normalized states"
+        shape: elem
+        semantic_op: mtp.concatenate
+      - id: eh_projection
+        label: "embedding-hidden projection\n2H → H"
+        shape: gemm
+        semantic_op: mtp.eh_projection
+      - id: nextn_dsa
+        label: "one non-mHC DSA block"
+        shape: attn
+        semantic_op: mtp.dsa_attention
+        drill: dsa_attention
+      - id: nextn_moe
+        label: "one routed/shared MoE block"
+        shape: moe
+        semantic_op: mtp.moe
+        drill: moe
+      - id: shared_head_norm
+        label: "shared-head RMSNorm"
+        shape: norm
+        semantic_op: mtp.shared_head_norm
+      - id: nextn_lm_head
+        label: "shared language-model head"
+        shape: gemm
+        semantic_op: mtp.lm_head
+      - id: draft_logits
+        label: "draft logits\n[B,T,V]"
+        shape: io
+        semantic_op: mtp.draft_logits
+        boundary_direction: output
+    edges:
+      - {from: candidate_token_ids, to: candidate_embedding, identity: candidate_token_ids, shape: "[B,T]", layout: batch_sequence, dtype: int32, state: ephemeral_input}
+      - {from: candidate_embedding, to: embedding_norm, identity: candidate_embedding, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: target_hidden_state, to: hidden_norm, identity: captured_target_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: captured_optional_state}
+      - {from: embedding_norm, to: concatenate, identity: normalized_candidate_embedding, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: hidden_norm, to: concatenate, identity: normalized_target_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: concatenate, to: eh_projection, identity: embedding_hidden_concat, shape: "[B,T,2H]", layout: batch_sequence_concatenated_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: eh_projection, to: nextn_dsa, identity: nextn_decoder_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: nextn_dsa, to: nextn_moe, identity: nextn_post_attention_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: nextn_moe, to: shared_head_norm, identity: nextn_decoder_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_head_norm, to: nextn_lm_head, identity: normalized_nextn_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: nextn_lm_head, to: draft_logits, identity: nextn_draft_logits, shape: "[B,T,V]", layout: batch_sequence_vocabulary, dtype: logits_dtype, state: ephemeral_output}

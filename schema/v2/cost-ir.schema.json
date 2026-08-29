@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cost-ir.schema.json",
+  "title": "Framework-independent operator cost contract",
+  "description": "Derived from Model and Execution IR. It contains semantic work and resource demand, never framework classes or runtime kernel names.",
+  "type": "object",
+  "required": ["schema_version", "target", "physical_model", "operator_family"],
+  "properties": {
+    "schema_version": {"const": "cost-ir.v1"},
+    "target": {"type": "string"},
+    "physical_model": {"type": "string"},
+    "operator_family": {"type": "string"},
+    "problem": {"type": "object"},
+    "resources": {
+      "type": "object",
+      "properties": {
+        "useful_ops": {"type": "number", "minimum": 0},
+        "compulsory_hbm_bytes": {"type": "number", "minimum": 0},
+        "physical_components_ms": {
+          "type": "object",
+          "additionalProperties": {"type": "number", "minimum": 0}
+        },
+        "transition_plan": {"$ref": "transition-plan.schema.json"}
+      },
+      "additionalProperties": true
+    },
+    "repetitions": {"type": "number", "exclusiveMinimum": 0},
+    "members": {"type": "array", "items": {"type": "string"}},
+    "scale": {"type": "number", "exclusiveMinimum": 0},
+    "assumptions": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

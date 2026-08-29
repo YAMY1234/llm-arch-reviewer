@@ -1,0 +1,499 @@
+schema_version: profile.v2
+profile_id: glm52_tp8_sglang_cg_decode_bs256_8k1k
+label: GB300 · sglang · pure TP8 · CUDA Graph decode · BS256 · 8k→1k
+model_id: glm52
+execution_path_id: tp8
+implementation_id: sglang_fdebc938_dsa
+variant_id: cg_decode_bs256_8k1k
+phase: decode
+generation_mode: autoregressive
+entry_view: top
+execution_parameters:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 2
+  cluster: CMH
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 256
+  concurrency: 256
+  warmup_requests: 768
+  formal_requests: 256
+  request_trajectory:
+  - 1
+  - 16
+  - 64
+  - 256
+  prompt_source: deterministic_random_token_ids
+  prompt_seed: 0
+  ignore_eos: true
+  prefix_cache_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+profiler:
+  type: nsight_systems
+  representative_rank: 0
+  cuda_graph_enabled: true
+  with_stack: false
+  selected_runtime_coordinate:
+    graph: true
+    native_batch: 17213
+    queue: 0
+    running: 256
+    scheduler_evidence: preceding_sample_within_decode_log_interval
+    scheduler_log_distance: 1
+    target_native_batch: 17214
+    token: 2244608
+  activity_boundary:
+    captured_executor_steps: 1
+    method: cudaProfilerApi_capture_range
+  gpu_metric_semantics: same-rank active interval union per selected step
+evidence:
+  job_id: '3267962'
+  source_commit: fdebc938f7f4d16fe6b9f55dcd9a767cf0899ea1
+  model_revision: aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa
+  container: lmsysorg/sglang:v0.5.16-cu130
+  validation_file: selected-rank-validation.json
+  validation_sha256: 32edc546c485de039c220888f1751afc3b8838e716d21ef46702cdcfecc57b8d
+  rank_rollup_file: rank-rollup.json
+  rank_rollup_sha256: 27219bd52d96d1a68b40c212f8a3ae2ec94be1902a39451aadab7eec0b7a5010
+  rank_aggregation_policy: critical_rank_max_elapsed_among_full_step_ranks_no_cross_rank_sum
+  validated_rank_count: 2
+  full_step_rank_count: 2
+  reference_rank: 0
+  raw_trace_sha256: 9546a4153334508fca98dfdd23577253c1dd30f56ea6a2485bf3520ad930b723
+  eager_mapping_sha256: fc24b5c44eb906688881bbda9544b5ad28ac70397c702156729f4d628517cbd3
+  mapping_policy: 78-layer hard-anchor bounded exact/normalized sequence and occurrence
+    order, eager-unique identity, reviewed GLM semantic signatures, and eager-validated
+    collective order; no greedy matching
+  mapped_kernel_count_ratio: 0.50969163
+  mapped_kernel_duration_ratio: 0.79363741
+  timing:
+    elapsed_ms: 29.197867
+    active_gpu_ms: 27.242465
+    gpu_residency_ms: 31.11133
+    device_gap_ms: 1.955402
+    gpu_overlap_ms: 3.868865
+    semantics: selected reference-rank executor-step GPU activity envelope
+timeline:
+  schema_version: timeline.v1
+  artifact: decode_bs256.timeline.json.gz
+  sha256: 662a79bc991a722fcc43c2d289e3725991df186eb70b2d52ff4a94732210856c
+  reference_rank: 0
+  step_count: 1
+  event_count: 2275
+  raw_trace_file: nvl72d015-T07_agg_w0_profile.nsys-rep
+node_states:
+  top.token_ids:
+    status: structural
+    label: input tensor boundary
+  top.decoder_stack:
+    status: structural
+    label: semantic container; timing is shown in drilled decoder nodes
+  top.logits:
+    status: structural
+    label: output tensor/materialization boundary
+  stack.stack_in:
+    status: structural
+    label: tensor boundary
+  stack.schedule:
+    status: structural
+    label: layer schedule control; no standalone GPU interval
+  stack.dsa_attention:
+    status: structural
+    label: semantic container; timing is shown in drilled attention nodes
+  stack.feed_forward_schedule:
+    status: structural
+    label: layer-conditioned control; no standalone GPU interval
+  stack.dense_mlp:
+    status: structural
+    label: semantic container; timing is shown in drilled dense-MLP nodes
+  stack.moe:
+    status: structural
+    label: semantic container; timing is shown in drilled MoE nodes
+  stack.stack_out:
+    status: structural
+    label: tensor boundary
+  dsa_attention.attn_in:
+    status: structural
+    label: tensor boundary
+  dsa_attention.indexer_mode:
+    status: structural
+    label: owner/reuse schedule control; no standalone GPU interval
+  dsa_attention.attn_out:
+    status: structural
+    label: tensor boundary
+  dense_mlp.mlp_in:
+    status: structural
+    label: tensor boundary
+  dense_mlp.mlp_out:
+    status: structural
+    label: tensor boundary
+  moe.moe_in:
+    status: structural
+    label: tensor boundary
+  moe.moe_out:
+    status: structural
+    label: tensor boundary
+  dsa_attention.index_k_cache:
+    status: state
+    label: persistent owner-layer index-K state read/write
+  dsa_attention.index_topk_state:
+    status: state
+    label: cross-layer top-k state read/write
+  stack.attention_residual:
+    status: fused
+    label: residual dataflow boundary; no independently attributable production interval
+    included_in: stack.post_attention_norm
+  stack.feed_forward_residual:
+    status: fused
+    label: residual dataflow boundary; no independently attributable production interval
+    included_in: stack.input_norm
+  dsa_attention.kv_a_projection:
+    status: fused
+    label: implementation-fused DSA latent projection interval
+    included_in: dsa_attention.q_a_projection
+  dsa_attention.kv_latent_split:
+    status: fused
+    label: implementation-fused Q/KV split and RoPE interval
+    included_in: dsa_attention.q_split_rope
+  top.mtp_extension:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_decoder:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.draft_logits:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.hidden_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.concatenate:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.shared_head_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.eh_projection:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_embedding:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.embedding_norm:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.target_hidden_state:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_token_ids:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_lm_head:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  moe.dispatch:
+    status: fused
+    label: decode token routing is fused into the routed-expert runner
+    included_in: moe.routed_experts
+  dsa_attention.kv_a_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.topk:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.q_b_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  stack.input_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.output_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.q_a_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  stack.post_attention_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.q_a_norm:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  top.lm_head:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dsa_attention.latent_kv_reconstruction:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.router:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dense_mlp.gate_up_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  moe.shared_expert_down:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+  dense_mlp.down_projection:
+    status: unmapped
+    label: semantic node executes in this phase, but its production kernels remain
+      ambiguous under fail-closed eager attribution transfer
+node_metrics:
+  dense_mlp.swiglu:
+    ms_per_iter: 0.010975
+    gpu_residency_ms_per_iter: 0.010975
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::_run_activation_inplace
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 3.658333
+      total_us_per_iter: 10.975
+      share_in_node_residency_pct: 100.0
+  dense_mlp.tp_dense_mlp_output_collective:
+    ms_per_iter: 0.044512
+    gpu_residency_ms_per_iter: 0.057344
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::flashinfer_allreduce_residual_rmsnorm
+      count: 6
+      count_per_iter: 6.0
+      avg_us: 9.557333
+      total_us_per_iter: 57.344
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_k_gate_projection:
+    ms_per_iter: 0.014528
+    gpu_residency_ms_per_iter: 0.014528
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 4.842667
+      total_us_per_iter: 14.528
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_k_norm_rope:
+    ms_per_iter: 0.065569
+    gpu_residency_ms_per_iter: 0.065569
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.index_k_norm_rope
+      count: 21
+      count_per_iter: 21.0
+      avg_us: 3.122333
+      total_us_per_iter: 65.569
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_logits:
+    ms_per_iter: 1.096804
+    gpu_residency_ms_per_iter: 1.096804
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.index_logits
+      count: 22
+      count_per_iter: 22.0
+      avg_us: 49.854727
+      total_us_per_iter: 1096.804
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_q_projection:
+    ms_per_iter: 0.073569
+    gpu_residency_ms_per_iter: 0.073569
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.index_q_projection
+      count: 21
+      count_per_iter: 21.0
+      avg_us: 3.503286
+      total_us_per_iter: 73.569
+      share_in_node_residency_pct: 100.0
+  dsa_attention.index_topk:
+    ms_per_iter: 0.273313
+    gpu_residency_ms_per_iter: 0.273313
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.index_topk
+      count: 21
+      count_per_iter: 21.0
+      avg_us: 13.014905
+      total_us_per_iter: 273.313
+      share_in_node_residency_pct: 100.0
+  dsa_attention.latent_kv_cache:
+    ms_per_iter: 0.122636
+    gpu_residency_ms_per_iter: 0.122636
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.latent_kv_cache
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 1.572256
+      total_us_per_iter: 122.636
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_split_rope:
+    ms_per_iter: 0.296219
+    gpu_residency_ms_per_iter: 0.296219
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.q_split_rope
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 3.797679
+      total_us_per_iter: 296.219
+      share_in_node_residency_pct: 100.0
+  dsa_attention.sparse_mla_core:
+    ms_per_iter: 5.298142
+    gpu_residency_ms_per_iter: 5.298142
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.sparse_mla_core
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 67.924897
+      total_us_per_iter: 5298.142
+      share_in_node_residency_pct: 100.0
+  dsa_attention.tp_attention_output_collective:
+    ms_per_iter: 1.193669
+    gpu_residency_ms_per_iter: 1.616327
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::flashinfer_allreduce_residual_rmsnorm
+      count: 156
+      count_per_iter: 156.0
+      avg_us: 10.361071
+      total_us_per_iter: 1616.327
+      share_in_node_residency_pct: 100.0
+  moe.combine:
+    ms_per_iter: 0.229503
+    gpu_residency_ms_per_iter: 0.229503
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::add_
+      count: 102
+      count_per_iter: 102.0
+      avg_us: 2.250029
+      total_us_per_iter: 229.503
+      share_in_node_residency_pct: 100.0
+  moe.routed_experts:
+    ms_per_iter: 5.220629
+    gpu_residency_ms_per_iter: 5.45519
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: moe.routed_experts
+      count: 150
+      count_per_iter: 150.0
+      avg_us: 36.367933
+      total_us_per_iter: 5455.19
+      share_in_node_residency_pct: 100.0
+  moe.routed_weighted_combine:
+    ms_per_iter: 0.498178
+    gpu_residency_ms_per_iter: 0.498178
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: moe.routed_weighted_combine
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 6.642373
+      total_us_per_iter: 498.178
+      share_in_node_residency_pct: 100.0
+  moe.shared_expert_activation:
+    ms_per_iter: 0.213655
+    gpu_residency_ms_per_iter: 0.213655
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::_run_activation_inplace
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 2.848733
+      total_us_per_iter: 213.655
+      share_in_node_residency_pct: 100.0
+  moe.shared_expert_up:
+    ms_per_iter: 0.428995
+    gpu_residency_ms_per_iter: 0.428995
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 114
+      count_per_iter: 114.0
+      avg_us: 3.763114
+      total_us_per_iter: 428.995
+      share_in_node_residency_pct: 100.0
+  moe.tp_moe_output_collective:
+    ms_per_iter: 1.088999
+    gpu_residency_ms_per_iter: 1.469448
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::flashinfer_allreduce_residual_rmsnorm
+      count: 148
+      count_per_iter: 148.0
+      avg_us: 9.650209
+      total_us_per_iter: 1428.231
+      share_in_node_residency_pct: 97.1951
+    - name: record_param_comms
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 41.217
+      total_us_per_iter: 41.217
+      share_in_node_residency_pct: 2.8049
+  top.embedding:
+    ms_per_iter: 0.002816
+    gpu_residency_ms_per_iter: 0.002816
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: top.embedding
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 2.816
+      total_us_per_iter: 2.816
+      share_in_node_residency_pct: 100.0
+  top.final_norm:
+    ms_per_iter: 0.00848
+    gpu_residency_ms_per_iter: 0.00848
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: top.final_norm
+      count: 2
+      count_per_iter: 2.0
+      avg_us: 4.24
+      total_us_per_iter: 8.48
+      share_in_node_residency_pct: 100.0
+  top.tp_embedding_output_collective:
+    ms_per_iter: 7.301955
+    gpu_residency_ms_per_iter: 7.301955
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: record_param_comms
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 7301.955
+      total_us_per_iter: 7301.955
+      share_in_node_residency_pct: 100.0
+  top.tp_logits_all_gather:
+    ms_per_iter: 0.146752
+    gpu_residency_ms_per_iter: 0.146752
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: record_param_comms
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 146.752
+      total_us_per_iter: 146.752
+      share_in_node_residency_pct: 100.0

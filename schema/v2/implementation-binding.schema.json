@@ -18,6 +18,39 @@
     },
     "container": {"type": "string"},
     "backend": {"type": "string"},
+    "binding_status": {
+      "type": "string",
+      "enum": ["draft", "validated", "unsupported"],
+      "description": "Lifecycle state. A source-derived binding remains draft until the candidate Execution IR passes the required eager semantic run."
+    },
+    "source_lock_status": {
+      "type": "string",
+      "enum": ["provisional", "runtime_verified", "mismatch"],
+      "description": "Whether the running container was verified against source_commit."
+    },
+    "execution_validation": {
+      "type": "object",
+      "required": ["status", "execution_fingerprint", "required_phases", "cuda_graph_enabled"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "pass", "fail", "unsupported"]
+        },
+        "execution_fingerprint": {
+          "type": "string",
+          "pattern": "^exec_[0-9a-f]{16}$"
+        },
+        "required_phases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["prefill", "decode"]}
+        },
+        "cuda_graph_enabled": {"const": false},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
+      }
+    },
     "extends": {
       "type": "string",
       "pattern": "^[a-zA-Z0-9_.-]+$",

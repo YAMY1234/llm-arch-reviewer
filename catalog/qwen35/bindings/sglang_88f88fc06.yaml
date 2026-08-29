@@ -1,0 +1,270 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_88f88fc06
+label: SGLang 88f88fc06
+model_id: qwen35
+execution_path_id: tp_only
+source_repo: https://github.com/YAMY1234/sglang
+source_commit: 88f88fc0620fe4d32afbcbb3225ee64928f5e509
+container: v0.5.10.post1-cu130
+backend: sglang
+
+node_bindings:
+  top.embedding:
+    symbols:
+      - Qwen3_5MoeModel.embed_tokens
+      - VocabParallelEmbedding
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5MoeModel.embed_tokens
+        display: qwen3_5.py — token embedding
+
+  top.decoder_stack:
+    symbols:
+      - Qwen3_5MoeModel.layers
+      - Qwen3_5LinearDecoderLayer
+      - Qwen3_5AttentionDecoderLayer
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5MoeModel.layers
+        display: qwen3_5.py — decoder layer construction
+
+  top.final_norm:
+    symbols:
+      - Qwen3_5MoeModel.norm
+      - GemmaRMSNorm
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5MoeModel.norm
+        display: qwen3_5.py — final RMSNorm
+
+  top.lm_head:
+    symbols:
+      - Qwen3_5MoeForCausalLM.lm_head
+      - ParallelLMHead
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5MoeForCausalLM.lm_head
+        display: qwen3_5.py — language-model head
+
+  stack.schedule:
+    symbols:
+      - Qwen3_5Config.layers_block_type
+      - Qwen3_5MoeModel.layers
+    links:
+      - file: python/sglang/srt/configs/qwen3_next.py
+        symbol: Qwen3_5Config.layers_block_type
+        display: qwen3_next.py — hybrid layer schedule
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5MoeModel.layers
+        display: qwen3_5.py — runtime layer selection
+
+  linear_layer.linear_attention:
+    symbols:
+      - Qwen3_5LinearDecoderLayer.linear_attn
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5LinearDecoderLayer.linear_attn
+        display: qwen3_5.py — linear-attention layer call
+
+  full_layer.full_attention:
+    symbols:
+      - Qwen3_5AttentionDecoderLayer.self_attention
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5AttentionDecoderLayer.self_attention
+        display: qwen3_5.py — full-attention layer call
+
+  linear_attention.qkvz_projection:
+    symbols:
+      - Qwen3_5GatedDeltaNet.in_proj_qkvz
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5GatedDeltaNet.in_proj_qkvz
+        display: qwen3_5.py — Q/K/V/Z projection
+
+  linear_attention.ba_projection:
+    symbols:
+      - Qwen3_5GatedDeltaNet.in_proj_ba
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5GatedDeltaNet.in_proj_ba
+        display: qwen3_5.py — beta/alpha projection
+
+  linear_attention.split_pack:
+    symbols:
+      - fused_qkvzba_split_reshape_cat_contiguous
+    kernel_signatures:
+      - fused_qkvzba_split
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: fused_qkvzba_split_reshape_cat_contiguous
+        display: qwen3_5.py — fused split and pack
+
+  linear_attention.causal_conv:
+    symbols:
+      - GDNAttnBackend.forward_extend
+      - causal_conv1d_fn
+    kernel_signatures:
+      - causal_conv1d
+    links:
+      - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+        symbol: GDNAttnBackend.forward_extend::causal_conv1d_fn
+        display: gdn_backend.py — causal convolution
+
+  linear_attention.gating:
+    symbols:
+      - fused_gdn_gating
+    kernel_signatures:
+      - fused_gdn_gating
+    links:
+      - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+        symbol: fused_gdn_gating
+        display: gdn_backend.py — GDN gating
+
+  linear_attention.delta_rule:
+    symbols:
+      - GDNAttnBackend.kernel_dispatcher.extend
+    kernel_signatures:
+      - chunk_gated_delta_rule_fwd_kernel_h
+      - chunk_gated_delta_rule_fwd_kkt_solve
+      - chunk_fwd_kernel_o
+    links:
+      - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+        symbol: GDNAttnBackend.kernel_dispatcher.extend
+        display: gdn_backend.py — delta-rule recurrence
+
+  linear_attention.gated_norm:
+    symbols:
+      - Qwen3_5GatedDeltaNet.norm
+      - RMSNormGated
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5GatedDeltaNet.norm
+        display: qwen3_5.py — gated RMSNorm
+
+  linear_attention.output_projection:
+    symbols:
+      - Qwen3_5GatedDeltaNet.out_proj
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5GatedDeltaNet.out_proj
+        display: qwen3_5.py — GDN output projection
+
+  linear_layer.tp_attention_output_collective:
+    symbols:
+      - LayerCommunicator
+      - tensor_model_parallel_all_reduce
+    kernel_signatures:
+      - ncclSymkDevKernel_AllReduce
+    links:
+      - file: python/sglang/srt/layers/communicator.py
+        symbol: LayerCommunicator
+        display: communicator.py — TP attention output collective
+
+  full_attention.qkv_projection:
+    symbols:
+      - Qwen3_5AttentionDecoderLayer.qkv_proj
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5AttentionDecoderLayer.qkv_proj
+        display: qwen3_5.py — gated Q/K/V projection
+
+  full_attention.attention_core:
+    symbols:
+      - Qwen3_5AttentionDecoderLayer.attn
+      - RadixAttention
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5AttentionDecoderLayer.attn
+        display: qwen3_5.py — grouped-query attention
+
+  full_attention.output_projection:
+    symbols:
+      - Qwen3_5AttentionDecoderLayer.o_proj
+    links:
+      - file: python/sglang/srt/models/qwen3_5.py
+        symbol: Qwen3_5AttentionDecoderLayer.o_proj
+        display: qwen3_5.py — attention output projection
+
+  full_layer.tp_attention_output_collective:
+    symbols:
+      - LayerCommunicator
+      - tensor_model_parallel_all_reduce
+    kernel_signatures:
+      - ncclSymkDevKernel_AllReduce
+    links:
+      - file: python/sglang/srt/layers/communicator.py
+        symbol: LayerCommunicator
+        display: communicator.py — TP full-attention output collective
+
+  moe.router:
+    symbols:
+      - Qwen2MoeSparseMoeBlock.gate
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: Qwen2MoeSparseMoeBlock.gate
+        display: qwen2_moe.py — router projection
+
+  moe.topk:
+    symbols:
+      - Qwen2MoeSparseMoeBlock.topk
+    kernel_signatures:
+      - moe::dev::routing
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: Qwen2MoeSparseMoeBlock.topk
+        display: qwen2_moe.py — Top-K routing
+
+  moe.routed_experts:
+    symbols:
+      - Qwen2MoeSparseMoeBlock.experts
+      - FusedMoE
+    kernel_signatures:
+      - bmm_E4m3
+      - bmm_Bfloat16
+      - moe::dev::activation
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: Qwen2MoeSparseMoeBlock.experts
+        display: qwen2_moe.py — routed experts
+
+  moe.shared_expert_up:
+    symbols:
+      - Qwen2MoeMLP.gate_up_proj
+      - Qwen2MoeMLP.act_fn
+    kernel_signatures:
+      - act_and_mul
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: Qwen2MoeMLP.gate_up_proj
+        display: qwen2_moe.py — shared expert gate/up
+
+  moe.combine:
+    symbols:
+      - Qwen2MoeSparseMoeBlock.forward
+    kernel_signatures:
+      - moe::dev::finalize
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: Qwen2MoeSparseMoeBlock.forward
+        display: qwen2_moe.py — routed/shared combination
+
+  linear_layer.tp_moe_output_collective:
+    symbols:
+      - tensor_model_parallel_all_reduce
+    kernel_signatures:
+      - ncclSymkDevKernel_AllReduce
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: tensor_model_parallel_all_reduce
+        display: qwen2_moe.py — TP output all-reduce
+
+  full_layer.tp_moe_output_collective:
+    symbols:
+      - tensor_model_parallel_all_reduce
+    kernel_signatures:
+      - ncclSymkDevKernel_AllReduce
+    links:
+      - file: python/sglang/srt/models/qwen2_moe.py
+        symbol: tensor_model_parallel_all_reduce
+        display: qwen2_moe.py — TP output all-reduce

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile one IR-first V2 model catalog into a static viewer bundle."""
+"""Compile one or every audited IR-first V2 catalog into static viewer bundles."""
 
 from __future__ import annotations
 
@@ -29,6 +29,9 @@ def sha256_file(path: Path) -> str:
 
 
 def copy_timeline_artifacts(model_root: Path, output_dir: Path) -> int:
+    timeline_dir = output_dir / "timelines"
+    if timeline_dir.exists():
+        shutil.rmtree(timeline_dir)
     copied = 0
     for profile_path in sorted(model_root.glob("profiles/*/*/*.yaml")):
         profile = yaml.safe_load(profile_path.read_text())
@@ -55,21 +58,36 @@ def copy_timeline_artifacts(model_root: Path, output_dir: Path) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="catalog model directory name")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
+        "--model",
+        action="append",
+        help="catalog model directory name; repeatable",
+    )
+    selection.add_argument(
+        "--all",
+        action="store_true",
+        help="compile every catalog directory containing model_ir.yaml",
+    )
     parser.add_argument("--catalog-root", type=Path, default=REPO_ROOT / "catalog")
     parser.add_argument("--docs-root", type=Path, default=REPO_ROOT / "docs")
     parser.add_argument(
         "--output-model-id",
-        help="viewer model id; defaults to '<model>_v2' to avoid replacing legacy data",
+        help="viewer model id; defaults to '<model>_v2'",
     )
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    model_root = (args.catalog_root / args.model).resolve()
-    output_model_id = args.output_model_id or f"{args.model}_v2"
-    output_path = args.docs_root / output_model_id / "arch_data.json"
+def build_model(
+    model_name: str,
+    *,
+    catalog_root: Path,
+    docs_root: Path,
+    output_model_id: str | None = None,
+) -> None:
+    model_root = (catalog_root / model_name).resolve()
+    output_model_id = output_model_id or f"{model_name}_v2"
+    output_path = docs_root / output_model_id / "arch_data.json"
     bundle = compile_catalog(model_root)
     write_bundle(bundle, output_path)
     timeline_count = copy_timeline_artifacts(model_root, output_path.parent)
@@ -81,6 +99,27 @@ def main() -> int:
         f"profiles={len(bundle['profiles'])}"
         f" timelines={timeline_count}"
     )
+
+
+def main() -> int:
+    args = parse_args()
+    if args.all and args.output_model_id:
+        raise SystemExit("--output-model-id is only valid with one --model")
+    if args.all:
+        models = sorted(
+            path.name
+            for path in args.catalog_root.iterdir()
+            if path.is_dir() and (path / "model_ir.yaml").is_file()
+        )
+    else:
+        models = list(dict.fromkeys(args.model or []))
+    for model_name in models:
+        build_model(
+            model_name,
+            catalog_root=args.catalog_root,
+            docs_root=args.docs_root,
+            output_model_id=args.output_model_id,
+        )
     return 0
 
 

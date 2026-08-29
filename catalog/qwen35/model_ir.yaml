@@ -1,0 +1,341 @@
+schema_version: model-ir.v2
+model_id: qwen35
+model_label: Qwen3.5-397B-A17B
+ir_version: 1
+default_view: top
+default_execution_path: tp_only
+
+dimensions:
+  B: request batch
+  T: token count
+  H: 4096
+  V: vocabulary size
+  E: 512 routed experts
+  K: 10 selected experts per token
+
+facts:
+  text_layers: 60
+  layer_pattern: "15 × (3 linear-attention + 1 full-attention)"
+  hidden_size: 4096
+  full_attention_heads: 32
+  full_attention_kv_heads: 2
+  routed_experts: 512
+  experts_per_token: 10
+  shared_experts: 1
+
+views:
+  top:
+    title: Qwen3.5 semantic model path
+    nodes:
+      - id: token_ids
+        label: "token ids\n[B,T]"
+        shape: io
+        semantic_op: model.input_ids
+      - id: embedding
+        label: "token embedding\n[V,H]"
+        shape: gemm
+        semantic_op: model.embedding
+      - id: decoder_stack
+        label: "60-layer decoder stack\n3 linear-attn + 1 full-attn"
+        shape: block
+        semantic_op: model.decoder_stack
+        drill: stack
+      - id: final_norm
+        label: "final RMSNorm\nH=4096"
+        shape: norm
+        semantic_op: model.final_norm
+      - id: lm_head
+        label: "language-model head\n[H,V]"
+        shape: gemm
+        semantic_op: model.lm_head
+      - id: logits
+        label: "logits\n[B,T,V]"
+        shape: io
+        semantic_op: model.logits
+    edges:
+      - {from: token_ids, to: embedding, shape: "[B,T]", dtype: int32}
+      - {from: embedding, to: decoder_stack, shape: "[B,T,H]", dtype: bf16}
+      - {from: decoder_stack, to: final_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: final_norm, to: lm_head, shape: "[B,T,H]", dtype: bf16}
+      - {from: lm_head, to: logits, shape: "[B,T,V]", dtype: fp32}
+
+  stack:
+    title: Stable hybrid decoder schedule
+    nodes:
+      - id: stack_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: stack.input
+      - id: schedule
+        label: "repeat 15 times\nlinear ×3, full ×1"
+        shape: elem
+        semantic_op: stack.schedule
+      - id: linear_layer
+        label: "linear-attention decoder layer\n45 layers"
+        shape: block
+        semantic_op: stack.linear_attention_layer
+        drill: linear_layer
+      - id: full_layer
+        label: "full-attention decoder layer\n15 layers"
+        shape: block
+        semantic_op: stack.full_attention_layer
+        drill: full_layer
+      - id: stack_out
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: stack.output
+    edges:
+      - {from: stack_in, to: schedule, shape: "[B,T,H]", dtype: bf16}
+      - {from: schedule, to: linear_layer, kind: dashed, label: "layers 0,1,2,…"}
+      - {from: schedule, to: full_layer, kind: dashed, label: "layers 3,7,…,59"}
+      - {from: linear_layer, to: stack_out, shape: "[B,T,H]", dtype: bf16}
+      - {from: full_layer, to: stack_out, shape: "[B,T,H]", dtype: bf16}
+
+  linear_layer:
+    title: Linear-attention decoder layer semantics
+    nodes:
+      - id: layer_in
+        label: "layer input + residual\n[B,T,H]"
+        shape: io
+        semantic_op: decoder.linear.input
+      - id: input_norm
+        label: input RMSNorm
+        shape: norm
+        semantic_op: decoder.linear.input_norm
+      - id: linear_attention
+        label: Gated DeltaNet attention
+        shape: attn
+        semantic_op: decoder.linear.attention
+        drill: linear_attention
+      - id: attention_residual
+        label: attention residual add
+        shape: elem
+        semantic_op: decoder.linear.attention_residual
+      - id: post_norm
+        label: post-attention RMSNorm
+        shape: norm
+        semantic_op: decoder.linear.post_attention_norm
+      - id: moe
+        label: routed + shared MoE
+        shape: moe
+        semantic_op: decoder.linear.moe
+        drill: moe
+      - id: layer_out
+        label: "layer output + residual\n[B,T,H]"
+        shape: io
+        semantic_op: decoder.linear.output
+    edges:
+      - {from: layer_in, to: input_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: input_norm, to: linear_attention, shape: "[B,T,H]", dtype: bf16}
+      - {from: linear_attention, to: attention_residual, shape: "[B,T,H]", dtype: bf16}
+      - {from: layer_in, to: attention_residual, kind: residual}
+      - {from: attention_residual, to: post_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: post_norm, to: moe, shape: "[B,T,H]", dtype: bf16}
+      - {from: moe, to: layer_out, shape: "[B,T,H]", dtype: bf16}
+      - {from: attention_residual, to: layer_out, kind: residual}
+
+  full_layer:
+    title: Full-attention decoder layer semantics
+    nodes:
+      - id: layer_in
+        label: "layer input + residual\n[B,T,H]"
+        shape: io
+        semantic_op: decoder.full.input
+      - id: input_norm
+        label: input RMSNorm
+        shape: norm
+        semantic_op: decoder.full.input_norm
+      - id: full_attention
+        label: gated grouped-query attention
+        shape: attn
+        semantic_op: decoder.full.attention
+        drill: full_attention
+      - id: attention_residual
+        label: attention residual add
+        shape: elem
+        semantic_op: decoder.full.attention_residual
+      - id: post_norm
+        label: post-attention RMSNorm
+        shape: norm
+        semantic_op: decoder.full.post_attention_norm
+      - id: moe
+        label: routed + shared MoE
+        shape: moe
+        semantic_op: decoder.full.moe
+        drill: moe
+      - id: layer_out
+        label: "layer output + residual\n[B,T,H]"
+        shape: io
+        semantic_op: decoder.full.output
+    edges:
+      - {from: layer_in, to: input_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: input_norm, to: full_attention, shape: "[B,T,H]", dtype: bf16}
+      - {from: full_attention, to: attention_residual, shape: "[B,T,H]", dtype: bf16}
+      - {from: layer_in, to: attention_residual, kind: residual}
+      - {from: attention_residual, to: post_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: post_norm, to: moe, shape: "[B,T,H]", dtype: bf16}
+      - {from: moe, to: layer_out, shape: "[B,T,H]", dtype: bf16}
+      - {from: attention_residual, to: layer_out, kind: residual}
+
+  linear_attention:
+    title: Gated DeltaNet semantic data flow
+    nodes:
+      - id: attn_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: linear_attention.input
+      - id: qkvz_projection
+        label: q/k/v/z projection
+        shape: gemm
+        semantic_op: linear_attention.qkvz_projection
+      - id: ba_projection
+        label: beta/alpha projection
+        shape: gemm
+        semantic_op: linear_attention.ba_projection
+      - id: split_pack
+        label: split, reshape and pack q/k/v
+        shape: elem
+        semantic_op: linear_attention.split_pack
+      - id: causal_conv
+        label: causal Conv1D + SiLU
+        shape: elem
+        semantic_op: linear_attention.causal_conv
+      - id: gating
+        label: beta/decay gating
+        shape: elem
+        semantic_op: linear_attention.gating
+      - id: delta_rule
+        label: gated delta-rule recurrence
+        shape: attn
+        semantic_op: linear_attention.delta_rule
+      - id: gated_norm
+        label: RMSNormGated(core, z)
+        shape: norm
+        semantic_op: linear_attention.gated_norm
+      - id: output_projection
+        label: output projection
+        shape: gemm
+        semantic_op: linear_attention.output_projection
+      - id: attn_out
+        label: "attention output\n[B,T,H]"
+        shape: io
+        semantic_op: linear_attention.output
+    edges:
+      - {from: attn_in, to: qkvz_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: attn_in, to: ba_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: qkvz_projection, to: split_pack, dtype: bf16}
+      - {from: ba_projection, to: split_pack, dtype: bf16}
+      - {from: split_pack, to: causal_conv, dtype: bf16}
+      - {from: causal_conv, to: gating, dtype: bf16}
+      - {from: gating, to: delta_rule, dtype: bf16}
+      - {from: delta_rule, to: gated_norm, dtype: bf16}
+      - {from: qkvz_projection, to: gated_norm, kind: dashed, label: z}
+      - {from: gated_norm, to: output_projection, dtype: bf16}
+      - {from: output_projection, to: attn_out, shape: "[B,T,H]", dtype: bf16}
+
+  full_attention:
+    title: Grouped-query attention semantic data flow
+    nodes:
+      - id: attn_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: full_attention.input
+      - id: qkv_projection
+        label: Q/K/V + output-gate projection
+        shape: gemm
+        semantic_op: full_attention.qkv_projection
+      - id: qk_norm
+        label: Q/K RMSNorm
+        shape: norm
+        semantic_op: full_attention.qk_norm
+      - id: rope
+        label: rotary position embedding
+        shape: elem
+        semantic_op: full_attention.rope
+      - id: kv_cache
+        label: KV cache read/write
+        shape: cache
+        semantic_op: full_attention.kv_cache
+      - id: attention_core
+        label: grouped-query attention
+        shape: attn
+        semantic_op: full_attention.core
+      - id: output_gate
+        label: sigmoid output gate
+        shape: elem
+        semantic_op: full_attention.output_gate
+      - id: output_projection
+        label: output projection
+        shape: gemm
+        semantic_op: full_attention.output_projection
+      - id: attn_out
+        label: "attention output\n[B,T,H]"
+        shape: io
+        semantic_op: full_attention.output
+    edges:
+      - {from: attn_in, to: qkv_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: qkv_projection, to: qk_norm, dtype: bf16}
+      - {from: qk_norm, to: rope, dtype: bf16}
+      - {from: rope, to: kv_cache, kind: cache_write, dtype: fp8}
+      - {from: kv_cache, to: attention_core, kind: cache_read, dtype: fp8}
+      - {from: attention_core, to: output_gate, dtype: bf16}
+      - {from: qkv_projection, to: output_gate, kind: dashed, label: gate}
+      - {from: output_gate, to: output_projection, dtype: bf16}
+      - {from: output_projection, to: attn_out, shape: "[B,T,H]", dtype: bf16}
+
+  moe:
+    title: Routed plus shared-expert MoE semantics
+    nodes:
+      - id: moe_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: moe.input
+      - id: router
+        label: "router projection\nH → E"
+        shape: gemm
+        semantic_op: moe.router
+      - id: topk
+        label: "softmax + Top-K\nK=10"
+        shape: elem
+        semantic_op: moe.topk
+      - id: dispatch
+        label: token-to-expert dispatch
+        shape: elem
+        semantic_op: moe.dispatch
+      - id: routed_experts
+        label: routed expert MLPs
+        shape: moe
+        semantic_op: moe.routed_experts
+      - id: shared_expert_up
+        label: shared expert gate/up projection
+        shape: gemm
+        semantic_op: moe.shared_expert_up
+      - id: shared_expert_down
+        label: shared expert down projection
+        shape: gemm
+        semantic_op: moe.shared_expert_down
+      - id: shared_gate
+        label: shared expert scalar gate
+        shape: elem
+        semantic_op: moe.shared_gate
+      - id: combine
+        label: routed + shared combine
+        shape: elem
+        semantic_op: moe.combine
+      - id: moe_out
+        label: "MoE output\n[B,T,H]"
+        shape: io
+        semantic_op: moe.output
+    edges:
+      - {from: moe_in, to: router, shape: "[B,T,H]", dtype: bf16}
+      - {from: router, to: topk, shape: "[B,T,E]", dtype: fp32}
+      - {from: topk, to: dispatch, shape: "ids + weights", dtype: fp32}
+      - {from: moe_in, to: dispatch, shape: "[B,T,H]", dtype: bf16}
+      - {from: dispatch, to: routed_experts, dtype: bf16}
+      - {from: routed_experts, to: combine, shape: "[B,T,H]", dtype: bf16}
+      - {from: moe_in, to: shared_expert_up, shape: "[B,T,H]", dtype: bf16}
+      - {from: shared_expert_up, to: shared_expert_down, dtype: bf16}
+      - {from: moe_in, to: shared_gate, kind: dashed}
+      - {from: shared_expert_down, to: shared_gate, dtype: bf16}
+      - {from: shared_gate, to: combine, dtype: bf16}
+      - {from: combine, to: moe_out, shape: "[B,T,H]", dtype: bf16}

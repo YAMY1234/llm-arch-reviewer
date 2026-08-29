@@ -98,6 +98,10 @@ class TraceMappingRules:
     signature_count_per_forward: int
     stack: StackFrameRules
     classify_node: ClassifyNodeFn
+    # A small allowlist for implementation-unique kernel signatures whose
+    # launch stack may be stale under asynchronous execution. All other nodes
+    # still require a semantic frame before they can be attributed.
+    kernel_only_nodes: frozenset[str] = frozenset()
 
 
 def load_trace(path: Path) -> dict[str, Any]:
@@ -180,6 +184,8 @@ def find_step_annotation_windows(
     """
 
     phase_lower = phase.lower()
+    if phase_lower in {"vllm_prefill", "vllm_decode"}:
+        return find_vllm_execute_context_windows(trace_events, phase=phase_lower)
     if phase_lower in {"eagle_mtp_prefill", "mtp_prefill"}:
         return find_eagle_mtp_prefill_windows(trace_events, signature=signature)
     if phase_lower in {"eagle_mtp_decode", "mtp_decode"}:
@@ -224,6 +230,51 @@ def find_step_annotation_windows(
             )
         )
     return sorted(windows, key=lambda window: window.start_us)
+
+
+_VLLM_EXECUTE_CONTEXT_RE = re.compile(
+    r"^execute_context_(?P<context_requests>\d+)\((?P<context_tokens>\d+)\)_"
+    r"generation_(?P<generation_requests>\d+)\((?P<generation_tokens>\d+)\)$"
+)
+
+
+def find_vllm_execute_context_windows(
+    trace_events: list[dict[str, Any]], *, phase: str
+) -> list[ForwardWindow]:
+    """Find vLLM worker steps from its GPU execute-context annotations.
+
+    vLLM emits the realized scheduler composition in each annotation.  This is
+    stronger than inferring prefill/decode from a repeated kernel signature and
+    also preserves chunked prefill as multiple worker steps of one request.
+    Duplicate annotations can appear on auxiliary streams, so only the GPU
+    track carrying the largest total annotated span is used.
+    """
+
+    annotations, _track = _primary_gpu_annotations(
+        trace_events, name_prefix="execute_context_"
+    )
+    windows: list[ForwardWindow] = []
+    for event in annotations:
+        match = _VLLM_EXECUTE_CONTEXT_RE.match(str(event.get("name", "")))
+        if not match:
+            continue
+        context_tokens = int(match.group("context_tokens"))
+        generation_tokens = int(match.group("generation_tokens"))
+        if phase == "vllm_prefill" and not (context_tokens > 0 and generation_tokens == 0):
+            continue
+        if phase == "vllm_decode" and not (context_tokens == 0 and generation_tokens > 0):
+            continue
+        start = float(event.get("ts", 0.0))
+        end = _event_end_us(event)
+        windows.append(
+            ForwardWindow(
+                start_us=start,
+                end_us=end,
+                iter_bounds_us=[(start, end)],
+                anchor_kernel_count=0,
+            )
+        )
+    return windows
 
 
 def _primary_gpu_annotations(
@@ -776,7 +827,8 @@ def build_kernel_mappings(
             event.cpu_op_name,
             event.python_stack,
         )
-        if node and not semantic:
+        kernel_only = bool(node and node in rules.kernel_only_nodes)
+        if node and not semantic and not kernel_only:
             node = None
             confidence = "unmapped_no_semantic_frame"
         evidence = ["kernel"]
@@ -786,6 +838,8 @@ def build_kernel_mappings(
             evidence.append("python_stack")
         if semantic:
             evidence.append("semantic_frame")
+        if kernel_only and not semantic:
+            evidence.append("unique_kernel_signature")
         if event.cpu_input_dims:
             evidence.append("record_shapes")
         mappings.append(
@@ -831,7 +885,12 @@ def validate_mappings(
     )
 
     for mapping in mappings:
-        if mapping.selected_node and not mapping.semantic_frame:
+        has_unique_kernel_evidence = "unique_kernel_signature" in mapping.evidence
+        if (
+            mapping.selected_node
+            and not mapping.semantic_frame
+            and not has_unique_kernel_evidence
+        ):
             errors.append(
                 f"{mapping.event_id} maps to {mapping.selected_node} without semantic_frame"
             )
@@ -943,6 +1002,7 @@ def build_trace_mapping(
     skip_first: bool = True,
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
+    expected_phase_frame: str | None = None,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
@@ -973,7 +1033,11 @@ def build_trace_mapping(
         source_root=source_root,
     )
     mappings = build_kernel_mappings(events, rules)
-    validation = validate_mappings(events, mappings, expected_phase=phase)
+    validation = validate_mappings(
+        events,
+        mappings,
+        expected_phase=expected_phase_frame or phase,
+    )
     manifest = {
         "trace_path": str(trace_path),
         "config_path": str(config_path) if config_path else None,

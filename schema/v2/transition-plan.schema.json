@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "transition-plan.schema.json",
+  "title": "Physical resource transition DAG",
+  "description": "Resources inside one transition overlap and use a max lower bound. Transitions compose only through explicit dependencies.",
+  "type": "object",
+  "required": ["schema_version", "target", "semantics", "transitions", "critical_path_ms", "fingerprint"],
+  "properties": {
+    "schema_version": {"const": "transition-plan.v1"},
+    "target": {"type": "string"},
+    "semantics": {"type": "string"},
+    "repetitions": {"type": "number", "exclusiveMinimum": 0},
+    "critical_path_ms": {"type": "number", "minimum": 0},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "depends_on", "resources_ms", "duration_ms", "limiter_vector"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"type": "string"},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "resources_ms": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}},
+          "duration_ms": {"type": "number", "minimum": 0},
+          "limiter_vector": {"type": "array", "items": {"type": "object"}}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

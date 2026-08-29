@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hardware-spec.schema.json",
+  "title": "llm-arch-reviewer per-GPU hardware capability specification",
+  "type": "object",
+  "required": ["schema_version", "hardware_spec_id", "label", "architecture", "scope", "theoretical", "provenance"],
+  "properties": {
+    "schema_version": {"const": "hardware-spec.v1"},
+    "hardware_spec_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "label": {"type": "string"},
+    "architecture": {"type": "string"},
+    "scope": {"const": "per_gpu"},
+    "aliases": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "status": {"enum": ["theoretical_only", "partially_calibrated", "calibrated"]},
+    "theoretical": {
+      "type": "object",
+      "required": ["compute", "memory", "interconnect"],
+      "properties": {
+        "compute": {"type": "object"},
+        "memory": {
+          "type": "object",
+          "required": ["hbm_bytes_per_s"],
+          "properties": {"hbm_bytes_per_s": {"type": "number", "exclusiveMinimum": 0}}
+        },
+        "interconnect": {"type": "object"}
+      }
+    },
+    "calibration": {
+      "description": "Optional exact-shape measured capability surfaces. Missing surfaces never fall back to guessed efficiency.",
+      "type": "object"
+    },
+    "methodologies": {
+      "description": "Disabled-by-default legacy sensitivity envelopes. These are not projection models or exact-shape calibration surfaces.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["role", "status", "defaults", "provenance"],
+        "properties": {
+          "role": {"enum": ["optimistic", "conservative", "provisional"]},
+          "enabled": {"type": "boolean", "default": false},
+          "status": {"enum": ["hypothesis", "correlated"]},
+          "defaults": {"type": "object"},
+          "operator_families": {"type": "object"},
+          "provenance": {"type": "object"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "provenance": {"type": "object"}
+  },
+  "additionalProperties": true
+}

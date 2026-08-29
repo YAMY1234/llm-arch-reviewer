@@ -1,0 +1,415 @@
+schema_version: model-ir.v2
+model_id: glm52
+model_label: GLM-5.2 NVFP4
+ir_version: 1
+default_view: top
+default_execution_path: tp8
+
+dimensions:
+  B: request batch
+  T: token count
+  H: 6144 hidden width
+  V: 154880 vocabulary entries
+  N: 64 attention heads
+  Dqk: 256 query/key width per head
+  Dnope: 192 non-RoPE query/key width per head
+  Drope: 64 RoPE width per head
+  Dv: 256 value width per head
+  Ckv: 512 latent KV width
+  Qi: 32 index heads
+  Di: 128 index head width
+  Ki: 2048 selected KV positions
+  E: 256 routed experts
+  K: 8 selected experts per token
+
+facts:
+  checkpoint: nvidia/GLM-5.2-NVFP4
+  checkpoint_revision: aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa
+  architecture: GlmMoeDsaForCausalLM
+  target_layers: 78
+  dense_layers: [0, 1, 2]
+  moe_layer_range: "3..77"
+  indexer_owner_layers: [0, 1, 2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46, 50, 54, 58, 62, 66, 70, 74]
+  indexer_owner_count: 21
+  indexer_shared_count: 57
+  index_topk: 2048
+  index_topk_freq: 4
+  routed_experts: 256
+  experts_per_token: 8
+  shared_experts: 1
+  nextn_layers: 1
+  max_position_embeddings: 1048576
+  model_weight_precision: mixed NVFP4 and BF16 per checkpoint quantization exclusions
+  kv_cache_precision: FP8
+
+views:
+  top:
+    title: GLM-5.2 stable semantic model path
+    nodes:
+      - id: token_ids
+        label: "token ids\n[B,T]"
+        shape: io
+        semantic_op: model.input_ids
+      - id: embedding
+        label: "token embedding\n[V,H]"
+        shape: gemm
+        semantic_op: model.embedding
+      - id: decoder_stack
+        label: "78-layer GLM-MoE-DSA decoder\n3 dense + 75 MoE"
+        shape: block
+        semantic_op: model.decoder_stack
+        drill: stack
+      - id: final_norm
+        label: "final RMSNorm\nH=6144"
+        shape: norm
+        semantic_op: model.final_norm
+      - id: lm_head
+        label: "language-model head\n[H,V]"
+        shape: gemm
+        semantic_op: model.lm_head
+      - id: logits
+        label: "full-vocabulary logits\n[B,T,V]"
+        shape: io
+        semantic_op: model.logits
+      - id: mtp_extension
+        label: "optional one-layer NextN head\nnot selected for autoregressive baseline"
+        shape: block
+        semantic_op: model.optional_nextn_extension
+        drill: mtp_extension
+    edges:
+      - {from: token_ids, to: embedding, shape: "[B,T]", dtype: int32}
+      - {from: embedding, to: decoder_stack, shape: "[B,T,H]", dtype: bf16}
+      - {from: decoder_stack, to: final_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: final_norm, to: lm_head, shape: "[B,T,H]", dtype: bf16}
+      - {from: lm_head, to: logits, shape: "[B,T,V]", dtype: fp32}
+      - {from: decoder_stack, to: mtp_extension, kind: dashed, label: "optional generation_mode=eagle_mtp"}
+
+  stack:
+    title: GLM-5.2 target decoder schedule
+    nodes:
+      - id: stack_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: stack.input
+      - id: schedule
+        label: "repeat 78 layers\ndense 0–2; MoE 3–77"
+        shape: elem
+        semantic_op: stack.layer_schedule
+      - id: input_norm
+        label: "pre-attention RMSNorm\n78 invocations"
+        shape: norm
+        semantic_op: decoder.input_norm
+      - id: dsa_attention
+        label: "MLA + DSA sparse attention\n21 index owners + 57 reusers"
+        shape: attn
+        semantic_op: decoder.dsa_attention
+        drill: dsa_attention
+      - id: attention_residual
+        label: attention residual add
+        shape: elem
+        semantic_op: decoder.attention_residual
+      - id: post_attention_norm
+        label: post-attention RMSNorm
+        shape: norm
+        semantic_op: decoder.post_attention_norm
+      - id: feed_forward_schedule
+        label: "layer-conditioned feed-forward\ndense or MoE"
+        shape: elem
+        semantic_op: decoder.feed_forward_schedule
+      - id: dense_mlp
+        label: "dense SwiGLU MLP\nlayers 0–2"
+        shape: block
+        semantic_op: decoder.dense_mlp
+        drill: dense_mlp
+      - id: moe
+        label: "routed + shared-expert MoE\nlayers 3–77"
+        shape: moe
+        semantic_op: decoder.moe
+        drill: moe
+      - id: feed_forward_residual
+        label: feed-forward residual add
+        shape: elem
+        semantic_op: decoder.feed_forward_residual
+      - id: stack_out
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: stack.output
+    edges:
+      - {from: stack_in, to: schedule, shape: "[B,T,H]", dtype: bf16}
+      - {from: schedule, to: input_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: input_norm, to: dsa_attention, shape: "[B,T,H]", dtype: bf16}
+      - {from: dsa_attention, to: attention_residual, shape: "[B,T,H]", dtype: bf16}
+      - {from: stack_in, to: attention_residual, kind: residual}
+      - {from: attention_residual, to: post_attention_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: post_attention_norm, to: feed_forward_schedule, shape: "[B,T,H]", dtype: bf16}
+      - {from: feed_forward_schedule, to: dense_mlp, kind: conditional, label: "layers 0–2"}
+      - {from: feed_forward_schedule, to: moe, kind: conditional, label: "layers 3–77"}
+      - {from: dense_mlp, to: feed_forward_residual, shape: "[B,T,H]", dtype: bf16}
+      - {from: moe, to: feed_forward_residual, shape: "[B,T,H]", dtype: bf16}
+      - {from: attention_residual, to: feed_forward_residual, kind: residual}
+      - {from: feed_forward_residual, to: stack_out, shape: "[B,T,H]", dtype: bf16}
+
+  dsa_attention:
+    title: Multi-head latent attention with DSA index selection
+    nodes:
+      - id: attn_in
+        label: "normalized hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: dsa_attention.input
+      - id: q_a_projection
+        label: "query latent projection\nH → 2048"
+        shape: gemm
+        semantic_op: dsa_attention.q_a_projection
+      - id: kv_a_projection
+        label: "KV latent + k-rope projection\nH → (512+64)"
+        shape: gemm
+        semantic_op: dsa_attention.kv_a_projection
+      - id: q_a_norm
+        label: q-latent RMSNorm
+        shape: norm
+        semantic_op: dsa_attention.q_a_norm
+      - id: q_b_projection
+        label: "query expansion\n64 × (192+64)"
+        shape: gemm
+        semantic_op: dsa_attention.q_b_projection
+      - id: q_split_rope
+        label: "split q-nope/q-rope + RoPE"
+        shape: elem
+        semantic_op: dsa_attention.q_split_rope
+      - id: kv_latent_split
+        label: "split latent c and k-rope"
+        shape: elem
+        semantic_op: dsa_attention.kv_latent_split
+      - id: kv_a_norm
+        label: latent-KV RMSNorm
+        shape: norm
+        semantic_op: dsa_attention.kv_a_norm
+      - id: latent_kv_cache
+        label: "latent KV + k-rope cache\nstate read/write"
+        shape: cache
+        semantic_op: dsa_attention.latent_kv_cache
+      - id: latent_kv_reconstruction
+        label: "latent K/V projection\nWkc/Wvc; may be algebraically absorbed"
+        shape: gemm
+        semantic_op: dsa_attention.latent_kv_reconstruction
+      - id: indexer_mode
+        label: "index schedule\n21 compute; 57 reuse"
+        shape: elem
+        semantic_op: dsa_attention.indexer_schedule
+      - id: index_q_projection
+        label: "index query projection\n32 × 128"
+        shape: gemm
+        semantic_op: dsa_attention.index_q_projection
+      - id: index_k_gate_projection
+        label: "index key + per-head gate projection"
+        shape: gemm
+        semantic_op: dsa_attention.index_k_gate_projection
+      - id: index_k_norm_rope
+        label: index-key norm + RoPE
+        shape: norm
+        semantic_op: dsa_attention.index_k_norm_rope
+      - id: index_k_cache
+        label: "quantized index-K cache\nowner-layer state read/write"
+        shape: cache
+        semantic_op: dsa_attention.index_k_cache
+      - id: index_logits
+        label: "paged MQA index scores"
+        shape: attn
+        semantic_op: dsa_attention.index_logits
+      - id: index_topk
+        label: "top-k KV selection\nK=2048"
+        shape: elem
+        semantic_op: dsa_attention.index_topk
+      - id: index_topk_state
+        label: "cross-layer top-k state\nwrite on owner; read on shared"
+        shape: cache
+        semantic_op: dsa_attention.index_topk_state
+      - id: sparse_mla_core
+        label: "sparse MLA attention over selected KV"
+        shape: attn
+        semantic_op: dsa_attention.sparse_mla_core
+      - id: output_projection
+        label: "attention output projection\n64×256 → H"
+        shape: gemm
+        semantic_op: dsa_attention.output_projection
+      - id: attn_out
+        label: "attention output\n[B,T,H]"
+        shape: io
+        semantic_op: dsa_attention.output
+    edges:
+      - {from: attn_in, to: q_a_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: q_a_projection, to: q_a_norm, shape: "[B,T,2048]", dtype: bf16}
+      - {from: q_a_norm, to: q_b_projection, dtype: bf16}
+      - {from: q_b_projection, to: q_split_rope, shape: "[B,T,N,Dqk]", dtype: bf16}
+      - {from: attn_in, to: kv_a_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: kv_a_projection, to: kv_latent_split, shape: "[B,T,Ckv+Drope]", dtype: bf16}
+      - {from: kv_latent_split, to: kv_a_norm, shape: "[B,T,Ckv]", dtype: bf16}
+      - {from: kv_latent_split, to: latent_kv_cache, kind: cache_write, label: k-rope}
+      - {from: kv_a_norm, to: latent_kv_cache, kind: cache_write, shape: "[B,T,Ckv]", dtype: fp8}
+      - {from: latent_kv_cache, to: latent_kv_reconstruction, kind: cache_read, dtype: fp8}
+      - {from: q_a_projection, to: index_q_projection, shape: "[B,T,2048]", dtype: bf16}
+      - {from: attn_in, to: index_k_gate_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: index_k_gate_projection, to: index_k_norm_rope, dtype: bf16}
+      - {from: index_k_norm_rope, to: index_k_cache, kind: cache_write, dtype: fp8}
+      - {from: index_k_cache, to: index_logits, kind: cache_read, dtype: fp8}
+      - {from: index_q_projection, to: index_logits, dtype: fp8}
+      - {from: index_k_gate_projection, to: index_logits, kind: dashed, label: per-head gates}
+      - {from: indexer_mode, to: index_logits, kind: conditional, label: owner layers}
+      - {from: index_logits, to: index_topk, shape: "[B,T,S]", dtype: fp32}
+      - {from: index_topk, to: index_topk_state, kind: cache_write, shape: "[B,T,Ki]", dtype: int32}
+      - {from: indexer_mode, to: index_topk_state, kind: conditional, label: shared-layer reuse}
+      - {from: q_split_rope, to: sparse_mla_core, dtype: bf16}
+      - {from: latent_kv_reconstruction, to: sparse_mla_core, dtype: bf16}
+      - {from: index_topk_state, to: sparse_mla_core, kind: cache_read, dtype: int32}
+      - {from: sparse_mla_core, to: output_projection, shape: "[B,T,N,Dv]", dtype: bf16}
+      - {from: output_projection, to: attn_out, shape: "[B,T,H]", dtype: bf16}
+
+  dense_mlp:
+    title: Dense SwiGLU feed-forward semantics
+    nodes:
+      - id: mlp_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: dense_mlp.input
+      - id: gate_up_projection
+        label: "gate/up projection\nH → 2×12288"
+        shape: gemm
+        semantic_op: dense_mlp.gate_up_projection
+      - id: swiglu
+        label: SiLU(gate) × up
+        shape: elem
+        semantic_op: dense_mlp.swiglu
+      - id: down_projection
+        label: "down projection\n12288 → H"
+        shape: gemm
+        semantic_op: dense_mlp.down_projection
+      - id: mlp_out
+        label: "dense MLP output\n[B,T,H]"
+        shape: io
+        semantic_op: dense_mlp.output
+    edges:
+      - {from: mlp_in, to: gate_up_projection, shape: "[B,T,H]", dtype: bf16}
+      - {from: gate_up_projection, to: swiglu, dtype: bf16}
+      - {from: swiglu, to: down_projection, dtype: bf16}
+      - {from: down_projection, to: mlp_out, shape: "[B,T,H]", dtype: bf16}
+
+  moe:
+    title: Routed plus shared-expert MoE semantics
+    nodes:
+      - id: moe_in
+        label: "hidden states\n[B,T,H]"
+        shape: io
+        semantic_op: moe.input
+      - id: router
+        label: "sigmoid router projection\nH → 256"
+        shape: gemm
+        semantic_op: moe.router
+      - id: topk
+        label: "renormalized top-8 routing\nscale=2.5"
+        shape: elem
+        semantic_op: moe.topk
+      - id: dispatch
+        label: token-to-expert dispatch
+        shape: elem
+        semantic_op: moe.dispatch
+      - id: routed_experts
+        label: "256 routed SwiGLU experts\nintermediate=2048"
+        shape: moe
+        semantic_op: moe.routed_experts
+      - id: routed_weighted_combine
+        label: weighted routed-expert combine
+        shape: elem
+        semantic_op: moe.routed_weighted_combine
+      - id: shared_expert_up
+        label: shared expert gate/up projection
+        shape: gemm
+        semantic_op: moe.shared_expert_up
+      - id: shared_expert_activation
+        label: shared expert SwiGLU
+        shape: elem
+        semantic_op: moe.shared_expert_activation
+      - id: shared_expert_down
+        label: shared expert down projection
+        shape: gemm
+        semantic_op: moe.shared_expert_down
+      - id: combine
+        label: routed + shared result combine
+        shape: elem
+        semantic_op: moe.combine
+      - id: moe_out
+        label: "MoE output\n[B,T,H]"
+        shape: io
+        semantic_op: moe.output
+    edges:
+      - {from: moe_in, to: router, shape: "[B,T,H]", dtype: bf16}
+      - {from: router, to: topk, shape: "[B,T,E]", dtype: fp32}
+      - {from: topk, to: dispatch, shape: "expert ids + weights", dtype: fp32}
+      - {from: moe_in, to: dispatch, shape: "[B,T,H]", dtype: bf16}
+      - {from: dispatch, to: routed_experts, dtype: bf16}
+      - {from: routed_experts, to: routed_weighted_combine, dtype: bf16}
+      - {from: topk, to: routed_weighted_combine, kind: dashed, label: routing weights}
+      - {from: moe_in, to: shared_expert_up, shape: "[B,T,H]", dtype: bf16}
+      - {from: shared_expert_up, to: shared_expert_activation, dtype: bf16}
+      - {from: shared_expert_activation, to: shared_expert_down, dtype: bf16}
+      - {from: routed_weighted_combine, to: combine, shape: "[B,T,H]", dtype: bf16}
+      - {from: shared_expert_down, to: combine, shape: "[B,T,H]", dtype: bf16}
+      - {from: combine, to: moe_out, shape: "[B,T,H]", dtype: bf16}
+
+  mtp_extension:
+    title: Optional checkpoint NextN extension
+    nodes:
+      - id: candidate_token_ids
+        label: candidate token ids
+        shape: io
+        semantic_op: mtp.candidate_token_ids
+      - id: candidate_embedding
+        label: candidate token embedding
+        shape: gemm
+        semantic_op: mtp.candidate_embedding
+      - id: target_hidden_state
+        label: captured target hidden state
+        shape: cache
+        semantic_op: mtp.target_hidden_state
+      - id: embedding_norm
+        label: candidate embedding RMSNorm
+        shape: norm
+        semantic_op: mtp.embedding_norm
+      - id: hidden_norm
+        label: target hidden RMSNorm
+        shape: norm
+        semantic_op: mtp.hidden_norm
+      - id: concatenate
+        label: concatenate normalized states
+        shape: elem
+        semantic_op: mtp.concatenate
+      - id: eh_projection
+        label: "embedding-hidden projection\n2H → H"
+        shape: gemm
+        semantic_op: mtp.eh_projection
+      - id: nextn_decoder
+        label: "one NextN DSA + MoE decoder\nreuses target index top-k state"
+        shape: block
+        semantic_op: mtp.nextn_decoder
+      - id: shared_head_norm
+        label: shared-head RMSNorm
+        shape: norm
+        semantic_op: mtp.shared_head_norm
+      - id: nextn_lm_head
+        label: NextN language-model head
+        shape: gemm
+        semantic_op: mtp.lm_head
+      - id: draft_logits
+        label: draft logits
+        shape: io
+        semantic_op: mtp.draft_logits
+    edges:
+      - {from: candidate_token_ids, to: candidate_embedding, dtype: int32}
+      - {from: candidate_embedding, to: embedding_norm, dtype: bf16}
+      - {from: target_hidden_state, to: hidden_norm, dtype: bf16}
+      - {from: embedding_norm, to: concatenate, dtype: bf16}
+      - {from: hidden_norm, to: concatenate, dtype: bf16}
+      - {from: concatenate, to: eh_projection, shape: "[B,T,2H]", dtype: bf16}
+      - {from: eh_projection, to: nextn_decoder, shape: "[B,T,H]", dtype: bf16}
+      - {from: nextn_decoder, to: shared_head_norm, shape: "[B,T,H]", dtype: bf16}
+      - {from: shared_head_norm, to: nextn_lm_head, shape: "[B,T,H]", dtype: bf16}
+      - {from: nextn_lm_head, to: draft_logits, shape: "[B,T,V]", dtype: fp32}

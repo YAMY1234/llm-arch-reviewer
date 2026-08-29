@@ -1,0 +1,161 @@
+schema_version: execution-plan.v2
+execution_path_id: tp_only
+label: Pure tensor parallel
+model_id: qwen35
+plan_version: 1
+
+parallelism_axes:
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  tp_size: parameterized
+
+default_parameters:
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+constraints:
+  tp_size_min: 2
+
+transforms:
+  - op: annotate_node
+    target: top.embedding
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: vocab_sharded
+        parallelism: TP
+
+  - op: annotate_node
+    target: top.lm_head
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: vocab_sharded
+        parallelism: TP
+
+  - op: annotate_node
+    target: linear_attention.qkvz_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: output_features_sharded
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: linear_attention.ba_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: output_features_sharded
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: linear_attention.output_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: input_features_sharded
+        parallelism: row_parallel
+
+  - op: insert_after
+    after: linear_layer.linear_attention
+    node:
+      id: tp_attention_output_collective
+      label: "TP output collective\nall-reduce / reduce-scatter"
+      shape: elem
+      semantic_op: execution.tp.linear_attention_output_collective
+      execution:
+        placement: tp_group
+        collective: output_collective
+        parallelism: TP
+        payload: row-parallel linear-attention output partials · bf16 [B,T,H]
+        result: replicated or owner-sharded attention output
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: full_attention.qkv_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: attention_heads_sharded
+        parallelism: column_parallel
+
+  - op: annotate_node
+    target: full_attention.output_projection
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: attention_heads_sharded
+        parallelism: row_parallel
+
+  - op: insert_after
+    after: full_layer.full_attention
+    node:
+      id: tp_attention_output_collective
+      label: "TP output collective\nall-reduce / reduce-scatter"
+      shape: elem
+      semantic_op: execution.tp.full_attention_output_collective
+      execution:
+        placement: tp_group
+        collective: output_collective
+        parallelism: TP
+        payload: row-parallel full-attention output partials · bf16 [B,T,H]
+        result: replicated or owner-sharded attention output
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: annotate_node
+    target: moe.router
+    set:
+      execution:
+        placement: replicated_on_tp_ranks
+        tensor_layout: replicated
+        parallelism: TP
+
+  - op: annotate_node
+    target: moe.routed_experts
+    set:
+      execution:
+        placement: all_tp_ranks
+        tensor_layout: expert_hidden_sharded
+        parallelism: TP
+
+  - op: insert_after
+    after: linear_layer.moe
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      execution:
+        placement: tp_group
+        collective: all_reduce
+        parallelism: TP
+        payload: expert-hidden output partials · bf16 [B,T,H]
+        result: replicated combined MoE output
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
+
+  - op: insert_after
+    after: full_layer.moe
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output collective\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      execution:
+        placement: tp_group
+        collective: all_reduce
+        parallelism: TP
+        payload: expert-hidden output partials · bf16 [B,T,H]
+        result: replicated combined MoE output
+    edge:
+      shape: "[B,T,H]"
+      dtype: bf16
