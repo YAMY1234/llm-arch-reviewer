@@ -81,6 +81,30 @@ def test_targets_include_direct_node_and_architecture_rollups() -> None:
     ]
 
 
+def test_targets_preserve_explicit_portable_ir_targets() -> None:
+    event = _event(
+        "gdn_attention.qkvz_projection",
+        timestamp=0.0,
+        duration=1.0,
+        stream=1,
+    )
+    event["layer_kind"] = "gdn"
+    event["ir_targets"] = [
+        "gdn_attention.ba_projection",
+        "gdn_moe_block.attention",
+        "stack.gdn_layer",
+        "top.decoder_stack",
+    ]
+
+    assert timeline_targets(event) == [
+        "gdn_attention.qkvz_projection",
+        "gdn_attention.ba_projection",
+        "gdn_moe_block.attention",
+        "stack.gdn_layer",
+        "top.decoder_stack",
+    ]
+
+
 def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
     artifact = build_timeline_artifact(
         profile_id="p",

@@ -85,7 +85,16 @@ def timeline_targets(event: dict[str, Any]) -> list[str]:
     """Return direct and roll-up IR targets for one attributed event."""
 
     node = str(event.get("node") or "")
-    targets: list[str] = [node] if node else []
+    # Attribution builders may already know the exact semantic leaf, fusion
+    # members, and drill ancestors for an implementation interval.  Preserve
+    # those explicit targets before applying legacy model-name roll-up rules.
+    # This keeps the shared timeline schema portable without teaching the
+    # viewer (or this helper) every model's node naming convention.
+    targets: list[str] = [
+        str(target) for target in (event.get("ir_targets") or []) if target
+    ]
+    if node:
+        targets.insert(0, node)
     qsa_indexer_drill_target = event.get("qsa_indexer_drill_target")
     if qsa_indexer_drill_target:
         targets.append(str(qsa_indexer_drill_target))

@@ -1,0 +1,459 @@
+schema_version: semantic-source-ledger.v1
+model_id: qwen35
+scope_id: checkpoint_declared_multimodal_target_plus_optional_mtp
+source_snapshot:
+  repository: https://github.com/sgl-project/sglang
+  revision: 033446bb05f35c0943aed2750c443077ffc0b92c
+  files:
+  - path: python/sglang/srt/configs/qwen3_5.py
+    git_blob_oid: 98de12f7eff0a09b6f3feb3c5051c4cc06b062c8
+    role: checkpoint configuration normalization
+  - path: python/sglang/srt/models/qwen3_5.py
+    git_blob_oid: f5771a9571ca5dd6f3712e02263f1388ac811be8
+    role: text decoder GDN GQA state and optional NextN layer
+  - path: python/sglang/srt/models/qwen3_vl.py
+    git_blob_oid: 39f7aa8df4b9bb0eaa7136ec914bb1efe8532540
+    role: vision encoder multimodal injection and conditional-generation wrapper
+  - path: python/sglang/srt/models/qwen2_moe.py
+    git_blob_oid: adc84684d309998eb53b5c29bdbc2e8c44e185a8
+    role: routed and shared MoE semantics
+  - path: python/sglang/srt/layers/attention/linear/gdn_backend.py
+    git_blob_oid: 40669014fdc840f20e5bd2e8045ad544873e5cb6
+    role: GDN state contracts and backend boundary
+  - path: python/sglang/srt/layers/attention/linear/kernels/gdn_triton.py
+    git_blob_oid: c6942226b1d62a782151919894ee54ba4fc3c1ba
+    role: GDN eager recurrent and convolution realization
+  - path: python/sglang/srt/layers/moe/topk.py
+    git_blob_oid: bc8f14f525409d1b33a110623c767c508940add3
+    role: MoE top-k probability contract
+  - path: python/sglang/srt/speculative/eagle_worker_v2.py
+    git_blob_oid: 197bf8c2c3960a34e35b139ab8d73c9f17a0450e
+    role: optional draft verify accept and commit loop
+  - path: python/sglang/srt/speculative/eagle_info.py
+    git_blob_oid: a927efc8bf4885fb29cd79138ebedd3ffd4c83df
+    role: candidate and tentative verification state
+audit_views:
+- full_attention
+- full_attention_moe_block
+- gdn_attention
+- gdn_moe_block
+- generation_loop
+- layer_schedule
+- moe_block
+- mtp_draft_head
+- mtp_full_attention
+- mtp_full_attention_moe_block
+- mtp_moe_block
+- stack
+- state_tensors
+- top
+- vision_block
+- vision_frontend
+entrypoints:
+- id: configuration_schedule
+  component: checkpoint architecture and hybrid layer schedule
+  source_file: python/sglang/srt/configs/qwen3_5.py
+  symbol: Qwen3_5TextConfig.__init__
+  anchor: class Qwen3_5TextConfig
+  review_status: verified
+  member_dispositions:
+  - name: __init__
+    disposition: reviewed
+  expected_ir_views:
+  - layer_schedule
+  - stack
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5TextConfig
+    disposition: mapped
+    ir_targets:
+    - stack.schedule
+- id: target_text_model
+  component: text embedding decoder final norm and logits flow
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5ForCausalLM.forward
+  anchor: class Qwen3_5ForCausalLM
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - stack
+  - top
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - top.embedding
+    - top.final_norm
+    - top.lm_head
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - stack.stack_input
+    - stack.stack_output
+    - top.target_logits
+    - top.token_input
+- id: vision_frontend
+  component: optional vision patch encoder merger and injection
+  source_file: python/sglang/srt/models/qwen3_vl.py
+  symbol: Qwen3VLMoeVisionModel.forward
+  anchor: class Qwen3VLMoeVisionModel
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - top
+  - vision_frontend
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3VLMoeVisionModel
+    disposition: mapped
+    ir_targets:
+    - top.multimodal_injection
+    - vision_frontend.merger_fc1
+    - vision_frontend.merger_fc2
+    - vision_frontend.merger_gelu
+    - vision_frontend.merger_norm
+    - vision_frontend.patch_projection
+    - vision_frontend.position_embedding
+    - vision_frontend.rotary_coordinates
+    - vision_frontend.spatial_group
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3VLMoeVisionModel
+    disposition: mapped
+    ir_targets:
+    - top.vision_inputs
+    - vision_frontend.vision_input
+    - vision_frontend.vision_output
+- id: vision_block
+  component: one vision transformer block
+  source_file: python/sglang/srt/models/qwen3_vl.py
+  symbol: Qwen3_VisionBlock.forward
+  anchor: class Qwen3_VisionBlock
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - vision_block
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_VisionBlock
+    disposition: mapped
+    ir_targets:
+    - vision_block.attention
+    - vision_block.attention_output
+    - vision_block.attention_residual
+    - vision_block.fc1
+    - vision_block.fc2
+    - vision_block.gelu
+    - vision_block.norm1
+    - vision_block.norm2
+    - vision_block.qkv_projection
+    - vision_block.rotary
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_VisionBlock
+    disposition: mapped
+    ir_targets:
+    - vision_block.block_input
+    - vision_block.block_output
+- id: linear_decoder_layer
+  component: GDN plus MoE decoder residual flow
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5LinearDecoderLayer.forward
+  anchor: class Qwen3_5LinearDecoderLayer
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - gdn_moe_block
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5LinearDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - gdn_moe_block.attention_residual
+    - gdn_moe_block.input_norm
+    - gdn_moe_block.layer_residual
+    - gdn_moe_block.post_attention_norm
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_5LinearDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - gdn_moe_block.input_hidden
+    - gdn_moe_block.output_hidden
+- id: gated_delta_net
+  component: GDN projections convolution recurrence gate and state
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5GatedDeltaNet.forward
+  anchor: class Qwen3_5GatedDeltaNet
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - gdn_attention
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - gdn_attention.ba_projection
+    - gdn_attention.causal_conv
+    - gdn_attention.gated_delta_recurrence
+    - gdn_attention.output_gate_norm
+    - gdn_attention.output_projection
+    - gdn_attention.qkvz_projection
+  - id: state_read
+    kind: state_read
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - gdn_attention.conv_state_read
+    - gdn_attention.recurrent_state_read
+  - id: state_update
+    kind: state_update
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - gdn_attention.state_write
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - gdn_attention.module_input
+    - gdn_attention.module_output
+- id: full_attention_layer
+  component: gated grouped-query attention and residual flow
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5AttentionDecoderLayer.forward
+  anchor: class Qwen3_5AttentionDecoderLayer
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - full_attention
+  - full_attention_moe_block
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5AttentionDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - full_attention.attention_output_gate
+    - full_attention.causal_gqa
+    - full_attention.output_projection
+    - full_attention.partial_rope
+    - full_attention.qk_norm
+    - full_attention.qkv_projection
+    - full_attention_moe_block.attention_residual
+    - full_attention_moe_block.input_norm
+    - full_attention_moe_block.layer_residual
+    - full_attention_moe_block.post_attention_norm
+  - id: state_read
+    kind: state_read
+    source_anchor: class Qwen3_5AttentionDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - full_attention.kv_state_read
+  - id: state_update
+    kind: state_update
+    source_anchor: class Qwen3_5AttentionDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - full_attention.kv_state_write
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_5AttentionDecoderLayer
+    disposition: mapped
+    ir_targets:
+    - full_attention.module_input
+    - full_attention.module_output
+    - full_attention_moe_block.input_hidden
+    - full_attention_moe_block.output_hidden
+- id: routed_shared_moe
+  component: router top-k routed experts shared expert and combine
+  source_file: python/sglang/srt/models/qwen2_moe.py
+  symbol: Qwen2MoeSparseMoeBlock.forward
+  anchor: class Qwen2MoeSparseMoeBlock
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - moe_block
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen2MoeSparseMoeBlock
+    disposition: mapped
+    ir_targets:
+    - moe_block.routed_experts
+    - moe_block.router
+    - moe_block.shared_expert
+    - moe_block.weighted_combine
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen2MoeSparseMoeBlock
+    disposition: mapped
+    ir_targets:
+    - moe_block.input_hidden
+    - moe_block.output_hidden
+- id: optional_mtp_layer
+  component: optional shared-embedding one-layer MTP draft model
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5ForCausalLM.forward
+  anchor: class Qwen3_5ForCausalLM
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - mtp_draft_head
+  - mtp_full_attention
+  - mtp_full_attention_moe_block
+  - mtp_moe_block
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - mtp_draft_head.concat
+    - mtp_draft_head.draft_final_norm
+    - mtp_draft_head.embedding_norm
+    - mtp_draft_head.fc_projection
+    - mtp_draft_head.hidden_norm
+    - mtp_draft_head.shared_embedding
+    - mtp_draft_head.shared_lm_head
+    - mtp_full_attention.attention_output_gate
+    - mtp_full_attention.causal_gqa
+    - mtp_full_attention.output_projection
+    - mtp_full_attention.partial_rope
+    - mtp_full_attention.qk_norm
+    - mtp_full_attention.qkv_projection
+    - mtp_full_attention_moe_block.attention_residual
+    - mtp_full_attention_moe_block.input_norm
+    - mtp_full_attention_moe_block.layer_residual
+    - mtp_full_attention_moe_block.post_attention_norm
+    - mtp_moe_block.routed_experts
+    - mtp_moe_block.router
+    - mtp_moe_block.shared_expert
+    - mtp_moe_block.weighted_combine
+  - id: state_read
+    kind: state_read
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - mtp_full_attention.kv_state_read
+  - id: state_update
+    kind: state_update
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - mtp_full_attention.kv_state_write
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class Qwen3_5ForCausalLM
+    disposition: mapped
+    ir_targets:
+    - mtp_draft_head.draft_input_token
+    - mtp_draft_head.draft_logits
+    - mtp_draft_head.target_hidden
+    - mtp_full_attention.module_input
+    - mtp_full_attention.module_output
+    - mtp_full_attention_moe_block.input_hidden
+    - mtp_full_attention_moe_block.output_hidden
+    - mtp_moe_block.input_hidden
+    - mtp_moe_block.output_hidden
+- id: persistent_state
+  component: KV GDN recurrent and tentative state boundaries
+  source_file: python/sglang/srt/models/qwen3_5.py
+  symbol: Qwen3_5GatedDeltaNet.forward
+  anchor: class Qwen3_5GatedDeltaNet
+  review_status: verified
+  member_dispositions:
+  - name: forward
+    disposition: reviewed
+  expected_ir_views:
+  - state_tensors
+  obligations:
+  - id: state_read
+    kind: state_read
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - state_tensors.attention_keys
+    - state_tensors.attention_values
+    - state_tensors.gdn_conv_windows
+    - state_tensors.gdn_recurrent_states
+    - state_tensors.mtp_draft_keys
+    - state_tensors.mtp_draft_values
+  - id: state_update
+    kind: state_update
+    source_anchor: class Qwen3_5GatedDeltaNet
+    disposition: mapped
+    ir_targets:
+    - state_tensors.committed_lengths
+    - state_tensors.verify_journal
+- id: optional_generation_loop
+  component: optional MTP draft verify accept replay and commit lifecycle
+  source_file: python/sglang/srt/speculative/eagle_worker_v2.py
+  symbol: EAGLEWorkerV2.forward_batch_generation
+  anchor: class EAGLEWorkerV2
+  review_status: verified
+  member_dispositions:
+  - name: forward_batch_generation
+    disposition: reviewed
+  expected_ir_views:
+  - generation_loop
+  - top
+  obligations:
+  - id: model_ir_primitive
+    kind: model_ir_primitive
+    source_anchor: class EAGLEWorkerV2
+    disposition: mapped
+    ir_targets:
+    - generation_loop.accept_prefix
+    - generation_loop.next_iteration
+    - generation_loop.replay_gdn
+  - id: state_read
+    kind: state_read
+    source_anchor: class EAGLEWorkerV2
+    disposition: mapped
+    ir_targets:
+    - generation_loop.committed_context
+    - generation_loop.tentative_state
+  - id: state_update
+    kind: state_update
+    source_anchor: class EAGLEWorkerV2
+    disposition: mapped
+    ir_targets:
+    - generation_loop.commit_gdn
+    - generation_loop.commit_kv
+  - id: tensor_boundary
+    kind: tensor_boundary
+    source_anchor: class EAGLEWorkerV2
+    disposition: mapped
+    ir_targets:
+    - generation_loop.candidate_tokens
+    - generation_loop.commit_tokens
+    - top.accepted_tokens
+reverse_exclusions: []

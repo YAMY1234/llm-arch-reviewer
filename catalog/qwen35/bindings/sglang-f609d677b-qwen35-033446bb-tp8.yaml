@@ -1,0 +1,1651 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f609d677b_qwen35_033446bb_tp8
+label: SGLang f609d677b with Qwen3.5 033446bb modules, pure TP8
+model_id: qwen35
+execution_path_id: tp8
+source_repo: https://github.com/sgl-project/sglang
+source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+container: sglang-glm53-flash-arm64-73f9294b.sqsh@sha256:28e9545e312e344bbbf80c575b928be53c9aba6296ae55f292ce0f10750c6971
+backend: native_multi_node_tp8
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_56198943adacd2b6
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  semantic_capture_cuda_graph_enabled: false
+  production_decode_cuda_graph_enabled: true
+  evidence:
+  - runtime preflight job 3413155
+  - eager graph-off semantic job 3414655, prefill and decode on all TP ranks
+  - production prefill job 3414663
+  - production CUDA Graph decode jobs 3414668, 3414675, 3414674, and 3414676
+  notes: The package base is f609d677b while the Qwen3.5 model, config, GDN and MoE modules match inspected 033446bb source
+    byte-for-byte; the mixed snapshot is explicit. Eager stack/signature/sequence reconciliation closes every production semantic owner.
+node_bindings:
+  top.token_input:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.vision_inputs:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.embedding:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.tp_embedding_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
+  top.vision_frontend:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.multimodal_injection:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.decoder_stack:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.state_store:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.final_norm:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.lm_head:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.tp_logits_all_gather:
+    symbols:
+    - tensor_model_parallel_all_gather
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_gather
+      line: 77
+      display: TP all-gather contract
+  top.target_logits:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.generation_controller:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  top.accepted_tokens:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  stack.stack_input:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  stack.schedule:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  stack.gdn_layer:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  stack.full_attention_layer:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  stack.stack_output:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_00:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_01:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_02:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_03:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_04:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_05:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_06:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_07:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_08:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_09:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_10:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_11:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_12:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_13:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_14:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_15:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_16:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_17:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_18:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_19:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_20:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_21:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_22:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_23:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_24:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_25:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_26:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_27:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_28:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_29:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_30:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_31:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_32:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_33:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_34:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_35:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_36:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_37:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_38:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_39:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_40:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_41:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_42:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_43:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_44:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_45:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_46:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_47:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_48:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_49:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_50:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_51:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_52:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_53:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_54:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_55:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_56:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_57:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_58:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  layer_schedule.layer_59:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.input_norm:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.attention:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.moe:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_attention.module_input:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  gdn_attention.qkvz_projection:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  gdn_attention.ba_projection:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  gdn_attention.conv_state_read:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  gdn_attention.causal_conv:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  gdn_attention.recurrent_state_read:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  gdn_attention.gated_delta_recurrence:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  gdn_attention.state_write:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  gdn_attention.output_gate_norm:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  gdn_attention.output_projection:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  gdn_attention.tp_gdn_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
+  gdn_attention.module_output:
+    symbols:
+    - Qwen3_5GatedDeltaNet
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5GatedDeltaNet
+      line: 266
+      display: Qwen3.5 GDN projections, state and output
+  full_attention_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.input_norm:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.attention:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.moe:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5LinearDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5LinearDecoderLayer
+      line: 792
+      display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention.module_input:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.qkv_projection:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.qk_norm:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.partial_rope:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.kv_state_read:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.causal_gqa:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.kv_state_write:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.attention_output_gate:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.output_projection:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  full_attention.tp_attention_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
+  full_attention.module_output:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  moe_block.input_hidden:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  moe_block.router:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  moe_block.routed_experts:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  moe_block.shared_expert:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  moe_block.weighted_combine:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  moe_block.tp_moe_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
+  moe_block.output_hidden:
+    symbols:
+    - Qwen2MoeSparseMoeBlock
+    links:
+    - file: python/sglang/srt/models/qwen2_moe.py
+      symbol: Qwen2MoeSparseMoeBlock
+      line: 262
+      display: router, routed experts, shared expert and combine
+  mtp_full_attention_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.input_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.attention:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.moe:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.module_input:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.qkv_projection:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.qk_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.partial_rope:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.kv_state_read:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.causal_gqa:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.kv_state_write:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.attention_output_gate:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.output_projection:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.module_output:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.router:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.routed_experts:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.shared_expert:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.weighted_combine:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.attention_keys:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  state_tensors.attention_values:
+    symbols:
+    - Qwen3_5AttentionDecoderLayer
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5AttentionDecoderLayer
+      line: 935
+      display: Qwen3.5 full-attention layer
+  state_tensors.mtp_draft_keys:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.mtp_draft_values:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.gdn_conv_windows:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  state_tensors.gdn_recurrent_states:
+    symbols:
+    - GDNAttnBackend
+    links:
+    - file: python/sglang/srt/layers/attention/linear/gdn_backend.py
+      symbol: GDNAttnBackend
+      line: 378
+      display: GDN prefill/decode recurrence and state backend
+  state_tensors.verify_journal:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.committed_lengths:
+    symbols:
+    - Qwen3_5MoeForCausalLM
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: Qwen3_5MoeForCausalLM
+      line: 1655
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  mtp_draft_head.draft_input_token:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.target_hidden:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.shared_embedding:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.embedding_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.hidden_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.concat:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.fc_projection:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_decoder_layer:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_final_norm:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.shared_lm_head:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_logits:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.committed_context:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.draft_propose:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.candidate_tokens:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.target_verify:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.tentative_state:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.accept_prefix:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.replay_gdn:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_kv:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_gdn:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_tokens:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.next_iteration:
+    symbols:
+    - Qwen3_5ForCausalLMMTP
+    links:
+    - file: python/sglang/srt/models/qwen3_5_mtp.py
+      symbol: Qwen3_5ForCausalLMMTP
+      line: 84
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  vision_frontend.vision_input:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.patch_projection:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.position_embedding:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.rotary_coordinates:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.vision_blocks:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.spatial_group:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_norm:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_fc1:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_gelu:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_fc2:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.vision_output:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.block_input:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.norm1:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.qkv_projection:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.rotary:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention_output:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention_residual:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.norm2:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.fc1:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.gelu:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.fc2:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.block_output:
+    symbols:
+    - Qwen3VLMoeVisionModel
+    links:
+    - file: python/sglang/srt/models/qwen3_vl.py
+      symbol: Qwen3VLMoeVisionModel
+      line: 345
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+runtime_module_source_commit: 033446bb05f35c0943aed2750c443077ffc0b92c
+runtime_module_sha256:
+  python/sglang/srt/configs/qwen3_5.py: 53f92b2be9d880716a1850cb4484ea2fa46408ab0b05be847ce0fa88edf71890
+  python/sglang/srt/models/qwen3_5.py: 0981d3b9bf4fef815511f02e39843af28dfb0cbf2bf0011a08151984abd7b197
+  python/sglang/srt/layers/attention/linear/gdn_backend.py: c607506f003a22635156d5726c37e9fb56e1d42e784d768eee8035a2820f6251
+  python/sglang/srt/layers/moe/fused_moe_triton/layer.py: 2c00940d386430c9bfc47d0dd4c8d62a8be68ad00ba36c082c1bf58b9697f616
+checkpoint_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
