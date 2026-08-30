@@ -22,8 +22,14 @@ unsupported substitutions. Each framework has stable prefill at global BS1 and
 CUDA Graph decode at global BS1/16/64/256. Every point uses 3×concurrency warmup
 requests and 1×concurrency formal requests, with one exact selected formal
 forward. Separate graph-off eager captures provide Python-stack semantic
-evidence; production captures provide timing. All eight TP ranks are validated
-for every point.
+evidence for each framework, phase, and TP rank. Reconciliation requires the
+same rank and phase plus an exact occurrence-scoped kernel-signature sequence;
+there is no node-representative stack fallback. Production profiler traces
+provide event layout, active intervals, and residency, while the selected
+profiler-off production baseline is the serving-wall and device-gap authority.
+All eight TP ranks are validated for every point. Any physical event that does
+not satisfy the exact eager contract is published as `typed_unresolved` with a
+review-required reason instead of a high-confidence fused claim.
 
 In these profiles, `profiler.cuda_graph_enabled` means that the selected formal
 forward actually used a CUDA Graph path, proven by a nonzero raw-trace
@@ -35,13 +41,28 @@ graph-path kernels on all eight TP ranks and is therefore recorded as
 `no_cuda_graph_replay`. SGLang prefill is recorded as
 `mixed_graph_and_eager` under its breakable-prefill configuration.
 
+SGLang graph-on decode capture drains each rank's preceding CUDA backlog and
+uses Gloo TP barriers after Kineto activation and after formal-forward input
+preparation, at the scheduler boundary immediately before
+`model_worker.forward_batch_generation`. No synchronization GPU kernel is
+added to the selected model interval. A fail-closed gate checks all eight ranks
+for exactly 121 logical all-reduce primaries, exact cross-rank signatures,
+baseline-relative max-single and mapped-envelope outliers, and robust physical
+residency outliers. The profiler-off baseline is the wall authority; the
+instrumented trace remains layout/active/residency evidence with its overhead
+recorded explicitly. One-shot and two-shot/RMSNorm companion kernels remain
+separately visible. A fusion group
+is emitted only when every member's physical production event set exactly
+equals its single timing owner's set. Unequal occurrence subsets remain
+`partially_fused` and never inherit the owner's aggregate timing.
+
 | Framework | Phase | Global BS | Production job | Viewer |
 |---|---:|---:|---:|---|
 | SGLang | prefill | 1 | 3414663 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=timeline) |
-| SGLang | decode | 1 | 3414668 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=timeline) |
-| SGLang | decode | 16 | 3414675 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs16_8k1k) |
-| SGLang | decode | 64 | 3414674 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs64_8k1k) |
-| SGLang | decode | 256 | 3414676 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs256_8k1k) |
+| SGLang | decode | 1 | 3427173 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=timeline) |
+| SGLang | decode | 16 | 3427500 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs16_8k1k) |
+| SGLang | decode | 64 | 3427499 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs64_8k1k) |
+| SGLang | decode | 256 | 3427851 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs256_8k1k) |
 | vLLM | prefill | 1 | 3414288 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=prefill&profile=qwen35_tp8_vllm_prefill_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=prefill&profile=qwen35_tp8_vllm_prefill_bs1_8k1k&viewMode=timeline) |
 | vLLM | decode | 1 | 3414289 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs1_8k1k&viewMode=timeline) |
 | vLLM | decode | 16 | 3414290 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs16_8k1k) |

@@ -11,6 +11,35 @@ def test_viewer_audit_timeline_wait_is_bounded() -> None:
     assert 0 < TIMELINE_LOAD_TIMEOUT_MS <= 60_000
 
 
+def test_every_timeline_data_consumer_has_a_bounded_wait() -> None:
+    script = (
+        Path(__file__).parents[1] / "scripts" / "audit_viewer_render.py"
+    ).read_text()
+    for stage in (
+        "cross_link_setup",
+        "bidirectional_dom_click_setup",
+        "runtime_support_detail",
+        "typed_unresolved_detail",
+    ):
+        marker = f"stage: '{stage}'"
+        assert marker in script
+        block_start = script.rfind('"""async timeoutMs => {', 0, script.index(marker))
+        block = script[block_start : script.index(marker)]
+        assert "while (!TIMELINE_DATA && Date.now() < deadline)" in block
+        assert "setViewMode('split', false, true)" in block
+
+
+def test_geometry_audit_uses_rendered_screen_coordinates() -> None:
+    script = (
+        Path(__file__).parents[1] / "scripts" / "audit_viewer_render.py"
+    ).read_text()
+    geometry = script[script.index("const bg = node.querySelector('.node-bg')") :]
+    geometry = geometry[: geometry.index("return {issues, groups:")]
+    assert "bg.getBoundingClientRect()" in geometry
+    assert "text.getBoundingClientRect()" in geometry
+    assert ".getBBox()" not in geometry
+
+
 def test_viewer_audit_writes_structured_failure_on_exception(tmp_path) -> None:
     output = tmp_path / "audit"
     args = Namespace(bundle=tmp_path / "qwen35_v2" / "arch_data.json", output=output)

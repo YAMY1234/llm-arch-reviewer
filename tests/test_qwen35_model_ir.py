@@ -10,6 +10,9 @@ import yaml
 
 from llm_arch_v2 import compile_catalog
 from llm_arch_v2.compiler import CatalogError, apply_execution_plan
+from models.qwen35.build.build_qwen35_production_profiles import (
+    rank_collective_duration_gate,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -209,8 +212,77 @@ def test_qwen35_complete_cross_framework_profile_matrix() -> None:
             assert selected_graph["replay_state"] == "no_cuda_graph_replay"
             assert selected_graph["graph_kernel_count"] == 0
         assert profile["profiler"]["selected_runtime_coordinate"]
+        timing = profile["evidence"]["timing"]
+        assert timing["elapsed_ms"] == timing["serving_wall_ms"]
+        assert timing["wall_authority"] == "selected profiler-off production baseline forward"
+        assert timing["layout_active_residency_authority"].startswith(
+            "instrumented production trace"
+        )
+        assert timing["kernel_envelope_ms"] > 0
+        assert timing["instrumented_trace_overhead_ms"] >= 0
         assert profile["evidence"]["unclassified_kernel_count"] == 0
-        assert profile["evidence"]["semantic_stack_closure_missing_node_count"] == 0
+        assert profile["evidence"]["typed_unresolved_semantic_event_count"] >= 0
+        assert len(profile["evidence"]["all_rank_eager_mapping_sha256"]) == 8
+        assert len(profile["evidence"]["all_rank_eager_raw_manifest_sha256"]) == 8
+        phase_contract = profile["evidence"]["all_rank_eager_phase_contract"]
+        assert set(phase_contract) == {str(rank) for rank in range(8)}
+        expected_source_phase = (
+            f"vllm_{profile['phase']}"
+            if profile["implementation_id"].startswith("vllm_")
+            else f"forward_{'extend' if profile['phase'] == 'prefill' else 'decode'}"
+        )
+        for rank, contract in phase_contract.items():
+            assert contract["source_phase"] == expected_source_phase, rank
+            assert contract["selected_forward_kernel_count"] > 0
+            assert contract["selected_forward_kernel_duration_us"] > 0
+            assert len(contract["raw_trace_sha256"]) == 64
+            assert len(contract["raw_manifest_sha256"]) == 64
+            assert len(contract["selected_forward_events_sha256"]) == 64
+        if profile["implementation_id"].startswith("vllm_"):
+            expected_count, expected_duration = (
+                (4133, 843078.284)
+                if profile["phase"] == "prefill"
+                else (3718, 741788.696)
+            )
+            assert phase_contract["0"]["selected_forward_kernel_count"] == expected_count
+            assert phase_contract["0"]["selected_forward_kernel_duration_us"] == pytest.approx(
+                expected_duration, abs=1e-3
+            )
+        if profile["implementation_id"].startswith("sglang_") and profile["phase"] == "decode":
+            gate = profile["profiler"]["rank_collective_duration_gate"]
+            assert gate["state"] == "passed"
+            assert gate["signature_outlier_count"] == 0
+            assert gate["signature_count"] in {121, 240}
+            assert set(gate["per_rank"]) == {str(rank) for rank in range(8)}
+            assert all(
+                row["logical_all_reduce_count"] == 121
+                and row["physical_all_reduce_kernel_count"] in {121, 240}
+                and row["max_single_all_reduce_ms"] <= gate[
+                    "max_single_limit_ms"
+                ]
+                and row["mapped_kernel_envelope_ms"] <= gate[
+                    "mapped_envelope_upper_ms"
+                ]
+                for row in gate["per_rank"].values()
+            )
+            sync = profile["profiler"]["profiler_sync_evidence"]
+            assert sync["state"] == "passed"
+            assert len(sync["overlay_sha256"]) == 64
+            assert len(sync["source_lock_sha256"]) == 64
+            assert set(sync["marker_counts"]) == {
+                "pre_activation_barrier",
+                "post_activation_barrier",
+                "activation_complete",
+                "pre_input_preparation_barrier",
+                "input_preparation_barrier_passed",
+            }
+            assert all(
+                set(counts) == {str(rank) for rank in range(8)}
+                and set(counts.values()) == {1}
+                for counts in sync["marker_counts"].values()
+            )
+            assert sync["pre_forward_device_collective_added"] is False
+            assert sync["all_tp_rank_count"] == 8
         assert profile["evidence"]["mapped_kernel_count_ratio"] >= 0.95
         assert profile["evidence"]["mapped_kernel_duration_ratio"] >= 0.95
         diagnostics = profile["evidence"]["attribution_diagnostics"]
@@ -232,6 +304,11 @@ def test_qwen35_runtime_bearing_semantics_are_measured_or_explicitly_closed() ->
         for target in required:
             if target in profile["node_metrics"]:
                 assert profile["node_metrics"][target]["ms_per_iter"] > 0
+                assert profile["node_metrics"][target]["attribution_status"] in {
+                    "measured_direct",
+                    "typed_unresolved",
+                    "inclusive_rollup",
+                }
                 continue
             state = profile["node_states"][target]
             assert state["status"] in {"fused", "partially_fused", "not_selected"}, (path, target, state)
@@ -258,6 +335,53 @@ def test_qwen35_fused_members_have_exactly_one_timing_owner_and_no_copied_metric
                 }
 
 
+def test_qwen35_fusion_groups_have_exact_owner_member_event_sets() -> None:
+    for profile_path in qwen35_profile_paths():
+        profile = load_yaml(profile_path)
+        with gzip.open(profile_path.with_name(profile["timeline"]["artifact"]), "rt") as source:
+            timeline = json.load(source)
+        strings = timeline["strings"]
+        events = [event for step in timeline["steps"] for event in step["events"]]
+        for group_id, group in profile["fusion_groups"].items():
+            owner = group["owner"]
+            owner_ids = {
+                strings[event["raw_event_id"]]
+                for event in events
+                if event["ir_node"] is not None and strings[event["ir_node"]] == owner
+            }
+            assert owner_ids == set(group["evidence_scope"]["production_event_ids"]), (
+                profile_path,
+                group_id,
+            )
+            assert group["evidence_scope"]["member_event_sets_equal_owner"] is True
+            for member in group["ir_nodes"][1:]:
+                member_ids = {
+                    strings[event["raw_event_id"]]
+                    for event in events
+                    if member in {strings[index] for index in event["ir_targets"]}
+                }
+                assert member_ids == owner_ids, (profile_path, group_id, member)
+
+
+def test_qwen35_known_unequal_fusion_candidates_remain_occurrence_scoped() -> None:
+    sglang = MODEL_ROOT / "profiles" / "tp8" / "sglang_f609d677b_qwen35_033446bb_tp8"
+    vllm = MODEL_ROOT / "profiles" / "tp8" / "vllm_487ecf187_qwen35_native_tp8"
+    cases = (
+        (sglang / "prefill_bs1_8k1k.yaml", "full_attention_moe_block.layer_residual"),
+        (vllm / "prefill_bs1_8k1k.yaml", "full_attention_moe_block.layer_residual"),
+        (sglang / "cg_decode_bs1_8k1k.yaml", "full_attention_moe_block.input_norm"),
+        (sglang / "cg_decode_bs16_8k1k.yaml", "full_attention_moe_block.input_norm"),
+        (vllm / "cg_decode_bs64_8k1k.yaml", "full_attention_moe_block.input_norm"),
+        (vllm / "cg_decode_bs256_8k1k.yaml", "full_attention_moe_block.input_norm"),
+    )
+    for profile_path, member in cases:
+        profile = load_yaml(profile_path)
+        state = profile["node_states"][member]
+        assert state["status"] == "partially_fused", (profile_path, member, state)
+        assert "fusion_group_id" not in state
+        assert state["label"].startswith("occurrence-scoped partial fusion only")
+
+
 def test_qwen35_timelines_close_semantic_events_to_eager_stacks_and_exact_targets() -> None:
     for profile_path in qwen35_profile_paths():
         profile = load_yaml(profile_path)
@@ -271,8 +395,25 @@ def test_qwen35_timelines_close_semantic_events_to_eager_stacks_and_exact_target
         assert semantic and support
         for event in semantic:
             node = strings[event["ir_node"]]
-            assert event["stack_id"] is not None, (profile_path, event["event_id"], node)
             assert node in {strings[index] for index in event["ir_targets"]}
+            reconciliation = strings[event["reconciliation_status"]]
+            if reconciliation == "closed":
+                assert event["stack_id"] is not None, (profile_path, event["event_id"], node)
+                stack = timeline["stacks"][event["stack_id"]]
+                evidence = {
+                    key: strings[value] if value is not None else None
+                    for key, value in stack["evidence"].items()
+                }
+                assert evidence["match"] == (
+                    "same_rank_phase_occurrence_signature_ordered_sequence"
+                )
+                assert evidence["rank"] == str(profile["timeline"]["reference_rank"])
+                assert evidence["phase"] == profile["phase"]
+            else:
+                assert reconciliation == "typed_unresolved"
+                assert event["stack_id"] is None
+                assert strings[event["confidence"]] == "review_required"
+                assert strings[event["reconciliation_reason"]]
         for event in support:
             assert event["support_class"] is not None
             assert event["support_reason"] is not None
@@ -294,7 +435,39 @@ def test_qwen35_vllm_large_decode_preserves_physical_n_to_one_collective_events(
         ]
         assert len(companions) == 120
         assert all(event["ir_node"] is not None for event in companions)
-        assert all(event["stack_id"] is not None for event in companions)
+        assert all(
+            strings[event["reconciliation_status"]] in {"closed", "typed_unresolved"}
+            for event in companions
+        )
+
+
+def test_qwen35_vllm_decode_does_not_publish_fill_as_qk_rope_fusion() -> None:
+    root = MODEL_ROOT / "profiles" / "tp8" / "vllm_487ecf187_qwen35_native_tp8"
+    for batch in (1, 16, 64, 256):
+        profile_path = root / f"cg_decode_bs{batch}_8k1k.yaml"
+        profile = load_yaml(profile_path)
+        assert not [
+            group_id
+            for group_id, group in profile["fusion_groups"].items()
+            if group["owner"] == "full_attention.qk_norm"
+            and "full_attention.partial_rope" in group["ir_nodes"]
+        ]
+        with gzip.open(profile_path.with_name(profile["timeline"]["artifact"]), "rt") as source:
+            timeline = json.load(source)
+        strings = timeline["strings"]
+        fill_qk_events = [
+            event
+            for step in timeline["steps"]
+            for event in step["events"]
+            if event["ir_node"] is not None
+            and strings[event["ir_node"]] == "full_attention.qk_norm"
+            and "FillFunctor<unsigned char>" in strings[event["kernel_name"]]
+        ]
+        assert fill_qk_events
+        assert all(event["stack_id"] is None for event in fill_qk_events)
+        assert {
+            strings[event["reconciliation_status"]] for event in fill_qk_events
+        } == {"typed_unresolved"}
 
 
 def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
@@ -317,3 +490,27 @@ def test_qwen35_public_artifacts_have_no_unexplained_mapping_placeholders() -> N
     for path in [MODEL_ROOT / "model_ir.yaml", *qwen35_profile_paths()]:
         text = path.read_text().lower()
         assert not [token for token in forbidden if token in text], path
+
+
+def test_qwen35_rank_collective_duration_gate_rejects_one_rank_wait_outlier() -> None:
+    kernel = (
+        "void flashinfer::trtllm_mnnvl_allreduce::"
+        "oneshotAllreduceFusionKernel<__nv_bfloat16>()"
+    )
+    rank_rows = {
+        rank: [
+            {
+                "kernel_name": kernel,
+                "ts_us": float(index * 20),
+                "dur_us": 2222.7 if rank == 0 and index == 0 else 10.0,
+                "node": "top.tp_embedding_output_collective",
+                "occurrence_id": f"collective_{index:03d}",
+            }
+            for index in range(121)
+        ]
+        for rank in range(8)
+    }
+    with pytest.raises(ValueError, match="rank collective-duration/outlier gate failed"):
+        rank_collective_duration_gate(
+            rank_rows, job="synthetic-skew", serving_wall_ms=5.721765
+        )

@@ -193,11 +193,12 @@ def _events_path_for_mapping(mapping_path: Path) -> Path | None:
 def load_eager_stack_index(
     mapping_path: Path,
 ) -> dict[str, dict[Any, list[dict[str, Any]]]]:
-    """Index eager Python stacks by exact kernel+IR and by representative IR.
+    """Index eager Python stacks by IR node and exact ordered occurrence.
 
     The full stack lives in the sibling ``events.<rank>.jsonl`` file.  If that
     file is unavailable, selected semantic frames in the mapping remain usable
-    as explicitly reduced evidence.
+    as explicitly reduced evidence.  No node-only or first-stack index is
+    constructed, so an occurrence cannot inherit a representative stack.
     """
 
     mappings = [
@@ -217,8 +218,7 @@ def load_eager_stack_index(
             )
         }
 
-    exact: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    by_node: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_node_occurrence: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for mapping in mappings:
         node = str(mapping.get("selected_node") or "")
         if not node:
@@ -250,39 +250,100 @@ def load_eager_stack_index(
             "stack_kind": stack_kind,
             "python_stack": stack,
             "cpu_op_name": event.get("cpu_op_name") or mapping.get("cpu_op_name"),
+            "rank": mapping.get("rank"),
+            "phase": mapping.get("phase"),
+            "occurrence_id": mapping.get("occurrence_id"),
+            "sequence_index": mapping.get("sequence_index"),
+            "closure_status": mapping.get("closure_status"),
         }
-        exact[(node, evidence["kernel_name"])].append(evidence)
-        by_node[node].append(evidence)
-    return {"exact": exact, "by_node": by_node}
+        by_node_occurrence[
+            (node, str(evidence["occurrence_id"] or ""))
+        ].append(evidence)
+    for candidates in by_node_occurrence.values():
+        candidates.sort(
+            key=lambda item: (
+                int(item["sequence_index"])
+                if item.get("sequence_index") is not None
+                else 2**31,
+                str(item["event_id"]),
+            )
+        )
+    return {"by_node_occurrence": by_node_occurrence}
 
 
 def attach_eager_stack_evidence(
-    events: Iterable[dict[str, Any]], *, mapping_path: Path
+    events: Iterable[dict[str, Any]],
+    *,
+    mapping_path: Path,
+    expected_rank: int | None = None,
+    expected_phase: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Attach eager stack evidence without presenting it as a formal stack."""
+    """Attach only same-rank, same-phase, occurrence-exact eager stacks.
+
+    A node-level representative is intentionally not a closure: one arbitrary
+    stack for a semantic node cannot prove that a materially different kernel
+    occurrence, signature, or rank implements that node.
+    """
 
     index = load_eager_stack_index(mapping_path)
+    raw_events = [dict(event) for event in events]
+    production_sequences: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for event in raw_events:
+        if event.get("node"):
+            production_sequences[
+                (
+                    str(event.get("node") or ""),
+                    str(event.get("occurrence_id") or ""),
+                )
+            ].append(str(event.get("kernel_name") or ""))
+    eager_sequences: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    sequence_matches: dict[tuple[str, str], bool] = {}
+    for key, production_signature in production_sequences.items():
+        candidates = [
+            candidate
+            for candidate in index["by_node_occurrence"].get(key, [])
+            if candidate.get("closure_status") == "closed"
+            and (expected_rank is None or candidate.get("rank") == expected_rank)
+            and (expected_phase is None or candidate.get("phase") == expected_phase)
+        ]
+        eager_sequences[key] = candidates
+        sequence_matches[key] = [
+            str(candidate.get("kernel_name") or "") for candidate in candidates
+        ] == production_signature
+    seen: Counter[tuple[str, str]] = Counter()
     enriched: list[dict[str, Any]] = []
-    for raw in events:
-        event = dict(raw)
+    for event in raw_events:
         node = str(event.get("node") or "")
-        name = str(event.get("kernel_name") or "")
-        candidates = index["exact"].get((node, name), [])
-        match_kind = "exact_kernel_name_and_ir_node"
-        if not candidates:
-            candidates = index["by_node"].get(node, [])
-            match_kind = "representative_ir_node_stack"
-        if candidates:
-            evidence = candidates[0]
+        occurrence = str(event.get("occurrence_id") or "")
+        key = (node, occurrence)
+        ordinal = seen[key]
+        seen[key] += 1
+        candidates = eager_sequences.get(key, [])
+        if sequence_matches.get(key, False) and ordinal < len(candidates):
+            evidence = candidates[ordinal]
             event["python_stack"] = evidence["python_stack"]
             event["cpu_op_name"] = evidence.get("cpu_op_name")
+            event["eager_event_id"] = evidence["event_id"]
+            event["reconciliation_status"] = "closed"
             event["stack_evidence"] = {
                 "source": "eager_trace",
-                "match": match_kind,
+                "match": "same_rank_phase_occurrence_signature_ordered_sequence",
                 "kind": evidence["stack_kind"],
                 "event_id": evidence["event_id"],
                 "confidence": evidence["confidence"],
+                "rank": str(evidence.get("rank")),
+                "phase": str(evidence.get("phase")),
+                "occurrence_id": occurrence,
+                "sequence_ordinal": str(ordinal),
             }
+        elif node:
+            event.pop("python_stack", None)
+            event["reconciliation_status"] = "typed_unresolved"
+            event["reconciliation_reason"] = (
+                "no same-rank, same-phase eager event set with an exact "
+                "occurrence-scoped kernel-signature sequence and closed semantic stacks"
+            )
+            event["confidence"] = "review_required"
         enriched.append(event)
     return enriched
 
@@ -500,6 +561,7 @@ def build_timeline_artifact(
             encoded_events.append(
                 {
                     "event_id": f"r{reference_rank}-s{raw_step['step_index']}-k{index}",
+                    "raw_event_id": strings.add(event.get("event_id")),
                     "start_us": round(float(event["ts_us"]) - start_us, 6),
                     "duration_us": round(float(event["dur_us"]), 6),
                     "stream_id": _stream_key(event),
@@ -521,6 +583,12 @@ def build_timeline_artifact(
                         event.get("attribution_method")
                     ),
                     "confidence": strings.add(event.get("confidence")),
+                    "reconciliation_status": strings.add(
+                        event.get("reconciliation_status")
+                    ),
+                    "reconciliation_reason": strings.add(
+                        event.get("reconciliation_reason")
+                    ),
                     "support_class": strings.add(event.get("support_class")),
                     "support_reason": strings.add(event.get("support_reason")),
                     "cpu_op_name": strings.add(event.get("cpu_op_name")),

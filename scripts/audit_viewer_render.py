@@ -97,6 +97,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         "cross_links": 0,
         "bidirectional_dom_clicks": 0,
         "runtime_support_details": 0,
+        "typed_unresolved_details": 0,
         "double_click_drills": 0,
         "fusion_owner_card_links": 0,
         "fusion_owner_detail_links": 0,
@@ -266,11 +267,14 @@ def main(args: argparse.Namespace | None = None) -> int:
                           }
                           const bg = node.querySelector('.node-bg');
                           if (!bg) { issues.push({type: 'missing_node_background', view, node: node.dataset.id}); continue; }
-                          const box = bg.getBBox();
+                          // Compare final rendered screen-space rectangles so
+                          // nested transforms (for example the drill glyph's
+                          // translated badge) are included on both sides.
+                          const box = bg.getBoundingClientRect();
                           for (const text of node.querySelectorAll('text')) {
-                            const t = text.getBBox();
-                            if (t.x < box.x - 3 || t.x + t.width > box.x + box.width + 3 ||
-                                t.y < box.y - 3 || t.y + t.height > box.y + box.height + 3) {
+                            const t = text.getBoundingClientRect();
+                            if (t.left < box.left - 3 || t.right > box.right + 3 ||
+                                t.top < box.top - 3 || t.bottom > box.bottom + 3) {
                               issues.push({type: 'node_text_overflow', view, node: node.dataset.id, text: text.textContent});
                             }
                           }
@@ -604,7 +608,15 @@ def main(args: argparse.Namespace | None = None) -> int:
             # and require both the typed class and concrete reason to render;
             # such events must not offer a misleading architecture jump.
             support = page.evaluate(
-                """() => {
+                """async timeoutMs => {
+                  setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'runtime_support_detail', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._supportClass && !candidate._irNode);
                   if (!event) return {absent: true};
@@ -619,8 +631,13 @@ def main(args: argparse.Namespace | None = None) -> int:
                     hasArchitectureButton: [...detail.querySelectorAll('button')]
                       .some(button => button.innerText.includes('Show in architecture')),
                   };
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
+            if support.get("error"):
+                fail("runtime_support_detail", profile=profile_id, **support)
+                captured_implementations.add(profile["implementation_id"])
+                continue
             if not support.get("absent"):
                 checks["runtime_support_details"] += 1
                 if (
@@ -632,6 +649,57 @@ def main(args: argparse.Namespace | None = None) -> int:
                     or support.get("hasArchitectureButton")
                 ):
                     fail("runtime_support_detail", profile=profile_id, **support)
+
+            # A sequence candidate that lacks same-rank/phase physical closure
+            # remains navigable, but the real detail panel must expose its
+            # typed unresolved state and concrete reason instead of presenting
+            # an arbitrary representative stack as high-confidence evidence.
+            unresolved = page.evaluate(
+                """async timeoutMs => {
+                  setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'typed_unresolved_detail', timeoutMs};
+                  }
+                  const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
+                    .find(candidate => candidate._reconciliationStatus === 'typed_unresolved' && candidate._irNode);
+                  if (!event) return {absent: true};
+                  showTimelineEventDetail(event);
+                  const detail = document.getElementById('detail');
+                  const text = detail.innerText;
+                  return {
+                    status: event._reconciliationStatus,
+                    reason: event._reconciliationReason,
+                    confidence: event._confidence,
+                    hasStatus: text.includes('reconciliation') && text.includes(event._reconciliationStatus),
+                    hasReason: !!event._reconciliationReason && text.includes(event._reconciliationReason),
+                    hasNoStack: text.includes('not available for this timing-only/support kernel'),
+                    hasArchitectureButton: [...detail.querySelectorAll('button')]
+                      .some(button => button.innerText.includes('Show in architecture')),
+                  };
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
+            )
+            if unresolved.get("error"):
+                fail("typed_unresolved_detail", profile=profile_id, **unresolved)
+                captured_implementations.add(profile["implementation_id"])
+                continue
+            if not unresolved.get("absent"):
+                checks["typed_unresolved_details"] += 1
+                if (
+                    unresolved.get("error")
+                    or unresolved.get("status") != "typed_unresolved"
+                    or unresolved.get("confidence") != "review_required"
+                    or not unresolved.get("reason")
+                    or not unresolved.get("hasStatus")
+                    or not unresolved.get("hasReason")
+                    or not unresolved.get("hasNoStack")
+                    or not unresolved.get("hasArchitectureButton")
+                ):
+                    fail("typed_unresolved_detail", profile=profile_id, **unresolved)
 
             # Burst input must be coalesced to animation frames.  A trackpad
             # can emit hundreds of wheel/move events per second; rebuilding
