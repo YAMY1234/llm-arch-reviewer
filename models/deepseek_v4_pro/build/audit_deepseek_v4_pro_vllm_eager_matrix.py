@@ -186,7 +186,7 @@ def main() -> int:
     )
     if phase_counts != expected_phase_counts:
         errors.append(
-            "expected one prefill and four decode profiles, got "
+            "phase profile counts differ from the requested matrix: got "
             + json.dumps(dict(phase_counts), sort_keys=True)
         )
 

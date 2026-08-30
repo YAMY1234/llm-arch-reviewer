@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -140,3 +141,54 @@ def test_both_commit_specific_bindings_cover_every_architecture_node() -> None:
             assert node_binding["symbols"], node_id
             assert node_binding["links"], node_id
             assert all(link.get("line", 0) > 0 for link in node_binding["links"])
+
+
+def test_stage1_sol_gap_input_covers_execution_ir_without_framework_costs() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    execution = next(iter(bundle["execution_variants"].values()))
+    expected_nodes = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in execution["views"].items()
+        for node in view["nodes"]
+    }
+    manifest = _load("sol_manifests/tp8_gb300_decode_gbs1_8k1k.yaml")
+
+    assert set(manifest["nodes"]) == expected_nodes
+    assert bundle["meta"]["sol_profile_count"] == 1
+    assert bundle["meta"]["gap_report_count"] == 1
+
+    sol = bundle["sol_profiles"][
+        "deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_ideal_v1"
+    ]
+    gap = bundle["gap_reports"][
+        "deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_gap_v1"
+    ]
+    assert sol["status"] == "partial"
+    assert gap["status"] == "partial_calibration"
+    assert sol["critical_path"]["complete_step"] is True
+    assert sol["coverage"] == {
+        "declared_node_count": 153,
+        "ideal_estimated_node_count": 70,
+        "calibrated_node_count": 0,
+        "plan_identified_node_count": 0,
+        "transition_simulated_node_count": 70,
+        "legacy_sensitivity_node_count": 0,
+        "observed_comparison_node_count": 60,
+        "structural_node_count": 83,
+        "unsupported_targets": [],
+        "coverage_semantics": "declared adapter nodes; not additive timing coverage",
+    }
+    assert not gap["model_violations"]
+    assert not gap["projection_violations"]
+
+    cost_ir = json.dumps(
+        {
+            node_id: estimate.get("cost_ir")
+            for node_id, estimate in sol["node_estimates"].items()
+            if estimate.get("cost_ir")
+        },
+        sort_keys=True,
+    ).lower()
+    assert "sglang" not in cost_ir
+    assert "vllm" not in cost_ir
+    assert "kernel" not in cost_ir
