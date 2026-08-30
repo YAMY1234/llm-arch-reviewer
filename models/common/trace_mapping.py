@@ -1004,6 +1004,7 @@ def build_trace_mapping(
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
     expected_phase_frame: str | None = None,
+    capture_contract: dict[str, Any] | None = None,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
@@ -1092,6 +1093,8 @@ def build_trace_mapping(
         ),
         "selected_forward_events_sha256": selected_events_digest,
     }
+    if capture_contract is not None:
+        manifest["capture_contract"] = capture_contract
     if phase.lower() in {
         "eagle_mtp_cudagraph_decode",
         "mtp_cudagraph_decode",

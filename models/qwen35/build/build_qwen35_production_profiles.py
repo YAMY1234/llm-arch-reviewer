@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from dataclasses import asdict
 import gzip
 import hashlib
 import json
@@ -27,9 +28,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.timeline_artifact import (  # noqa: E402
-    attach_eager_stack_evidence,
     build_timeline_artifact,
     write_timeline_artifact,
+)
+from models.common.trace_mapping import (  # noqa: E402
+    find_step_annotation_windows,
+    load_trace,
+    normalize_kernel_events,
 )
 from models.qwen35.build.qwen35_production_attribution import (  # noqa: E402
     attribute_production_forward,
@@ -59,6 +64,20 @@ MATRIX = (
     {"framework": "vllm", "phase": "decode", "batch": 64, "job": "3414291"},
     {"framework": "vllm", "phase": "decode", "batch": 256, "job": "3414292"},
 )
+
+
+GRAPH_OFF_CAPTURES = {
+    ("sglang", "prefill", 1): {"job": "3435301", "profile_step": 0},
+    ("sglang", "decode", 1): {"job": "3434399", "profile_step": 511},
+    ("sglang", "decode", 16): {"job": "3435305", "profile_step": 529},
+    ("sglang", "decode", 64): {"job": "3435306", "profile_step": 582},
+    ("sglang", "decode", 256): {"job": "3436395", "profile_step": 769},
+    ("vllm", "prefill", 1): {"job": "3436383", "profile_delay_iterations": 0},
+    ("vllm", "decode", 1): {"job": "3434240", "profile_delay_iterations": 513},
+    ("vllm", "decode", 16): {"job": "3436385", "profile_delay_iterations": 521},
+    ("vllm", "decode", 64): {"job": "3436387", "profile_delay_iterations": 545},
+    ("vllm", "decode", 256): {"job": "3436389", "profile_delay_iterations": 643},
+}
 
 
 FUSION_CANDIDATES = {
@@ -122,6 +141,9 @@ def kernel_rows_from_torch(path: Path, rank: int) -> list[dict[str, Any]]:
                 "pid": event.get("pid"),
                 "tid": event.get("tid"),
                 "graph_id": args.get("graph id"),
+                "graph_node_id": args.get("graph node id"),
+                "correlation": args.get("correlation"),
+                "external_id": args.get("External id"),
             }
         )
     return rows
@@ -157,6 +179,11 @@ def kernel_rows_from_sqlite(path: Path, rank_base: int) -> dict[int, list[dict[s
                     "pid": event["globalPid"],
                     "tid": event["streamId"],
                     "graph_id": event["graphId"],
+                    "graph_node_id": (
+                        event["graphNodeId"]
+                        if "graphNodeId" in event.keys()
+                        else None
+                    ),
                 }
             )
         result[rank] = rows
@@ -178,6 +205,143 @@ def evidence_dir(root: Path, item: dict[str, Any]) -> Path:
     return root / "evidence" / f"sglang-production-{suffix}" / job
 
 
+def sglang_prefill_forward_timing_coordinate(
+    root: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load the exact profiler-off DeviceTimer authority for SGLang prefill.
+
+    SGLang's periodic input-throughput log measures the interval since the
+    previous prefill log and therefore includes intervening decode iterations.
+    It is not a single-forward wall clock.  The retained ForwardPassMetrics
+    stream has one CUDA-event DeviceTimer span per model forward plus the
+    realized scheduler composition, so select the unique post-warmup 8K-only
+    formal prefill directly from that raw stream.
+    """
+
+    selection_path = root / "validation" / "sglang-prefill-fpm-selection.json"
+    selection = json.loads(selection_path.read_text())
+    expected_header = {
+        "schema_version": "qwen35-sglang-forward-timing-selection.v1",
+        "state": "passed",
+        "framework": "sglang",
+        "phase": "prefill",
+        "batch_size": 1,
+    }
+    for field, expected in expected_header.items():
+        if selection.get(field) != expected:
+            raise ValueError(
+                f"SGLang prefill DeviceTimer selection {field}="
+                f"{selection.get(field)!r}, expected {expected!r}"
+            )
+    contract = selection.get("contract") or {}
+    expected_contract = {
+        "input_length": 8192,
+        "output_length": 1024,
+        "warmup_request_count": 3,
+        "formal_request_count": 1,
+        "no_intentionally_shared_prefix": True,
+        "ignore_eos": True,
+        "mtp_nextn": False,
+    }
+    for field, expected in expected_contract.items():
+        if contract.get(field) != expected:
+            raise ValueError(
+                f"SGLang prefill DeviceTimer contract {field}="
+                f"{contract.get(field)!r}, expected {expected!r}"
+            )
+    expected_topology = {
+        "tensor_parallel_size": 8,
+        "data_parallel_size": 1,
+        "pipeline_parallel_size": 1,
+        "expert_parallel_size": 1,
+    }
+    if contract.get("topology") != expected_topology:
+        raise ValueError("SGLang prefill DeviceTimer topology mismatch")
+
+    retained = selection.get("evidence") or {}
+    client_relative = Path(str(retained.get("client_path") or ""))
+    if client_relative.is_absolute() or ".." in client_relative.parts:
+        raise ValueError("invalid SGLang prefill DeviceTimer client evidence path")
+    client_path = root / client_relative
+    if not client_path.is_file() or retained.get("client_sha256") != sha256_file(client_path):
+        raise ValueError("SGLang prefill DeviceTimer client evidence SHA-256 mismatch")
+    client = json.loads(client_path.read_text())
+    if client.get("state") != "passed" or client.get("contract") != {
+        "concurrency": 1,
+        "formal_request_count": 1,
+        "ignore_eos": True,
+        "isl": 8192,
+        "mtp_nextn": False,
+        "no_intentionally_shared_prefix": True,
+        "osl": 1024,
+        "random_range_ratio": 1.0,
+        "random_token_ids": True,
+        "seed": 0,
+        "warmup_request_count": 3,
+    }:
+        raise ValueError("SGLang prefill DeviceTimer raw client contract mismatch")
+    fpm = client.get("forward_pass_metrics") or {}
+    floor = int(fpm.get("counter_floor_after_warmup", -1))
+    matches = []
+    for message in fpm.get("messages") or []:
+        metrics = message.get("metrics") or {}
+        scheduled = metrics.get("scheduled_requests") or {}
+        if (
+            int(metrics.get("counter_id", -1)) > floor
+            and float(metrics.get("wall_time") or 0.0) > 0.0
+            and scheduled.get("num_prefill_requests") == 1
+            and scheduled.get("sum_prefill_tokens") == 8192
+            and scheduled.get("sum_prefill_kv_tokens") == 8192
+            and scheduled.get("num_decode_requests") == 0
+            and scheduled.get("sum_decode_kv_tokens") == 0
+        ):
+            matches.append(message)
+    if len(matches) != 1:
+        raise ValueError(
+            "SGLang prefill DeviceTimer selection requires exactly one post-warmup "
+            f"formal 8K-only forward, got {len(matches)}"
+        )
+    selected_message = matches[0]
+    selected_metrics = selected_message["metrics"]
+    declared = selection.get("selection") or {}
+    exact_fields = {
+        "counter_floor_after_warmup": floor,
+        "matching_message_count": 1,
+        "transport_sequence": selected_message.get("transport_sequence"),
+        "counter_id": selected_metrics.get("counter_id"),
+        "received_at": selected_message.get("received_at"),
+        "payload_sha256": selected_message.get("payload_sha256"),
+        "wall_time_seconds": selected_metrics.get("wall_time"),
+    }
+    for field, expected in exact_fields.items():
+        if declared.get(field) != expected:
+            raise ValueError(
+                f"SGLang prefill DeviceTimer selection {field}="
+                f"{declared.get(field)!r}, recomputed {expected!r}"
+            )
+    wall_ms = float(selected_metrics["wall_time"]) * 1000.0
+    if abs(float(declared.get("wall_time_ms") or 0.0) - wall_ms) > 1e-9:
+        raise ValueError("SGLang prefill DeviceTimer millisecond conversion mismatch")
+    return {
+        "baseline_mean_elapsed_ms": wall_ms,
+        "timing_authority": "profiler_off_per_forward_device_timer",
+        "counter_floor_after_warmup": floor,
+        "selected_counter_id": selected_metrics["counter_id"],
+        "selected_transport_sequence": selected_message["transport_sequence"],
+        "selected_payload_sha256": selected_message["payload_sha256"],
+        "selected_scheduler_composition": selected_metrics["scheduled_requests"],
+        "same_isolated_forward_proven": True,
+        "rejected_previous_authority": selection["rejected_previous_authority"],
+    }, {
+        "file": selection_path.name,
+        "sha256": sha256_file(selection_path),
+        "raw_client_file": client_path.name,
+        "raw_client_sha256": sha256_file(client_path),
+        "job_id": selection["job_id"],
+        "state": selection["state"],
+    }
+
+
 def selected_runtime_coordinate(root: Path, item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return the exact baseline selector and its immutable evidence reference."""
 
@@ -185,6 +349,8 @@ def selected_runtime_coordinate(root: Path, item: dict[str, Any]) -> tuple[dict[
     phase = item["phase"]
     batch = str(item["batch"])
     if framework == "sglang":
+        if phase == "prefill":
+            return sglang_prefill_forward_timing_coordinate(root)
         path = root / "evidence" / "sglang-baseline" / "3413390" / "window-selection.json"
         payload = json.loads(path.read_text())
         selected = payload["concurrencies"][batch][f"selected_{phase}"]
@@ -726,141 +892,704 @@ def sglang_profiler_sync_evidence(
     }
 
 
-def build_reconciled_eager_mapping(
-    root: Path, framework: str, phase: str, rank: int
+def graph_off_evidence_dir(root: Path, item: dict[str, Any]) -> Path:
+    capture = GRAPH_OFF_CAPTURES[(item["framework"], item["phase"], item["batch"])]
+    job = capture["job"]
+    if item["framework"] == "vllm":
+        return root / "evidence" / "vllm-graph_off" / job
+    suffix = "prefill-c1" if item["phase"] == "prefill" else f"decode-c{item['batch']}"
+    return root / "evidence" / f"sglang-graph_off-{suffix}" / job
+
+
+def graph_off_trace_paths(
+    root: Path, item: dict[str, Any]
+) -> tuple[Path, dict[int, Path]]:
+    directory = graph_off_evidence_dir(root, item)
+    pattern = (
+        "traces/*.trace.json.gz"
+        if item["framework"] == "vllm"
+        else "logs/profiles/*/*.trace.json.gz"
+    )
+    paths = {
+        rank_from_name(path): path for path in sorted(directory.glob(pattern))
+    }
+    if set(paths) != set(range(8)):
+        raise ValueError(
+            f"{item['framework']}/{item['phase']}/BS{item['batch']}: expected "
+            f"graph-off TP ranks 0..7 under {directory}, got {sorted(paths)}"
+        )
+    return directory, paths
+
+
+def validate_graph_off_client_contract(
+    directory: Path, item: dict[str, Any]
 ) -> tuple[Path, dict[str, Any]]:
-    source_name = (
-        f"sglang-forward_{'extend' if phase == 'prefill' else 'decode'}"
-        if framework == "sglang"
-        else f"vllm-vllm_{phase}"
+    client_path = (
+        directory / f"client-c{item['batch']}.json"
+        if item["framework"] == "vllm"
+        else directory / "logs" / f"client-c{item['batch']}.json"
     )
-    source_phase = (
-        f"forward_{'extend' if phase == 'prefill' else 'decode'}"
-        if framework == "sglang"
-        else f"vllm_{phase}"
-    )
-    source_dir = root / "mapping" / source_name
-    manifest_path = source_dir / f"input_manifest.tp{rank}.json"
-    events_source_path = source_dir / f"events.tp{rank}.jsonl"
-    mapping_source_path = source_dir / f"kernel_mapping.tp{rank}.jsonl"
-    for path in (manifest_path, events_source_path, mapping_source_path):
-        if not path.is_file():
-            raise ValueError(
-                f"{framework}/{phase}/TP{rank}: missing rank-specific eager evidence {path}"
+    if not client_path.is_file():
+        raise ValueError(f"missing graph-off client contract: {client_path}")
+    client = json.loads(client_path.read_text())
+    expected = {
+        "concurrency": item["batch"],
+        "formal_request_count": item["batch"],
+        "warmup_request_count": 3 * item["batch"],
+        "isl": 8192,
+        "osl": 1024,
+        "ignore_eos": True,
+        "mtp_nextn": False,
+        "no_intentionally_shared_prefix": True,
+        "random_token_ids": True,
+        "random_range_ratio": 1.0,
+        "seed": 0,
+    }
+    contract = client.get("contract") or {}
+    mismatches = {
+        key: {"actual": contract.get(key), "expected": value}
+        for key, value in expected.items()
+        if contract.get(key) != value
+    }
+    for section, count in (("warmup", 3 * item["batch"]), ("formal", item["batch"])):
+        cell = client.get(section) or {}
+        if (
+            cell.get("request_count") != count
+            or cell.get("failure_count") != 0
+            or any(
+                request.get("realized_prompt_tokens") != 8192
+                or request.get("realized_completion_tokens") != 1024
+                for request in cell.get("requests") or []
             )
-    manifest = json.loads(manifest_path.read_text())
-    expected_source_commit = (
-        SGLANG_MODULE_SOURCE if framework == "sglang" else VLLM_SOURCE
+        ):
+            mismatches[section] = {
+                "request_count": cell.get("request_count"),
+                "failure_count": cell.get("failure_count"),
+                "expected_request_count": count,
+            }
+    if client.get("state") != "passed" or mismatches:
+        raise ValueError(
+            f"{item['framework']}/{item['phase']}/BS{item['batch']}: graph-off "
+            f"client contract mismatch: {mismatches}"
+        )
+    capture = GRAPH_OFF_CAPTURES[(item["framework"], item["phase"], item["batch"])]
+    if item["framework"] == "sglang":
+        config_path = directory / (
+            f"config_eager_{item['phase']}_c{item['batch']}.yaml"
+        )
+        config = yaml.safe_load(config_path.read_text())
+        identity = config.get("identity") or {}
+        backend = config.get("backend") or {}
+        environment = backend.get("aggregated_environment") or {}
+        runtime = ((backend.get("sglang_config") or {}).get("aggregated") or {})
+        profiling = (config.get("profiling") or {}).get("aggregated") or {}
+        expected_config = {
+            "model_revision": ((identity.get("model") or {}).get("revision"), MODEL_REVISION),
+            "source_commit": ((identity.get("frameworks") or {}).get("source_commit"), SGLANG_SOURCE),
+            "gpu_type": ((config.get("resources") or {}).get("gpu_type"), "gb300"),
+            "nodes": ((config.get("resources") or {}).get("agg_nodes"), 2),
+            "gpus_per_node": ((config.get("resources") or {}).get("gpus_per_node"), 4),
+            "profile_kind": (environment.get("QWEN_PROFILE_KIND"), "eager"),
+            "profile_phase": (environment.get("QWEN_EAGER_PHASE"), item["phase"]),
+            "profile_concurrency": (environment.get("QWEN_CONCURRENCY"), str(item["batch"])),
+            "profile_step": (environment.get("QWEN_PROFILE_STEP"), str(capture["profile_step"])),
+            "tp_size": (runtime.get("tensor-parallel-size"), 8),
+            "dp_size": (runtime.get("data-parallel-size"), 1),
+            "pp_size": (runtime.get("pipeline-parallel-size"), 1),
+            "ep_size": (runtime.get("expert-parallel-size"), 1),
+            "cuda_graph_disabled": (runtime.get("disable-cuda-graph"), True),
+            "prefix_cache_disabled": (runtime.get("disable-radix-cache"), True),
+            "profile_start_step": (profiling.get("start_step"), capture["profile_step"]),
+            "profile_stop_step": (profiling.get("stop_step"), capture["profile_step"] + 1),
+        }
+        mismatched_config = {
+            name: {"actual": actual, "expected": expected}
+            for name, (actual, expected) in expected_config.items()
+            if actual != expected
+        }
+        if mismatched_config:
+            raise ValueError(
+                f"graph-off SGLang capture config mismatch in {config_path}: "
+                f"{mismatched_config}"
+            )
+        coordinate = client.get("profile_coordinate") or {}
+        expected_step = capture["profile_step"]
+        relative_step = coordinate.get("baseline_relative_start_step")
+        resolved_step = coordinate.get("resolved_absolute_start_step")
+        requested_step = (
+            (client.get("profile_controls") or [{}])[0]
+            .get("request", {})
+            .get("start_step")
+        )
+        if (
+            coordinate.get("mode") != "formal_relative_resolved_from_scheduler_log"
+            or relative_step != expected_step
+            or resolved_step != requested_step
+        ):
+            raise ValueError(
+                "graph-off SGLang formal coordinate mismatch: "
+                f"relative={relative_step}, expected={expected_step}, "
+                f"resolved={resolved_step}, requested={requested_step}"
+            )
+    else:
+        server_path = directory / "server.log"
+        server_text = server_path.read_text(errors="replace")
+        expected_delay = capture["profile_delay_iterations"]
+        required = (
+            "cudagraph_mode': <CUDAGraphMode.NONE: 0>",
+            "version 0.1.dev20051+g487ecf187",
+            "tensor_parallel_size=8",
+            "pipeline_parallel_size=1",
+            "data_parallel_size=1",
+            "served_model_name=nvidia/Qwen3.5-397B-A17B-NVFP4-V2",
+            f"delay_iterations={expected_delay}",
+            "max_iterations=1",
+            r'torch_profiler_record_shapes\":true',
+            "torch_profiler_with_stack=True",
+        )
+        if any(fragment not in server_text for fragment in required):
+            raise ValueError(
+                f"graph-off vLLM compile/profile contract mismatch in {server_path}"
+            )
+    return client_path, client
+
+
+def load_graph_off_rank(
+    root: Path, item: dict[str, Any], rank: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    directory, paths = graph_off_trace_paths(root, item)
+    client_path, client = validate_graph_off_client_contract(directory, item)
+    path = paths[rank]
+    trace = load_trace(path)
+    distributed = trace.get("distributedInfo") or {}
+    device_properties = trace.get("deviceProperties") or []
+    if (
+        trace.get("with_stack") != 1
+        or trace.get("record_shapes") != 1
+        or distributed.get("rank") != rank
+        or distributed.get("world_size") != 8
+        or not device_properties
+        or {device.get("name") for device in device_properties} != {"NVIDIA GB300"}
+    ):
+        raise ValueError(
+            f"{item['framework']}/{item['phase']}/BS{item['batch']}/TP{rank}: "
+            "graph-off trace rank/hardware/stack/shape contract mismatch"
+        )
+    if item["framework"] == "vllm" and (
+        trace.get("vllm_version") != "0.1.dev20051+g487ecf187"
+        or (trace.get("vllm_version_tuple") or [])[-1:] != ["g487ecf187"]
+    ):
+        raise ValueError(
+            f"vLLM graph-off trace source version mismatch in {path}"
+        )
+    phase_name = (
+        f"forward_{'extend' if item['phase'] == 'prefill' else 'decode'}"
+        if item["framework"] == "sglang"
+        else f"vllm_{item['phase']}"
     )
-    exact_contract = {
+    windows = find_step_annotation_windows(
+        trace.get("traceEvents") or [], phase=phase_name
+    )
+    if len(windows) != 1:
+        raise ValueError(
+            f"{item['framework']}/{item['phase']}/BS{item['batch']}/TP{rank}: "
+            f"expected exactly one graph-off formal window, got {len(windows)}"
+        )
+    window = windows[0]
+    raw_selected_kernels = [
+        event
+        for event in trace.get("traceEvents") or []
+        if event.get("cat") == "kernel"
+        and event.get("ph") == "X"
+        and window.start_us <= float(event.get("ts", 0.0)) <= window.end_us
+    ]
+    nonzero_graph_ids = {
+        str((event.get("args") or {}).get("graph id"))
+        for event in raw_selected_kernels
+        if str((event.get("args") or {}).get("graph id") or "0") not in {"0", "None", ""}
+    }
+    if nonzero_graph_ids:
+        raise ValueError(
+            f"graph-off TP{rank} selected window contains nonzero graph IDs: "
+            f"{sorted(nonzero_graph_ids)}"
+        )
+    source_root = (
+        Path("/Users/yangminl/Documents/Projects/sglang-qwen35-profile-source-20260829")
+        if item["framework"] == "sglang"
+        else Path("/Users/yangminl/Documents/Projects/vllm-qwen35-profile-source-20260829")
+    )
+    normalized = normalize_kernel_events(
+        trace.get("traceEvents") or [], window=window, source_root=source_root
+    )
+    rows = []
+    for event in normalized:
+        row = asdict(event)
+        row["event_id"] = f"e-r{rank}-{event.event_id}"
+        row["rank"] = rank
+        rows.append(row)
+    if len(rows) != len(raw_selected_kernels):
+        raise ValueError(
+            f"graph-off TP{rank} normalized/raw kernel count mismatch: "
+            f"{len(rows)} != {len(raw_selected_kernels)}"
+        )
+    missing_stacks = [row["event_id"] for row in rows if not row.get("python_stack")]
+    if missing_stacks:
+        raise ValueError(
+            f"graph-off TP{rank} has {len(missing_stacks)} kernels without Python stacks"
+        )
+    diagnostics = attribute_production_forward(
+        rows, framework=item["framework"], phase=item["phase"]
+    )
+    capture_metadata_path = (
+        directory / f"config_eager_{item['phase']}_c{item['batch']}.yaml"
+        if item["framework"] == "sglang"
+        else directory / "server.log"
+    )
+    return rows, {
+        "job_id": GRAPH_OFF_CAPTURES[
+            (item["framework"], item["phase"], item["batch"])
+        ]["job"],
+        "trace_path": str(path),
+        "trace_sha256": sha256_file(path),
+        "client_path": str(client_path),
+        "client_sha256": sha256_file(client_path),
+        "capture_metadata_path": str(capture_metadata_path),
+        "capture_metadata_sha256": sha256_file(capture_metadata_path),
+        "source_commit": (
+            SGLANG_SOURCE if item["framework"] == "sglang" else VLLM_SOURCE
+        ),
+        "runtime_source_version": (
+            "0.0.0.dev1+gf609d677b"
+            if item["framework"] == "sglang"
+            else trace["vllm_version"]
+        ),
+        "hardware": "NVIDIA GB300",
+        "world_size": distributed["world_size"],
+        "selected_formal_coordinate": (
+            {
+                "mode": "sglang_formal_relative_scheduler_forward",
+                "relative_step": GRAPH_OFF_CAPTURES[
+                    (item["framework"], item["phase"], item["batch"])
+                ]["profile_step"],
+                "resolved_absolute_step": client["profile_coordinate"][
+                    "resolved_absolute_start_step"
+                ],
+            }
+            if item["framework"] == "sglang"
+            else {
+                "mode": "vllm_start_profile_relative_engine_iteration",
+                "delay_iterations": GRAPH_OFF_CAPTURES[
+                    (item["framework"], item["phase"], item["batch"])
+                ]["profile_delay_iterations"],
+                "active_iterations": 1,
+            }
+        ),
+        "phase": phase_name,
         "rank": rank,
-        "phase": source_phase,
-        "source_commit": expected_source_commit,
+        "window_start_us": window.start_us,
+        "window_end_us": window.end_us,
+        "window_duration_ms": (window.end_us - window.start_us) / 1000.0,
+        "selected_forward_kernel_count": len(rows),
+        "selected_forward_kernel_duration_us": sum(
+            float(row.get("dur_us") or 0.0) for row in rows
+        ),
+        "selected_forward_events_sha256": hashlib.sha256(
+            json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "nonzero_graph_id_count": 0,
+        "all_kernel_python_stack_count": len(rows),
+        "attribution_diagnostics": diagnostics,
+        "client_contract": client["contract"],
     }
-    for field, expected in exact_contract.items():
-        if manifest.get(field) != expected:
-            raise ValueError(
-                f"{framework}/{phase}/TP{rank}: eager manifest {field}="
-                f"{manifest.get(field)!r}, expected {expected!r}"
-            )
-    raw_trace_path = Path(str(manifest.get("trace_path") or ""))
-    if not raw_trace_path.is_file():
-        raise ValueError(
-            f"{framework}/{phase}/TP{rank}: raw eager trace is missing: {raw_trace_path}"
+
+
+def reconciliation_kernel_family(row: dict[str, Any]) -> str:
+    name = str(row.get("kernel_name") or "").lower()
+    # Torch and Nsight demangle the same ATen template with different spelling
+    # (for example ``4ul`` versus ``(unsigned long)4`` and anonymous lambdas
+    # versus numbered lambda instances).  These families retain the semantic
+    # operation and scalar-width distinction while discarding only that tool
+    # presentation difference.
+    if "direct_copy_kernel_cuda" in name:
+        return "direct_copy_i64" if "lambda(long" in name else "direct_copy_i32"
+    if "index_elementwise_kernel" in name:
+        return (
+            "index_copy_elementwise"
+            if "index_copy_kernel_impl" in name
+            else "index_elementwise"
         )
-    if manifest.get("trace_sha256") != sha256_file(raw_trace_path):
-        raise ValueError(
-            f"{framework}/{phase}/TP{rank}: raw eager trace SHA-256 mismatch"
-        )
-    events = [
-        json.loads(line)
-        for line in events_source_path.read_text().splitlines()
-        if line.strip()
-    ]
-    expected_kernel_count = int(manifest.get("selected_forward_kernel_count") or -1)
-    if len(events) != expected_kernel_count:
-        raise ValueError(
-            f"{framework}/{phase}/TP{rank}: selected eager event count {len(events)} "
-            f"!= manifest {expected_kernel_count}"
-        )
-    selected_events_sha256 = hashlib.sha256(
-        json.dumps(events, sort_keys=True, separators=(",", ":")).encode()
+    if "exp_kernel_cuda" in name:
+        return "exp_elementwise"
+    if "launch_clamp_scalar" in name:
+        return "clamp_elementwise"
+    if "devicescaninitkernel" in name:
+        return "device_scan_init"
+    if "devicescankernel" in name:
+        return "device_scan"
+    if "cudafunctoronself_add" in name:
+        return "onself_add_elementwise"
+    families = (
+        ("all_reduce", ("allreduce", "all_reduce", "multimem_all_reduce")),
+        ("all_gather", ("allgather", "all_gather")),
+        ("static_quant", ("static_quant",)),
+        ("nvfp4_quant", ("nvfp4_quant", "cvt_fp16_to_fp4")),
+        ("qkv_split", ("fused_qkvzba_split",)),
+        ("causal_conv", ("causal_conv1d",)),
+        ("gdn_recurrence", ("gated_delta", "chunkedgateddeltanet")),
+        ("layer_norm", ("layer_norm", "rmsnorm", "rms_norm")),
+        ("qqtst_gemm", ("qqtst_",)),
+        ("tst_gemm", ("tst_",)),
+        ("splitk_reduce", ("splitkreduce",)),
+        ("moe_routing", ("routingindices", "routingindicescoop")),
+        ("moe_up", ("bmm_e2m1",)),
+        ("moe_down", ("bmm_bfloat16",)),
+        ("moe_finalize", ("finalizekernel",)),
+        ("fmha", ("fmha",)),
+        ("kv_cache", ("reshape_and_cache", "qkv_kv_cache")),
+        ("fill", ("fillfunctor",)),
+        ("act_and_mul", ("act_and_mul_kernel",)),
+        ("sigmoid_gate", ("sigmoid_mul", "sigmoid_kernel", "mulfunctor")),
+        ("cutlass_gemm", ("cutlass13device_kernel", "kernel_cutlass_kernel")),
+    )
+    for family, tokens in families:
+        if any(token in name for token in tokens):
+            return family
+    if name.startswith("triton_"):
+        return name.split("_0", 1)[0]
+    return name
+
+
+def _binding_stack_hash(stack: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(
+        json.dumps(stack, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if manifest.get("selected_forward_events_sha256") != selected_events_sha256:
+
+
+def build_matched_graph_off_mapping(
+    root: Path,
+    item: dict[str, Any],
+    rank: int,
+    production_rows: list[dict[str, Any]],
+) -> tuple[Path, dict[str, Any]]:
+    eager_rows, capture = load_graph_off_rank(root, item, rank)
+    eager_model = [row for row in eager_rows if row.get("node")]
+    production_model = [row for row in production_rows if row.get("node")]
+    key = lambda row: (
+        str(row.get("node") or ""),
+        str(row.get("occurrence_id") or "top"),
+    )
+    eager_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    production_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in eager_model:
+        eager_groups[key(row)].append(row)
+    for row in production_model:
+        production_groups[key(row)].append(row)
+    if set(eager_groups) != set(production_groups):
         raise ValueError(
-            f"{framework}/{phase}/TP{rank}: selected eager event identity SHA-256 mismatch"
+            f"{item['framework']}/{item['phase']}/BS{item['batch']}/TP{rank}: "
+            "graph-off/production semantic occurrence keys differ: "
+            f"eager_only={sorted(set(eager_groups)-set(production_groups))} "
+            f"production_only={sorted(set(production_groups)-set(eager_groups))}"
         )
-    duration_us = sum(float(event.get("dur_us") or 0.0) for event in events)
-    if abs(duration_us - float(manifest["selected_forward_kernel_duration_us"])) > 1e-3:
-        raise ValueError(
-            f"{framework}/{phase}/TP{rank}: selected eager duration mismatch"
+    bindings: dict[str, dict[str, Any]] = {}
+    relation_counts: Counter[str] = Counter()
+    group_reports = []
+    for group_key in sorted(production_groups):
+        eager_group = sorted(
+            eager_groups[group_key],
+            key=lambda row: int(row.get("semantic_sequence_index", 0)),
         )
-    source_mappings = [
-        json.loads(line)
-        for line in mapping_source_path.read_text().splitlines()
-        if line.strip()
-    ]
-    source_mapping_by_event = {
-        str(mapping["event_id"]): mapping for mapping in source_mappings
-    }
-    rows = [dict(event) for event in events]
-    attribute_production_forward(rows, framework=framework, phase=phase)
-    output = root / "mapping" / f"reconciled-{framework}-{phase}"
+        production_group = sorted(
+            production_groups[group_key],
+            key=lambda row: int(row.get("semantic_sequence_index", 0)),
+        )
+        eager_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in eager_group:
+            eager_by_name[str(row["kernel_name"])].append(row)
+        used_source_ids: set[str] = set()
+        pending_production = []
+        for row in production_group:
+            candidates = eager_by_name.get(str(row["kernel_name"])) or []
+            source = next(
+                (candidate for candidate in candidates if candidate["event_id"] not in used_source_ids),
+                None,
+            )
+            if source is None:
+                pending_production.append(row)
+                continue
+            used_source_ids.add(str(source["event_id"]))
+            bindings[str(row["event_id"])] = {
+                "sources": [source],
+                "relation": "one_to_one_exact_signature",
+            }
+        # CUDA Graph replay adds a router-GEMM memcpy epilogue in SGLang.  It
+        # is a proved 1:N physical decomposition of the same router projection
+        # within the exact layer/MoE occurrence.
+        still_pending = []
+        for row in pending_production:
+            name = str(row.get("kernel_name") or "").lower()
+            if (
+                item["framework"] == "sglang"
+                and group_key[0] == "moe_block.router"
+                and name in {"memcpy32_post", "memcpy128"}
+            ):
+                sources = [
+                    source
+                    for source in eager_group
+                    if "tst_" in str(source.get("kernel_name") or "").lower()
+                    and "qqtst_" not in str(source.get("kernel_name") or "").lower()
+                ]
+                if len(sources) != 1:
+                    raise ValueError(
+                        f"{group_key}: router companion lacks one exact eager projection source"
+                    )
+                used_source_ids.add(str(sources[0]["event_id"]))
+                bindings[str(row["event_id"])] = {
+                    "sources": sources,
+                    "relation": "one_eager_to_many_production_router_epilogue",
+                }
+            elif group_key[0] == "moe_block.router" and "splitkreduce" in name:
+                sources = [
+                    source
+                    for source in eager_group
+                    if "tst_" in str(source.get("kernel_name") or "").lower()
+                    and "qqtst_" not in str(source.get("kernel_name") or "").lower()
+                ]
+                if len(sources) != 1:
+                    raise ValueError(
+                        f"{group_key}: graph-only router split-K epilogue lacks "
+                        "one exact eager projection source"
+                    )
+                used_source_ids.add(str(sources[0]["event_id"]))
+                bindings[str(row["event_id"])] = {
+                    "sources": sources,
+                    "relation": "one_eager_to_many_production_router_splitk_epilogue",
+                }
+            else:
+                still_pending.append(row)
+        pending_production = still_pending
+        remaining_sources = [
+            row for row in eager_group if str(row["event_id"]) not in used_source_ids
+        ]
+        if len(pending_production) == 1:
+            target = pending_production[0]
+            target_family = reconciliation_kernel_family(target)
+            family_sources = [
+                source
+                for source in remaining_sources
+                if reconciliation_kernel_family(source) == target_family
+            ]
+            splitk_sources = [
+                source
+                for source in remaining_sources
+                if reconciliation_kernel_family(source) == "splitk_reduce"
+            ]
+            if len(family_sources) == 1 and len(splitk_sources) == 1:
+                source_set = [family_sources[0], splitk_sources[0]]
+                bindings[str(target["event_id"])] = {
+                    "sources": source_set,
+                    "relation": "many_eager_gemm_splitk_to_one_production",
+                }
+                used_source_ids.update(str(source["event_id"]) for source in source_set)
+                pending_production = []
+                remaining_sources = [
+                    row
+                    for row in remaining_sources
+                    if str(row["event_id"]) not in used_source_ids
+                ]
+        eager_by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        production_by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in remaining_sources:
+            eager_by_family[reconciliation_kernel_family(row)].append(row)
+        for row in pending_production:
+            production_by_family[reconciliation_kernel_family(row)].append(row)
+        if set(eager_by_family) != set(production_by_family):
+            raise ValueError(
+                f"{group_key}: unmatched graph-off/production kernel families: "
+                f"eager={dict((k,len(v)) for k,v in eager_by_family.items())} "
+                f"production={dict((k,len(v)) for k,v in production_by_family.items())}"
+            )
+        for family in sorted(eager_by_family):
+            sources = eager_by_family[family]
+            targets = production_by_family[family]
+            if len(sources) == len(targets):
+                pairs = [([source], target, "one_to_one_normalized_family") for source, target in zip(sources, targets)]
+            elif len(sources) == 1:
+                pairs = [([sources[0]], target, "one_eager_to_many_production") for target in targets]
+            elif len(targets) == 1:
+                pairs = [(sources, targets[0], "many_eager_to_one_production")]
+            else:
+                raise ValueError(
+                    f"{group_key}/{family}: ambiguous {len(sources)}:{len(targets)} reconciliation"
+                )
+            for source_set, target, relation in pairs:
+                bindings[str(target["event_id"])] = {
+                    "sources": source_set,
+                    "relation": relation,
+                }
+                used_source_ids.update(str(source["event_id"]) for source in source_set)
+        if used_source_ids != {str(row["event_id"]) for row in eager_group}:
+            raise ValueError(f"{group_key}: graph-off source events were not fully consumed")
+        group_reports.append(
+            {
+                "node": group_key[0],
+                "occurrence_id": group_key[1],
+                "graph_off_event_count": len(eager_group),
+                "production_event_count": len(production_group),
+                "graph_off_signature_sha256": hashlib.sha256(
+                    json.dumps([row["kernel_name"] for row in eager_group]).encode()
+                ).hexdigest(),
+                "production_signature_sha256": hashlib.sha256(
+                    json.dumps([row["kernel_name"] for row in production_group]).encode()
+                ).hexdigest(),
+            }
+        )
+    if set(bindings) != {str(row["event_id"]) for row in production_model}:
+        raise ValueError("not every production model event received a graph-off binding")
+
+    output = root / "mapping" / (
+        f"reconciled-{item['framework']}-{item['phase']}-bs{item['batch']}"
+    )
     output.mkdir(parents=True, exist_ok=True)
     events_path = output / f"events.tp{rank}.jsonl"
     mapping_path = output / f"kernel_mapping.tp{rank}.jsonl"
-    events_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+    reconciled_events = []
     mappings = []
-    for sequence_index, row in enumerate(rows):
-        semantic_node = row.get("node")
-        if not semantic_node:
-            continue
-        source_mapping = source_mapping_by_event.get(str(row["event_id"]))
-        if not source_mapping or source_mapping.get("selected_node") != semantic_node:
-            # Ordered collective segmentation is useful portable evidence, but
-            # it is not a Python-stack closure for this physical kernel.  Do
-            # not manufacture a mapping entry that a later stage could mistake
-            # for high-confidence semantic ownership.
-            continue
+    for sequence_index, row in enumerate(
+        sorted(production_model, key=lambda cell: int(cell["semantic_sequence_index"]))
+    ):
+        binding = bindings[str(row["event_id"])]
+        sources = binding["sources"]
+        stacks = [source["python_stack"] for source in sources]
+        source_ids = [str(source["event_id"]) for source in sources]
+        source_kernel_names = [str(source["kernel_name"]) for source in sources]
+        stack_hashes = [_binding_stack_hash(stack) for stack in stacks]
+        row["python_stack"] = stacks[0]
+        row["cpu_op_name"] = sources[0].get("cpu_op_name")
+        row["eager_event_ids"] = source_ids
+        row["reconciliation_status"] = "closed"
+        row["reconciliation_relation"] = binding["relation"]
+        row["stack_evidence"] = {
+            "source": "matched_graph_off_eager_trace",
+            "match": "same_rank_phase_occurrence_signature_ordered_sequence",
+            "relation": binding["relation"],
+            "eager_event_ids": source_ids,
+            "eager_kernel_names": source_kernel_names,
+            "stack_sha256": stack_hashes,
+            "rank": rank,
+            "phase": item["phase"],
+            "occurrence_id": row.get("occurrence_id") or "top",
+            "production_sequence_index": row["semantic_sequence_index"],
+        }
+        relation_counts[binding["relation"]] += 1
+        reconciled_events.append(
+            {
+                "event_id": row["event_id"],
+                "kernel_name": row["kernel_name"],
+                "selected_node": row["node"],
+                "occurrence_id": row.get("occurrence_id") or "top",
+                "rank": rank,
+                "phase": item["phase"],
+                "python_stack": stacks[0],
+                "source_python_stacks": stacks,
+                "source_eager_event_ids": source_ids,
+                "source_eager_kernel_names": source_kernel_names,
+                "source_stack_sha256": stack_hashes,
+                "cpu_op_name": sources[0].get("cpu_op_name"),
+                "relation": binding["relation"],
+            }
+        )
         mappings.append(
             {
                 "event_id": row["event_id"],
                 "kernel_name": row["kernel_name"],
-                "selected_node": semantic_node,
-                "confidence": source_mapping.get("confidence") or "support",
+                "selected_node": row["node"],
+                "confidence": "high",
                 "rank": rank,
-                "phase": phase,
-                "source_phase": source_phase,
-                "occurrence_id": row.get("occurrence_id"),
+                "phase": item["phase"],
+                "source_phase": capture["phase"],
+                "occurrence_id": row.get("occurrence_id") or "top",
                 "sequence_index": sequence_index,
+                "production_sequence_index": row["semantic_sequence_index"],
                 "closure_status": "closed",
+                "relation": binding["relation"],
+                "source_eager_event_ids": source_ids,
+                "source_eager_kernel_names": source_kernel_names,
+                "source_stack_sha256": stack_hashes,
                 "evidence": [
                     "same_rank_eager_python_stack",
+                    "same_phase_graph_off_capture",
                     "phase_specific_raw_trace_identity",
-                    "exact_kernel_signature",
                     "occurrence_scoped_ordered_sequence",
+                    "explicit_1n_n1_relation",
                 ],
             }
         )
-    mapping_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in mappings))
+    events_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in reconciled_events)
+    )
+    mapping_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in mappings)
+    )
     report = {
-        "framework": framework,
-        "phase": phase,
-        "source_phase": source_phase,
+        "job_id": capture["job_id"],
+        "framework": item["framework"],
+        "phase": item["phase"],
+        "batch_size": item["batch"],
         "rank": rank,
-        "kernel_count": len(rows),
-        "semantic_kernel_count": sum(bool(row.get("node")) for row in rows),
-        "support_kernel_count": sum(bool(row.get("support_class")) for row in rows),
-        "closed_stack_event_count": len({row["event_id"] for row in mappings}),
-        "node_coverage": sorted({row["node"] for row in rows if row.get("node")}),
-        "closed_node_coverage": sorted({row["selected_node"] for row in mappings}),
-        "raw_trace_path": str(raw_trace_path),
-        "raw_trace_sha256": manifest["trace_sha256"],
-        "raw_manifest_path": str(manifest_path),
-        "raw_manifest_sha256": sha256_file(manifest_path),
-        "source_events_sha256": sha256_file(events_source_path),
-        "selected_forward_events_sha256": selected_events_sha256,
-        "source_mapping_sha256": sha256_file(mapping_source_path),
+        "production_semantic_event_count": len(production_model),
+        "graph_off_semantic_event_count": len(eager_model),
+        "production_support_event_count": sum(
+            bool(row.get("support_class")) for row in production_rows
+        ),
+        "graph_off_support_event_count": sum(
+            bool(row.get("support_class")) for row in eager_rows
+        ),
+        "production_support_class_counts": dict(
+            sorted(
+                Counter(
+                    str(row["support_class"])
+                    for row in production_rows
+                    if row.get("support_class")
+                ).items()
+            )
+        ),
+        "graph_off_support_class_counts": dict(
+            sorted(
+                Counter(
+                    str(row["support_class"])
+                    for row in eager_rows
+                    if row.get("support_class")
+                ).items()
+            )
+        ),
+        "closed_production_event_count": len(mappings),
+        "typed_unresolved_event_count": 0,
+        "relation_counts": dict(sorted(relation_counts.items())),
+        "occurrence_group_count": len(group_reports),
+        "occurrence_groups": group_reports,
+        "raw_trace_path": capture["trace_path"],
+        "raw_trace_sha256": capture["trace_sha256"],
+        "raw_manifest_path": capture["client_path"],
+        "raw_manifest_sha256": capture["client_sha256"],
+        "capture_metadata_path": capture["capture_metadata_path"],
+        "capture_metadata_sha256": capture["capture_metadata_sha256"],
+        "source_commit": capture["source_commit"],
+        "runtime_source_version": capture["runtime_source_version"],
+        "hardware": capture["hardware"],
+        "world_size": capture["world_size"],
+        "selected_formal_coordinate": capture["selected_formal_coordinate"],
+        "selected_forward_events_sha256": capture[
+            "selected_forward_events_sha256"
+        ],
+        "source_phase": capture["phase"],
+        "kernel_count": capture["selected_forward_kernel_count"],
+        "selected_forward_kernel_duration_us": capture[
+            "selected_forward_kernel_duration_us"
+        ],
+        "support_kernel_count": sum(bool(row.get("support_class")) for row in eager_rows),
+        "all_kernel_python_stack_count": capture["all_kernel_python_stack_count"],
+        "nonzero_graph_id_count": capture["nonzero_graph_id_count"],
         "mapping_sha256": sha256_file(mapping_path),
         "events_sha256": sha256_file(events_path),
     }
@@ -909,13 +1638,10 @@ def metric_for_rows(rows: list[dict[str, Any]], *, status: str) -> dict[str, Any
 
 def build_metrics(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     direct: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    targeted: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         if row.get("node"):
             direct[str(row["node"])].append(row)
-        for target in row.get("ir_targets") or []:
-            targeted[str(target)].append(row)
-    metrics = {
+    return {
         node: metric_for_rows(
             events,
             status=(
@@ -926,32 +1652,6 @@ def build_metrics(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         )
         for node, events in direct.items()
     }
-    for target, events in targeted.items():
-        if target in direct:
-            # A reusable semantic leaf may be standalone for one occurrence
-            # and fused for others.  Keep one interval-union aggregate and say
-            # so explicitly instead of copying an owner's scalar duration.
-            event_ids = {event["event_id"] for event in direct[target]}
-            event_ids.update(event["event_id"] for event in events)
-            combined = [event for event in rows if event["event_id"] in event_ids]
-            if len(combined) != len(direct[target]):
-                metrics[target] = metric_for_rows(
-                    combined,
-                    status=(
-                        "inclusive_rollup"
-                        if all(
-                            event.get("reconciliation_status") == "closed"
-                            for event in combined
-                        )
-                        else "typed_unresolved"
-                    ),
-                )
-                metrics[target]["metric_kind"] = "inclusive_rollup"
-                metrics[target]["partial_fusion"] = True
-        # Target-only leaves are non-owner members of a shared event set.  They
-        # intentionally receive no scalar metric; node_states and the fusion
-        # group link them to the one timing owner.
-    return metrics
 
 
 def all_model_nodes(model_ir: dict[str, Any]) -> set[str]:
@@ -986,6 +1686,8 @@ def fusion_target_is_physically_proven(
     """
 
     name = str(row.get("kernel_name") or "").lower()
+    cpu_op = str(row.get("cpu_op_name") or "").lower()
+    method = str(row.get("attribution_method") or "")
     if (
         owner == "full_attention.causal_gqa"
         and member == "full_attention.kv_state_read"
@@ -995,12 +1697,21 @@ def fusion_target_is_physically_proven(
         owner == "full_attention.qk_norm"
         and member == "full_attention.partial_rope"
     ):
-        return "fused_qk" in name and "rope" in name
+        return (
+            ("fused_qk" in name and "rope" in name)
+            or (
+                "vllm_" in method
+                and "inductor_source_nodes_qk_norm_rope" in method
+                and any(token in name for token in ("triton_poi_fused_7", "triton_poi_fused_8"))
+            )
+        )
     if (
         owner == "gdn_attention.qkvz_projection"
         and member == "gdn_attention.ba_projection"
     ):
-        return "fused_qkvzba_split" in name
+        return "fused_qkvzba_split" in name or (
+            "vllm_" in method and "gdn_sequence" in method
+        )
     if (
         owner == "gdn_attention.causal_conv"
         and member == "gdn_attention.conv_state_read"
@@ -1017,8 +1728,29 @@ def fusion_target_is_physically_proven(
                 "gdn_decode",
                 "gdn_wide_vec",
                 "chunk_gated_delta",
+                "chunkedgateddeltanet",
                 "recompute_w_u",
                 "chunk_fwd_kernel_o",
+            )
+        )
+    if owner.endswith(("post_attention_norm", "input_norm")) and member.endswith(
+        ("attention_residual", "layer_residual")
+    ):
+        # SGLang uses ``fused_add_rmsnorm`` while vLLM's generated Triton
+        # symbol preserves the source-op spelling ``fused_add_rms_norm``.
+        # Both explicitly identify one launch owning the add and RMS norm.
+        return any(
+            token in name
+            for token in ("fused_add_rmsnorm", "fused_add_rms_norm")
+        )
+    if "collective" in owner and member.endswith(
+        ("attention_residual", "post_attention_norm", "layer_residual", "input_norm")
+    ):
+        return any(
+            token in cpu_op
+            for token in (
+                "allreduce_residual_rmsnorm",
+                "fused_allreduce_norm",
             )
         )
     return False
@@ -1072,30 +1804,56 @@ def build_states_and_fusions(
                 )
         owner = next(iter(owners)) if len(owners) == 1 else None
         owner_events_closed = bool(owner) and event_ids_by_owner[owner] <= closed_event_ids
-        physical_target_proof = bool(owner) and all(
-            fusion_target_is_physically_proven(row, owner, member)
-            for row in rows_by_owner[owner]
+        target_rows = [
+            row
+            for candidate_owner in owners
+            for row in rows_by_owner[candidate_owner]
+            if str(row["event_id"])
+            in event_ids_by_member_owner[(member, candidate_owner)]
+        ]
+        target_events_closed = bool(target_rows) and {
+            str(row["event_id"]) for row in target_rows
+        } <= closed_event_ids
+        physical_target_proof = bool(target_rows) and any(
+            fusion_target_is_physically_proven(
+                row, str(row.get("node") or ""), member
+            )
+            for row in target_rows
         )
-        if (
-            member in direct_nodes
-            or len(owners) != 1
-            or equality_failures
-            or not owner_events_closed
-            or not physical_target_proof
-        ):
+        if not target_events_closed or not physical_target_proof:
             states[member] = {
                 "status": "partially_fused",
                 "label": (
-                    "occurrence-scoped partial fusion only; no profile-aggregate "
-                    "shared ownership is published because direct occurrences, "
-                    "multiple owners, event-set inequality, or incomplete same-rank "
-                    "eager closure prevents an exact aggregate"
+                    "occurrence fusion proof is incomplete; profile acceptance "
+                    "must fail closed"
                 ),
                 "shared_timing_owners": sorted(owners),
                 "event_set_equality_failures": equality_failures,
                 "all_owner_events_same_rank_closed": owner_events_closed,
+                "all_target_events_same_rank_closed": target_events_closed,
                 "physical_target_proof": physical_target_proof,
             }
+            continue
+        if member in direct_nodes or len(owners) != 1 or equality_failures:
+            # The member is direct in some occurrences, or exact target event
+            # sets differ by occurrence.  Retain that closure on Timeline but
+            # publish neither a profile-aggregate fused state nor copied owner
+            # timing.  A target-only leaf remains a structural semantic node.
+            if member not in direct_nodes:
+                states[member] = {
+                    "status": "structural",
+                    "label": (
+                        "implemented by exact occurrence-scoped shared events; "
+                        "no profile-aggregate fused timing is claimed"
+                    ),
+                    "occurrence_fusion_evidence": {
+                        "shared_timing_owners": sorted(owners),
+                        "target_event_count": len(target_rows),
+                        "all_target_events_same_rank_closed": True,
+                        "physical_target_proof": True,
+                        "profile_aggregate_event_set_equal": not equality_failures,
+                    },
+                }
             continue
         assert owner is not None
         if owner in covered or member in covered:
@@ -1227,17 +1985,11 @@ def build_one(
     mapping_paths: dict[int, Path] = {}
     reconciliation_reports: dict[str, dict[str, Any]] = {}
     for rank in sorted(rank_rows):
-        mapping_path, reconciliation_report = build_reconciled_eager_mapping(
-            task_root, framework, phase, rank
+        mapping_path, reconciliation_report = build_matched_graph_off_mapping(
+            task_root, item, rank, rank_rows[rank]
         )
         mapping_paths[rank] = mapping_path
         reconciliation_reports[str(rank)] = reconciliation_report
-        rank_rows[rank] = attach_eager_stack_evidence(
-            rank_rows[rank],
-            mapping_path=mapping_path,
-            expected_rank=rank,
-            expected_phase=phase,
-        )
         semantic_rows = [row for row in rank_rows[rank] if row.get("node")]
         closed_rows = [
             row
@@ -1359,7 +2111,10 @@ def build_one(
         },
         stack_source={
             "mode": "separate_graph_off_eager_capture",
-            "mapping_file": str(mapping_path),
+            "mapping_file": (
+                "current/qwen35-complete-profiles/mapping/"
+                f"{mapping_path.parent.name}/{mapping_path.name}"
+            ),
             "mapping_sha256": sha256_file(mapping_path),
             "all_rank_mapping_sha256": {
                 str(rank): sha256_file(path)
@@ -1479,23 +2234,50 @@ def build_one(
             },
             "all_rank_eager_phase_contract": {
                 rank: {
+                    "job_id": report["job_id"],
                     "source_phase": report["source_phase"],
                     "selected_forward_kernel_count": report["kernel_count"],
+                    "graph_off_semantic_event_count": report[
+                        "graph_off_semantic_event_count"
+                    ],
+                    "graph_off_support_event_count": report[
+                        "graph_off_support_event_count"
+                    ],
+                    "production_semantic_event_count": report[
+                        "production_semantic_event_count"
+                    ],
+                    "closed_production_event_count": report[
+                        "closed_production_event_count"
+                    ],
+                    "typed_unresolved_event_count": report[
+                        "typed_unresolved_event_count"
+                    ],
+                    "production_support_event_count": report[
+                        "production_support_event_count"
+                    ],
+                    "graph_off_support_class_counts": report[
+                        "graph_off_support_class_counts"
+                    ],
+                    "production_support_class_counts": report[
+                        "production_support_class_counts"
+                    ],
                     "selected_forward_kernel_duration_us": round(
-                        sum(
-                            float(json.loads(line).get("dur_us") or 0.0)
-                            for line in (
-                                task_root
-                                / "mapping"
-                                / f"reconciled-{framework}-{phase}"
-                                / f"events.tp{rank}.jsonl"
-                            ).read_text().splitlines()
-                            if line.strip()
-                        ),
-                        6,
+                        report["selected_forward_kernel_duration_us"], 6
                     ),
                     "raw_trace_sha256": report["raw_trace_sha256"],
                     "raw_manifest_sha256": report["raw_manifest_sha256"],
+                    "capture_metadata_sha256": report[
+                        "capture_metadata_sha256"
+                    ],
+                    "source_commit": report["source_commit"],
+                    "runtime_source_version": report[
+                        "runtime_source_version"
+                    ],
+                    "hardware": report["hardware"],
+                    "world_size": report["world_size"],
+                    "selected_formal_coordinate": report[
+                        "selected_formal_coordinate"
+                    ],
                     "selected_forward_events_sha256": report[
                         "selected_forward_events_sha256"
                     ],

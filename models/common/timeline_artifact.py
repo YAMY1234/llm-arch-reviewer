@@ -578,6 +578,13 @@ def build_timeline_artifact(
                     "segment_id": event.get("segment_id"),
                     "occurrence_id": strings.add(event.get("occurrence_id")),
                     "eager_event_id": strings.add(event.get("eager_event_id")),
+                    "eager_event_ids": [
+                        strings.add(event_id)
+                        for event_id in (event.get("eager_event_ids") or [])
+                    ],
+                    "reconciliation_relation": strings.add(
+                        event.get("reconciliation_relation")
+                    ),
                     "kernel_kind": strings.add(_kernel_kind(event)),
                     "attribution_method": strings.add(
                         event.get("attribution_method")

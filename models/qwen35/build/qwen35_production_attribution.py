@@ -25,6 +25,51 @@ def _lower(row: dict[str, Any]) -> str:
     return str(row.get("kernel_name") or "").lower()
 
 
+def _nonzero_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed else None
+
+
+def semantic_execution_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Recover CUDA Graph launch order without changing timeline timestamps.
+
+    Multi-stream kernels complete out of launch order.  For a single replayed
+    graph, Kineto retains the exact graph-node identifiers, which are the
+    correct portable occurrence order for collective-bounded reconciliation.
+    Graph-id-zero setup/output kernels remain ordered by their GPU timestamps.
+    Piecewise graphs are intentionally not globally reordered because node
+    identifiers from distinct graphs do not define a cross-graph sequence.
+    """
+
+    graph_rows = [row for row in rows if _nonzero_int(row.get("graph_id"))]
+    graph_ids = {_nonzero_int(row.get("graph_id")) for row in graph_rows}
+    if len(graph_ids) != 1 or any(
+        _nonzero_int(row.get("graph_node_id")) is None for row in graph_rows
+    ):
+        return sorted(rows, key=lambda row: float(row["ts_us"]))
+    graph_start = min(float(row["ts_us"]) for row in graph_rows)
+    graph_row_ids = {id(row) for row in graph_rows}
+    before = [
+        row
+        for row in rows
+        if id(row) not in graph_row_ids and float(row["ts_us"]) < graph_start
+    ]
+    before_row_ids = {id(row) for row in before}
+    after = [
+        row
+        for row in rows
+        if id(row) not in graph_row_ids and id(row) not in before_row_ids
+    ]
+    return [
+        *sorted(before, key=lambda row: float(row["ts_us"])),
+        *sorted(graph_rows, key=lambda row: int(row["graph_node_id"])),
+        *sorted(after, key=lambda row: float(row["ts_us"])),
+    ]
+
+
 def is_all_reduce(row: dict[str, Any]) -> bool:
     name = _lower(row)
     return any(
@@ -365,33 +410,75 @@ def _map_sglang_moe(
     )
     if routed_quant is None:
         raise ValueError("SGLang MoE segment is missing routed-expert quantization")
-    router_start = int(routed_quant) - 1
-    while router_start > 0 and "splitkreduce" in _lower(body[router_start]):
-        router_start -= 1
     leading_norm = next(
-        (i for i, row in enumerate(body[:router_start]) if _is_norm_kernel(row)), None
+        (i for i, row in enumerate(body) if _is_norm_kernel(row)), None
     )
     for index, row in enumerate(body):
         name = _lower(row)
         if leading_norm is not None and index == leading_norm:
             _map_post_attention_norm(row, kind=kind, framework="sglang", phase=phase)
             continue
-        if index < router_start:
-            node = "moe_block.shared_expert"
-        elif index < int(routed_quant):
-            node = "moe_block.router"
-        elif index == routed_quant:
+        if "cudafunctoronself_add" in name:
+            _support(
+                row,
+                "moe_schedule_metadata",
+                "graph-replay expert-counter update used by the fused MoE scheduler",
+            )
+            continue
+        if "alloc_decode_kernel" in name:
+            _support(
+                row,
+                "linear_attention_schedule_metadata",
+                "asynchronous GDN decode workspace allocation may overlap the "
+                "neighboring MoE timestamp segment; it carries no model tensor "
+                "transition and is excluded from MoE ownership",
+            )
+            continue
+        if "index_put_kernel_impl" in name or "index_kernel_impl" in name:
+            _support(
+                row,
+                "moe_schedule_metadata",
+                "graph-replay index update adjacent to the router GEMM and its "
+                "memcpy epilogue; it updates fused-MoE scheduler metadata rather "
+                "than a Model IR tensor",
+            )
+            continue
+        if (
+            index == routed_quant
+            or index in {gate_bmm, down_bmm}
+            or "finalizekernel" in name
+            or "direct_copy_kernel_cuda" in name
+        ):
             node = "moe_block.routed_experts"
         elif "routing" in name:
             node = "moe_block.router"
-        elif index in {gate_bmm, down_bmm} or "finalizekernel" in name or "nvfp4_quant" in name:
-            node = "moe_block.routed_experts"
-        elif "act_and_mul" in name or "qqtst_40x64" in name or "splitkreduce" in name:
-            node = "moe_block.shared_expert"
-        elif index >= int(finalize):
+        elif index == combine:
             node = "moe_block.weighted_combine"
+        elif name in {"memcpy32_post", "memcpy128"} or (
+            "tst_" in name and "qqtst_" not in name
+        ):
+            # The graph-on router GEMM may expose an extra memcpy epilogue.
+            node = "moe_block.router"
+        elif "splitkreduce" in name:
+            # The pinned router GEMM has beta=false; shared-expert GEMMs use
+            # beta=true.  This template bit remains visible even when graph
+            # replay interleaves the two streams.
+            node = (
+                "moe_block.router"
+                if "__nv_bfloat16, false, float" in name
+                else "moe_block.shared_expert"
+            )
+        elif any(
+            token in name
+            for token in (
+                "_static_quant_fp8",
+                "act_and_mul",
+                "qqtst_",
+            )
+        ):
+            node = "moe_block.shared_expert"
         else:
-            node = "moe_block.routed_experts"
+            raise ValueError(f"unresolved SGLang MoE kernel: {name}")
         _assign(row, node, method="tp_collective_bounded_sglang_moe_sequence")
     block = _block(kind)
     members: list[str] = []
@@ -487,28 +574,71 @@ def _map_vllm_attention(
         gate = int(attention) + 1
     if None in (attention, gate):
         raise ValueError("incomplete vLLM full-attention landmarks")
-    input_norm = next(
-        (i for i, row in enumerate(body[: int(attention)]) if "rms_norm" in _lower(row)),
+    # The compiled full-attention partition has an explicit, retained source
+    # contract.  Its qkv projection is the quant pointwise plus bmm; kernels
+    # 5/6/7 implement Q/K RMSNorm and RoPE; kernel 8 constructs and quantizes
+    # K/V before reshape_and_cache writes the state.  A following FillFunctor
+    # initializes attention-plan scratch and is not Q/K normalization.  Do not
+    # infer these roles from qkv_start+1: that was the source of the historical
+    # false FillFunctor -> qk_norm claim.
+    qk_tokens = (
+        ("triton_poi_fused_6", "triton_red_fused_7", "triton_poi_fused_8")
+        if phase == "prefill"
+        else ("triton_poi_fused_5", "triton_red_fused_6", "triton_poi_fused_7")
+    )
+    kv_prepare_token = (
+        "rms_norm_slice_split_split_with_sizes_view_9"
+        if phase == "prefill"
+        else "rms_norm_slice_split_split_with_sizes_view_8"
+    )
+    rope_token = "triton_poi_fused_8" if phase == "prefill" else "triton_poi_fused_7"
+    qk_landmarks = {
+        index
+        for index, row in enumerate(body)
+        if any(token in _lower(row) for token in qk_tokens)
+    }
+    kv_prepare = next(
+        (
+            index
+            for index, row in enumerate(body)
+            if kv_prepare_token in _lower(row)
+        ),
         None,
     )
-    qkv_start = input_norm + 1 if input_norm is not None else 0
-    qk_owner = qkv_start + 1
+    if not qk_landmarks or kv_prepare is None or cache is None:
+        raise ValueError(
+            "vLLM compiled full-attention source landmarks are incomplete: "
+            f"qk={sorted(qk_landmarks)} kv_prepare={kv_prepare} cache={cache}"
+        )
     for index, row in enumerate(body):
-        if input_norm is not None and index == input_norm:
-            _map_input_norm(
+        name = _lower(row)
+        if "fillfunctor<unsigned char>" in name:
+            _support(
                 row,
-                layer_id=layer_id,
-                kind=kind,
-                framework="vllm",
-                phase=phase,
+                "attention_plan_metadata",
+                "compiled attention-plan scratch initialization before FMHA",
             )
-            continue
-        if index < qk_owner:
+        elif index in qk_landmarks:
+            rope_targets = (
+                ("full_attention.partial_rope",)
+                if rope_token in name
+                else ()
+            )
+            node, fused = "full_attention.qk_norm", rope_targets
+            _assign(
+                row,
+                node,
+                method=f"vllm_{phase}_inductor_source_nodes_qk_norm_rope",
+                ir_targets=fused,
+            )
+        elif index in {int(kv_prepare), int(cache)}:
+            _assign(
+                row,
+                "full_attention.kv_state_write",
+                method=f"vllm_{phase}_inductor_source_nodes_kv_prepare_write",
+            )
+        elif index < min(qk_landmarks):
             node, fused = "full_attention.qkv_projection", ()
-        elif index == qk_owner:
-            node, fused = "full_attention.qk_norm", ("full_attention.partial_rope",)
-        elif cache is not None and index == cache:
-            node, fused = "full_attention.kv_state_write", ()
         elif index == attention:
             node, fused = "full_attention.causal_gqa", ("full_attention.kv_state_read",)
         elif index == gate:
@@ -516,8 +646,16 @@ def _map_vllm_attention(
         elif index > int(gate):
             node, fused = "full_attention.output_projection", ()
         else:
-            node, fused = "full_attention.qk_norm", ("full_attention.partial_rope",)
-        _assign(row, node, method=f"tp_collective_bounded_vllm_{phase}_full_attention_sequence", ir_targets=fused)
+            raise ValueError(
+                f"unresolved vLLM compiled full-attention slot {index}: {name}"
+            )
+        if not row.get("node") and not row.get("support_class"):
+            _assign(
+                row,
+                node,
+                method=f"tp_collective_bounded_vllm_{phase}_full_attention_sequence",
+                ir_targets=fused,
+            )
     residual_targets = (
         (f"{_block(kind)}.attention_residual", f"{_block(kind)}.post_attention_norm")
         if phase == "decode"
@@ -547,35 +685,66 @@ def _map_vllm_moe(
     )
     if routed_quant is None:
         raise ValueError("vLLM MoE segment is missing routed-expert quantization")
-    router_start = int(routed_quant) - 1
-    while router_start > 0 and "splitkreduce" in _lower(body[router_start]):
-        router_start -= 1
-    leading_norm = next(
-        (i for i, row in enumerate(body[:router_start]) if "rms_norm" in _lower(row)),
+    router_gemm = next(
+        (
+            index
+            for index, row in enumerate(body)
+            if "tst_" in _lower(row) and "qqtst_" not in _lower(row)
+        ),
         None,
     )
-    combine = len(body) - 1
+    if router_gemm is None:
+        raise ValueError("vLLM MoE segment is missing router projection")
+    leading_norm = next(
+        (i for i, row in enumerate(body) if "rms_norm" in _lower(row)),
+        None,
+    )
     for index, row in enumerate(body):
         name = _lower(row)
+        cpu = str(row.get("cpu_op_name") or "").lower()
         if leading_norm is not None and index == leading_norm:
             _map_post_attention_norm(row, kind=kind, framework="vllm", phase=phase)
             continue
-        if index < router_start:
-            node = "moe_block.shared_expert"
-        elif index < int(routed_quant):
-            node = "moe_block.router"
-        elif index == routed_quant:
+        if index == routed_quant or index in {gate_bmm, down_bmm} or "finalizekernel" in name:
             node = "moe_block.routed_experts"
         elif "routing" in name:
             node = "moe_block.router"
-        elif index in {gate_bmm, down_bmm} or "finalizekernel" in name or "cvt_fp16_to_fp4" in name:
-            node = "moe_block.routed_experts"
-        elif index == combine:
+        elif "triton_poi_fused_add" in name:
             node = "moe_block.weighted_combine"
-        elif index > int(finalize):
+        elif "tst_" in name and "qqtst_" not in name:
+            # The first TST/split-K pair (before routed quantization) is the
+            # router projection.  A later TST/split-K pair is the shared
+            # expert down projection.  Shape-specialized kernel names vary
+            # across BS1/16/64/256, while this source/occurrence boundary does
+            # not.
+            node = (
+                "moe_block.router"
+                if index == int(router_gemm)
+                else "moe_block.shared_expert"
+            )
+        elif "splitkreduce" in name:
+            node = (
+                "moe_block.router"
+                if index < int(routed_quant)
+                and index <= int(router_gemm) + 2
+                else "moe_block.shared_expert"
+            )
+        elif any(
+            token in name
+            for token in (
+                "triton_poi_fused__to_copy_clamp_mul_reciprocal_0",
+                "triton_poi_fused_mul_silu_slice_0",
+                "dot_kernel",
+                "reduce_1block_kernel",
+                "sigmoid_kernel_cuda",
+                "binary_internal::mulfunctor",
+            )
+        ):
+            node = "moe_block.shared_expert"
+        elif "cutlass13device_kernel" in name or cpu == "vllm::bmm_fp8":
             node = "moe_block.shared_expert"
         else:
-            node = "moe_block.routed_experts"
+            raise ValueError(f"unresolved vLLM MoE kernel: {name}")
         _assign(row, node, method=f"tp_collective_bounded_vllm_{phase}_moe_sequence")
     block = _block(kind)
     members: list[str] = []
@@ -599,11 +768,9 @@ def _map_prefix(rows: list[dict[str, Any]], framework: str) -> None:
             _assign(row, "top.embedding", method=f"{framework}_unique_embedding_kernel")
         else:
             _support(row, "request_batch_metadata", "request indices, positions, or state-slot preparation before the model forward")
-    fused = ("top.embedding",) if framework == "vllm" else ()
     _assign_collective_group(
         rows[collective_start:],
         "top.tp_embedding_output_collective",
-        ir_targets=fused,
     )
 
 
@@ -661,12 +828,14 @@ def attribute_production_forward(
 ) -> dict[str, Any]:
     if framework not in {"sglang", "vllm"}:
         raise ValueError(f"unsupported framework {framework!r}")
-    rows.sort(key=lambda row: float(row["ts_us"]))
+    ordered_rows = semantic_execution_order(rows)
+    for sequence_index, row in enumerate(ordered_rows):
+        row["semantic_sequence_index"] = sequence_index
     # Larger FlashInfer collectives launch a second RMSNorm/Lamport kernel.
     # Remove those physical companions while resolving the portable ordered
     # collective spine, then bind each back to its nearest primary owner.
-    companions = [row for row in rows if is_all_reduce_companion(row)]
-    spine = [row for row in rows if not is_all_reduce_companion(row)]
+    companions = [row for row in ordered_rows if is_all_reduce_companion(row)]
+    spine = [row for row in ordered_rows if not is_all_reduce_companion(row)]
     prefix, layers, suffix = split_tp8_forward(spine)
     _map_prefix(prefix, framework)
     for layer_id, ((attention_rows, moe_rows), kind) in enumerate(zip(layers, LAYER_PATTERN)):
@@ -709,6 +878,7 @@ def attribute_production_forward(
     mapped = [row for row in rows if row.get("node")]
     total_us = sum(float(row.get("dur_us") or 0.0) for row in rows)
     mapped_us = sum(float(row.get("dur_us") or 0.0) for row in mapped)
+    rows.sort(key=lambda row: float(row["ts_us"]))
     return {
         "framework": framework,
         "phase": phase,

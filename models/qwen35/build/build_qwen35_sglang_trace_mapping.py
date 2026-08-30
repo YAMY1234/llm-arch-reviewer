@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -24,7 +25,14 @@ def main() -> int:
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--phase", choices=("forward_extend", "forward_decode"), required=True)
     parser.add_argument("--n-iters", type=int, required=True)
+    parser.add_argument(
+        "--capture-contract",
+        type=Path,
+        required=True,
+        help="Exact job/workload/formal-coordinate contract retained with every rank manifest.",
+    )
     args = parser.parse_args()
+    capture_contract = json.loads(args.capture_contract.read_text())
     result = build_trace_mapping(
         trace_path=args.trace.resolve(),
         source_root=args.source_root.resolve(),
@@ -37,6 +45,7 @@ def main() -> int:
         n_iters=args.n_iters,
         skip_first=False,
         expected_phase_frame="_execute_extend" if args.phase == "forward_extend" else "_execute_decode",
+        capture_contract=capture_contract,
     )
     write_build_result(args.out_dir.resolve(), result, rank=args.rank)
     print(

@@ -17,42 +17,39 @@ bindings compile to execution fingerprint `exec_50bb583c3a3d0557`:
   `033446bb05f35c0943aed2750c443077ffc0b92c`.
 - vLLM commit `487ecf187d3dfe74d2cf6119a92881dba403c219`.
 
-The attempted 8K/1K production matrix has **zero accepted profiles and ten
-unsupported candidates**. The canonical Viewer therefore publishes the two
-validated bindings and shared Architecture IR, but no Qwen3.5 timing profile or
-Timeline. `unsupported_profiles.yaml` is the public fail-closed audit: it keeps
-the exact SGLang/vLLM, phase, global batch, job, source, hardware, workload,
-all-rank trace/eager hashes, CUDA Graph observation, unresolved counts, fusion
-closure counts, and validation hashes for every rejected point.
+The 8K/1K production matrix has **ten accepted measured profiles**: SGLang and
+vLLM prefill at GBS1 plus CUDA-Graph decode at GBS1/16/64/256. Every point uses
+3×concurrency warmup requests and 1×concurrency formal requests. The graph-off
+semantic capture is taken at the matched stable formal coordinate for the same
+framework, phase, batch, rank, source, and hardware contract.
 
-All ten candidates used 3×concurrency warmup requests and 1×concurrency formal
-requests. They are not deliverable because each reference rank still has
-1,439–2,043 model-bearing production events without exact same-rank,
-same-phase, occurrence-scoped eager closure. The graph-off evidence frequently
-has a materially different 1:N/N:1 event sequence, and some eager stack rules
-are absent or conflict with the production candidate owner. Those events are
-not reclassified as runtime support and are not promoted to high-confidence
-fusion ownership.
+All model-bearing production events have exact same-rank, same-phase,
+occurrence-scoped eager closure. Exact signatures are used where graph-off and
+graph-on launches are identical; explicit ordered 1:N and N:1 relations retain
+the source event IDs, kernel names, Python stacks, and stack hashes where CUDA
+Graph specialization changes the physical decomposition. Framework scheduler,
+planning, sampling, and output helpers are separately typed as runtime support
+and are not used to hide unresolved Model IR work.
 
-Full fusion groups in the rejected diagnostics are emitted only when member
-and owner production event sets are equal and every owner event has same-rank
-closure. Other relationships remain occurrence-scoped partial evidence. Since
-the partial nodes do not form complete profile-aggregate ownership, no rejected
-diagnostic is compiled into the Viewer.
+Profile-aggregate fusion groups are emitted only when each member's physical
+production event set exactly equals its single timing owner's set and every
+owner event is closed. A relationship that is fused in only some layer
+occurrences remains occurrence-scoped structural evidence: it receives no
+aggregate fusion claim and no copied timing. This preserves one timing owner
+for 1:N and N:1 semantic bindings.
 
-The SGLang prefill candidate has an additional timing-contract failure. Its
-profiler-off selector reports 4111.995663 ms for the first formal scheduler
-interval, while the instrumented selected forward has 89.595218 ms active GPU
-time and a 93.450314 ms model envelope. The retained profiler-controlled request
-also stretches to 35.46 s. There is no proof that the 4.112 s interval and the
-instrumented interval isolate the same stable forward, so neither number is
-published as an accepted profile wall time.
+SGLang prefill wall time is the exact post-warmup, prefill-only
+ForwardPassMetrics DeviceTimer span: 93.678078 ms for one request with 8192
+prefill tokens, zero decode requests, and zero decode tokens. It matches the
+same instrumented forward's 93.450314 ms model envelope. The earlier
+4111.995663 ms scheduler interval is retained as rejected evidence because it
+included intervening decode work and was not an isolated forward.
 
 In the diagnostics, `cuda_graph_enabled`/`used_graph_path` refers only to the
 selected formal forward and is proven by nonzero raw-trace graph IDs. Server
 CUDA Graph configuration is a separate fact. Thus vLLM prefill remains
 `used_graph_path: false` with zero graph IDs even though the server configured
-`FULL_AND_PIECEWISE`; decode candidates retain their observed graph-path state.
+`FULL_AND_PIECEWISE`; decode profiles retain their observed graph-path state.
 
 SGLang graph-on decode capture drains each rank's preceding CUDA backlog and
 uses Gloo TP barriers after Kineto activation and after formal-forward input
@@ -64,19 +61,17 @@ baseline-relative max-single and mapped-envelope outliers, and robust physical
 residency outliers. The profiler-off baseline is the wall authority; the
 instrumented trace remains layout/active/residency evidence with its overhead
 recorded explicitly. One-shot and two-shot/RMSNorm companion kernels remain
-separately visible. A fusion group
-is emitted only when every member's physical production event set exactly
-equals its single timing owner's set. Unequal occurrence subsets remain
-partial evidence and never inherit the owner's aggregate timing.
+separately visible.
 
 The shared Architecture remains available for both bindings:
 
 - [SGLang Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&viewMode=architecture)
 - [vLLM Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&viewMode=architecture)
 
-Raw traces, eager mappings, selectors, manifests, and validation hashes are
-retained outside git under `current/qwen35-complete-profiles/`; rejected compact
-profiles and timelines are retained there and identified by public hashes.
+Raw traces, eager mappings, selectors, manifests, compile caches, and validation
+hashes are retained outside git under `current/qwen35-complete-profiles/` and
+the recorded cluster scratch roots. Public profiles retain all-rank hashes for
+the non-regenerable evidence.
 
 Build the catalog with:
 
@@ -86,4 +81,4 @@ python3 scripts/build_v2.py --model qwen35
 
 The catalog uses the shared compiler/schema and the single canonical
 `docs/viewer.html`; there is no Qwen3.5-specific viewer path. Future profiles
-will appear only after all acceptance gates pass.
+must pass the same fail-closed acceptance gates.

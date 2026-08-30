@@ -279,6 +279,12 @@ class CommonTraceMappingTest(unittest.TestCase):
                 phase="forward_decode",
                 rules=TOY_RULES,
                 skip_first=False,
+                capture_contract={
+                    "job_id": "job-1",
+                    "phase": "decode",
+                    "concurrency": 1,
+                    "selected_formal_step": 7,
+                },
             )
 
             self.assertEqual(
@@ -290,6 +296,15 @@ class CommonTraceMappingTest(unittest.TestCase):
             self.assertEqual(result.mappings[0].selected_node, "toy_node")
             self.assertEqual(
                 len(result.manifest["selected_forward_events_sha256"]), 64
+            )
+            self.assertEqual(
+                result.manifest["capture_contract"],
+                {
+                    "job_id": "job-1",
+                    "phase": "decode",
+                    "concurrency": 1,
+                    "selected_formal_step": 7,
+                },
             )
 
     def test_common_engine_uses_supplied_rules_not_qwen_names(self):

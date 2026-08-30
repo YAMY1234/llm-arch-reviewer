@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import gzip
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,9 +12,16 @@ import yaml
 from llm_arch_v2 import compile_catalog
 from llm_arch_v2.compiler import CatalogError, apply_execution_plan
 from models.qwen35.build.build_qwen35_production_profiles import (
+    build_states_and_fusions,
+    fusion_target_is_physically_proven,
     profile_acceptance_gate,
     rank_collective_duration_gate,
+    reconciliation_kernel_family,
+    sglang_prefill_forward_timing_coordinate,
     wall_trace_contract_gate,
+)
+from models.qwen35.build.qwen35_production_attribution import (
+    semantic_execution_order,
 )
 
 
@@ -145,15 +154,24 @@ def qwen35_profile_paths() -> list[Path]:
     return sorted((MODEL_ROOT / "profiles" / "tp8").glob("*/*.yaml"))
 
 
-def test_qwen35_cross_framework_matrix_is_fail_closed_as_unsupported() -> None:
+def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
     manifest = load_yaml(MODEL_ROOT / "unsupported_profiles.yaml")
-    profiles = manifest["profiles"]
-    assert qwen35_profile_paths() == []
+    profile_paths = qwen35_profile_paths()
     assert manifest["expected_profile_count"] == 10
-    assert manifest["accepted_profile_count"] == 0
-    assert manifest["unsupported_profile_count"] == 10
+    assert manifest["accepted_profile_count"] == 10
+    assert manifest["unsupported_profile_count"] == 0
+    assert manifest["profiles"] == []
+    assert len(profile_paths) == 10
+    profiles = [load_yaml(path) for path in profile_paths]
+    profile_path_by_id = {
+        profile["profile_id"]: path for profile, path in zip(profiles, profile_paths)
+    }
     assert {
-        (profile["framework"], profile["phase"], profile["global_batch_size"])
+        (
+            "sglang" if "sglang" in profile["implementation_id"] else "vllm",
+            profile["phase"],
+            profile["workload"]["batch_size"],
+        )
         for profile in profiles
     } == {
         (framework, phase, batch)
@@ -161,27 +179,89 @@ def test_qwen35_cross_framework_matrix_is_fail_closed_as_unsupported() -> None:
         for phase, batch in (("prefill", 1), ("decode", 1), ("decode", 16), ("decode", 64), ("decode", 256))
     }
     for profile in profiles:
-        batch = profile["global_batch_size"]
-        assert profile["state"] == "unsupported"
+        batch = profile["workload"]["batch_size"]
+        framework = (
+            "sglang" if "sglang" in profile["implementation_id"] else "vllm"
+        )
+        assert profile["acceptance"] == {
+            "state": "accepted",
+            "fail_closed": True,
+            "reason_count": 0,
+            "reasons": [],
+        }
         assert profile["workload"]["isl"] == 8192
         assert profile["workload"]["osl"] == 1024
         assert profile["workload"]["warmup_requests"] == 3 * batch
         assert profile["workload"]["formal_requests"] == batch
-        assert "semantic_reconciliation_incomplete" in profile["reason_codes"]
-        assert "fusion_reconciliation_incomplete" in profile["reason_codes"]
-        assert profile["typed_unresolved_semantic_event_count"] > 0
-        assert set(profile["rank_typed_unresolved_semantic_event_count"]) == {
-            str(rank) for rank in range(8)
-        }
+        assert profile["evidence"]["typed_unresolved_semantic_event_count"] == 0
+        rank_diagnostics = profile["evidence"]["attribution_diagnostics"]
+        assert rank_diagnostics["semantic_reconciliation"][
+            "typed_unresolved_event_count"
+        ] == 0
         assert all(
-            count > 0
-            for count in profile["rank_typed_unresolved_semantic_event_count"].values()
+            state.get("status") != "partially_fused"
+            for state in profile["node_states"].values()
         )
-        assert profile["partial_fusion_node_count"] > 0
-        assert profile["incomplete_fusion_owner_closure_node_count"] > 0
-        assert profile["full_fusion_groups_all_closed"] is True
-        assert profile["false_fill_qk_rope_fusion_published"] is False
-        selected_graph = profile["selected_forward_cuda_graph"]
+        for group in profile["fusion_groups"].values():
+            assert group["evidence_scope"]["member_event_sets_equal_owner"] is True
+            assert group["evidence_scope"]["all_owner_events_same_rank_closed"] is True
+            assert group["timing_semantics"] == "shared_event_set"
+            owner = group["owner"]
+            for member in group["ir_nodes"]:
+                if member == owner:
+                    continue
+                assert member not in profile["node_metrics"]
+                assert profile["node_states"][member]["included_in"] == owner
+        timeline_path = profile_path_by_id[profile["profile_id"]].with_name(
+            profile["timeline"]["artifact"]
+        )
+        with gzip.open(timeline_path, "rt") as handle:
+            timeline = json.load(handle)
+        strings = timeline["strings"]
+
+        def decode(value):
+            return strings[value] if isinstance(value, int) else value
+
+        events = [
+            event for step in timeline["steps"] for event in step["events"]
+        ]
+        assert all(
+            decode(event.get("reconciliation_status")) == "closed"
+            for event in events
+            if decode(event.get("ir_node"))
+        )
+        assert all(
+            decode(event.get("ir_node")) or decode(event.get("support_class"))
+            for event in events
+        )
+        for group in profile["fusion_groups"].values():
+            owner_events = {
+                decode(event["raw_event_id"])
+                for event in events
+                if decode(event.get("ir_node")) == group["owner"]
+            }
+            assert owner_events
+            for member in group["ir_nodes"]:
+                if member == group["owner"]:
+                    continue
+                member_events = {
+                    decode(event["raw_event_id"])
+                    for event in events
+                    if member
+                    in [decode(target) for target in event.get("ir_targets") or []]
+                }
+                assert member_events == owner_events
+        qk_kernels = profile["node_metrics"].get("full_attention.qk_norm", {}).get(
+            "kernels", []
+        )
+        assert all(
+            "fillfunctor" not in kernel["name"].lower() for kernel in qk_kernels
+        )
+
+        selected_graph = profile["profiler"]["selected_forward_cuda_graph"]
+        assert profile["profiler"]["cuda_graph_enabled"] is selected_graph[
+            "used_graph_path"
+        ]
         assert selected_graph["used_graph_path"] is (selected_graph["graph_id_count"] > 0)
         assert selected_graph["model_kernel_count"] == (
             selected_graph["graph_kernel_count"] + selected_graph["non_graph_kernel_count"]
@@ -189,67 +269,109 @@ def test_qwen35_cross_framework_matrix_is_fail_closed_as_unsupported() -> None:
         assert selected_graph["all_tp_ranks_consistent"] is True
         assert selected_graph["used_graph_path"] is (selected_graph["graph_kernel_count"] > 0)
         evidence_basis = selected_graph["evidence_basis"]
+        graph_semantics = profile["profiler"]["cuda_graph_enabled_semantics"]
         if selected_graph["used_graph_path"]:
             assert f"{selected_graph['graph_id_count']} distinct nonzero raw-trace graph IDs" in evidence_basis
             assert f"{selected_graph['graph_kernel_count']} model-bearing kernels" in evidence_basis
+            assert graph_semantics == (
+                "selected formal forward used a CUDA Graph path; "
+                f"{selected_graph['graph_kernel_count']} model-bearing kernels "
+                "have a nonzero raw-trace graph_id"
+            )
         else:
             assert evidence_basis == (
                 f"zero nonzero raw-trace graph IDs across {selected_graph['model_kernel_count']} "
                 "model-bearing kernels in the selected formal forward"
             )
+            assert graph_semantics == (
+                "selected formal forward did not use CUDA Graph replay; zero "
+                "nonzero raw-trace graph IDs were observed across all "
+                f"{selected_graph['model_kernel_count']} model-bearing kernels"
+            )
         if profile["phase"] == "decode":
             assert selected_graph["used_graph_path"] is True
-            assert selected_graph["replay_state"] == "mixed_graph_and_eager"
-        elif profile["framework"] == "sglang":
+            expected_replay_state = (
+                "mixed_graph_and_eager"
+                if selected_graph["non_graph_kernel_count"]
+                else "cuda_graph_replay"
+            )
+            assert selected_graph["replay_state"] == expected_replay_state
+        elif framework == "sglang":
             assert selected_graph["used_graph_path"] is True
             assert selected_graph["replay_state"] == "mixed_graph_and_eager"
         else:
             assert selected_graph["used_graph_path"] is False
             assert selected_graph["replay_state"] == "no_cuda_graph_replay"
             assert selected_graph["graph_kernel_count"] == 0
-        assert len(profile["all_rank_eager_mapping_sha256"]) == 8
-        assert len(profile["all_rank_eager_raw_manifest_sha256"]) == 8
-        assert len(profile["all_rank_production_trace_sha256"]) == 8
-        phase_contract = profile["all_rank_eager_phase_contract"]
+        assert len(profile["evidence"]["all_rank_eager_mapping_sha256"]) == 8
+        assert len(profile["evidence"]["all_rank_eager_raw_manifest_sha256"]) == 8
+        assert len(profile["evidence"]["all_rank_trace_sha256"]) == 8
+        phase_contract = profile["evidence"]["all_rank_eager_phase_contract"]
         assert set(phase_contract) == {str(rank) for rank in range(8)}
         expected_source_phase = (
             f"vllm_{profile['phase']}"
-            if profile["framework"] == "vllm"
+            if framework == "vllm"
             else f"forward_{'extend' if profile['phase'] == 'prefill' else 'decode'}"
         )
+        expected_source_commit = (
+            "f609d677b909ca46c64bb6803b69a85fedbf86bc"
+            if framework == "sglang"
+            else "487ecf187d3dfe74d2cf6119a92881dba403c219"
+        )
+        expected_coordinate = (
+            {("prefill", 1): 0, ("decode", 1): 511, ("decode", 16): 529,
+             ("decode", 64): 582, ("decode", 256): 769}
+            if framework == "sglang"
+            else {("prefill", 1): 0, ("decode", 1): 513, ("decode", 16): 521,
+                  ("decode", 64): 545, ("decode", 256): 643}
+        )[(profile["phase"], batch)]
         for rank, contract in phase_contract.items():
             assert contract["source_phase"] == expected_source_phase, rank
             assert contract["selected_forward_kernel_count"] > 0
             assert contract["selected_forward_kernel_duration_us"] > 0
+            assert contract["source_commit"] == expected_source_commit
+            assert contract["hardware"] == "NVIDIA GB300"
+            assert contract["world_size"] == 8
             assert len(contract["raw_trace_sha256"]) == 64
             assert len(contract["raw_manifest_sha256"]) == 64
+            assert len(contract["capture_metadata_sha256"]) == 64
             assert len(contract["selected_forward_events_sha256"]) == 64
-        if profile["framework"] == "vllm":
-            expected_count, expected_duration = (
-                (4133, 843078.284)
-                if profile["phase"] == "prefill"
-                else (3718, 741788.696)
+            assert contract["selected_forward_kernel_count"] == (
+                contract["graph_off_semantic_event_count"]
+                + contract["graph_off_support_event_count"]
             )
-            assert phase_contract["0"]["selected_forward_kernel_count"] == expected_count
-            assert phase_contract["0"]["selected_forward_kernel_duration_us"] == pytest.approx(
-                expected_duration, abs=1e-3
+            production_count = (
+                contract["production_semantic_event_count"]
+                + contract["production_support_event_count"]
             )
-        assert len(profile["validation_sha256"]) == 64
-        assert len(profile["rejected_profile_sha256"]) == 64
-        assert len(profile["rejected_timeline_sha256"]) == 64
+            assert production_count > 0
+            assert contract["typed_unresolved_event_count"] == 0
+            assert contract["closed_production_event_count"] == contract[
+                "production_semantic_event_count"
+            ]
+            coordinate = contract["selected_formal_coordinate"]
+            if framework == "sglang":
+                assert coordinate["mode"] == "sglang_formal_relative_scheduler_forward"
+                assert coordinate["relative_step"] == expected_coordinate
+            else:
+                assert coordinate == {
+                    "mode": "vllm_start_profile_relative_engine_iteration",
+                    "delay_iterations": expected_coordinate,
+                    "active_iterations": 1,
+                }
+        assert len(profile["evidence"]["validation_sha256"]) == 64
 
     sglang_prefill = next(
         profile
         for profile in profiles
-        if profile["framework"] == "sglang" and profile["phase"] == "prefill"
+        if "sglang" in profile["implementation_id"] and profile["phase"] == "prefill"
     )
-    gate = sglang_prefill["wall_trace_contract_gate"]
-    assert gate["state"] == "failed"
-    assert gate["same_isolated_forward_proven"] is False
-    assert gate["serving_wall_ms"] == 4111.995663
+    gate = sglang_prefill["evidence"]["timing"]["wall_trace_contract_gate"]
+    assert gate["state"] == "passed"
+    assert gate["same_isolated_forward_proven"] is True
+    assert gate["serving_wall_ms"] == pytest.approx(93.678078)
     assert gate["instrumented_active_gpu_ms"] == 89.595218
     assert gate["instrumented_kernel_envelope_ms"] == 93.450314
-    assert "wall_trace_contract_mismatch" in sglang_prefill["reason_codes"]
 
 
 def test_qwen35_acceptance_gate_rejects_each_incomplete_contract() -> None:
@@ -323,9 +445,125 @@ def test_qwen35_wall_trace_gate_rejects_unexplained_first_prefill_interval() -> 
     assert gate["wall_to_envelope_ratio"] == pytest.approx(44.001946)
 
 
+def test_qwen35_sglang_prefill_timing_selects_exact_post_warmup_forward(
+    tmp_path: Path,
+) -> None:
+    client_relative = Path("evidence/sglang-fpm-baseline-c1/1/logs/client-c1.json")
+    client_path = tmp_path / client_relative
+    client_path.parent.mkdir(parents=True)
+    contract = {
+        "concurrency": 1,
+        "formal_request_count": 1,
+        "ignore_eos": True,
+        "isl": 8192,
+        "mtp_nextn": False,
+        "no_intentionally_shared_prefix": True,
+        "osl": 1024,
+        "random_range_ratio": 1.0,
+        "random_token_ids": True,
+        "seed": 0,
+        "warmup_request_count": 3,
+    }
+    selected = {
+        "received_at": "2026-08-30T00:00:01+00:00",
+        "transport_sequence": 102,
+        "payload_sha256": "a" * 64,
+        "metrics": {
+            "counter_id": 102,
+            "wall_time": 0.09367807769775391,
+            "scheduled_requests": {
+                "num_prefill_requests": 1,
+                "sum_prefill_tokens": 8192,
+                "sum_prefill_kv_tokens": 8192,
+                "num_decode_requests": 0,
+                "sum_decode_kv_tokens": 0,
+            },
+        },
+    }
+    client = {
+        "state": "passed",
+        "contract": contract,
+        "forward_pass_metrics": {
+            "counter_floor_after_warmup": 100,
+            "messages": [
+                {
+                    "transport_sequence": 101,
+                    "metrics": {
+                        "counter_id": 101,
+                        "wall_time": 0.004,
+                        "scheduled_requests": {
+                            "num_prefill_requests": 0,
+                            "sum_prefill_tokens": 0,
+                            "sum_prefill_kv_tokens": 0,
+                            "num_decode_requests": 1,
+                            "sum_decode_kv_tokens": 8193,
+                        },
+                    },
+                },
+                selected,
+            ],
+        },
+    }
+    client_path.write_text(json.dumps(client))
+    client_sha = hashlib.sha256(client_path.read_bytes()).hexdigest()
+    selection_path = tmp_path / "validation" / "sglang-prefill-fpm-selection.json"
+    selection_path.parent.mkdir(parents=True)
+    selection_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "qwen35-sglang-forward-timing-selection.v1",
+                "state": "passed",
+                "job_id": "1",
+                "framework": "sglang",
+                "phase": "prefill",
+                "batch_size": 1,
+                "contract": {
+                    "input_length": 8192,
+                    "output_length": 1024,
+                    "warmup_request_count": 3,
+                    "formal_request_count": 1,
+                    "no_intentionally_shared_prefix": True,
+                    "ignore_eos": True,
+                    "mtp_nextn": False,
+                    "topology": {
+                        "tensor_parallel_size": 8,
+                        "data_parallel_size": 1,
+                        "pipeline_parallel_size": 1,
+                        "expert_parallel_size": 1,
+                    },
+                },
+                "selection": {
+                    "counter_floor_after_warmup": 100,
+                    "matching_message_count": 1,
+                    "transport_sequence": 102,
+                    "counter_id": 102,
+                    "received_at": selected["received_at"],
+                    "payload_sha256": selected["payload_sha256"],
+                    "wall_time_seconds": selected["metrics"]["wall_time"],
+                    "wall_time_ms": selected["metrics"]["wall_time"] * 1000.0,
+                },
+                "evidence": {
+                    "client_path": str(client_relative),
+                    "client_sha256": client_sha,
+                },
+                "rejected_previous_authority": {
+                    "value_ms": 4111.995663,
+                    "reason": "not an isolated forward",
+                },
+            }
+        )
+    )
+
+    coordinate, evidence = sglang_prefill_forward_timing_coordinate(tmp_path)
+    assert coordinate["baseline_mean_elapsed_ms"] == pytest.approx(93.6780776977539)
+    assert coordinate["selected_counter_id"] == 102
+    assert coordinate["same_isolated_forward_proven"] is True
+    assert evidence["raw_client_sha256"] == client_sha
+
+
 def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
     bundle = compile_catalog(MODEL_ROOT)
-    assert bundle["profiles"] == {}
+    assert len(bundle["profiles"]) == 10
     variant = next(iter(bundle["execution_variants"].values()))
     target_count = sum(len(view["nodes"]) for view in variant["views"].values())
     assert target_count == 203
@@ -372,3 +610,114 @@ def test_qwen35_rank_collective_duration_gate_rejects_one_rank_wait_outlier() ->
         rank_collective_duration_gate(
             rank_rows, job="synthetic-skew", serving_wall_ms=5.721765
         )
+
+
+def test_qwen35_cuda_graph_semantic_order_uses_graph_node_ids() -> None:
+    rows = [
+        {"event_id": "setup", "ts_us": 1.0, "graph_id": 0, "graph_node_id": None},
+        {"event_id": "late", "ts_us": 20.0, "graph_id": 7, "graph_node_id": 3},
+        {"event_id": "early", "ts_us": 10.0, "graph_id": 7, "graph_node_id": 1},
+        {"event_id": "middle", "ts_us": 30.0, "graph_id": 7, "graph_node_id": 2},
+        {"event_id": "output", "ts_us": 40.0, "graph_id": 0, "graph_node_id": None},
+    ]
+    assert [row["event_id"] for row in semantic_execution_order(rows)] == [
+        "setup",
+        "early",
+        "middle",
+        "late",
+        "output",
+    ]
+
+    piecewise = [dict(row) for row in rows]
+    piecewise[2]["graph_id"] = 8
+    assert [row["event_id"] for row in semantic_execution_order(piecewise)] == [
+        "setup",
+        "early",
+        "late",
+        "middle",
+        "output",
+    ]
+
+
+def test_qwen35_reconciliation_normalizes_tool_demangle_spelling_only() -> None:
+    torch_name = (
+        "void at::native::vectorized_elementwise_kernel<4, "
+        "at::native::exp_kernel_cuda(at::TensorIteratorBase&)>()"
+    )
+    nsys_name = (
+        "void at::native::vectorized_elementwise_kernel<(int)4, "
+        "at::native::exp_kernel_cuda(at::TensorIteratorBase &)>()"
+    )
+    assert reconciliation_kernel_family({"kernel_name": torch_name}) == "exp_elementwise"
+    assert reconciliation_kernel_family({"kernel_name": nsys_name}) == "exp_elementwise"
+    assert reconciliation_kernel_family({"kernel_name": "FillFunctor<unsigned char>"}) == "fill"
+
+
+def test_qwen35_aggregate_fusion_requires_exact_physical_event_set() -> None:
+    model_ir = {
+        "views": {
+            "gdn_attention": {
+                "nodes": [
+                    {"id": "gated_delta_recurrence"},
+                    {"id": "recurrent_state_read"},
+                    {"id": "state_write"},
+                ]
+            }
+        }
+    }
+    rows = [
+        {
+            "event_id": f"event-{index}",
+            "node": "gdn_attention.gated_delta_recurrence",
+            "kernel_name": "chunkedGatedDeltaNetChunkedKernel",
+            "reconciliation_status": "closed",
+            "ir_targets": [
+                "gdn_attention.gated_delta_recurrence",
+                "gdn_attention.recurrent_state_read",
+                "gdn_attention.state_write",
+            ],
+        }
+        for index in range(2)
+    ]
+    states, groups = build_states_and_fusions(
+        model_ir=model_ir,
+        execution_plan={"transforms": []},
+        rows=rows,
+        metrics={"gdn_attention.gated_delta_recurrence": {}},
+    )
+    assert len(groups) == 1
+    group = next(iter(groups.values()))
+    assert group["evidence_scope"]["member_event_sets_equal_owner"] is True
+    assert group["evidence_scope"]["production_event_ids"] == ["event-0", "event-1"]
+    assert states["gdn_attention.recurrent_state_read"]["status"] == "fused"
+    assert states["gdn_attention.state_write"]["status"] == "fused"
+
+    rows[1]["ir_targets"].remove("gdn_attention.state_write")
+    states, groups = build_states_and_fusions(
+        model_ir=model_ir,
+        execution_plan={"transforms": []},
+        rows=rows,
+        metrics={"gdn_attention.gated_delta_recurrence": {}},
+    )
+    assert all(
+        "gdn_attention.state_write" not in group["ir_nodes"]
+        for group in groups.values()
+    )
+    assert states["gdn_attention.state_write"]["status"] == "structural"
+    assert "included_in" not in states["gdn_attention.state_write"]
+
+
+def test_qwen35_vllm_generated_fused_add_rms_norm_is_physical_proof() -> None:
+    row = {
+        "kernel_name": (
+            "triton_red_fused__to_copy_add_fused_add_rms_norm_"
+            "moe_forward_shared_1"
+        ),
+        "cpu_op_name": "",
+        "attribution_method": "vllm_prefill_eager_validated_post_attention_norm",
+    }
+    assert fusion_target_is_physically_proven(
+        row,
+        "full_attention_moe_block.post_attention_norm",
+        "full_attention_moe_block.attention_residual",
+    )
