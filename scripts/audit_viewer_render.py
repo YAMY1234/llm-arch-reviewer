@@ -105,6 +105,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         "fusion_owner_dom_clicks": 0,
         "timeline_interaction_performance": 0,
         "real_timeline_gestures": 0,
+        "architecture_only_implementations": 0,
     }
     captured_implementations: set[str] = set()
 
@@ -126,6 +127,129 @@ def main(args: argparse.Namespace | None = None) -> int:
         page = context.new_page()
         page_errors: list[str] = []
         page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+        # A fail-closed catalog may intentionally contain validated
+        # Architecture bindings but zero accepted timing profiles.  Audit that
+        # real rendered state instead of reporting a vacuous zero-check pass.
+        # Timeline and bidirectional DOM-click counters remain zero and the
+        # report scope states why they are not applicable.
+        if not bundle["profiles"]:
+            for implementation_id, implementation in bundle["implementations"].items():
+                variant_id = implementation["execution_variant"]
+                variant = bundle["execution_variants"][variant_id]
+                entry_view = variant["default_view"]
+                routes = drill_routes(variant["views"], entry_view)
+                route_key = f"architecture:{implementation_id}"
+                route_counts[route_key] = len(routes)
+                checks["architecture_only_implementations"] += 1
+                query = urlencode(
+                    {
+                        "model": model,
+                        "execution": variant_id,
+                        "implementation": implementation_id,
+                        "viewMode": "architecture",
+                        "irLayer": "execution",
+                        "metric": "active",
+                        "audit": "1",
+                    }
+                )
+                url = f"{args.base_url.rstrip('/')}/viewer.html?{query}#views={entry_view}&from="
+                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                page.wait_for_selector("g.view-group g.node", timeout=60_000)
+                selection = page.evaluate(
+                    """() => ({
+                      profile: CURRENT_PROFILE,
+                      implementation: CURRENT_IMPLEMENTATION,
+                      mode: CURRENT_VIEW_MODE,
+                    })"""
+                )
+                if selection != {
+                    "profile": "",
+                    "implementation": implementation_id,
+                    "mode": "architecture",
+                }:
+                    fail(
+                        "architecture_only_selection_mismatch",
+                        expected={
+                            "profile": "",
+                            "implementation": implementation_id,
+                            "mode": "architecture",
+                        },
+                        actual=selection,
+                    )
+
+                detail_issues = page.evaluate(
+                    """() => {
+                      const issues = [];
+                      let checked = 0;
+                      for (const [viewName, view] of Object.entries(DATA.views)) {
+                        for (const node of (view.nodes || [])) {
+                          checked += 1;
+                          showDetail(node, viewName);
+                          const text = document.getElementById('detail').innerText;
+                          for (const heading of ['Semantics', 'Inputs', 'Transition / Equation', 'Outputs']) {
+                            if (!text.includes(heading)) issues.push({view: viewName, node: node.id, missing: heading});
+                          }
+                          const equation = String(node?.semantics?.equation || '');
+                          if (!equation.trim() || text.includes('Equation unavailable') ||
+                              /\\b(?:undefined|NaN|Infinity)\\b/.test(equation)) {
+                            issues.push({view: viewName, node: node.id, invalidEquation: equation});
+                          }
+                        }
+                      }
+                      return {checked, issues};
+                    }"""
+                )
+                checks["nodes"] += int(detail_issues["checked"])
+                for issue in detail_issues["issues"]:
+                    fail("architecture_only_semantic_panel", implementation=implementation_id, **issue)
+
+                for route_index, (path, origins) in enumerate(routes):
+                    checks["routes"] += 1
+                    render = page.evaluate(
+                        """async ({path, origins}) => {
+                          VIEW_STACK = path;
+                          DRILL_FROM = [null, ...origins];
+                          await renderView();
+                          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                          const issues = [];
+                          for (const node of document.querySelectorAll('g.view-group g.node')) {
+                            const rect = node.getBoundingClientRect();
+                            if (!(rect.width > 0 && rect.height > 0)) {
+                              issues.push({node: node.dataset.id, geometry: [rect.x, rect.y, rect.width, rect.height]});
+                            }
+                          }
+                          const invalid = ['NaN', 'undefined', 'Infinity'].filter(token =>
+                            new RegExp(`\\\\b${token}\\\\b`).test(document.body.innerText));
+                          return {issues, invalid, renderedNodes: document.querySelectorAll('g.view-group g.node').length};
+                        }""",
+                        {"path": path, "origins": origins},
+                    )
+                    if not render["renderedNodes"]:
+                        fail(
+                            "architecture_only_empty_route",
+                            implementation=implementation_id,
+                            path=path,
+                        )
+                    for issue in render["issues"]:
+                        fail(
+                            "architecture_only_geometry",
+                            implementation=implementation_id,
+                            path=path,
+                            **issue,
+                        )
+                    for token in render["invalid"]:
+                        fail(
+                            "architecture_only_invalid_presentation_token",
+                            implementation=implementation_id,
+                            path=path,
+                            token=token,
+                        )
+                    if route_index == 0:
+                        page.screenshot(
+                            path=str(args.output / f"{implementation_id}-architecture.png"),
+                            full_page=True,
+                        )
 
         for profile_id, profile in bundle["profiles"].items():
             variant = bundle["execution_variants"][profile["execution_variant"]]
@@ -923,6 +1047,11 @@ def main(args: argparse.Namespace | None = None) -> int:
         "checks": checks,
         "route_count_per_profile": route_counts,
         "interaction_performance": interaction_performance,
+        "scope": (
+            "accepted_profiles"
+            if bundle["profiles"]
+            else "architecture_only_no_accepted_profiles"
+        ),
         "status": "pass" if not failures else "fail",
         "failures": failures,
     }

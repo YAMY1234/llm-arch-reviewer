@@ -238,6 +238,142 @@ def profiler_off_wall_ms(item: dict[str, Any], coordinate: dict[str, Any]) -> fl
     return float(value)
 
 
+def wall_trace_contract_gate(
+    item: dict[str, Any],
+    coordinate: dict[str, Any],
+    *,
+    serving_wall_ms: float,
+    active_gpu_ms: float,
+    kernel_envelope_ms: float,
+) -> dict[str, Any]:
+    """Reject an unexplained profiler-off wall / trace-forward mismatch.
+
+    A large wall interval is not automatically model time.  In particular,
+    the SGLang C=1 selector used the first formal prefill scheduler interval
+    (profile step zero).  That 4111.995663 ms interval is about 44x the
+    instrumented model envelope and the retained production client shows a
+    35.46 s request after profiler activation.  There is no evidence that the
+    baseline interval and the instrumented interval bound the same isolated
+    forward, so this point must remain unsupported rather than publishing the
+    interval as serving/model wall authority.
+
+    Other points are not accepted merely because they pass this local check;
+    exact semantic and fusion closure are independent mandatory gates.
+    """
+
+    wall_to_envelope_ratio = serving_wall_ms / kernel_envelope_ms
+    envelope_to_wall_ratio = kernel_envelope_ms / serving_wall_ms
+    first_formal_scheduler_interval = (
+        item["framework"] == "sglang"
+        and item["phase"] == "prefill"
+        and int(coordinate.get("profile_start_step", -1)) == 0
+    )
+    unexplained = first_formal_scheduler_interval and wall_to_envelope_ratio > 4.0
+    return {
+        "state": "failed" if unexplained else "passed",
+        "serving_wall_ms": round(serving_wall_ms, 6),
+        "instrumented_active_gpu_ms": round(active_gpu_ms, 6),
+        "instrumented_kernel_envelope_ms": round(kernel_envelope_ms, 6),
+        "wall_to_envelope_ratio": round(wall_to_envelope_ratio, 6),
+        "envelope_to_wall_ratio": round(envelope_to_wall_ratio, 6),
+        "same_isolated_forward_proven": not unexplained,
+        "first_formal_scheduler_interval": first_formal_scheduler_interval,
+        "reason": (
+            "the profiler-off selector is the first formal prefill scheduler "
+            "interval and is 44x the instrumented model envelope; retained "
+            "request/profiler evidence does not isolate the same forward"
+            if unexplained
+            else "no unexplained first-formal scheduler-wall mismatch was detected"
+        ),
+    }
+
+
+def profile_acceptance_gate(
+    *,
+    rank_diagnostics: dict[str, dict[str, Any]],
+    typed_unresolved_event_count: int,
+    node_states: dict[str, dict[str, Any]],
+    fusion_groups: dict[str, dict[str, Any]],
+    wall_trace_gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the fail-closed release decision for one measured candidate."""
+
+    reasons: list[dict[str, Any]] = []
+    per_rank_unresolved = {
+        rank: int(diagnostics["semantic_reconciliation"]["typed_unresolved_event_count"])
+        for rank, diagnostics in sorted(rank_diagnostics.items())
+    }
+    if typed_unresolved_event_count or any(per_rank_unresolved.values()):
+        reasons.append(
+            {
+                "code": "semantic_reconciliation_incomplete",
+                "reference_rank_typed_unresolved_event_count": typed_unresolved_event_count,
+                "per_rank_typed_unresolved_event_count": per_rank_unresolved,
+                "policy": (
+                    "an accepted profile requires zero model-bearing production "
+                    "events without exact same-rank, same-phase, occurrence-scoped closure"
+                ),
+            }
+        )
+
+    partial_states = {
+        node: state
+        for node, state in node_states.items()
+        if state.get("status") == "partially_fused"
+    }
+    incomplete_owner_nodes = sorted(
+        node
+        for node, state in partial_states.items()
+        if state.get("all_owner_events_same_rank_closed") is False
+    )
+    if partial_states:
+        reasons.append(
+            {
+                "code": "fusion_reconciliation_incomplete",
+                "partial_fusion_node_count": len(partial_states),
+                "incomplete_owner_closure_node_count": len(incomplete_owner_nodes),
+                "incomplete_owner_closure_nodes": incomplete_owner_nodes,
+                "policy": (
+                    "partial occurrence evidence is retained, but it is not a "
+                    "deliverable profile-aggregate fused attribution"
+                ),
+            }
+        )
+
+    invalid_full_groups = sorted(
+        group_id
+        for group_id, group in fusion_groups.items()
+        if group.get("evidence_scope", {}).get("member_event_sets_equal_owner") is not True
+        or group.get("evidence_scope", {}).get("all_owner_events_same_rank_closed") is not True
+    )
+    if invalid_full_groups:
+        reasons.append(
+            {
+                "code": "invalid_complete_fusion_claim",
+                "fusion_group_ids": invalid_full_groups,
+            }
+        )
+
+    if wall_trace_gate.get("state") != "passed":
+        reasons.append(
+            {
+                "code": "wall_trace_contract_mismatch",
+                "gate": wall_trace_gate,
+                "policy": (
+                    "an unexplained profiler-off wall / instrumented forward "
+                    "mismatch cannot be published as measured timing"
+                ),
+            }
+        )
+
+    return {
+        "state": "accepted" if not reasons else "unsupported",
+        "fail_closed": True,
+        "reason_count": len(reasons),
+        "reasons": reasons,
+    }
+
+
 def rank_collective_duration_gate(
     rank_rows: dict[int, list[dict[str, Any]]], *, job: str, serving_wall_ms: float
 ) -> dict[str, Any]:
@@ -985,6 +1121,7 @@ def build_states_and_fusions(
                 "resolution": "profile_aggregate",
                 "production_event_ids": sorted(event_ids_by_owner[owner]),
                 "member_event_sets_equal_owner": True,
+                "all_owner_events_same_rank_closed": True,
             },
         }
         for member in members:
@@ -1147,6 +1284,13 @@ def build_one(
     residency_us = sum(float(row["dur_us"]) for row in model_rows)
     instrumented_envelope_ms = (model_stop - model_start) / 1000.0
     active_ms = active_us / 1000.0
+    wall_trace_gate = wall_trace_contract_gate(
+        item,
+        runtime_coordinate,
+        serving_wall_ms=serving_wall_ms,
+        active_gpu_ms=active_ms,
+        kernel_envelope_ms=instrumented_envelope_ms,
+    )
     timing = {
         "elapsed_ms": round(serving_wall_ms, 6),
         "serving_wall_ms": round(serving_wall_ms, 6),
@@ -1163,6 +1307,7 @@ def build_one(
         ),
         "wall_authority": "selected profiler-off production baseline forward",
         "layout_active_residency_authority": "instrumented production trace; profiler overhead is explicit and does not replace serving wall",
+        "wall_trace_contract_gate": wall_trace_gate,
         "semantics": (
             "elapsed/device-gap authority is the exact selected profiler-off "
             "production baseline; kernel layout, active interval union, and "
@@ -1179,6 +1324,13 @@ def build_one(
         )
     states, fusion_groups = build_states_and_fusions(
         model_ir=model_ir, execution_plan=execution_plan, rows=model_rows, metrics=metrics
+    )
+    acceptance_gate = profile_acceptance_gate(
+        rank_diagnostics=rank_diagnostics,
+        typed_unresolved_event_count=typed_unresolved_event_count,
+        node_states=states,
+        fusion_groups=fusion_groups,
+        wall_trace_gate=wall_trace_gate,
     )
 
     profile_id, variant_id, filename = profile_identity(item)
@@ -1232,6 +1384,8 @@ def build_one(
         "rank_collective_duration_gate": collective_duration_gate,
         "profiler_sync_evidence": profiler_sync_evidence,
         "profile_timing": timing,
+        "wall_trace_contract_gate": wall_trace_gate,
+        "acceptance_gate": acceptance_gate,
         "eager_mapping_by_rank": {
             str(rank): {"path": str(path), "sha256": sha256_file(path)}
             for rank, path in sorted(mapping_paths.items())
@@ -1250,6 +1404,7 @@ def build_one(
     label_phase = "prefill" if phase == "prefill" else "CUDA Graph decode"
     profile = {
         "schema_version": "profile.v2",
+        "acceptance": acceptance_gate,
         "profile_id": profile_id,
         "label": f"GB300 · {framework} · pure TP8 · {label_phase} · BS{batch} · 8k→1k",
         "model_id": "qwen35",
@@ -1287,7 +1442,7 @@ def build_one(
             "type": "nsight_systems" if framework == "sglang" and phase == "prefill" else "torch_profiler",
             "representative_rank": reference_rank,
             "all_tp_ranks_validated": True,
-            "timing_gate_status": "passed",
+            "timing_gate_status": wall_trace_gate["state"],
             "rank_collective_duration_gate": collective_duration_gate,
             "profiler_sync_evidence": profiler_sync_evidence,
             "cuda_graph_enabled": graph_evidence["used_graph_path"],
@@ -1355,6 +1510,7 @@ def build_one(
             "mapping_policy": "phase-specific same-rank eager stack plus exact occurrence-scoped physical kernel-signature sequence; no representative-node fallback; unresolved candidates are typed review_required",
             "attribution_diagnostics": rank_diagnostics[str(reference_rank)],
             "timing": timing,
+            "acceptance_gate": acceptance_gate,
         },
         "timeline": {
             "schema_version": "timeline.v1",
@@ -1386,6 +1542,36 @@ def build_one(
         "timing": timing,
         "mapped_kernel_count_ratio": profile["evidence"]["mapped_kernel_count_ratio"],
         "mapped_kernel_duration_ratio": profile["evidence"]["mapped_kernel_duration_ratio"],
+        "acceptance": acceptance_gate,
+        "profile_id": profile_id,
+        "framework": framework,
+        "phase": phase,
+        "batch_size": batch,
+        "profile_path": str(profile_path),
+        "timeline_path": str(timeline_path),
+        "source_commit": source_commit,
+        "runtime_model_module_commit": runtime_module_commit,
+        "graph_evidence": graph_evidence,
+        "typed_unresolved_semantic_event_count": typed_unresolved_event_count,
+        "rank_typed_unresolved_semantic_event_count": {
+            rank: diagnostics["semantic_reconciliation"]["typed_unresolved_event_count"]
+            for rank, diagnostics in sorted(rank_diagnostics.items())
+        },
+        "partial_fusion_node_count": sum(
+            state.get("status") == "partially_fused" for state in states.values()
+        ),
+        "incomplete_fusion_owner_closure_node_count": sum(
+            state.get("status") == "partially_fused"
+            and state.get("all_owner_events_same_rank_closed") is False
+            for state in states.values()
+        ),
+        "full_fusion_group_count": len(fusion_groups),
+        "full_fusion_groups_all_closed": all(
+            group.get("evidence_scope", {}).get("member_event_sets_equal_owner") is True
+            and group.get("evidence_scope", {}).get("all_owner_events_same_rank_closed") is True
+            for group in fusion_groups.values()
+        ),
+        "wall_trace_contract_gate": wall_trace_gate,
     }
 
 
@@ -1414,12 +1600,123 @@ def main() -> int:
         )
         for item in MATRIX
     ]
+    accepted = [result for result in results if result["acceptance"]["state"] == "accepted"]
+    unsupported = [result for result in results if result["acceptance"]["state"] != "accepted"]
+    rejected_dir = args.task_root / "validation" / "rejected-profiles"
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    public_unsupported = []
+    for result in unsupported:
+        profile_path = Path(result["profile_path"])
+        timeline_path = Path(result["timeline_path"])
+        profile = yaml.safe_load(profile_path.read_text())
+        rejected_profile = rejected_dir / f"{result['profile_id']}.yaml"
+        rejected_timeline = rejected_dir / f"{result['profile_id']}.timeline.json.gz"
+        profile_path.replace(rejected_profile)
+        timeline_path.replace(rejected_timeline)
+        public_unsupported.append(
+            {
+                "profile_id": result["profile_id"],
+                "state": "unsupported",
+                "framework": result["framework"],
+                "phase": result["phase"],
+                "global_batch_size": result["batch_size"],
+                "job_id": result["job_id"],
+                "source_commit": result["source_commit"],
+                "runtime_model_module_commit": result["runtime_model_module_commit"],
+                "hardware": profile["hardware"],
+                "workload": profile["workload"],
+                "reason_codes": [
+                    reason["code"] for reason in result["acceptance"]["reasons"]
+                ],
+                "typed_unresolved_semantic_event_count": result[
+                    "typed_unresolved_semantic_event_count"
+                ],
+                "rank_typed_unresolved_semantic_event_count": result[
+                    "rank_typed_unresolved_semantic_event_count"
+                ],
+                "partial_fusion_node_count": result["partial_fusion_node_count"],
+                "incomplete_fusion_owner_closure_node_count": result[
+                    "incomplete_fusion_owner_closure_node_count"
+                ],
+                "full_fusion_group_count": result["full_fusion_group_count"],
+                "full_fusion_groups_all_closed": result[
+                    "full_fusion_groups_all_closed"
+                ],
+                "false_fill_qk_rope_fusion_published": any(
+                    group.get("owner") == "full_attention.qk_norm"
+                    and "full_attention.partial_rope" in group.get("ir_nodes", [])
+                    for group in profile["fusion_groups"].values()
+                ),
+                "wall_trace_contract_gate": result["wall_trace_contract_gate"],
+                "selected_forward_cuda_graph": result["graph_evidence"],
+                "all_rank_eager_phase_contract": profile["evidence"][
+                    "all_rank_eager_phase_contract"
+                ],
+                "all_rank_eager_raw_manifest_sha256": profile["evidence"][
+                    "all_rank_eager_raw_manifest_sha256"
+                ],
+                "all_rank_eager_mapping_sha256": profile["evidence"][
+                    "all_rank_eager_mapping_sha256"
+                ],
+                "all_rank_production_trace_sha256": profile["evidence"][
+                    "all_rank_trace_sha256"
+                ],
+                "validation_sha256": result["validation_sha256"],
+                "rejected_profile_sha256": sha256_file(rejected_profile),
+                "rejected_timeline_sha256": sha256_file(rejected_timeline),
+                "diagnostic_artifacts": {
+                    "profile": (
+                        "current/qwen35-complete-profiles/validation/rejected-profiles/"
+                        f"{rejected_profile.name}"
+                    ),
+                    "timeline": (
+                        "current/qwen35-complete-profiles/validation/rejected-profiles/"
+                        f"{rejected_timeline.name}"
+                    ),
+                    "validation": "retained outside git; identified by validation_sha256",
+                },
+            }
+        )
+
+    # Remove now-empty generated directories.  Accepted profiles, if any,
+    # remain in the canonical profiles tree and are the only profiles compiled
+    # into the Viewer bundle.
+    for directory in sorted(
+        {Path(result["profile_path"]).parent for result in unsupported},
+        reverse=True,
+    ):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
+
+    unsupported_manifest = {
+        "schema_version": "qwen35-unsupported-profile-matrix.v1",
+        "model_id": "qwen35",
+        "execution_path_id": "tp8",
+        "expected_profile_count": len(MATRIX),
+        "accepted_profile_count": len(accepted),
+        "unsupported_profile_count": len(unsupported),
+        "acceptance_policy": (
+            "only profile.v2 files that pass zero-unresolved semantic closure, "
+            "exact fusion ownership, and wall/trace contract gates are compiled "
+            "into the canonical Viewer"
+        ),
+        "profiles": public_unsupported,
+    }
+    (catalog_root / "unsupported_profiles.yaml").write_text(
+        yaml.safe_dump(
+            unsupported_manifest, sort_keys=False, allow_unicode=True, width=120
+        )
+    )
+
     report = {
         "schema_version": "qwen35-profile-matrix.v1",
         "raw_artifact_policy": "preserved outside git; exact paths and SHA256 values recorded per TP rank",
-        "measured_profile_count": len(results),
-        "unsupported_profile_count": 0,
-        "profiles": results,
+        "expected_profile_count": len(MATRIX),
+        "measured_profile_count": len(accepted),
+        "unsupported_profile_count": len(unsupported),
+        "accepted_profiles": accepted,
+        "unsupported_profiles": unsupported,
+        "public_unsupported_manifest": str(catalog_root / "unsupported_profiles.yaml"),
     }
     output = args.task_root / "validation" / "profile-matrix.json"
     output.parent.mkdir(parents=True, exist_ok=True)

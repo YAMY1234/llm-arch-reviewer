@@ -17,35 +17,48 @@ bindings compile to execution fingerprint `exec_50bb583c3a3d0557`:
   `033446bb05f35c0943aed2750c443077ffc0b92c`.
 - vLLM commit `487ecf187d3dfe74d2cf6119a92881dba403c219`.
 
-The immutable 8K/1K production matrix contains ten measured profiles and zero
-unsupported substitutions. Each framework has stable prefill at global BS1 and
-CUDA Graph decode at global BS1/16/64/256. Every point uses 3×concurrency warmup
-requests and 1×concurrency formal requests, with one exact selected formal
-forward. Separate graph-off eager captures provide Python-stack semantic
-evidence for each framework, phase, and TP rank. Reconciliation requires the
-same rank and phase plus an exact occurrence-scoped kernel-signature sequence;
-there is no node-representative stack fallback. Production profiler traces
-provide event layout, active intervals, and residency, while the selected
-profiler-off production baseline is the serving-wall and device-gap authority.
-All eight TP ranks are validated for every point. Any physical event that does
-not satisfy the exact eager contract is published as `typed_unresolved` with a
-review-required reason instead of a high-confidence fused claim.
+The attempted 8K/1K production matrix has **zero accepted profiles and ten
+unsupported candidates**. The canonical Viewer therefore publishes the two
+validated bindings and shared Architecture IR, but no Qwen3.5 timing profile or
+Timeline. `unsupported_profiles.yaml` is the public fail-closed audit: it keeps
+the exact SGLang/vLLM, phase, global batch, job, source, hardware, workload,
+all-rank trace/eager hashes, CUDA Graph observation, unresolved counts, fusion
+closure counts, and validation hashes for every rejected point.
 
-In these profiles, `profiler.cuda_graph_enabled` means that the selected formal
-forward actually used a CUDA Graph path, proven by a nonzero raw-trace
-`graph_id` on a model-bearing kernel; it does not mean only that the server was
-configured for CUDA Graph. Server configuration and selected-forward replay
-are recorded separately. In particular, the vLLM prefill server configured and
-captured `FULL_AND_PIECEWISE`, but the selected 8K prefill forward has zero
-graph-path kernels on all eight TP ranks and is therefore recorded as
-`no_cuda_graph_replay`. SGLang prefill is recorded as
-`mixed_graph_and_eager` under its breakable-prefill configuration.
+All ten candidates used 3×concurrency warmup requests and 1×concurrency formal
+requests. They are not deliverable because each reference rank still has
+1,439–2,043 model-bearing production events without exact same-rank,
+same-phase, occurrence-scoped eager closure. The graph-off evidence frequently
+has a materially different 1:N/N:1 event sequence, and some eager stack rules
+are absent or conflict with the production candidate owner. Those events are
+not reclassified as runtime support and are not promoted to high-confidence
+fusion ownership.
+
+Full fusion groups in the rejected diagnostics are emitted only when member
+and owner production event sets are equal and every owner event has same-rank
+closure. Other relationships remain occurrence-scoped partial evidence. Since
+the partial nodes do not form complete profile-aggregate ownership, no rejected
+diagnostic is compiled into the Viewer.
+
+The SGLang prefill candidate has an additional timing-contract failure. Its
+profiler-off selector reports 4111.995663 ms for the first formal scheduler
+interval, while the instrumented selected forward has 89.595218 ms active GPU
+time and a 93.450314 ms model envelope. The retained profiler-controlled request
+also stretches to 35.46 s. There is no proof that the 4.112 s interval and the
+instrumented interval isolate the same stable forward, so neither number is
+published as an accepted profile wall time.
+
+In the diagnostics, `cuda_graph_enabled`/`used_graph_path` refers only to the
+selected formal forward and is proven by nonzero raw-trace graph IDs. Server
+CUDA Graph configuration is a separate fact. Thus vLLM prefill remains
+`used_graph_path: false` with zero graph IDs even though the server configured
+`FULL_AND_PIECEWISE`; decode candidates retain their observed graph-path state.
 
 SGLang graph-on decode capture drains each rank's preceding CUDA backlog and
 uses Gloo TP barriers after Kineto activation and after formal-forward input
 preparation, at the scheduler boundary immediately before
 `model_worker.forward_batch_generation`. No synchronization GPU kernel is
-added to the selected model interval. A fail-closed gate checks all eight ranks
+added to the selected model interval. The retained diagnostic checks all eight ranks
 for exactly 121 logical all-reduce primaries, exact cross-rank signatures,
 baseline-relative max-single and mapped-envelope outliers, and robust physical
 residency outliers. The profiler-off baseline is the wall authority; the
@@ -54,24 +67,16 @@ recorded explicitly. One-shot and two-shot/RMSNorm companion kernels remain
 separately visible. A fusion group
 is emitted only when every member's physical production event set exactly
 equals its single timing owner's set. Unequal occurrence subsets remain
-`partially_fused` and never inherit the owner's aggregate timing.
+partial evidence and never inherit the owner's aggregate timing.
 
-| Framework | Phase | Global BS | Production job | Viewer |
-|---|---:|---:|---:|---|
-| SGLang | prefill | 1 | 3414663 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=timeline) |
-| SGLang | decode | 1 | 3427173 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs1_8k1k&viewMode=timeline) |
-| SGLang | decode | 16 | 3427500 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs16_8k1k) |
-| SGLang | decode | 64 | 3427499 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs64_8k1k) |
-| SGLang | decode | 256 | 3427851 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=decode&profile=qwen35_tp8_sglang_cg_decode_bs256_8k1k) |
-| vLLM | prefill | 1 | 3414288 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=prefill&profile=qwen35_tp8_vllm_prefill_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=prefill&profile=qwen35_tp8_vllm_prefill_bs1_8k1k&viewMode=timeline) |
-| vLLM | decode | 1 | 3414289 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs1_8k1k&viewMode=timeline) |
-| vLLM | decode | 16 | 3414290 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs16_8k1k) |
-| vLLM | decode | 64 | 3414291 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs64_8k1k) |
-| vLLM | decode | 256 | 3414292 | [Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&phase=decode&profile=qwen35_tp8_vllm_cg_decode_bs256_8k1k) |
+The shared Architecture remains available for both bindings:
+
+- [SGLang Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&viewMode=architecture)
+- [vLLM Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=vllm_487ecf187_qwen35_native_tp8&viewMode=architecture)
 
 Raw traces, eager mappings, selectors, manifests, and validation hashes are
-retained outside git under `current/qwen35-complete-profiles/`; the compact
-timelines and immutable hashes are committed with each profile.
+retained outside git under `current/qwen35-complete-profiles/`; rejected compact
+profiles and timelines are retained there and identified by public hashes.
 
 Build the catalog with:
 
@@ -79,5 +84,6 @@ Build the catalog with:
 python3 scripts/build_v2.py --model qwen35
 ```
 
-All profiles use the shared compiler/schema and the single canonical
-`docs/viewer.html`; there is no Qwen3.5-specific viewer path.
+The catalog uses the shared compiler/schema and the single canonical
+`docs/viewer.html`; there is no Qwen3.5-specific viewer path. Future profiles
+will appear only after all acceptance gates pass.

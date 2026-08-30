@@ -40,6 +40,16 @@ def test_geometry_audit_uses_rendered_screen_coordinates() -> None:
     assert ".getBBox()" not in geometry
 
 
+def test_zero_profile_audit_is_architecture_only_not_vacuous() -> None:
+    script = (
+        Path(__file__).parents[1] / "scripts" / "audit_viewer_render.py"
+    ).read_text()
+    assert 'if not bundle["profiles"]:' in script
+    assert '"architecture_only_implementations"' in script
+    assert '"architecture_only_no_accepted_profiles"' in script
+    assert 'page.wait_for_selector("g.view-group g.node"' in script
+
+
 def test_viewer_audit_writes_structured_failure_on_exception(tmp_path) -> None:
     output = tmp_path / "audit"
     args = Namespace(bundle=tmp_path / "qwen35_v2" / "arch_data.json", output=output)
