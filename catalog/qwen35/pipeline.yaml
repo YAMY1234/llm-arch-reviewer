@@ -1,0 +1,107 @@
+schema_version: ir-pipeline-manifest.v1
+model_id: qwen35
+target: cross_framework_pure_tp8_stage1
+evidence_root: current/qwen35-complete-profiles
+
+source_lock:
+  model_id: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  framework_targets:
+    - framework: sglang
+      support_state: runtime_verified_mixed_snapshot
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_model_module_commit: 033446bb05f35c0943aed2750c443077ffc0b92c
+      container: sglang-glm53-flash-arm64-73f9294b.sqsh@sha256:28e9545e312e344bbbf80c575b928be53c9aba6296ae55f292ce0f10750c6971
+      runtime_source_verification: passed
+      eager_reconciliation: passed
+    - framework: vllm
+      support_state: runtime_verified_native
+      source_commit: 487ecf187d3dfe74d2cf6119a92881dba403c219
+      container: vllm-glm53-flash-arm64-905c0293.sqsh@sha256:efdfe25952dc672d4415032e2755df7d7f2bab549992a2e3f2c429334f366756
+      runtime_source_verification: passed
+      eager_reconciliation: passed
+
+execution:
+  execution_path_id: tp8
+  execution_fingerprint: exec_50bb583c3a3d0557
+  serving_mode: aggregated
+  generation_mode: autoregressive
+  modality: text_only
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  pp_size: 1
+  attention_dp: false
+  mtp_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+  prefix_cache_enabled: false
+
+workload:
+  fixed_lengths: true
+  isl: 8192
+  osl: 1024
+  random_range_ratio: 1.0
+  ignore_eos: true
+  request_rate: inf
+  prompt_seed: 0
+  warmup_request_multiplier: 3
+  formal_request_multiplier: 1
+
+capture_policy:
+  eager_semantic:
+    cuda_graph_enabled: false
+    phases: [prefill, decode]
+    collect: [python_stack, shapes, ranks, streams, collective_order, state_transitions, invocation_scope]
+  baseline_discovery:
+    profiler_enabled: false
+    preserve_trajectory_fields: true
+    select_exact_stable_formal_forward: true
+  production:
+    prefill:
+      global_batch_sizes: [1]
+      require_stable_selected_forward: true
+    decode:
+      cuda_graph_enabled: true
+      global_batch_sizes: [1, 16, 64, 256]
+    require_all_tp_rank_traces: true
+  post_capture_validation:
+    require_actual_window_match: true
+    require_realized_lengths: [8192, 1024]
+    require_exact_batch_composition: true
+    require_graph_state_match: true
+    require_eager_stack_signature_sequence_closure: true
+    require_independent_eager_semantic_owner_anchor: true
+    require_production_eager_owner_agreement: true
+    require_logical_tp_all_reduce_count: 121
+    require_tp_all_gather_count: 1
+
+acceptance:
+  expected_profile_points: 10
+  unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported
+  accepted_profile_requirements:
+    typed_unresolved_semantic_event_count: 0
+    all_tp_rank_typed_unresolved_semantic_event_count: 0
+    eager_semantic_owner_unanchored_event_count: 0
+    production_eager_owner_disagreement_count: 0
+    full_fusion_member_event_sets_equal_owner: true
+    full_fusion_owner_events_same_rank_closed: true
+    partially_fused_runtime_nodes: 0
+    wall_trace_contract_gate: passed
+  raw_artifact_policy: task_evidence_only
+  viewer_special_cases_allowed: false
+  deterministic_build_repetitions: 2
+  second_phase_non_blocking: [mtp_on, attention_dp_and_moe_ep, pd_disaggregation, hicache_or_kv_offload, multimodal_profile]
+
+stage1_result:
+  status: complete
+  measured_profile_count: 10
+  unsupported_profile_count: 0
+  pending_profile_count: 0
+  unsupported_profile_manifest: catalog/qwen35/unsupported_profiles.yaml
+  semantic_source_coverage: 121_of_121_runtime_semantic_leaves
+  binding_coverage: 203_of_203_compiled_nodes_for_each_framework
+  final_validation: current/qwen35-complete-profiles/validation/final-validation.json
+  deterministic_bundle_sha256: 5e362d8516ed26bb9068360bf4afbc7e18dfde53a52cb7b46016b26e131adf88

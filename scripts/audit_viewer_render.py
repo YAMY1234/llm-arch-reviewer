@@ -18,6 +18,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 
+TIMELINE_LOAD_TIMEOUT_MS = 30_000
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
@@ -54,8 +57,33 @@ def drill_routes(views: dict, root: str) -> list[tuple[list[str], list[str]]]:
     return routes
 
 
-def main() -> int:
-    args = parse_args()
+def write_exception_report(args: argparse.Namespace, error: Exception) -> int:
+    """Persist a fail-closed report when the browser audit raises unexpectedly."""
+
+    args.output.mkdir(parents=True, exist_ok=True)
+    report = {
+        "schema_version": "viewer-render-audit.v1",
+        "bundle": str(args.bundle),
+        "model": args.bundle.parent.name,
+        "checks": {},
+        "route_count_per_profile": {},
+        "interaction_performance": [],
+        "status": "fail",
+        "failures": [
+            {
+                "kind": "audit_exception",
+                "exception_type": type(error).__name__,
+                "error": str(error),
+            }
+        ],
+    }
+    (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+    return 1
+
+
+def main(args: argparse.Namespace | None = None) -> int:
+    args = args or parse_args()
     bundle = json.loads(args.bundle.read_text())
     model = args.bundle.parent.name
     route_counts: dict[str, int] = {}
@@ -69,6 +97,7 @@ def main() -> int:
         "cross_links": 0,
         "bidirectional_dom_clicks": 0,
         "runtime_support_details": 0,
+        "typed_unresolved_details": 0,
         "double_click_drills": 0,
         "fusion_owner_card_links": 0,
         "fusion_owner_detail_links": 0,
@@ -76,6 +105,7 @@ def main() -> int:
         "fusion_owner_dom_clicks": 0,
         "timeline_interaction_performance": 0,
         "real_timeline_gestures": 0,
+        "architecture_only_implementations": 0,
     }
     captured_implementations: set[str] = set()
 
@@ -97,6 +127,129 @@ def main() -> int:
         page = context.new_page()
         page_errors: list[str] = []
         page.on("pageerror", lambda error: page_errors.append(str(error)))
+
+        # A fail-closed catalog may intentionally contain validated
+        # Architecture bindings but zero accepted timing profiles.  Audit that
+        # real rendered state instead of reporting a vacuous zero-check pass.
+        # Timeline and bidirectional DOM-click counters remain zero and the
+        # report scope states why they are not applicable.
+        if not bundle["profiles"]:
+            for implementation_id, implementation in bundle["implementations"].items():
+                variant_id = implementation["execution_variant"]
+                variant = bundle["execution_variants"][variant_id]
+                entry_view = variant["default_view"]
+                routes = drill_routes(variant["views"], entry_view)
+                route_key = f"architecture:{implementation_id}"
+                route_counts[route_key] = len(routes)
+                checks["architecture_only_implementations"] += 1
+                query = urlencode(
+                    {
+                        "model": model,
+                        "execution": variant_id,
+                        "implementation": implementation_id,
+                        "viewMode": "architecture",
+                        "irLayer": "execution",
+                        "metric": "active",
+                        "audit": "1",
+                    }
+                )
+                url = f"{args.base_url.rstrip('/')}/viewer.html?{query}#views={entry_view}&from="
+                page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                page.wait_for_selector("g.view-group g.node", timeout=60_000)
+                selection = page.evaluate(
+                    """() => ({
+                      profile: CURRENT_PROFILE,
+                      implementation: CURRENT_IMPLEMENTATION,
+                      mode: CURRENT_VIEW_MODE,
+                    })"""
+                )
+                if selection != {
+                    "profile": "",
+                    "implementation": implementation_id,
+                    "mode": "architecture",
+                }:
+                    fail(
+                        "architecture_only_selection_mismatch",
+                        expected={
+                            "profile": "",
+                            "implementation": implementation_id,
+                            "mode": "architecture",
+                        },
+                        actual=selection,
+                    )
+
+                detail_issues = page.evaluate(
+                    """() => {
+                      const issues = [];
+                      let checked = 0;
+                      for (const [viewName, view] of Object.entries(DATA.views)) {
+                        for (const node of (view.nodes || [])) {
+                          checked += 1;
+                          showDetail(node, viewName);
+                          const text = document.getElementById('detail').innerText;
+                          for (const heading of ['Semantics', 'Inputs', 'Transition / Equation', 'Outputs']) {
+                            if (!text.includes(heading)) issues.push({view: viewName, node: node.id, missing: heading});
+                          }
+                          const equation = String(node?.semantics?.equation || '');
+                          if (!equation.trim() || text.includes('Equation unavailable') ||
+                              /\\b(?:undefined|NaN|Infinity)\\b/.test(equation)) {
+                            issues.push({view: viewName, node: node.id, invalidEquation: equation});
+                          }
+                        }
+                      }
+                      return {checked, issues};
+                    }"""
+                )
+                checks["nodes"] += int(detail_issues["checked"])
+                for issue in detail_issues["issues"]:
+                    fail("architecture_only_semantic_panel", implementation=implementation_id, **issue)
+
+                for route_index, (path, origins) in enumerate(routes):
+                    checks["routes"] += 1
+                    render = page.evaluate(
+                        """async ({path, origins}) => {
+                          VIEW_STACK = path;
+                          DRILL_FROM = [null, ...origins];
+                          await renderView();
+                          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                          const issues = [];
+                          for (const node of document.querySelectorAll('g.view-group g.node')) {
+                            const rect = node.getBoundingClientRect();
+                            if (!(rect.width > 0 && rect.height > 0)) {
+                              issues.push({node: node.dataset.id, geometry: [rect.x, rect.y, rect.width, rect.height]});
+                            }
+                          }
+                          const invalid = ['NaN', 'undefined', 'Infinity'].filter(token =>
+                            new RegExp(`\\\\b${token}\\\\b`).test(document.body.innerText));
+                          return {issues, invalid, renderedNodes: document.querySelectorAll('g.view-group g.node').length};
+                        }""",
+                        {"path": path, "origins": origins},
+                    )
+                    if not render["renderedNodes"]:
+                        fail(
+                            "architecture_only_empty_route",
+                            implementation=implementation_id,
+                            path=path,
+                        )
+                    for issue in render["issues"]:
+                        fail(
+                            "architecture_only_geometry",
+                            implementation=implementation_id,
+                            path=path,
+                            **issue,
+                        )
+                    for token in render["invalid"]:
+                        fail(
+                            "architecture_only_invalid_presentation_token",
+                            implementation=implementation_id,
+                            path=path,
+                            token=token,
+                        )
+                    if route_index == 0:
+                        page.screenshot(
+                            path=str(args.output / f"{implementation_id}-architecture.png"),
+                            full_page=True,
+                        )
 
         for profile_id, profile in bundle["profiles"].items():
             variant = bundle["execution_variants"][profile["execution_variant"]]
@@ -238,11 +391,14 @@ def main() -> int:
                           }
                           const bg = node.querySelector('.node-bg');
                           if (!bg) { issues.push({type: 'missing_node_background', view, node: node.dataset.id}); continue; }
-                          const box = bg.getBBox();
+                          // Compare final rendered screen-space rectangles so
+                          // nested transforms (for example the drill glyph's
+                          // translated badge) are included on both sides.
+                          const box = bg.getBoundingClientRect();
                           for (const text of node.querySelectorAll('text')) {
-                            const t = text.getBBox();
-                            if (t.x < box.x - 3 || t.x + t.width > box.x + box.width + 3 ||
-                                t.y < box.y - 3 || t.y + t.height > box.y + box.height + 3) {
+                            const t = text.getBoundingClientRect();
+                            if (t.left < box.left - 3 || t.right > box.right + 3 ||
+                                t.top < box.top - 3 || t.bottom > box.bottom + 3) {
                               issues.push({type: 'node_text_overflow', view, node: node.dataset.id, text: text.textContent});
                             }
                           }
@@ -396,13 +552,15 @@ def main() -> int:
             # Verify both directions using actual viewer functions and the
             # loaded production timeline.
             cross = page.evaluate(
-                """async () => {
+                """async timeoutMs => {
                   setViewMode('split', false, true);
-                  const deadline = Date.now() + 30000;
+                  const deadline = Date.now() + timeoutMs;
                   while (!TIMELINE_DATA && Date.now() < deadline) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                   }
-                  if (!TIMELINE_DATA) return {error: 'timeline_not_loaded'};
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'cross_link_setup', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._irNode);
                   if (!event) return {error: 'no_mapped_timeline_event'};
@@ -415,7 +573,8 @@ def main() -> int:
                   const reverse = SELECTED?.view === route.view && SELECTED?.nodeId === route.nodeId &&
                     !!document.querySelector(`g.view-group[data-view="${route.view}"] g.node[data-id="${route.nodeId}"].selected`);
                   return {forward, reverse, event: event._irNode, route};
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
             checks["cross_links"] += 1
             if cross.get("error") or not cross.get("forward") or not cross.get("reverse"):
@@ -432,8 +591,15 @@ def main() -> int:
             # navigation helpers survived but the clicked-kernel selection
             # state (one solid slice, all unrelated slices faded) disappeared.
             dom_setup = page.evaluate(
-                """async () => {
+                """async timeoutMs => {
                   setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'bidirectional_dom_click_setup', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._irNode && architectureRouteForEvent(candidate).nodeId);
                   if (!event) return {error: 'no_mapped_timeline_event'};
@@ -498,7 +664,8 @@ def main() -> int:
                       y: rect.top + hit.y + hit.height / 2,
                     },
                   };
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
             if dom_setup.get("error"):
                 fail("bidirectional_dom_setup", profile=profile_id, **dom_setup)
@@ -565,7 +732,15 @@ def main() -> int:
             # and require both the typed class and concrete reason to render;
             # such events must not offer a misleading architecture jump.
             support = page.evaluate(
-                """() => {
+                """async timeoutMs => {
+                  setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'runtime_support_detail', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._supportClass && !candidate._irNode);
                   if (!event) return {absent: true};
@@ -580,8 +755,13 @@ def main() -> int:
                     hasArchitectureButton: [...detail.querySelectorAll('button')]
                       .some(button => button.innerText.includes('Show in architecture')),
                   };
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
+            if support.get("error"):
+                fail("runtime_support_detail", profile=profile_id, **support)
+                captured_implementations.add(profile["implementation_id"])
+                continue
             if not support.get("absent"):
                 checks["runtime_support_details"] += 1
                 if (
@@ -593,6 +773,57 @@ def main() -> int:
                     or support.get("hasArchitectureButton")
                 ):
                     fail("runtime_support_detail", profile=profile_id, **support)
+
+            # A sequence candidate that lacks same-rank/phase physical closure
+            # remains navigable, but the real detail panel must expose its
+            # typed unresolved state and concrete reason instead of presenting
+            # an arbitrary representative stack as high-confidence evidence.
+            unresolved = page.evaluate(
+                """async timeoutMs => {
+                  setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'typed_unresolved_detail', timeoutMs};
+                  }
+                  const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
+                    .find(candidate => candidate._reconciliationStatus === 'typed_unresolved' && candidate._irNode);
+                  if (!event) return {absent: true};
+                  showTimelineEventDetail(event);
+                  const detail = document.getElementById('detail');
+                  const text = detail.innerText;
+                  return {
+                    status: event._reconciliationStatus,
+                    reason: event._reconciliationReason,
+                    confidence: event._confidence,
+                    hasStatus: text.includes('reconciliation') && text.includes(event._reconciliationStatus),
+                    hasReason: !!event._reconciliationReason && text.includes(event._reconciliationReason),
+                    hasNoStack: text.includes('not available for this timing-only/support kernel'),
+                    hasArchitectureButton: [...detail.querySelectorAll('button')]
+                      .some(button => button.innerText.includes('Show in architecture')),
+                  };
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
+            )
+            if unresolved.get("error"):
+                fail("typed_unresolved_detail", profile=profile_id, **unresolved)
+                captured_implementations.add(profile["implementation_id"])
+                continue
+            if not unresolved.get("absent"):
+                checks["typed_unresolved_details"] += 1
+                if (
+                    unresolved.get("error")
+                    or unresolved.get("status") != "typed_unresolved"
+                    or unresolved.get("confidence") != "review_required"
+                    or not unresolved.get("reason")
+                    or not unresolved.get("hasStatus")
+                    or not unresolved.get("hasReason")
+                    or not unresolved.get("hasNoStack")
+                    or not unresolved.get("hasArchitectureButton")
+                ):
+                    fail("typed_unresolved_detail", profile=profile_id, **unresolved)
 
             # Burst input must be coalesced to animation frames.  A trackpad
             # can emit hundreds of wheel/move events per second; rebuilding
@@ -816,6 +1047,11 @@ def main() -> int:
         "checks": checks,
         "route_count_per_profile": route_counts,
         "interaction_performance": interaction_performance,
+        "scope": (
+            "accepted_profiles"
+            if bundle["profiles"]
+            else "architecture_only_no_accepted_profiles"
+        ),
         "status": "pass" if not failures else "fail",
         "failures": failures,
     }
@@ -826,4 +1062,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parsed_args = parse_args()
+    try:
+        exit_code = main(parsed_args)
+    except Exception as error:
+        exit_code = write_exception_report(parsed_args, error)
+    raise SystemExit(exit_code)

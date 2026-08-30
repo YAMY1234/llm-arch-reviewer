@@ -1,0 +1,3062 @@
+schema_version: profile.v2
+acceptance: &id001
+  state: accepted
+  fail_closed: true
+  reason_count: 0
+  reasons: []
+profile_id: qwen35_tp8_sglang_cg_decode_bs64_8k1k
+label: GB300 · sglang · pure TP8 · CUDA Graph decode · BS64 · 8k→1k
+model_id: qwen35
+execution_path_id: tp8
+implementation_id: sglang_f609d677b_qwen35_033446bb_tp8
+variant_id: cg_decode_bs64_8k1k
+phase: decode
+generation_mode: autoregressive
+entry_view: top
+execution_parameters:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  pp_size: 1
+hardware:
+  gpu: GB300
+  gpus_per_node: 4
+  nodes: 2
+  cluster: CMH
+workload:
+  isl: 8192
+  osl: 1024
+  batch_size: 64
+  batch_size_scope: global_request_count
+  concurrency: 64
+  warmup_requests: 192
+  formal_requests: 64
+  prompt_source: deterministic_random_token_ids
+  prompt_seed: 0
+  ignore_eos: true
+  prefix_cache_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+  mtp_nextn_enabled: false
+profiler:
+  type: torch_profiler
+  representative_rank: 4
+  all_tp_ranks_validated: true
+  timing_gate_status: passed
+  rank_collective_duration_gate:
+    state: passed
+    policy: all 8 TP ranks; 121 logical all-reduce primaries; every one-shot/two-shot physical kernel included; exact node/occurrence/kernel/ordinal
+      signatures must exist on every rank; reject signature/max-single outliers relative to the selected profiler-off serving
+      wall and the rank median, reject any mapped rank envelope above 125% of serving wall, and retain robust union-residency
+      outlier bounds
+    serving_wall_authority_ms: 8.759048
+    signature_count: 240
+    signature_outlier_count: 0
+    worst_signature:
+      node: top.tp_embedding_output_collective
+      occurrence_id: top
+      kernel_name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, true,
+        float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      ordinal: 0
+      rank_duration_us:
+        '0': 7.328
+        '1': 22.4
+        '2': 212.386
+        '3': 264.578
+        '4': 59.585
+        '5': 19.776
+        '6': 57.121
+        '7': 234.625
+      min_us: 7.328
+      max_us: 264.578
+      max_to_min_ratio: 36.10507641921397
+    max_single_limit_ms: 0.33341200000000004
+    signature_spread_limit_us: 875.9048
+    mapped_envelope_upper_ms: 10.94881
+    median_rank_max_single_all_reduce_ms: 0.058353
+    median_total_all_reduce_residency_ms: 1.154431
+    total_residency_lower_ms: 0.669621
+    total_residency_upper_ms: 1.831647
+    per_rank:
+      '0':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.105659
+        max_single_all_reduce_ms: 0.011456
+        mapped_kernel_envelope_ms: 8.958099
+      '1':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.125544
+        max_single_all_reduce_ms: 0.0224
+        mapped_kernel_envelope_ms: 8.972443
+      '2':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.326604
+        max_single_all_reduce_ms: 0.212386
+        mapped_kernel_envelope_ms: 9.162115
+      '3':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.381519
+        max_single_all_reduce_ms: 0.264578
+        mapped_kernel_envelope_ms: 9.213974
+      '4':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.150966
+        max_single_all_reduce_ms: 0.059585
+        mapped_kernel_envelope_ms: 9.010351
+      '5':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.100419
+        max_single_all_reduce_ms: 0.019776
+        mapped_kernel_envelope_ms: 8.969251
+      '6':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.157896
+        max_single_all_reduce_ms: 0.057121
+        mapped_kernel_envelope_ms: 9.005981
+      '7':
+        logical_all_reduce_count: 121
+        physical_all_reduce_kernel_count: 240
+        total_all_reduce_residency_ms: 1.333267
+        max_single_all_reduce_ms: 0.234625
+        mapped_kernel_envelope_ms: 9.182627
+    failures: []
+  profiler_sync_evidence:
+    state: passed
+    mechanism: 'accepted dual-TP CPU-barrier pattern: per-rank CUDA backlog drain plus Gloo TP barrier after Kineto activation,
+      then another per-rank CUDA drain plus Gloo TP barrier at the scheduler resolve_forward_inputs boundary immediately before
+      model_worker.forward_batch_generation; no CUDA work is added to the selected model interval'
+    overlay_file: sitecustomize.py
+    overlay_sha256: f38a27dbe1d876cf3c9d13b2a6f5c52fa486e4424e657c8b0beaf95c75a2f61c
+    source_lock_file: source-lock.json
+    source_lock_sha256: b374e1fe138a9d19655c249fe6e0e7c42566ccd1c91bc401f8df37cca5cd2702
+    marker_counts:
+      pre_activation_barrier:
+        '0': 1
+        '1': 1
+        '2': 1
+        '3': 1
+        '4': 1
+        '5': 1
+        '6': 1
+        '7': 1
+      post_activation_barrier:
+        '0': 1
+        '1': 1
+        '2': 1
+        '3': 1
+        '4': 1
+        '5': 1
+        '6': 1
+        '7': 1
+      activation_complete:
+        '0': 1
+        '1': 1
+        '2': 1
+        '3': 1
+        '4': 1
+        '5': 1
+        '6': 1
+        '7': 1
+      pre_input_preparation_barrier:
+        '0': 1
+        '1': 1
+        '2': 1
+        '3': 1
+        '4': 1
+        '5': 1
+        '6': 1
+        '7': 1
+      input_preparation_barrier_passed:
+        '0': 1
+        '1': 1
+        '2': 1
+        '3': 1
+        '4': 1
+        '5': 1
+        '6': 1
+        '7': 1
+    pre_forward_device_collective_added: false
+    scheduler_fence_location: immediately after resolve_forward_inputs returns and before model_worker.forward_batch_generation
+    all_tp_rank_count: 8
+    server_log_sha256:
+      nvl72d167-T05_agg_w0.out: b62eddb054aee9167d7f7585f458c1412f0de347686700e06c0f474b6b178574
+      nvl72d167-T06_agg_w0.out: 417132090efff97c3e3d3ca793f3c579da09dc797b9f136ee2f46ce19d99dd60
+  cuda_graph_enabled: true
+  cuda_graph_enabled_semantics: selected formal forward used a CUDA Graph path; 1775 model-bearing kernels have a nonzero
+    raw-trace graph_id
+  server_cuda_graph_config:
+    enabled: true
+    mode: full_decode
+    evidence: production server_args cuda_graph_config and disable_*_cuda_graph=false
+    evidence_files:
+      nvl72d167-T05_agg_w0.out: b62eddb054aee9167d7f7585f458c1412f0de347686700e06c0f474b6b178574
+      nvl72d167-T06_agg_w0.out: 417132090efff97c3e3d3ca793f3c579da09dc797b9f136ee2f46ce19d99dd60
+  selected_forward_cuda_graph:
+    used_graph_path: true
+    replay_state: cuda_graph_replay
+    model_kernel_count: 1775
+    graph_kernel_count: 1775
+    non_graph_kernel_count: 0
+    graph_id_count: 1
+    evidence_basis: 1 distinct nonzero raw-trace graph IDs cover 1775 model-bearing kernels in the selected formal forward
+    all_tp_ranks_consistent: true
+  with_stack: false
+  eager_semantic_capture_cuda_graph_enabled: false
+  production_stack_source: separate eager capture
+  formal_window_count: 1
+  selected_runtime_coordinate:
+    baseline_mean_elapsed_ms: 8.759048
+    batch: 18295
+    cuda_graph: true
+    global_batch_size: 64
+    profile_start_step: 582
+    profile_stop_step: 583
+    queue: 0
+    running: 64
+    throughput_token_s: 7306.73
+    timestamp: '2026-08-29T17:31:29'
+    token: 561088
+    baseline_job_id: '3413390'
+    native_coordinate: scheduler_batch
+    profile_coordinate: scheduler_forward_count_after_formal_profile_start
+  gpu_metric_semantics: elapsed/device-gap authority is the exact selected profiler-off production baseline; kernel layout,
+    active interval union, and residency come from one median-envelope rank of the instrumented formal forward and may include
+    explicit profiler overhead
+evidence:
+  job_id: '3427499'
+  source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+  runtime_model_module_commit: 033446bb05f35c0943aed2750c443077ffc0b92c
+  model_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
+  model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
+  container: sglang-glm53-flash-arm64-73f9294b.sqsh@sha256:28e9545e312e344bbbf80c575b928be53c9aba6296ae55f292ce0f10750c6971
+  validation_file: validation.json
+  validation_sha256: 6142536f6bb435d1ac5fd5f3e9bdf97fd7b5b4918c7fed979a7c6287c8942b41
+  baseline_selector:
+    file: window-selection.json
+    sha256: 409fc847ef473bd95014069de28dad824bf90ef0c9a0fb77b19b2cdb340104c5
+    state: passed
+  raw_trace_sha256: beeef9329be29180a18d80b0e9f93d6a54786d0ceb5f2dfffaab2f2288c7b59d
+  all_rank_trace_sha256:
+    '0': c05e43dc80e6bc2266dd858d16da42e3d627cb00e6c454588bf63f8dc4e60756
+    '1': 34833767237d4e48495d4062113a1a3138ba8771b2b996c1ab0a97bb3d8715b1
+    '2': 672411da6738bf3b70ee31cf17f475c4c32986d66df0dfe083acd75dbe92a1cc
+    '3': 75ed057ef2ae939032d4178fb6b92c06cac3853eee9253d1f220ef5e20bead90
+    '4': beeef9329be29180a18d80b0e9f93d6a54786d0ceb5f2dfffaab2f2288c7b59d
+    '5': 0d53ecaa4fa5515c1505809d9afa2bbd63b38e63e1548680ddb0b2a0c8fc72f4
+    '6': b5baa490d01bda1cbefa9895a4236c17ea3f8218e642c48a7f462778b18b7423
+    '7': 1b8f174ee7807c72f723d07f68c5c39a8f8a014c40ddff160c6857af705d3bc1
+  eager_mapping_sha256: 5eaaf3c958070d132aef17a3e05c04a7d5252a5a2cbd30585d6e31fda1e0e9ea
+  all_rank_eager_mapping_sha256:
+    '0': 953b2d5f1d0332d095bd9256b2898d7a619e1378851681eac722e7917b8a0966
+    '1': 197f91124ea6159c48da431749c1ace6eb66d10a4dfdcac55f0eaff4dd863be6
+    '2': 801751104385a63da132eb5de2ac6c9d86456deab6ec5d774748ffbee6939fa2
+    '3': e0bc96bdb8ae512e4e747e7497403906055bc0ce2e7a868a83ec1d6f5360b1ad
+    '4': 5eaaf3c958070d132aef17a3e05c04a7d5252a5a2cbd30585d6e31fda1e0e9ea
+    '5': d4c1b87f8d6891075dc5e35dcf5c98a1b9474206fcd6bebb4776c55273fe7118
+    '6': f4f3971f596a05e0de031dabe69db770343f11b10a7d37091e47b0112de57dc7
+    '7': 541ec20de42ce20a6cee18bad9260c4cc0c320b72c382d70cc83043bc20f8dac
+  all_rank_eager_raw_manifest_sha256:
+    '0': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '1': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '2': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '3': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '4': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '5': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '6': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+    '7': 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+  all_rank_eager_phase_contract:
+    '0':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 462358.763
+      raw_trace_sha256: 8fe7b878890dd1f74c30743b4601b36d248dfa3c350457a648e96adb5e4f793a
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: a3fd2886cb57a66aad799ce540a9fd7c6314e4a78bd303f5742bf01c608cc323
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '1':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 928572.175
+      raw_trace_sha256: 0174bd0ab23b0247fb0c1eb6fd2ad944fa2ce3fea3d2e13a1efe63c46d6029fb
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: 3fff3d25300a12f65a911b3c14783374fe0e05f18dbb367d60c6c0795208ca23
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '2':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 719328.098
+      raw_trace_sha256: b6fb48896d5ca3e7d031b15f561f79a6f2f06eede0149532bf6dc0f332fc80ab
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: 1e4609adba690ac3e634e7b5a56d574175ae4df65ffedc2f0ca0018f7f46d5d8
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '3':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 831941.226
+      raw_trace_sha256: 7a5503fc07e0551fa1943c95a0ddfdfead07fd666ac4c7498e6a6504575929ec
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: 86f6039dd7205c6e7e8a72d2e5673b6b4b0f96ade16d24eb26bd60cf8db7c407
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '4':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 914439.425
+      raw_trace_sha256: ee04e30034bdf148c81c5c53bbc8a846bfdc12050ffcab2944d28b332df170b0
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: a339ca0a7f30a8b9fe0e33320df6006b96ba8f04a15f7329bae065f0ebc38fad
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '5':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 969003.615
+      raw_trace_sha256: 79f23239ec73a72cbda3a1f1e48d66c71f59dd82e8202d92de563fcfd46eb065
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: 2093a2d860c68cc5352e37f3a46bf4c681496d5a9043da4a7e4f9890fb7a346a
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '6':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 28317.073
+      raw_trace_sha256: 03497b884d27f3a93f0f40b77491a475409698d95cd7dfe4c96d2285ca8fb059
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: ed93e4a1f7850c2ecebb7670b38c3ebe19cae49d9673374dc8e39433ff37c43b
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+    '7':
+      job_id: '3435306'
+      source_phase: forward_decode
+      selected_forward_kernel_count: 1727
+      graph_off_semantic_event_count: 1715
+      graph_off_support_event_count: 12
+      production_semantic_event_count: 1775
+      closed_production_event_count: 1775
+      typed_unresolved_event_count: 0
+      production_support_event_count: 28
+      graph_off_support_class_counts:
+        request_batch_metadata: 10
+        sampling_and_output: 2
+      production_support_class_counts:
+        request_batch_metadata: 12
+        sampling_and_output: 16
+      selected_forward_kernel_duration_us: 945096.734
+      raw_trace_sha256: 7fb1e960ff991ed67ba7d88303767e1cd6cfc9cc714fc160afb2290b864712c3
+      raw_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+      capture_metadata_sha256: b557f0b984f569dc9038ebeb3f20f0c6587cf104445ee5925c095952ed3ccfb9
+      source_commit: f609d677b909ca46c64bb6803b69a85fedbf86bc
+      runtime_source_version: 0.0.0.dev1+gf609d677b
+      hardware: NVIDIA GB300
+      world_size: 8
+      selected_formal_coordinate:
+        mode: sglang_formal_relative_scheduler_forward
+        relative_step: 582
+        resolved_absolute_step: 3861
+      selected_forward_events_sha256: b4c0fe01f79bf909e34f912417f5d56a1579bfb93041ebbb1e3f4e074c45ad31
+      independent_eager_semantic_owner_validation:
+        framework: sglang
+        phase: decode
+        validated_semantic_event_count: 1715
+        semantic_owner_counts:
+          full_attention.attention_output_gate: 15
+          full_attention.causal_gqa: 15
+          full_attention.kv_state_write: 15
+          full_attention.output_projection: 30
+          full_attention.qk_norm: 15
+          full_attention.qkv_projection: 30
+          full_attention_moe_block.tp_attention_output_collective: 30
+          full_attention_moe_block.tp_moe_output_collective: 29
+          gdn_attention.causal_conv: 45
+          gdn_attention.gated_delta_recurrence: 45
+          gdn_attention.output_gate_norm: 45
+          gdn_attention.output_projection: 90
+          gdn_attention.qkvz_projection: 225
+          gdn_moe_block.input_norm: 1
+          gdn_moe_block.tp_attention_output_collective: 90
+          gdn_moe_block.tp_moe_output_collective: 90
+          moe_block.routed_experts: 240
+          moe_block.router: 240
+          moe_block.shared_expert: 360
+          moe_block.weighted_combine: 60
+          top.embedding: 1
+          top.final_norm: 1
+          top.lm_head: 1
+          top.tp_embedding_output_collective: 1
+          top.tp_logits_all_gather: 1
+        semantic_owner_basis_counts:
+          compiled_source_kernel_occurrence_contract: 1711
+          direct_python_module_stack: 4
+        published_node_family_count: 25
+        published_node_families:
+        - full_attention.attention_output_gate
+        - full_attention.causal_gqa
+        - full_attention.kv_state_write
+        - full_attention.output_projection
+        - full_attention.qk_norm
+        - full_attention.qkv_projection
+        - full_attention_moe_block.tp_attention_output_collective
+        - full_attention_moe_block.tp_moe_output_collective
+        - gdn_attention.causal_conv
+        - gdn_attention.gated_delta_recurrence
+        - gdn_attention.output_gate_norm
+        - gdn_attention.output_projection
+        - gdn_attention.qkvz_projection
+        - gdn_moe_block.input_norm
+        - gdn_moe_block.tp_attention_output_collective
+        - gdn_moe_block.tp_moe_output_collective
+        - moe_block.routed_experts
+        - moe_block.router
+        - moe_block.shared_expert
+        - moe_block.weighted_combine
+        - top.embedding
+        - top.final_norm
+        - top.lm_head
+        - top.tp_embedding_output_collective
+        - top.tp_logits_all_gather
+        unanchored_semantic_event_count: 0
+        owner_disagreement_count: 0
+        final_norm_fused_target_event_count: 0
+  mapped_kernel_count_ratio: 0.9844703272323905
+  mapped_kernel_duration_ratio: 0.9800125722002331
+  unclassified_kernel_count: 0
+  semantic_stack_closure_missing_node_count: 0
+  typed_unresolved_semantic_event_count: 0
+  mapping_policy: independently Python-stack/source-anchored phase-specific same-rank eager owner plus exact occurrence-scoped
+    physical kernel-signature sequence; production/eager owner disagreement fails closed; no representative-node fallback;
+    unresolved candidates are typed review_required
+  attribution_diagnostics:
+    framework: sglang
+    phase: decode
+    kernel_count: 1803
+    mapped_kernel_count: 1775
+    mapped_kernel_count_ratio: 0.9844703272323905
+    mapped_kernel_duration_ratio: 0.9800125722002331
+    layer_pattern: GGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGA
+    gdn_layer_count: 45
+    full_attention_layer_count: 15
+    tp_all_reduce_kernel_count: 240
+    tp_logical_all_reduce_count: 121
+    tp_all_gather_count: 1
+    support_class_counts:
+      request_batch_metadata: 12
+      sampling_and_output: 16
+    method_counts:
+      explicit_runtime_support_classification: 28
+      sglang_unique_embedding_kernel: 1
+      complete_eager_validated_tp_collective_order: 122
+      sglang_decode_eager_validated_layer_input_norm: 1
+      tp_collective_bounded_sglang_gdn_sequence: 450
+      n_to_one_flashinfer_twoshot_rmsnorm_companion: 119
+      tp_collective_bounded_sglang_moe_sequence: 960
+      tp_collective_bounded_sglang_full_attention_sequence: 120
+      sglang_unique_fused_final_norm_kernel: 1
+      sglang_bounded_lm_head_tail: 1
+    selected_forward_cuda_graph:
+      used_graph_path: true
+      replay_state: cuda_graph_replay
+      model_kernel_count: 1775
+      graph_kernel_count: 1775
+      non_graph_kernel_count: 0
+      graph_id_count: 1
+      evidence_basis: 1 distinct nonzero raw-trace graph IDs cover 1775 model-bearing kernels in the selected formal forward
+    mapped_kernel_envelope_ms: 9.010351
+    raw_trace: 1788087974.4928741-TP-4.trace.json.gz
+    raw_trace_sha256: beeef9329be29180a18d80b0e9f93d6a54786d0ceb5f2dfffaab2f2288c7b59d
+    semantic_reconciliation:
+      closed_event_count: 1775
+      typed_unresolved_event_count: 0
+      closed_node_count: 25
+      typed_unresolved_nodes: []
+      mapping_sha256: 5eaaf3c958070d132aef17a3e05c04a7d5252a5a2cbd30585d6e31fda1e0e9ea
+      raw_eager_trace_sha256: ee04e30034bdf148c81c5c53bbc8a846bfdc12050ffcab2944d28b332df170b0
+      raw_eager_manifest_sha256: 9ccaf49ffda7a012b507c419014dc6a465d8f3eace981084a72e4e197c8aaf1a
+  timing:
+    elapsed_ms: 8.759048
+    serving_wall_ms: 8.759048
+    active_gpu_ms: 8.928748
+    gpu_residency_ms: 11.988827
+    device_gap_ms: 0.0
+    gpu_overlap_ms: 3.060079
+    kernel_envelope_ms: 9.010351
+    instrumented_trace_overhead_ms: 0.251303
+    instrumented_active_excess_ms: 0.1697
+    wall_authority: selected profiler-off production baseline forward
+    layout_active_residency_authority: instrumented production trace; profiler overhead is explicit and does not replace serving
+      wall
+    wall_trace_contract_gate:
+      state: passed
+      serving_wall_ms: 8.759048
+      instrumented_active_gpu_ms: 8.928748
+      instrumented_kernel_envelope_ms: 9.010351
+      wall_to_envelope_ratio: 0.97211
+      envelope_to_wall_ratio: 1.028691
+      same_isolated_forward_proven: true
+      first_formal_scheduler_interval: false
+      reason: no unexplained first-formal scheduler-wall mismatch was detected
+    semantics: elapsed/device-gap authority is the exact selected profiler-off production baseline; kernel layout, active
+      interval union, and residency come from one median-envelope rank of the instrumented formal forward and may include
+      explicit profiler overhead
+  acceptance_gate: *id001
+timeline:
+  schema_version: timeline.v1
+  artifact: cg_decode_bs64_8k1k.timeline.json.gz
+  sha256: 5c02ee29678045a0914e33ee7b0cafb25a5b0c019b1445c265135de313b1bdbe
+  reference_rank: 4
+  step_count: 1
+  event_count: 1803
+  raw_trace_file: 1788087974.4928741-TP-4.trace.json.gz
+node_states:
+  full_attention_moe_block.input_norm:
+    status: structural
+    label: implemented by exact occurrence-scoped shared events; no profile-aggregate fused timing is claimed
+    occurrence_fusion_evidence:
+      shared_timing_owners:
+      - gdn_moe_block.tp_moe_output_collective
+      target_event_count: 30
+      all_target_events_same_rank_closed: true
+      physical_target_proof: true
+      profile_aggregate_event_set_equal: false
+  full_attention.kv_state_read:
+    status: fused
+    label: fused into full_attention.causal_gqa
+    included_in: full_attention.causal_gqa
+    fusion_group_id: qwen35_profile_aggregate_full_attention_causal_gqa
+  full_attention.partial_rope:
+    status: fused
+    label: fused into full_attention.qk_norm
+    included_in: full_attention.qk_norm
+    fusion_group_id: qwen35_profile_aggregate_full_attention_qk_norm
+  full_attention_moe_block.attention_residual:
+    status: fused
+    label: fused into full_attention_moe_block.tp_attention_output_collective
+    included_in: full_attention_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective
+  full_attention_moe_block.post_attention_norm:
+    status: fused
+    label: fused into full_attention_moe_block.tp_attention_output_collective
+    included_in: full_attention_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective
+  full_attention_moe_block.layer_residual:
+    status: fused
+    label: fused into full_attention_moe_block.tp_moe_output_collective
+    included_in: full_attention_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective
+  gdn_attention.conv_state_read:
+    status: fused
+    label: fused into gdn_attention.causal_conv
+    included_in: gdn_attention.causal_conv
+    fusion_group_id: qwen35_profile_aggregate_gdn_attention_causal_conv
+  gdn_attention.recurrent_state_read:
+    status: fused
+    label: fused into gdn_attention.gated_delta_recurrence
+    included_in: gdn_attention.gated_delta_recurrence
+    fusion_group_id: qwen35_profile_aggregate_gdn_attention_gated_delta_recurrence
+  gdn_attention.state_write:
+    status: fused
+    label: fused into gdn_attention.gated_delta_recurrence
+    included_in: gdn_attention.gated_delta_recurrence
+    fusion_group_id: qwen35_profile_aggregate_gdn_attention_gated_delta_recurrence
+  gdn_attention.ba_projection:
+    status: fused
+    label: fused into gdn_attention.qkvz_projection
+    included_in: gdn_attention.qkvz_projection
+    fusion_group_id: qwen35_profile_aggregate_gdn_attention_qkvz_projection
+  gdn_moe_block.attention_residual:
+    status: fused
+    label: fused into gdn_moe_block.tp_attention_output_collective
+    included_in: gdn_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
+  gdn_moe_block.post_attention_norm:
+    status: fused
+    label: fused into gdn_moe_block.tp_attention_output_collective
+    included_in: gdn_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
+  gdn_moe_block.layer_residual:
+    status: fused
+    label: fused into gdn_moe_block.tp_moe_output_collective
+    included_in: gdn_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
+  full_attention.module_input:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  full_attention.module_output:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  full_attention_moe_block.attention:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  full_attention_moe_block.input_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  full_attention_moe_block.moe:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  full_attention_moe_block.output_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_attention.module_input:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_attention.module_output:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_moe_block.attention:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_moe_block.input_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_moe_block.moe:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  gdn_moe_block.output_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  generation_loop.accept_prefix:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.candidate_tokens:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.commit_gdn:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.commit_kv:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.commit_tokens:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.committed_context:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.draft_propose:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.next_iteration:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.replay_gdn:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.target_verify:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  generation_loop.tentative_state:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  layer_schedule.layer_00:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_01:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_02:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_03:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_04:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_05:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_06:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_07:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_08:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_09:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_10:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_11:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_12:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_13:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_14:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_15:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_16:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_17:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_18:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_19:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_20:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_21:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_22:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_23:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_24:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_25:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_26:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_27:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_28:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_29:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_30:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_31:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_32:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_33:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_34:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_35:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_36:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_37:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_38:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_39:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_40:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_41:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_42:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_43:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_44:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_45:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_46:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_47:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_48:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_49:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_50:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_51:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_52:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_53:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_54:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_55:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_56:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_57:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_58:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  layer_schedule.layer_59:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  moe_block.input_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  moe_block.output_hidden:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  mtp_draft_head.concat:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.draft_decoder_layer:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.draft_final_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.draft_input_token:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.draft_logits:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.embedding_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.fc_projection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.hidden_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.shared_embedding:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.shared_lm_head:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_draft_head.target_hidden:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.attention_output_gate:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.causal_gqa:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.kv_state_read:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.kv_state_write:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.module_input:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.module_output:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.output_projection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.partial_rope:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.qk_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention.qkv_projection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.attention:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.attention_residual:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.input_hidden:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.input_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.layer_residual:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.moe:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.output_hidden:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_full_attention_moe_block.post_attention_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.input_hidden:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.output_hidden:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.routed_experts:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.router:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.shared_expert:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  mtp_moe_block.weighted_combine:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  stack.full_attention_layer:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  stack.gdn_layer:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  stack.schedule:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  stack.stack_input:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  stack.stack_output:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.attention_keys:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.attention_values:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.committed_lengths:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.gdn_conv_windows:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.gdn_recurrent_states:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.mtp_draft_keys:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.mtp_draft_values:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  state_tensors.verify_journal:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.accepted_tokens:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.decoder_stack:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.generation_controller:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  top.multimodal_injection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  top.state_store:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.target_logits:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.token_input:
+    status: structural
+    label: semantic, state, scheduler, or drill boundary without standalone production timing
+  top.vision_frontend:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  top.vision_inputs:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.attention:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.attention_output:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.attention_residual:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.block_input:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.block_output:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.fc1:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.fc2:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.gelu:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.norm1:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.norm2:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.qkv_projection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_block.rotary:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.merger_fc1:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.merger_fc2:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.merger_gelu:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.merger_norm:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.patch_projection:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.position_embedding:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.rotary_coordinates:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.spatial_group:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.vision_blocks:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.vision_input:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+  vision_frontend.vision_output:
+    status: not_selected
+    label: outside the text-only, MTP-off pure-TP8 contract
+fusion_groups:
+  qwen35_profile_aggregate_full_attention_causal_gqa:
+    owner: full_attention.causal_gqa
+    ir_nodes:
+    - full_attention.causal_gqa
+    - full_attention.kv_state_read
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1046
+      - r4-k1282
+      - r4-k1518
+      - r4-k1754
+      - r4-k1990
+      - r4-k2226
+      - r4-k2462
+      - r4-k2698
+      - r4-k2936
+      - r4-k3170
+      - r4-k338
+      - r4-k3406
+      - r4-k3642
+      - r4-k574
+      - r4-k812
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_full_attention_qk_norm:
+    owner: full_attention.qk_norm
+    ir_nodes:
+    - full_attention.qk_norm
+    - full_attention.partial_rope
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1042
+      - r4-k1278
+      - r4-k1514
+      - r4-k1750
+      - r4-k1986
+      - r4-k2222
+      - r4-k2458
+      - r4-k2694
+      - r4-k2932
+      - r4-k3166
+      - r4-k334
+      - r4-k3402
+      - r4-k3638
+      - r4-k570
+      - r4-k808
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective:
+    owner: full_attention_moe_block.tp_attention_output_collective
+    ir_nodes:
+    - full_attention_moe_block.tp_attention_output_collective
+    - full_attention_moe_block.attention_residual
+    - full_attention_moe_block.post_attention_norm
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1054
+      - r4-k1056
+      - r4-k1290
+      - r4-k1292
+      - r4-k1526
+      - r4-k1528
+      - r4-k1762
+      - r4-k1764
+      - r4-k2000
+      - r4-k2002
+      - r4-k2234
+      - r4-k2236
+      - r4-k2470
+      - r4-k2472
+      - r4-k2706
+      - r4-k2708
+      - r4-k2944
+      - r4-k2946
+      - r4-k3178
+      - r4-k3180
+      - r4-k3414
+      - r4-k3416
+      - r4-k346
+      - r4-k348
+      - r4-k3650
+      - r4-k3652
+      - r4-k582
+      - r4-k584
+      - r4-k820
+      - r4-k822
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective:
+    owner: full_attention_moe_block.tp_moe_output_collective
+    ir_nodes:
+    - full_attention_moe_block.tp_moe_output_collective
+    - full_attention_moe_block.layer_residual
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1090
+      - r4-k1092
+      - r4-k1326
+      - r4-k1328
+      - r4-k1562
+      - r4-k1564
+      - r4-k1798
+      - r4-k1800
+      - r4-k2034
+      - r4-k2036
+      - r4-k2270
+      - r4-k2272
+      - r4-k2506
+      - r4-k2508
+      - r4-k2742
+      - r4-k2744
+      - r4-k2978
+      - r4-k2980
+      - r4-k3214
+      - r4-k3216
+      - r4-k3450
+      - r4-k3452
+      - r4-k3686
+      - r4-k382
+      - r4-k384
+      - r4-k618
+      - r4-k620
+      - r4-k854
+      - r4-k856
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_gdn_attention_causal_conv:
+    owner: gdn_attention.causal_conv
+    ir_nodes:
+    - gdn_attention.causal_conv
+    - gdn_attention.conv_state_read
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1104
+      - r4-k1164
+      - r4-k1224
+      - r4-k1340
+      - r4-k1400
+      - r4-k1460
+      - r4-k1576
+      - r4-k160
+      - r4-k1636
+      - r4-k1696
+      - r4-k1812
+      - r4-k1872
+      - r4-k1932
+      - r4-k2048
+      - r4-k2108
+      - r4-k2168
+      - r4-k220
+      - r4-k2284
+      - r4-k2344
+      - r4-k2404
+      - r4-k2520
+      - r4-k2580
+      - r4-k2640
+      - r4-k2756
+      - r4-k280
+      - r4-k2816
+      - r4-k2876
+      - r4-k2992
+      - r4-k3052
+      - r4-k3112
+      - r4-k3228
+      - r4-k3288
+      - r4-k3348
+      - r4-k3464
+      - r4-k3524
+      - r4-k3584
+      - r4-k396
+      - r4-k456
+      - r4-k516
+      - r4-k632
+      - r4-k692
+      - r4-k752
+      - r4-k868
+      - r4-k928
+      - r4-k988
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_gdn_attention_gated_delta_recurrence:
+    owner: gdn_attention.gated_delta_recurrence
+    ir_nodes:
+    - gdn_attention.gated_delta_recurrence
+    - gdn_attention.recurrent_state_read
+    - gdn_attention.state_write
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1106
+      - r4-k1166
+      - r4-k1226
+      - r4-k1342
+      - r4-k1402
+      - r4-k1462
+      - r4-k1578
+      - r4-k162
+      - r4-k1638
+      - r4-k1698
+      - r4-k1814
+      - r4-k1874
+      - r4-k1934
+      - r4-k2050
+      - r4-k2110
+      - r4-k2170
+      - r4-k222
+      - r4-k2286
+      - r4-k2346
+      - r4-k2406
+      - r4-k2522
+      - r4-k2582
+      - r4-k2642
+      - r4-k2758
+      - r4-k2818
+      - r4-k282
+      - r4-k2878
+      - r4-k2994
+      - r4-k3054
+      - r4-k3114
+      - r4-k3230
+      - r4-k3290
+      - r4-k3350
+      - r4-k3466
+      - r4-k3526
+      - r4-k3586
+      - r4-k398
+      - r4-k458
+      - r4-k518
+      - r4-k634
+      - r4-k694
+      - r4-k754
+      - r4-k870
+      - r4-k930
+      - r4-k990
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_gdn_attention_qkvz_projection:
+    owner: gdn_attention.qkvz_projection
+    ir_nodes:
+    - gdn_attention.qkvz_projection
+    - gdn_attention.ba_projection
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1094
+      - r4-k1096
+      - r4-k1098
+      - r4-k1100
+      - r4-k1102
+      - r4-k1154
+      - r4-k1156
+      - r4-k1158
+      - r4-k1160
+      - r4-k1162
+      - r4-k1214
+      - r4-k1216
+      - r4-k1218
+      - r4-k1220
+      - r4-k1222
+      - r4-k1330
+      - r4-k1332
+      - r4-k1334
+      - r4-k1336
+      - r4-k1338
+      - r4-k1390
+      - r4-k1392
+      - r4-k1394
+      - r4-k1396
+      - r4-k1398
+      - r4-k1450
+      - r4-k1452
+      - r4-k1454
+      - r4-k1456
+      - r4-k1458
+      - r4-k150
+      - r4-k152
+      - r4-k154
+      - r4-k156
+      - r4-k1566
+      - r4-k1568
+      - r4-k1570
+      - r4-k1572
+      - r4-k1574
+      - r4-k158
+      - r4-k1626
+      - r4-k1628
+      - r4-k1630
+      - r4-k1632
+      - r4-k1634
+      - r4-k1686
+      - r4-k1688
+      - r4-k1690
+      - r4-k1692
+      - r4-k1694
+      - r4-k1802
+      - r4-k1804
+      - r4-k1806
+      - r4-k1808
+      - r4-k1810
+      - r4-k1862
+      - r4-k1864
+      - r4-k1866
+      - r4-k1868
+      - r4-k1870
+      - r4-k1922
+      - r4-k1924
+      - r4-k1926
+      - r4-k1928
+      - r4-k1930
+      - r4-k2038
+      - r4-k2040
+      - r4-k2042
+      - r4-k2044
+      - r4-k2046
+      - r4-k2098
+      - r4-k210
+      - r4-k2100
+      - r4-k2102
+      - r4-k2104
+      - r4-k2106
+      - r4-k212
+      - r4-k214
+      - r4-k2158
+      - r4-k216
+      - r4-k2160
+      - r4-k2162
+      - r4-k2164
+      - r4-k2166
+      - r4-k218
+      - r4-k2274
+      - r4-k2276
+      - r4-k2278
+      - r4-k2280
+      - r4-k2282
+      - r4-k2334
+      - r4-k2336
+      - r4-k2338
+      - r4-k2340
+      - r4-k2342
+      - r4-k2394
+      - r4-k2396
+      - r4-k2398
+      - r4-k2400
+      - r4-k2402
+      - r4-k2510
+      - r4-k2512
+      - r4-k2514
+      - r4-k2516
+      - r4-k2518
+      - r4-k2570
+      - r4-k2572
+      - r4-k2574
+      - r4-k2576
+      - r4-k2578
+      - r4-k2630
+      - r4-k2632
+      - r4-k2634
+      - r4-k2636
+      - r4-k2638
+      - r4-k270
+      - r4-k272
+      - r4-k274
+      - r4-k2746
+      - r4-k2748
+      - r4-k2750
+      - r4-k2752
+      - r4-k2754
+      - r4-k276
+      - r4-k278
+      - r4-k2806
+      - r4-k2808
+      - r4-k2810
+      - r4-k2812
+      - r4-k2814
+      - r4-k2866
+      - r4-k2868
+      - r4-k2870
+      - r4-k2872
+      - r4-k2874
+      - r4-k2982
+      - r4-k2984
+      - r4-k2986
+      - r4-k2988
+      - r4-k2990
+      - r4-k3042
+      - r4-k3044
+      - r4-k3046
+      - r4-k3048
+      - r4-k3050
+      - r4-k3102
+      - r4-k3104
+      - r4-k3106
+      - r4-k3108
+      - r4-k3110
+      - r4-k3218
+      - r4-k3220
+      - r4-k3222
+      - r4-k3224
+      - r4-k3226
+      - r4-k3278
+      - r4-k3280
+      - r4-k3282
+      - r4-k3284
+      - r4-k3286
+      - r4-k3338
+      - r4-k3340
+      - r4-k3342
+      - r4-k3344
+      - r4-k3346
+      - r4-k3454
+      - r4-k3456
+      - r4-k3458
+      - r4-k3460
+      - r4-k3462
+      - r4-k3514
+      - r4-k3516
+      - r4-k3518
+      - r4-k3520
+      - r4-k3522
+      - r4-k3574
+      - r4-k3576
+      - r4-k3578
+      - r4-k3580
+      - r4-k3582
+      - r4-k386
+      - r4-k388
+      - r4-k390
+      - r4-k392
+      - r4-k394
+      - r4-k446
+      - r4-k448
+      - r4-k450
+      - r4-k452
+      - r4-k454
+      - r4-k506
+      - r4-k508
+      - r4-k510
+      - r4-k512
+      - r4-k514
+      - r4-k622
+      - r4-k624
+      - r4-k626
+      - r4-k628
+      - r4-k630
+      - r4-k682
+      - r4-k684
+      - r4-k686
+      - r4-k688
+      - r4-k690
+      - r4-k742
+      - r4-k744
+      - r4-k746
+      - r4-k748
+      - r4-k750
+      - r4-k858
+      - r4-k860
+      - r4-k862
+      - r4-k864
+      - r4-k866
+      - r4-k918
+      - r4-k920
+      - r4-k922
+      - r4-k924
+      - r4-k926
+      - r4-k978
+      - r4-k980
+      - r4-k982
+      - r4-k984
+      - r4-k986
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective:
+    owner: gdn_moe_block.tp_attention_output_collective
+    ir_nodes:
+    - gdn_moe_block.tp_attention_output_collective
+    - gdn_moe_block.attention_residual
+    - gdn_moe_block.post_attention_norm
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1000
+      - r4-k1114
+      - r4-k1116
+      - r4-k1174
+      - r4-k1176
+      - r4-k1234
+      - r4-k1236
+      - r4-k1350
+      - r4-k1352
+      - r4-k1410
+      - r4-k1412
+      - r4-k1472
+      - r4-k1474
+      - r4-k1586
+      - r4-k1588
+      - r4-k1646
+      - r4-k1648
+      - r4-k170
+      - r4-k1706
+      - r4-k1708
+      - r4-k172
+      - r4-k1822
+      - r4-k1824
+      - r4-k1882
+      - r4-k1884
+      - r4-k1942
+      - r4-k1944
+      - r4-k2058
+      - r4-k2060
+      - r4-k2118
+      - r4-k2120
+      - r4-k2178
+      - r4-k2180
+      - r4-k2294
+      - r4-k2296
+      - r4-k230
+      - r4-k232
+      - r4-k2354
+      - r4-k2356
+      - r4-k2414
+      - r4-k2416
+      - r4-k2532
+      - r4-k2534
+      - r4-k2590
+      - r4-k2592
+      - r4-k2650
+      - r4-k2652
+      - r4-k2766
+      - r4-k2768
+      - r4-k2826
+      - r4-k2828
+      - r4-k2886
+      - r4-k2888
+      - r4-k290
+      - r4-k292
+      - r4-k3002
+      - r4-k3004
+      - r4-k3064
+      - r4-k3066
+      - r4-k3122
+      - r4-k3124
+      - r4-k3238
+      - r4-k3240
+      - r4-k3298
+      - r4-k3300
+      - r4-k3358
+      - r4-k3360
+      - r4-k3474
+      - r4-k3476
+      - r4-k3534
+      - r4-k3536
+      - r4-k3596
+      - r4-k3598
+      - r4-k408
+      - r4-k410
+      - r4-k466
+      - r4-k468
+      - r4-k526
+      - r4-k528
+      - r4-k642
+      - r4-k644
+      - r4-k702
+      - r4-k704
+      - r4-k762
+      - r4-k764
+      - r4-k878
+      - r4-k880
+      - r4-k940
+      - r4-k942
+      - r4-k998
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+  qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective:
+    owner: gdn_moe_block.tp_moe_output_collective
+    ir_nodes:
+    - gdn_moe_block.tp_moe_output_collective
+    - gdn_moe_block.layer_residual
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r4-k1034
+      - r4-k1036
+      - r4-k1150
+      - r4-k1152
+      - r4-k1210
+      - r4-k1212
+      - r4-k1270
+      - r4-k1272
+      - r4-k1386
+      - r4-k1388
+      - r4-k1446
+      - r4-k1448
+      - r4-k1506
+      - r4-k1508
+      - r4-k1622
+      - r4-k1624
+      - r4-k1682
+      - r4-k1684
+      - r4-k1742
+      - r4-k1744
+      - r4-k1858
+      - r4-k1860
+      - r4-k1918
+      - r4-k1920
+      - r4-k1978
+      - r4-k1980
+      - r4-k206
+      - r4-k208
+      - r4-k2094
+      - r4-k2096
+      - r4-k2154
+      - r4-k2156
+      - r4-k2214
+      - r4-k2216
+      - r4-k2330
+      - r4-k2332
+      - r4-k2390
+      - r4-k2392
+      - r4-k2450
+      - r4-k2452
+      - r4-k2566
+      - r4-k2568
+      - r4-k2626
+      - r4-k2628
+      - r4-k266
+      - r4-k268
+      - r4-k2686
+      - r4-k2688
+      - r4-k2802
+      - r4-k2804
+      - r4-k2862
+      - r4-k2864
+      - r4-k2922
+      - r4-k2924
+      - r4-k3038
+      - r4-k3040
+      - r4-k3098
+      - r4-k3100
+      - r4-k3158
+      - r4-k3160
+      - r4-k326
+      - r4-k3274
+      - r4-k3276
+      - r4-k328
+      - r4-k3334
+      - r4-k3336
+      - r4-k3394
+      - r4-k3396
+      - r4-k3510
+      - r4-k3512
+      - r4-k3570
+      - r4-k3572
+      - r4-k3630
+      - r4-k3632
+      - r4-k442
+      - r4-k444
+      - r4-k502
+      - r4-k504
+      - r4-k562
+      - r4-k564
+      - r4-k678
+      - r4-k680
+      - r4-k738
+      - r4-k740
+      - r4-k798
+      - r4-k800
+      - r4-k914
+      - r4-k916
+      - r4-k974
+      - r4-k976
+      member_event_sets_equal_owner: true
+      all_owner_events_same_rank_closed: true
+node_metrics:
+  top.embedding:
+    ms_per_iter: 0.001792
+    active_gpu_ms: 0.001792
+    gpu_residency_ms: 0.001792
+    gpu_residency_ms_per_iter: 0.001792
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _vocab_parallel_embedding_kernel
+      count: 1
+      total_us_per_iter: 1.792
+      count_per_iter: 1.0
+      avg_us: 1.792
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  top.tp_embedding_output_collective:
+    ms_per_iter: 0.059585
+    active_gpu_ms: 0.059585
+    gpu_residency_ms: 0.059585
+    gpu_residency_ms_per_iter: 0.059585
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, true, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 1
+      total_us_per_iter: 59.585
+      count_per_iter: 1.0
+      avg_us: 59.585
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_moe_block.input_norm:
+    ms_per_iter: 0.007552
+    active_gpu_ms: 0.007552
+    gpu_residency_ms: 0.007552
+    gpu_residency_ms_per_iter: 0.007552
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: kernel_cutlass_kernel_flashinfernormkernelsrmsnormRMSNormKernel_object_at__tensorptrbf16gmemalign128oi64409640961_tensorptrbf16gmemalign16o40961_tensorptrbf16gmemalign128oi64409640961___T_0
+      count: 1
+      total_us_per_iter: 7.552
+      count_per_iter: 1.0
+      avg_us: 7.552
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_attention.qkvz_projection:
+    ms_per_iter: 0.76319
+    active_gpu_ms: 0.76319
+    gpu_residency_ms: 1.058753
+    gpu_residency_ms_per_iter: 1.058753
+    mapped_event_count: 225
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_qqtst_80x128_128x8_4x1_v_bz_TNN
+      count: 45
+      total_us_per_iter: 343.362
+      count_per_iter: 45.0
+      avg_us: 7.630267
+      share_in_node_pct: 32.430794
+      share_in_node_residency_pct: 32.430794
+    - name: _static_quant_fp8
+      count: 45
+      total_us_per_iter: 293.568
+      count_per_iter: 45.0
+      avg_us: 6.523733
+      share_in_node_pct: 27.727714
+      share_in_node_residency_pct: 27.727714
+    - name: nvjet_sm103_tst_64x32_64x16_1x2_h_bz_splitK_TNT
+      count: 45
+      total_us_per_iter: 162.88
+      count_per_iter: 45.0
+      avg_us: 3.619556
+      share_in_node_pct: 15.384136
+      share_in_node_residency_pct: 15.384136
+    - name: void cublasLt::splitKreduce_kernel<32, 16, int, float, __nv_bfloat16, float, __nv_bfloat16, false, float, __nv_bfloat16,
+        __nv_bfloat16, true, false, false, false>(cublasLt::cublasSplitKParams<float>, float const*, __nv_bfloat16 const*,
+        float*, __nv_bfloat16*, float const*, float const*, __nv_bfloat16 const*, float const*, __nv_bfloat16*, void*, long,
+        float*, int*, float*, float*, float const*, float const*, float const*, float const*, float const*)
+      count: 45
+      total_us_per_iter: 130.783
+      count_per_iter: 45.0
+      avg_us: 2.906289
+      share_in_node_pct: 12.352551
+      share_in_node_residency_pct: 12.352551
+    - name: fused_qkvzba_split_reshape_cat_contiguous_kernel
+      count: 45
+      total_us_per_iter: 128.16
+      count_per_iter: 45.0
+      avg_us: 2.848
+      share_in_node_pct: 12.104806
+      share_in_node_residency_pct: 12.104806
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_attention.causal_conv:
+    ms_per_iter: 0.155107
+    active_gpu_ms: 0.155107
+    gpu_residency_ms: 0.155108
+    gpu_residency_ms_per_iter: 0.155108
+    mapped_event_count: 45
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _causal_conv1d_update_kernel
+      count: 45
+      total_us_per_iter: 155.108
+      count_per_iter: 45.0
+      avg_us: 3.446844
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_attention.gated_delta_recurrence:
+    ms_per_iter: 0.431649
+    active_gpu_ms: 0.431649
+    gpu_residency_ms: 0.431648
+    gpu_residency_ms_per_iter: 0.431648
+    mapped_event_count: 45
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: fused_recurrent_gated_delta_rule_packed_decode_kernel
+      count: 45
+      total_us_per_iter: 431.648
+      count_per_iter: 45.0
+      avg_us: 9.592178
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_attention.output_gate_norm:
+    ms_per_iter: 0.108768
+    active_gpu_ms: 0.108768
+    gpu_residency_ms: 0.108769
+    gpu_residency_ms_per_iter: 0.108769
+    mapped_event_count: 45
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _layer_norm_fwd_1pass_kernel
+      count: 45
+      total_us_per_iter: 108.769
+      count_per_iter: 45.0
+      avg_us: 2.417089
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_attention.output_projection:
+    ms_per_iter: 0.24768
+    active_gpu_ms: 0.24768
+    gpu_residency_ms: 0.252736
+    gpu_residency_ms_per_iter: 0.252736
+    mapped_event_count: 90
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_qqtst_48x64_128x15_4x1_v_bz_TNN
+      count: 45
+      total_us_per_iter: 173.216
+      count_per_iter: 45.0
+      avg_us: 3.849244
+      share_in_node_pct: 68.536338
+      share_in_node_residency_pct: 68.536338
+    - name: _static_quant_fp8
+      count: 45
+      total_us_per_iter: 79.52
+      count_per_iter: 45.0
+      avg_us: 1.767111
+      share_in_node_pct: 31.463662
+      share_in_node_residency_pct: 31.463662
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_moe_block.tp_attention_output_collective:
+    ms_per_iter: 0.391516
+    active_gpu_ms: 0.391516
+    gpu_residency_ms: 0.522049
+    gpu_residency_ms_per_iter: 0.522049
+    mapped_event_count: 90
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 45
+      total_us_per_iter: 268.704
+      count_per_iter: 45.0
+      avg_us: 5.9712
+      share_in_node_pct: 51.47103
+      share_in_node_residency_pct: 51.47103
+    - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
+        true, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 45
+      total_us_per_iter: 253.345
+      count_per_iter: 45.0
+      avg_us: 5.629889
+      share_in_node_pct: 48.52897
+      share_in_node_residency_pct: 48.52897
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  moe_block.router:
+    ms_per_iter: 1.316585
+    active_gpu_ms: 1.316585
+    gpu_residency_ms: 1.478314
+    gpu_residency_ms_per_iter: 1.478314
+    mapped_event_count: 300
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_tst_64x32_64x16_2x2_2cta_h_bz_splitK_TNT
+      count: 60
+      total_us_per_iter: 506.627
+      count_per_iter: 60.0
+      avg_us: 8.443783
+      share_in_node_pct: 34.270595
+      share_in_node_residency_pct: 34.270595
+    - name: void moe::dev::routing::routingCustom::routingIndicesClusterKernel<moe::dev::routing::routingCustom::KernelParams<__nv_bfloat16,
+        __nv_bfloat16, 512, 16, moe::dev::routing::TopKExpertSelect<moe::dev::routing::NoOpPreprocess, moe::dev::routing::SoftmaxPostprocess>
+        >, 512>(moe::dev::routing::routingCustom::KernelParams<__nv_bfloat16, __nv_bfloat16, 512, 16, moe::dev::routing::TopKExpertSelect<moe::dev::routing::NoOpPreprocess,
+        moe::dev::routing::SoftmaxPostprocess> >)
+      count: 60
+      total_us_per_iter: 467.521
+      count_per_iter: 60.0
+      avg_us: 7.792017
+      share_in_node_pct: 31.625284
+      share_in_node_residency_pct: 31.625284
+    - name: void moe::dev::routing::routingCustom::routingIndicesBlockScoresKernel<moe::dev::routing::routingCustom::KernelParams<__nv_bfloat16,
+        __nv_bfloat16, 512, 16, moe::dev::routing::TopKExpertSelect<moe::dev::routing::NoOpPreprocess, moe::dev::routing::SoftmaxPostprocess>
+        > >(moe::dev::routing::routingCustom::KernelParams<__nv_bfloat16, __nv_bfloat16, 512, 16, moe::dev::routing::TopKExpertSelect<moe::dev::routing::NoOpPreprocess,
+        moe::dev::routing::SoftmaxPostprocess> >)
+      count: 60
+      total_us_per_iter: 236.58
+      count_per_iter: 60.0
+      avg_us: 3.943
+      share_in_node_pct: 16.003366
+      share_in_node_residency_pct: 16.003366
+    - name: void cublasLt::splitKreduce_kernel<32, 16, int, float, __nv_bfloat16, float, __nv_bfloat16, false, float, __nv_bfloat16,
+        __nv_bfloat16, true, false, false, false>(cublasLt::cublasSplitKParams<float>, float const*, __nv_bfloat16 const*,
+        float*, __nv_bfloat16*, float const*, float const*, __nv_bfloat16 const*, float const*, __nv_bfloat16*, void*, long,
+        float*, int*, float*, float*, float const*, float const*, float const*, float const*, float const*)
+      count: 60
+      total_us_per_iter: 174.465
+      count_per_iter: 60.0
+      avg_us: 2.90775
+      share_in_node_pct: 11.80162
+      share_in_node_residency_pct: 11.80162
+    - name: memcpy32_post
+      count: 60
+      total_us_per_iter: 93.121
+      count_per_iter: 60.0
+      avg_us: 1.552017
+      share_in_node_pct: 6.299135
+      share_in_node_residency_pct: 6.299135
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  moe_block.shared_expert:
+    ms_per_iter: 1.006291
+    active_gpu_ms: 1.006291
+    gpu_residency_ms: 1.16356
+    gpu_residency_ms_per_iter: 1.16356
+    mapped_event_count: 360
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_qqtst_96x64_128x10_4x1_v_bz_splitK_TNN
+      count: 60
+      total_us_per_iter: 312.484
+      count_per_iter: 60.0
+      avg_us: 5.208067
+      share_in_node_pct: 26.855856
+      share_in_node_residency_pct: 26.855856
+    - name: void sglang::act_and_mul_kernel<__nv_bfloat16, (sglang::ActivationKind)0, true, false, false, false>(sglang::ActivationParams)
+      count: 60
+      total_us_per_iter: 216.609
+      count_per_iter: 60.0
+      avg_us: 3.61015
+      share_in_node_pct: 18.616058
+      share_in_node_residency_pct: 18.616058
+    - name: void cublasLt::splitKreduce_kernel<32, 16, int, float, __nv_bfloat16, float, __nv_bfloat16, true, float, __nv_bfloat16,
+        __nv_bfloat16, true, false, false, false>(cublasLt::cublasSplitKParams<float>, float const*, __nv_bfloat16 const*,
+        float*, __nv_bfloat16*, float const*, float const*, __nv_bfloat16 const*, float const*, __nv_bfloat16*, void*, long,
+        float*, int*, float*, float*, float const*, float const*, float const*, float const*, float const*)
+      count: 60
+      total_us_per_iter: 213.86
+      count_per_iter: 60.0
+      avg_us: 3.564333
+      share_in_node_pct: 18.3798
+      share_in_node_residency_pct: 18.3798
+    - name: nvjet_sm103_qqtst_64x40_128x16_2x2_h_bz_TNT
+      count: 60
+      total_us_per_iter: 213.535
+      count_per_iter: 60.0
+      avg_us: 3.558917
+      share_in_node_pct: 18.351868
+      share_in_node_residency_pct: 18.351868
+    - name: _static_quant_fp8
+      count: 120
+      total_us_per_iter: 207.072
+      count_per_iter: 120.0
+      avg_us: 1.7256
+      share_in_node_pct: 17.796418
+      share_in_node_residency_pct: 17.796418
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  moe_block.routed_experts:
+    ms_per_iter: 4.079069
+    active_gpu_ms: 4.079069
+    gpu_residency_ms: 4.30409
+    gpu_residency_ms_per_iter: 4.30409
+    mapped_event_count: 240
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: bmm_Bfloat16_E2m1E2m1_Fp32_Ab16_Bb16_t128x8x256_s9_et128x8_m128x8x64_c1x1x1_rM_TN_transOut_schPd2x1x2x3_biasFp32M_bN_rgTma_clmp_dynB_sm100f
+      count: 60
+      total_us_per_iter: 2141.737
+      count_per_iter: 60.0
+      avg_us: 35.695617
+      share_in_node_pct: 49.760507
+      share_in_node_residency_pct: 49.760507
+    - name: bmm_E2m1_E2m1E2m1_Fp32_Ab16_Bb16_Cb16_t128x8x512u2_s5_et128x8_m128x8x64_c1x1x1_rM_TN_transOut_schPd2x1x2x3_biasFp32M_bN_ldgsts_ldgstsSf_rgTma_clmp_swiGlu_dynB_sm100f
+      count: 60
+      total_us_per_iter: 1716.17
+      count_per_iter: 60.0
+      avg_us: 28.602833
+      share_in_node_pct: 39.873005
+      share_in_node_residency_pct: 39.873005
+    - name: void moe::dev::finalize::finalizeKernel<moe::dev::finalize::KernelParams<cutlass::bfloat16_t, cutlass::bfloat16_t,
+        2, true> >(moe::dev::finalize::KernelParams<cutlass::bfloat16_t, cutlass::bfloat16_t, 2, true>)
+      count: 60
+      total_us_per_iter: 299.876
+      count_per_iter: 60.0
+      avg_us: 4.997933
+      share_in_node_pct: 6.967233
+      share_in_node_residency_pct: 6.967233
+    - name: kernel_cutlass_kernel_flashinferquantizationkernelsnvfp4_quantizeNVFP4QuantizeLinearKernel_object_at__tensorptrbf16gmemalign16o409640961_tensorptri8gmemalign16o204820481_tensorptri8gmemal_0
+      count: 60
+      total_us_per_iter: 146.307
+      count_per_iter: 60.0
+      avg_us: 2.43845
+      share_in_node_pct: 3.399255
+      share_in_node_residency_pct: 3.399255
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  moe_block.weighted_combine:
+    ms_per_iter: 0.14467
+    active_gpu_ms: 0.14467
+    gpu_residency_ms: 0.144672
+    gpu_residency_ms_per_iter: 0.144672
+    mapped_event_count: 60
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _fused_gate_sigmoid_mul_add_kernel
+      count: 60
+      total_us_per_iter: 144.672
+      count_per_iter: 60.0
+      avg_us: 2.4112
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  gdn_moe_block.tp_moe_output_collective:
+    ms_per_iter: 0.435195
+    active_gpu_ms: 0.435195
+    gpu_residency_ms: 0.639392
+    gpu_residency_ms_per_iter: 0.639392
+    mapped_event_count: 90
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
+        true, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 45
+      total_us_per_iter: 329.696
+      count_per_iter: 45.0
+      avg_us: 7.326578
+      share_in_node_pct: 51.563986
+      share_in_node_residency_pct: 51.563986
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 45
+      total_us_per_iter: 309.696
+      count_per_iter: 45.0
+      avg_us: 6.882133
+      share_in_node_pct: 48.436014
+      share_in_node_residency_pct: 48.436014
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.qkv_projection:
+    ms_per_iter: 0.219327
+    active_gpu_ms: 0.219327
+    gpu_residency_ms: 0.223264
+    gpu_residency_ms_per_iter: 0.223264
+    mapped_event_count: 30
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_qqtst_80x128_128x8_4x1_v_bz_TNN
+      count: 15
+      total_us_per_iter: 115.136
+      count_per_iter: 15.0
+      avg_us: 7.675733
+      share_in_node_pct: 51.569442
+      share_in_node_residency_pct: 51.569442
+    - name: _static_quant_fp8
+      count: 15
+      total_us_per_iter: 108.128
+      count_per_iter: 15.0
+      avg_us: 7.208533
+      share_in_node_pct: 48.430558
+      share_in_node_residency_pct: 48.430558
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.qk_norm:
+    ms_per_iter: 0.046016
+    active_gpu_ms: 0.046016
+    gpu_residency_ms: 0.046017
+    gpu_residency_ms_per_iter: 0.046017
+    mapped_event_count: 15
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _fused_qk_rmsnorm_rope_gate_kernel
+      count: 15
+      total_us_per_iter: 46.017
+      count_per_iter: 15.0
+      avg_us: 3.0678
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.kv_state_write:
+    ms_per_iter: 0.063556
+    active_gpu_ms: 0.063556
+    gpu_residency_ms: 0.063554
+    gpu_residency_ms_per_iter: 0.063554
+    mapped_event_count: 15
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void sglang::fused_fp8_qkv_kv_cache_kernel<__nv_bfloat16, long, 16, true, true>(sglang::FusedQkvParams)
+      count: 15
+      total_us_per_iter: 63.554
+      count_per_iter: 15.0
+      avg_us: 4.236933
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.causal_gqa:
+    ms_per_iter: 0.727778
+    active_gpu_ms: 0.727778
+    gpu_residency_ms: 0.727779
+    gpu_residency_ms_per_iter: 0.727779
+    mapped_event_count: 15
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: fmhaSm100fKernel_QkvE4m3OBfloat16H256PagedKvCausalP64MultiCtasKvCgaVarSeqQ8Kv128StaticSwapsAbForGen
+      count: 15
+      total_us_per_iter: 727.779
+      count_per_iter: 15.0
+      avg_us: 48.5186
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.attention_output_gate:
+    ms_per_iter: 0.026433
+    active_gpu_ms: 0.026433
+    gpu_residency_ms: 0.026432
+    gpu_residency_ms_per_iter: 0.026432
+    mapped_event_count: 15
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: _fused_sigmoid_mul_kernel
+      count: 15
+      total_us_per_iter: 26.432
+      count_per_iter: 15.0
+      avg_us: 1.762133
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention.output_projection:
+    ms_per_iter: 0.082083
+    active_gpu_ms: 0.082083
+    gpu_residency_ms: 0.083264
+    gpu_residency_ms_per_iter: 0.083264
+    mapped_event_count: 30
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_qqtst_48x64_128x15_4x1_v_bz_TNN
+      count: 15
+      total_us_per_iter: 56.928
+      count_per_iter: 15.0
+      avg_us: 3.7952
+      share_in_node_pct: 68.370484
+      share_in_node_residency_pct: 68.370484
+    - name: _static_quant_fp8
+      count: 15
+      total_us_per_iter: 26.336
+      count_per_iter: 15.0
+      avg_us: 1.755733
+      share_in_node_pct: 31.629516
+      share_in_node_residency_pct: 31.629516
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention_moe_block.tp_attention_output_collective:
+    ms_per_iter: 0.136159
+    active_gpu_ms: 0.136159
+    gpu_residency_ms: 0.18576
+    gpu_residency_ms_per_iter: 0.18576
+    mapped_event_count: 30
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 15
+      total_us_per_iter: 96.0
+      count_per_iter: 15.0
+      avg_us: 6.4
+      share_in_node_pct: 51.679587
+      share_in_node_residency_pct: 51.679587
+    - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
+        true, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 15
+      total_us_per_iter: 89.76
+      count_per_iter: 15.0
+      avg_us: 5.984
+      share_in_node_pct: 48.320413
+      share_in_node_residency_pct: 48.320413
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  full_attention_moe_block.tp_moe_output_collective:
+    ms_per_iter: 0.128511
+    active_gpu_ms: 0.128511
+    gpu_residency_ms: 0.182016
+    gpu_residency_ms_per_iter: 0.182016
+    mapped_event_count: 29
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
+        true, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 14
+      total_us_per_iter: 90.624
+      count_per_iter: 14.0
+      avg_us: 6.473143
+      share_in_node_pct: 49.78903
+      share_in_node_residency_pct: 49.78903
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 14
+      total_us_per_iter: 85.248
+      count_per_iter: 14.0
+      avg_us: 6.089143
+      share_in_node_pct: 46.835443
+      share_in_node_residency_pct: 46.835443
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, true, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 1
+      total_us_per_iter: 6.144
+      count_per_iter: 1.0
+      avg_us: 6.144
+      share_in_node_pct: 3.375527
+      share_in_node_residency_pct: 3.375527
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  top.final_norm:
+    ms_per_iter: 0.007168
+    active_gpu_ms: 0.007168
+    gpu_residency_ms: 0.007168
+    gpu_residency_ms_per_iter: 0.007168
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: kernel_cutlass_kernel_flashinfernormkernelsfused_add_rmsnormFusedAddRMSNormKernel_object_at__tensorptrbf16gmemalign128oi64409640961_tensorptrbf16gmemalign128oi64409640961_tensorptrbf16gme_0
+      count: 1
+      total_us_per_iter: 7.168
+      count_per_iter: 1.0
+      avg_us: 7.168
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  top.lm_head:
+    ms_per_iter: 0.042656
+    active_gpu_ms: 0.042656
+    gpu_residency_ms: 0.042656
+    gpu_residency_ms_per_iter: 0.042656
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: nvjet_sm103_tst_256x64_64x5_4x1_v_bz_TNT
+      count: 1
+      total_us_per_iter: 42.656
+      count_per_iter: 1.0
+      avg_us: 42.656
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
+  top.tp_logits_all_gather:
+    ms_per_iter: 0.072897
+    active_gpu_ms: 0.072897
+    gpu_residency_ms: 0.072897
+    gpu_residency_ms_per_iter: 0.072897
+    mapped_event_count: 1
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: ncclDevKernel_AllGather_RING_LL(ncclDevKernelArgsStorage<4096ul>)
+      count: 1
+      total_us_per_iter: 72.897
+      count_per_iter: 1.0
+      avg_us: 72.897
+      share_in_node_pct: 100.0
+      share_in_node_residency_pct: 100.0
+    source_rank: 4
+    rank_policy: one coherent global rank nearest the all-rank median mapped envelope; layout/active/residency only, never
+      serving-wall authority
