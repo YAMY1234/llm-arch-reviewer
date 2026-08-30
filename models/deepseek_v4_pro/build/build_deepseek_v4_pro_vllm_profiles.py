@@ -642,6 +642,7 @@ def build_one(
     matrix_report_sha256: str = MATRIX_REPORT_SHA256,
     matrix_manifest_sha256: str = MATRIX_MANIFEST_SHA256,
     fusion_spec_map: dict[str, dict[str, Any]] | None = None,
+    trace_pattern: str = "*rank{rank}.*trace.json.gz",
 ) -> tuple[Path, str]:
     matrix_profile = matrix["profiles"][name]
     rank = int(
@@ -683,7 +684,7 @@ def build_one(
     batch = int(spec["batch_size"])
     profile_id = f"deepseek_v4_pro_tp8_{profile_framework}_{spec['variant_id']}"
     trace_dir = task_root / "evidence" / spec["production_kind"] / spec["job_id"] / "traces"
-    trace_path = find_single(trace_dir, f"*rank{rank}.*trace.json.gz")
+    trace_path = find_single(trace_dir, trace_pattern.format(rank=rank))
     if file_sha256(trace_path) != report["trace"]["sha256"]:
         raise ValueError(f"raw trace hash mismatch: {trace_path}")
     validation_path = trace_dir.parent / "validation.json"

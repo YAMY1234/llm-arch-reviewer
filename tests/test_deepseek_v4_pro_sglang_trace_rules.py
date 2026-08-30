@@ -3,6 +3,7 @@ from __future__ import annotations
 from models.common.trace_mapping import FrameRef
 from models.deepseek_v4_pro.build.compile_deepseek_v4_pro_vllm_eager_contract import (
     CSA_LAYERS,
+    _canonicalize_sglang_attention_order,
     _recover_ordered_sglang_compute,
     compile_contract,
 )
@@ -106,6 +107,37 @@ def test_prefill_hca_compressor_projection_uses_exact_neighbors() -> None:
     )
     assert rows[1]["selected_node"] == "compressor.kv_gate_projection"
     assert rows[1]["mapping_method"] == "ordered_hca_compressor_projection"
+
+
+def test_sglang_attention_order_overrides_only_exact_stale_async_boundaries() -> None:
+    rows = [
+        {"selected_node": "attention.q_a", "kernel_name": "qa_quant"},
+        {"selected_node": "attention.q_a", "kernel_name": "qa_gemm"},
+        {"selected_node": "attention.q_norm", "kernel_name": "q_norm"},
+        {"selected_node": "attention.q_a", "kernel_name": "qb_quant"},
+        {"selected_node": "attention.q_a", "kernel_name": "qb_gemm"},
+        {"selected_node": "attention.q_head_norm", "kernel_name": "q_head_norm"},
+        {
+            "selected_node": "compressor.kv_gate_projection",
+            "kernel_name": "nvjet_sm103_tss_128x256_64x6_2x2_2cta_h_bz_TNT",
+        },
+        {"selected_node": "csa_indexer.k_compress", "kernel_name": "flash_c4_prefill<128l"},
+        {"selected_node": "attention.sparse_mqa", "kernel_name": "sparse_attn"},
+        {
+            "selected_node": "top.runtime_support",
+            "kernel_name": "AUnaryFunctor and MulFunctor postprocess",
+        },
+        {"selected_node": "attention.inverse_rope", "kernel_name": "inverse_rope"},
+    ]
+
+    _canonicalize_sglang_attention_order(rows, kind="csa")
+
+    assert [row["selected_node"] for row in rows[3:5]] == [
+        "attention.q_b",
+        "attention.q_b",
+    ]
+    assert rows[6]["selected_node"] == "csa_indexer.k_compress"
+    assert rows[9]["selected_node"] == "attention.sparse_mqa"
 
 
 def _row(event_id: int, node: str, kernel: str | None = None) -> dict:

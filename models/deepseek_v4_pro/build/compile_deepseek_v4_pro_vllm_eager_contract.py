@@ -328,6 +328,101 @@ def _expand_branch_node(node: str, kind: str) -> str:
     return node
 
 
+def _canonicalize_sglang_attention_order(
+    attention: list[dict[str, Any]], *, kind: str
+) -> None:
+    """Override stale async stacks only at exact source-dependent boundaries."""
+
+    q_norm = next(
+        (index for index, row in enumerate(attention) if row.get("selected_node") == "attention.q_norm"),
+        None,
+    )
+    q_head_norm = next(
+        (
+            index
+            for index, row in enumerate(attention)
+            if row.get("selected_node") == "attention.q_head_norm"
+        ),
+        None,
+    )
+    if q_norm is None and q_head_norm is None:
+        q_norm = q_head_norm = 0
+    elif q_norm is None or q_head_norm is None or q_norm >= q_head_norm:
+        raise ValueError("SGLang attention lacks ordered q_norm/q_head_norm boundaries")
+    for index, row in enumerate(attention) if q_norm != q_head_norm else ():
+        if row.get("selected_node") not in {"attention.q_a", "attention.q_b"}:
+            continue
+        if index < q_norm:
+            owner = "attention.q_a"
+        elif index < q_head_norm:
+            owner = "attention.q_b"
+        else:
+            raise ValueError("SGLang q_a/q_b launch occurs after q_head_norm")
+        if row.get("selected_node") != owner:
+            row.update(
+                {
+                    "selected_node": owner,
+                    "mapping_method": "ordered_query_projection_norm_boundary",
+                    "confidence": "high",
+                }
+            )
+
+    if kind != "csa":
+        return
+    for index in range(len(attention) - 1):
+        row = attention[index]
+        following_kernel = str(attention[index + 1].get("kernel_name") or "").lower()
+        kernel = str(row.get("kernel_name") or "").lower()
+        if "nvjet_sm103_tss_128x256_64x6_2x2_2cta_h_bz_tnt" not in kernel:
+            continue
+        if "flash_c4_prefill<128l" in following_kernel:
+            row.update(
+                {
+                    "selected_node": "csa_indexer.k_compress",
+                    "mapping_method": "ordered_prefill_indexer_c4_projection",
+                    "confidence": "high",
+                }
+            )
+        elif "flash_c4_prefill<512l" in following_kernel:
+            row.update(
+                {
+                    "selected_node": "compressor.kv_gate_projection",
+                    "mapping_method": "ordered_prefill_main_compressor_projection",
+                    "confidence": "high",
+                }
+            )
+
+    sparse_indices = [
+        index
+        for index, row in enumerate(attention)
+        if row.get("selected_node") == "attention.sparse_mqa"
+    ]
+    inverse_rope = next(
+        (
+            index
+            for index, row in enumerate(attention)
+            if row.get("selected_node") == "attention.inverse_rope"
+        ),
+        None,
+    )
+    if sparse_indices and inverse_rope is not None:
+        for index in range(max(sparse_indices) + 1, inverse_rope):
+            row = attention[index]
+            kernel = str(row.get("kernel_name") or "")
+            if (
+                row.get("selected_node") == "top.runtime_support"
+                and "AUnaryFunctor" in kernel
+                and "MulFunctor" in kernel
+            ):
+                row.update(
+                    {
+                        "selected_node": "attention.sparse_mqa",
+                        "mapping_method": "ordered_sparse_mqa_postprocess_before_inverse_rope",
+                        "confidence": "high",
+                    }
+                )
+
+
 MHC_PRE_FUSED_MEMBERS = (
     "mhc_transform.flatten_rms",
     "mhc_transform.affine",
@@ -480,6 +575,8 @@ def _annotate_schedule(
             raise ValueError("first layer lacks the exact standalone mHC-pre group")
 
         kind = "csa" if layer_id in CSA_LAYERS else "hca"
+        if source_commit == "71de97b264b04dcd514cf904003028aefe9775c8":
+            _canonicalize_sglang_attention_order(attention, kind=kind)
         wrong_prefix = "hca_" if kind == "csa" else "csa_"
         direct_branch_nodes = [
             str(row.get("selected_node") or "")
