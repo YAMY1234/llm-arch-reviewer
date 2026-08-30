@@ -15,10 +15,109 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.timeline_artifact import (  # noqa: E402
+    attach_eager_stack_evidence,
     build_timeline_artifact,
     timeline_targets,
     write_timeline_artifact,
 )
+
+
+def test_eager_stack_attachment_rejects_arbitrary_node_representative(
+    tmp_path: Path,
+) -> None:
+    mapping_path = tmp_path / "kernel_mapping.tp3.jsonl"
+    events_path = tmp_path / "events.tp3.jsonl"
+    eager_event = _event(
+        "full_attention.qk_norm", timestamp=1.0, duration=1.0, stream=7
+    )
+    eager_event["event_id"] = "eager-k0"
+    eager_event["kernel_name"] = "real_qk_kernel"
+    eager_event["occurrence_id"] = "layer_03.attention"
+    events_path.write_text(json.dumps(eager_event) + "\n")
+    mapping_path.write_text(
+        json.dumps(
+            {
+                "event_id": "eager-k0",
+                "kernel_name": "real_qk_kernel",
+                "selected_node": "full_attention.qk_norm",
+                "confidence": "high",
+                "rank": 3,
+                "phase": "decode",
+                "occurrence_id": "layer_03.attention",
+                "sequence_index": 9,
+                "closure_status": "closed",
+            }
+        )
+        + "\n"
+    )
+    production = _event(
+        "full_attention.qk_norm", timestamp=2.0, duration=1.0, stream=7
+    )
+    production["event_id"] = "production-k0"
+    production["kernel_name"] = "FillFunctor<unsigned char>"
+    production["occurrence_id"] = "layer_03.attention"
+    enriched = attach_eager_stack_evidence(
+        [production],
+        mapping_path=mapping_path,
+        expected_rank=3,
+        expected_phase="decode",
+    )[0]
+    assert enriched["reconciliation_status"] == "typed_unresolved"
+    assert enriched["confidence"] == "review_required"
+    assert "python_stack" not in enriched
+
+
+def test_eager_stack_attachment_rejects_occurrence_sequence_reordering(
+    tmp_path: Path,
+) -> None:
+    mapping_path = tmp_path / "kernel_mapping.tp3.jsonl"
+    events_path = tmp_path / "events.tp3.jsonl"
+    eager_events = []
+    mappings = []
+    for index, kernel in enumerate(("kernel_a", "kernel_b")):
+        event = _event(
+            "full_attention.qk_norm",
+            timestamp=float(index),
+            duration=1.0,
+            stream=7,
+        )
+        event.update(event_id=f"eager-k{index}", kernel_name=kernel)
+        eager_events.append(event)
+        mappings.append(
+            {
+                "event_id": event["event_id"],
+                "kernel_name": kernel,
+                "selected_node": "full_attention.qk_norm",
+                "confidence": "high",
+                "rank": 3,
+                "phase": "decode",
+                "occurrence_id": "layer_03.attention",
+                "sequence_index": index,
+                "closure_status": "closed",
+            }
+        )
+    events_path.write_text("".join(json.dumps(row) + "\n" for row in eager_events))
+    mapping_path.write_text("".join(json.dumps(row) + "\n" for row in mappings))
+    production = []
+    for index, kernel in enumerate(("kernel_b", "kernel_a")):
+        event = _event(
+            "full_attention.qk_norm",
+            timestamp=float(index + 10),
+            duration=1.0,
+            stream=7,
+        )
+        event.update(event_id=f"production-k{index}", kernel_name=kernel)
+        production.append(event)
+    enriched = attach_eager_stack_evidence(
+        production,
+        mapping_path=mapping_path,
+        expected_rank=3,
+        expected_phase="decode",
+    )
+    assert {event["reconciliation_status"] for event in enriched} == {
+        "typed_unresolved"
+    }
+    assert all("python_stack" not in event for event in enriched)
 
 
 def _event(
@@ -81,7 +180,69 @@ def test_targets_include_direct_node_and_architecture_rollups() -> None:
     ]
 
 
+def test_targets_preserve_explicit_model_independent_rollups() -> None:
+    event = _event(
+        "detail.owner",
+        timestamp=0.0,
+        duration=1.0,
+        stream=1,
+    )
+    event["ir_targets"] = ["detail.owner", "top.module", "detail.fused_member"]
+
+    assert timeline_targets(event) == [
+        "detail.owner",
+        "top.module",
+        "detail.fused_member",
+        "stack.linear_layer",
+        "top.decoder_stack",
+        "linear_layer.linear_attention",
+    ]
+
+
+def test_targets_put_explicit_timing_owner_before_fusion_members() -> None:
+    event = _event("detail.fused_member", timestamp=0.0, duration=1.0, stream=1)
+    event["timing_owner"] = "detail.owner"
+    event["ir_targets"] = ["detail.fused_member", "top.module"]
+
+    assert timeline_targets(event)[:3] == [
+        "detail.owner",
+        "detail.fused_member",
+        "top.module",
+    ]
+
+
+def test_targets_preserve_explicit_portable_ir_targets() -> None:
+    event = _event(
+        "gdn_attention.qkvz_projection",
+        timestamp=0.0,
+        duration=1.0,
+        stream=1,
+    )
+    event["layer_kind"] = "gdn"
+    event["ir_targets"] = [
+        "gdn_attention.ba_projection",
+        "gdn_moe_block.attention",
+        "stack.gdn_layer",
+        "top.decoder_stack",
+    ]
+
+    assert timeline_targets(event) == [
+        "gdn_attention.qkvz_projection",
+        "gdn_attention.ba_projection",
+        "gdn_moe_block.attention",
+        "stack.gdn_layer",
+        "top.decoder_stack",
+    ]
+
+
 def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
+    event = _event(
+        "linear_attention.recurrent_update",
+        timestamp=1.0,
+        duration=2.0,
+        stream=7,
+    )
+    event["eager_event_ids"] = ["eager-r0-k42", "eager-r0-k43"]
     artifact = build_timeline_artifact(
         profile_id="p",
         phase="decode",
@@ -90,7 +251,7 @@ def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
             "step_index": 0,
             "trace_start_us": 0.0,
             "duration_us": 10.0,
-            "events": [_event("linear_attention.recurrent_update", timestamp=1.0, duration=2.0, stream=7)],
+            "events": [event],
         }],
         timing_summary={},
         raw_trace={},
@@ -101,6 +262,10 @@ def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
     assert event["segment_id"] == 6
     assert strings[event["occurrence_id"]] == "layer_03.attention"
     assert strings[event["eager_event_id"]] == "eager-r0-k42"
+    assert [strings[index] for index in event["eager_event_ids"]] == [
+        "eager-r0-k42",
+        "eager-r0-k43",
+    ]
 
 
 def test_timeline_persists_explicit_runtime_support_contract() -> None:

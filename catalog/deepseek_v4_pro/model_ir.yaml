@@ -1,0 +1,1056 @@
+schema_version: model-ir.v2
+model_id: deepseek_v4_pro
+model_label: DeepSeek-V4-Pro-0813 FP8/FP4
+ir_version: 2
+semantic_revision: 6
+default_view: top
+default_execution_path: tp8_moe_intermediate_shard
+
+dimensions:
+  B: request batch
+  T: current token count
+  S: cached sequence length
+  H: 7168 hidden width
+  HC: "4 × H = 28672"
+  R: 4 mHC residual streams
+  L: 61 target decoder layers
+  Lcsa: 30 context-sparse attention layers
+  Lhca: 31 hierarchical-compressed attention layers
+  V: 129280 vocabulary entries
+  N: 128 query heads
+  D: 512 query and KV head width
+  Dr: 64 rotary dimensions within each head
+  Dn: 448 non-rotary dimensions within each head
+  Cq: 1536 query latent width
+  Go: 16 output projection groups
+  Co: 1024 output low-rank width per group
+  P: 4 tokens per CSA compression block
+  Ph: 128 tokens per HCA compression block
+  Ni: 64 CSA indexer heads
+  Di: 128 CSA indexer head width
+  Ki: 1024 selected compressed CSA blocks
+  W: 128-token exact sliding window
+  E: 384 routed experts
+  K: 6 routed experts selected per token
+  I: 3072 expert intermediate width
+  M: 3 DSpark draft stages
+  Dm: 512 DSpark Markov rank
+  G: 5 DSpark draft positions
+
+facts:
+  checkpoint: deepseek-ai/DeepSeek-V4-Pro-0813
+  checkpoint_revision: 72e1d3230f6c080a530b0a1d46f8eb4602340597
+  checkpoint_config_sha256: 9dd2a89255469e120b333668ef5a169b7ae46c00f6bbab786bf0be457546aec0
+  architecture: DeepseekV4ForCausalLM
+  model_type: deepseek_v4
+  scope: target_text_model_plus_attached_dspark
+  maximum_context_length: 1048576
+  target_layers: 61
+  csa_layers: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60]
+  hca_layers: [0, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59]
+  csa_compression_ratio: 4
+  hca_compression_ratio: 128
+  csa_compression_overlap: true
+  hca_compression_overlap: false
+  attention_window: 128
+  query_heads: 128
+  kv_heads: 1
+  head_dim: 512
+  rope_head_dim: 64
+  query_lora_rank: 1536
+  output_groups: 16
+  output_lora_rank: 1024
+  indexer_heads: 64
+  indexer_head_dim: 128
+  indexer_topk_compressed_blocks: 1024
+  routed_experts: 384
+  selected_experts: 6
+  shared_experts: 1
+  expert_intermediate_size: 3072
+  hash_router_layers: [0, 1, 2]
+  learned_router_layers: "3..60"
+  router_score: sqrt_softplus
+  routed_scaling_factor: 2.5
+  swiglu_limit: 10.0
+  mhc_streams: 4
+  mhc_sinkhorn_iterations: 20
+  mhc_epsilon: 0.000001
+  dspark_stages: 3
+  dspark_block_size: 5
+  dspark_noise_token_id: 128799
+  dspark_target_layer_ids: [58, 59, 60]
+  dspark_markov_rank: 512
+  target_generation_mode_for_stage1: autoregressive_without_dspark
+  checkpoint_weight_precision: mixed FP8 E4M3 and FP4 E2M1 routed experts
+  activation_precision: runtime binding and profile fact
+  cache_precision: runtime binding and profile fact
+
+semantic_evidence:
+  official_model_repository: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813
+  official_revision: 72e1d3230f6c080a530b0a1d46f8eb4602340597
+  official_reference_files:
+    - config.json
+    - inference/config.json
+    - inference/model.py
+    - inference/kernel.py
+  official_paper: "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence"
+  review_note: >-
+    The public -0813 release supersedes the preview checkpoint and attaches a
+    three-stage DSpark module. Framework kernels, fusion, tensor-parallel
+    collectives, scheduler behavior, and CUDA Graph capture are intentionally
+    excluded from Model IR and attached only through Execution IR, bindings,
+    and measured profiles.
+
+semantic_coverage:
+  parameter_closure: complete_for_target_text_and_attached_dspark
+  state_closure: complete_for_mhc_csa_hca_compressors_indexer_kv_and_dspark
+  layer_variant_closure: complete_for_30_csa_31_hca_3_hash_router_and_3_dspark_stages
+  operator_dataflow_closure: complete_against_official_reference_72e1d3230f6c
+  config_field_disposition:
+    model_ir:
+      - hidden, vocabulary, layer, head, low-rank, compression, window, and RoPE dimensions
+      - mHC stream count, coefficient equations, Sinkhorn iterations, and residual transitions
+      - CSA learned indexer, HCA deterministic compressed history, MQA, sink, and cache state
+      - hash and learned expert routing, routed/shared expert math, and clamped SwiGLU
+      - DSpark target features, three draft stages, Markov logits, confidence, and outputs
+    execution_ir:
+      - pure TP placement, sharding, collectives, payload layouts, and state ownership
+    binding_profile:
+      - framework source symbols, selected kernels, fusion, scheduler steps, CUDA Graph mode, and timing
+    excluded:
+      - training loss, optimizer state, evaluation sampling policy, tokenizer rendering, and deployment routing
+  implementation_details_excluded:
+    - CUDA, Triton, TileLang, FlashInfer, DeepGEMM, or FlashMLA kernel selection
+    - physical cache page layout and scheduler slot allocation
+    - fused launch decomposition and auxiliary stream scheduling
+    - TP collectives and rank-local expert placement
+
+semantic_contract:
+  version: 1
+  require_explicit_equations: true
+  operations:
+    model.input_ids: {kind: boundary, equation: 'token_ids := request token ids [B,T]'}
+    runtime.model_step_support: {kind: control, equation: 'prepare positions, request slots, cache metadata, and sampling metadata without changing model values'}
+    model.embedding: {kind: embedding, equation: 'X = Embedding[token_ids]'}
+    model.hc_expand: {kind: transform, equation: 'R_0[b,t,r,h] = X[b,t,h] for r in 0..R-1'}
+    model.decoder_stack: {kind: module, equation: 'R_61 = DecoderStack(R_0; 30 CSA layers, 31 HCA layers, MoE in every layer)'}
+    model.final_hc_read: {kind: module, equation: 'h = FinalHCRead(R_61)'}
+    model.final_norm: {kind: normalization, equation: 'y = RMSNorm(h; gamma, epsilon)'}
+    model.lm_head: {kind: projection, equation: 'logits = y W_vocab^T'}
+    model.logits: {kind: boundary, equation: 'response_logits := logits [B,T,V]'}
+    model.optional_dspark: {kind: module, equation: 'draft_ids, draft_logits, confidence = DSpark(target hidden layers 58,59,60) when explicitly enabled'}
+
+    decoder.input: {kind: boundary, equation: 'R_l := layer input residual streams [B,T,R,H]'}
+    decoder.layer_schedule: {kind: control, equation: 'for l=0..60 use CSA iff compress_ratio[l]=4, otherwise HCA with ratio 128'}
+    decoder.attention_mhc_pre: {kind: module, equation: 'x_attn, post_attn, B_attn = MHCPre(R_l)'}
+    decoder.attention_norm: {kind: normalization, equation: 'x_norm = RMSNorm(x_attn)'}
+    decoder.attention_choice: {kind: control, equation: 'delta_attn = CSA(x_norm) on 30 configured layers else HCA(x_norm) on 31 configured layers'}
+    decoder.csa: {kind: module, equation: 'delta_attn = CSA(x_norm, csa_state)'}
+    decoder.hca: {kind: module, equation: 'delta_attn = HCA(x_norm, hca_state)'}
+    decoder.attention_mhc_post: {kind: module, equation: 'R_attn[r] = post_attn[r] delta_attn + sum_s B_attn[r,s] R_l[s]'}
+    decoder.ffn_mhc_pre: {kind: module, equation: 'x_ffn, post_ffn, B_ffn = MHCPre(R_attn)'}
+    decoder.ffn_norm: {kind: normalization, equation: 'x_ffn_norm = RMSNorm(x_ffn)'}
+    decoder.moe: {kind: module, equation: 'delta_ffn = RoutedSharedMoE(x_ffn_norm, token_ids, layer_id)'}
+    decoder.ffn_mhc_post: {kind: module, equation: 'R_(l+1)[r] = post_ffn[r] delta_ffn + sum_s B_ffn[r,s] R_attn[s]'}
+    decoder.output: {kind: boundary, equation: 'R_(l+1) := layer output residual streams [B,T,R,H]'}
+
+    mhc.input: {kind: boundary, equation: 'R := residual streams [B,T,R,H]'}
+    mhc.flatten_rms: {kind: normalization, equation: 'z = vec(R) / sqrt(mean(vec(R)^2) + epsilon_norm)'}
+    mhc.affine: {kind: projection, equation: '[a_raw,c_raw,b_raw] = W_hc z + bias_hc'}
+    mhc.pre_gate: {kind: activation, equation: 'A = sigmoid(scale_A a_raw + base_A) + epsilon_hc'}
+    mhc.post_gate: {kind: activation, equation: 'C = 2 sigmoid(scale_C c_raw + base_C)'}
+    mhc.combine_sinkhorn: {kind: transform, equation: 'B = Sinkhorn_20(exp(scale_B b_raw + base_B)); rows and columns each sum to one'}
+    mhc.read: {kind: reduction, equation: 'x[h] = sum_r A[r] R[r,h]'}
+    mhc.delta: {kind: boundary, equation: 'delta := sublayer result [B,T,H]'}
+    mhc.place: {kind: composition, equation: 'placed[r,h] = C[r] delta[h]'}
+    mhc.mix: {kind: composition, equation: 'mixed[r,h] = sum_s B[r,s] R[s,h]'}
+    mhc.output: {kind: boundary, equation: 'R_next = placed + mixed'}
+
+    final_hc.input: {kind: boundary, equation: 'R := final residual streams [B,T,R,H]'}
+    final_hc.flatten_rms: {kind: normalization, equation: 'z = vec(R) / sqrt(mean(vec(R)^2) + epsilon_norm)'}
+    final_hc.pre_gate: {kind: activation, equation: 'A = sigmoid(scale W z + base) + epsilon_hc'}
+    final_hc.read: {kind: reduction, equation: 'h[h] = sum_r A[r] R[r,h]'}
+    final_hc.output: {kind: boundary, equation: 'h := final target hidden [B,T,H]'}
+
+    attention.input: {kind: boundary, equation: 'x := normalized attention input [B,T,H]'}
+    attention.q_a: {kind: projection, equation: 'q_latent_raw = x W_qa^T'}
+    attention.q_norm: {kind: normalization, equation: 'q_latent = RMSNorm(q_latent_raw)'}
+    attention.q_b: {kind: projection, equation: 'q_heads = reshape(q_latent W_qb^T, [B,T,N,D])'}
+    attention.q_head_norm: {kind: normalization, equation: 'q = q_heads / sqrt(mean(q_heads^2) + epsilon)'}
+    attention.q_rope: {kind: transform, equation: 'q[...,Dn:D] = RoPE(q[...,Dn:D], position)'}
+    attention.window_kv: {kind: projection, equation: 'kv_window = RMSNorm(x W_kv^T); apply RoPE to Dr suffix and quantize Dn prefix'}
+    attention.window_cache: {kind: state, equation: 'window_cache_next = RingAppend(window_cache_prev, kv_window, capacity W)'}
+    attention.window_indices: {kind: control, equation: 'window_ids(t) = max(0,t-W+1)..t represented in the W-slot ring'}
+    attention.index_union: {kind: composition, equation: 'selected_ids = concat(window_ids, compressed_history_ids)'}
+    attention.sparse_mqa: {kind: attention, equation: 'o_h = Softmax(q_h K_selected^T / sqrt(D) with learned sink_h) V_selected'}
+    attention.inverse_rope: {kind: transform, equation: 'o[...,Dn:D] = inverse_RoPE(o[...,Dn:D], position)'}
+    attention.grouped_o_a: {kind: projection, equation: 'u_g = o_group_g W_oa_g^T for g in 0..Go-1'}
+    attention.o_b: {kind: projection, equation: 'delta_attn = concat(u_g) W_ob^T'}
+    attention.output: {kind: boundary, equation: 'delta_attn := attention output [B,T,H]'}
+
+    compressor.input: {kind: boundary, equation: 'x_block := hidden states assigned to one compression block'}
+    compressor.kv_gate_projection: {kind: projection, equation: 'kv_j = x_j W_kv^T; gate_j = x_j W_gate^T + absolute_position_embedding_j'}
+    compressor.overlap_layout: {kind: transform, equation: 'CSA emits current and one-block-shifted length-P windows; HCA emits one non-overlapping length-Ph window'}
+    compressor.softmax_pool: {kind: reduction, equation: 'kv_bar = sum_j softmax_j(gate)_j elementwise_mul kv_j'}
+    compressor.norm_rope: {kind: transform, equation: 'kv_comp = RoPE(RMSNorm(kv_bar)) with Dr rotary suffix'}
+    compressor.state: {kind: state, equation: 'partial_block_state_next = append(partial_block_state, kv_j, gate_j); emit and roll when block completes'}
+    compressor.cache: {kind: state, equation: 'compressed_cache_next = append(compressed_cache_prev, kv_comp)'}
+    compressor.output: {kind: boundary, equation: 'kv_comp := one compressed D-width KV vector per completed block'}
+
+    csa_indexer.input: {kind: boundary, equation: 'x and q_latent_raw := CSA input and shared query latent'}
+    csa_indexer.q: {kind: projection, equation: 'q_i = reshape(q_latent_raw W_iq^T, [B,T,Ni,Di])'}
+    csa_indexer.q_rope_rotate: {kind: transform, equation: 'q_i = FP4(Hadamard(RoPE(q_i)))'}
+    csa_indexer.k_compress: {kind: module, equation: 'k_i = FP4(Hadamard(IndexCompressor_P(x)))'}
+    csa_indexer.weight: {kind: projection, equation: 'alpha_i = x W_weight^T / sqrt(Di Ni)'}
+    csa_indexer.score: {kind: attention, equation: 'score_p = sum_i alpha_i ReLU(q_i dot k_p)'}
+    csa_indexer.topk: {kind: routing, equation: 'block_ids = TopK(score, min(Ki, completed_blocks)) under the causal block mask'}
+    csa_indexer.expand: {kind: transform, equation: 'compressed_history_ids = offset + block_ids; each id addresses one compressed CSA KV vector'}
+    csa_indexer.output: {kind: boundary, equation: 'compressed_history_ids := selected CSA compressed cache positions'}
+
+    hca_history.input: {kind: boundary, equation: 'completed HCA compressed cache length and current position'}
+    hca_history.all_completed: {kind: control, equation: 'compressed_history_ids = offset + [0,1,...,floor((t+1)/Ph)-1] under causal masking'}
+    hca_history.output: {kind: boundary, equation: 'compressed_history_ids := all causally completed HCA blocks'}
+
+    moe.input: {kind: boundary, equation: 'x := normalized MoE input [B,T,H]'}
+    moe.score_projection: {kind: projection, equation: 's_raw = x W_router^T'}
+    moe.sqrt_softplus: {kind: activation, equation: 's = sqrt(softplus(s_raw))'}
+    moe.hash_select: {kind: routing, equation: 'expert_ids = token_to_expert[token_ids] for layer_id in {0,1,2}'}
+    moe.learned_select: {kind: routing, equation: 'expert_ids = TopK(s + correction_bias, K) for layer_id >= 3'}
+    moe.weights: {kind: normalization, equation: 'w_j = 2.5 s[expert_j] / sum_k s[expert_k]; selection bias is excluded from w'}
+    moe.dispatch: {kind: routing, equation: 'x_e = stable group of token copies addressed to each selected expert'}
+    moe.routed_gate_up: {kind: projection, equation: '[g_e,u_e] = x_e [W1_e,W3_e]^T'}
+    moe.routed_activation: {kind: activation, equation: 'm_e = SiLU(min(g_e,10)) elementwise_mul clamp(u_e,-10,10)'}
+    moe.routed_down: {kind: projection, equation: 'y_e = m_e W2_e^T'}
+    moe.routed_combine: {kind: reduction, equation: 'y_routed = sum_j w_j y_expert_j'}
+    moe.shared_gate_up: {kind: projection, equation: '[g_s,u_s] = x [W1_s,W3_s]^T'}
+    moe.shared_activation: {kind: activation, equation: 'm_s = SiLU(min(g_s,10)) elementwise_mul clamp(u_s,-10,10)'}
+    moe.shared_down: {kind: projection, equation: 'y_shared = m_s W2_s^T'}
+    moe.combine: {kind: composition, equation: 'delta_ffn = y_routed + y_shared'}
+    moe.output: {kind: boundary, equation: 'delta_ffn := routed-plus-shared MoE output [B,T,H]'}
+
+    dspark.input: {kind: boundary, equation: 'current token id plus target hidden states from layers 58,59,60'}
+    dspark.target_concat: {kind: composition, equation: 'h_target = concat(mean_R(R_58), mean_R(R_59), mean_R(R_60))'}
+    dspark.target_projection: {kind: projection, equation: 'main_x = RMSNorm(h_target W_main^T)'}
+    dspark.noise_block: {kind: composition, equation: 'draft_ids[0]=current_token; draft_ids[1:G]=noise_token_id'}
+    dspark.embedding: {kind: embedding, equation: 'R_draft = repeat_R(Embedding[draft_ids])'}
+    dspark.stage_schedule: {kind: control, equation: 'apply three sequential DSpark decoder stages; stage 0 owns target projection and stage 2 owns heads'}
+    dspark.stage: {kind: module, equation: 'R_draft_next = DSparkStage(R_draft, main_x)'}
+    dspark.final_hc: {kind: module, equation: 'h_draft = FinalHCRead(R_draft_stage3)'}
+    dspark.norm_lm: {kind: projection, equation: 'draft_logits_base = RMSNorm(h_draft) W_vocab^T'}
+    dspark.markov: {kind: projection, equation: 'markov_logits_i = Embedding_markov[token_i] W_markov^T'}
+    dspark.logit_add: {kind: composition, equation: 'draft_logits_i = draft_logits_base_i + markov_logits_i'}
+    dspark.autoregressive_sample: {kind: control, equation: 'token_(i+1) = Sample(draft_logits_i) for i=0..G-1'}
+    dspark.confidence: {kind: projection, equation: 'confidence_i = Linear_fp32(concat(h_draft_i, markov_embedding_i))'}
+    dspark.output: {kind: boundary, equation: 'draft token ids [B,G+1], logits [B,G,V], confidence [B,G]'}
+
+    dspark_stage.input: {kind: boundary, equation: 'R_draft and main_x := stage residual state and target feature'}
+    dspark_stage.attention_mhc_pre: {kind: module, equation: 'x_attn, post_attn, B_attn = MHCPre(R_draft)'}
+    dspark_stage.attention: {kind: module, equation: 'delta_attn = DSparkAttention(RMSNorm(x_attn), main_x)'}
+    dspark_stage.attention_mhc_post: {kind: module, equation: 'R_attn[r] = post_attn[r] delta_attn + sum_s B_attn[r,s] R_draft[s]'}
+    dspark_stage.ffn_mhc_pre: {kind: module, equation: 'x_ffn, post_ffn, B_ffn = MHCPre(R_attn)'}
+    dspark_stage.ffn_norm: {kind: normalization, equation: 'x_ffn_norm = RMSNorm(x_ffn)'}
+    dspark_stage.moe: {kind: module, equation: 'delta_ffn = RoutedSharedMoE(x_ffn_norm)'}
+    dspark_stage.ffn_mhc_post: {kind: module, equation: 'R_next[r] = post_ffn[r] delta_ffn + sum_s B_ffn[r,s] R_attn[s]'}
+    dspark_stage.output: {kind: boundary, equation: 'R_next := next DSpark residual state'}
+
+    dspark_attention.input: {kind: boundary, equation: 'draft state x plus target feature main_x'}
+    dspark_attention.target_kv: {kind: projection, equation: 'target_kv = QuantNoPE(RoPE(RMSNorm(main_x W_kv^T)))'}
+    dspark_attention.ring_update: {kind: state, equation: 'target_window_cache[t mod W] = target_kv_t'}
+    dspark_attention.draft_qkv: {kind: projection, equation: 'draft q and kv use the same low-rank query and shared-KV equations as target attention'}
+    dspark_attention.fixed_indices: {kind: control, equation: 'selected_ids = all W target-window slots concatenated with the G draft positions'}
+    dspark_attention.sparse_mqa: {kind: attention, equation: 'draft_o = MQA(draft_q, concat(target_window_kv,draft_kv), selected_ids, sink)'}
+    dspark_attention.output_projection: {kind: projection, equation: 'delta_attn = GroupedLowRankOutput(inverse_RoPE(draft_o))'}
+    dspark_attention.output: {kind: boundary, equation: 'delta_attn := DSpark attention output [B,G,H]'}
+
+boundary_contracts:
+  - {parent_node: top.decoder_stack, boundary_mode: exact_node, child_view: decoder_stack, input_shape: "[B,T,R,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: top.final_hc_read, boundary_mode: exact_node, child_view: final_hc_read, input_shape: "[B,T,R,H]", output_shape: "[B,T,H]"}
+  - {parent_node: top.dspark_extension, boundary_mode: external_entry, child_view: dspark_generation, input_shape: "current token ids [B] + sequential draft ids [B,G] + target layer hidden states [B,T,3H]", output_shape: "draft ids [B,G+1] + logits [B,G,V] + confidence [B,G]"}
+  - {parent_node: decoder_stack.attention_mhc_pre, scope_nodes: [decoder_stack.attention_mhc_pre, decoder_stack.attention_mhc_post], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "[B,T,R,H] + attention delta [B,T,H]", handoff_shape: "collapsed [B,T,H] -> attention delta [B,T,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: decoder_stack.csa_attention, boundary_mode: exact_node, child_view: csa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: decoder_stack.hca_attention, boundary_mode: exact_node, child_view: hca_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: decoder_stack.ffn_mhc_pre, scope_nodes: [decoder_stack.ffn_mhc_pre, decoder_stack.ffn_mhc_post], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "[B,T,R,H] + feed-forward delta [B,T,H]", handoff_shape: "collapsed [B,T,H] -> feed-forward delta [B,T,H]", output_shape: "[B,T,R,H]"}
+  - {parent_node: decoder_stack.moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: csa_attention.csa_compressor, boundary_mode: external_entry, child_view: csa_compressor, input_shape: "hidden tokens [B,T,H] grouped into overlapping P-token blocks", output_shape: "compressed KV [B,ceil(S/P),D]"}
+  - {parent_node: csa_attention.indexer, boundary_mode: external_entry, child_view: csa_indexer, input_shape: "x [B,T,H] + query latent [B,T,Cq]", output_shape: "selected block ids [B,T,Ki]"}
+  - {parent_node: hca_attention.hca_compressor, boundary_mode: external_entry, child_view: hca_compressor, input_shape: "hidden tokens [B,T,H] grouped into non-overlapping Ph-token blocks", output_shape: "compressed KV [B,floor(S/Ph),D]"}
+  - {parent_node: hca_attention.history_indices, boundary_mode: external_entry, child_view: hca_history, input_shape: "position [B,T] and completed HCA block count", output_shape: "causal compressed history ids [B,T,floor(S/Ph)]"}
+  - {parent_node: dspark_generation.stage_stack, boundary_mode: exact_node, child_view: dspark_stage, input_shape: "[B,G,R,H] + [B,T,H]", output_shape: "[B,G,R,H]"}
+  - {parent_node: dspark_generation.final_hc, boundary_mode: exact_node, child_view: final_hc_read, input_shape: "draft [B,G,R,H] represented by generic child-token shape [B,T,R,H]", output_shape: "draft [B,G,H] represented by generic child-token shape [B,T,H]"}
+  - {parent_node: dspark_stage.attention_mhc_pre, scope_nodes: [dspark_stage.attention_mhc_pre, dspark_stage.attention_mhc_post], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "draft [B,G,R,H] represented by generic child shape [B,T,R,H]", handoff_shape: "attention delta [B,G,H] represented by generic child shape [B,T,H]", output_shape: "draft [B,G,R,H] represented by generic child-token shape [B,T,R,H]"}
+  - {parent_node: dspark_stage.attention, boundary_mode: external_entry, child_view: dspark_attention, input_shape: "collapsed draft [B,G,H] + target feature [B,T,H]", output_shape: "[B,G,H]"}
+  - {parent_node: dspark_stage.ffn_mhc_pre, scope_nodes: [dspark_stage.ffn_mhc_pre, dspark_stage.ffn_mhc_post], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "draft [B,G,R,H] represented by generic child shape [B,T,R,H]", handoff_shape: "feed-forward delta [B,G,H] represented by generic child shape [B,T,H]", output_shape: "draft [B,G,R,H] represented by generic child-token shape [B,T,R,H]"}
+  - {parent_node: dspark_stage.moe, boundary_mode: exact_node, child_view: moe, input_shape: "draft [B,G,H] represented by generic child-token shape [B,T,H]", output_shape: "draft [B,G,H] represented by generic child-token shape [B,T,H]"}
+
+timing_scope_contracts:
+  - {target_node: decoder_stack.attention_mhc_pre, source_nodes: [mhc_transform.pre_gate, mhc_transform.combine_sinkhorn, mhc_transform.read], event_filter: {substage: attention}, required_occurrence_count: 61, metric_kind: inclusive_event_union, drill_view: mhc_transform}
+  - {target_node: decoder_stack.attention_mhc_post, source_nodes: [mhc_transform.place, mhc_transform.mix], event_filter: {substage: attention}, required_occurrence_count: 61, metric_kind: inclusive_event_union}
+  - {target_node: decoder_stack.ffn_mhc_pre, source_nodes: [mhc_transform.pre_gate, mhc_transform.combine_sinkhorn, mhc_transform.read], event_filter: {substage: feed_forward}, required_occurrence_count: 61, metric_kind: inclusive_event_union, drill_view: mhc_transform}
+  - {target_node: decoder_stack.ffn_mhc_post, source_nodes: [mhc_transform.place, mhc_transform.mix], event_filter: {substage: feed_forward}, required_occurrence_count: 61, metric_kind: inclusive_event_union}
+
+views:
+  top:
+    title: DeepSeek-V4-Pro-0813 target model and optional DSpark attachment
+    nodes:
+      - {id: token_ids, label: "token ids\n[B,T]", shape: io, semantic_op: model.input_ids}
+      - id: runtime_support
+        label: runtime metadata and cache preparation
+        shape: elem
+        semantic_op: runtime.model_step_support
+        semantic_details: {equation_exempt_reason: serving metadata preparation does not transform model values}
+      - id: embedding
+        label: token embedding
+        shape: gemm
+        semantic_op: model.embedding
+        semantic_details: {math: ["X[b,t] = W_embed[token_ids[b,t]]"]}
+      - id: hc_expand
+        label: replicate into four mHC streams
+        shape: elem
+        semantic_op: model.hc_expand
+        semantic_details: {math: ["R_0[b,t,r,h] = X[b,t,h] for r=0..3"]}
+      - {id: decoder_stack, label: "61-layer decoder\n30 CSA + 31 HCA + 61 MoE", shape: block, semantic_op: model.decoder_stack, drill: decoder_stack}
+      - {id: final_hc_read, label: final mHC read, shape: block, semantic_op: model.final_hc_read, drill: final_hc_read}
+      - id: final_norm
+        label: final RMSNorm
+        shape: norm
+        semantic_op: model.final_norm
+        semantic_details: {math: ["y = gamma elementwise_mul h / sqrt(mean(h^2)+1e-6)"]}
+      - id: lm_head
+        label: vocabulary projection
+        shape: gemm
+        semantic_op: model.lm_head
+        semantic_details: {math: ["logits = y W_vocab^T"]}
+      - {id: logits, label: "logits\n[B,T,V]", shape: io, semantic_op: model.logits}
+      - {id: dspark_extension, label: "optional three-stage DSpark\nnot selected in Stage 1", shape: block, semantic_op: model.optional_dspark, drill: dspark_generation}
+    edges:
+      - {from: token_ids, to: runtime_support, identity: request_token_ids, shape: "[B,T]", layout: batch_sequence, dtype: int64, state: ephemeral_input}
+      - {from: runtime_support, to: embedding, identity: prepared_token_ids, shape: "[B,T]", layout: batch_sequence, dtype: int64, state: ephemeral_input}
+      - {from: embedding, to: hc_expand, identity: token_embeddings, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: checkpoint_embedding_dtype, state: ephemeral_activation}
+      - {from: hc_expand, to: decoder_stack, identity: residual_streams_initial, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: decoder_stack, to: final_hc_read, identity: residual_streams_final, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: final_hc_read, to: final_norm, identity: collapsed_final_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: final_norm, to: lm_head, identity: normalized_final_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: lm_head, to: logits, identity: vocabulary_logits, shape: "[B,T,V]", layout: batch_sequence_vocabulary, dtype: logits_dtype, state: ephemeral_output}
+      - {from: decoder_stack, to: dspark_extension, kind: conditional, label: dspark_enabled, identity: target_features_58_59_60, shape: "[B,T,3H]", layout: batch_sequence_concatenated_hidden, dtype: model_activation_dtype, state: captured_optional_state}
+
+  decoder_stack:
+    title: Repeated target decoder layer with explicit CSA/HCA and mHC lifecycles
+    nodes:
+      - {id: stack_in, label: residual streams in, shape: io, semantic_op: decoder.input, boundary_direction: input}
+      - {id: schedule, label: "repeat layers 0..60\nratios from config", shape: block, semantic_op: decoder.layer_schedule}
+      - {id: attention_mhc_pre, label: attention mHC read and coefficients, shape: block, semantic_op: decoder.attention_mhc_pre, drill: mhc_transform}
+      - id: attention_norm
+        label: attention RMSNorm
+        shape: norm
+        semantic_op: decoder.attention_norm
+        semantic_details: {math: ["x_norm = RMSNorm(x_attn)"]}
+      - {id: attention_choice, label: choose CSA or HCA by layer ratio, shape: block, semantic_op: decoder.attention_choice}
+      - {id: csa_attention, label: "CSA branch\n30 layers · ratio 4", shape: block, semantic_op: decoder.csa, drill: csa_attention}
+      - {id: hca_attention, label: "HCA branch\n31 layers · ratio 128", shape: block, semantic_op: decoder.hca, drill: hca_attention}
+      - {id: attention_mhc_post, label: attention mHC place and doubly-stochastic mix, shape: block, semantic_op: decoder.attention_mhc_post}
+      - {id: ffn_mhc_pre, label: feed-forward mHC read and coefficients, shape: block, semantic_op: decoder.ffn_mhc_pre, drill: mhc_transform}
+      - id: ffn_norm
+        label: feed-forward RMSNorm
+        shape: norm
+        semantic_op: decoder.ffn_norm
+        semantic_details: {math: ["x_ffn_norm = RMSNorm(x_ffn)"]}
+      - {id: moe, label: "routed plus shared MoE\nhash first 3 · learned thereafter", shape: block, semantic_op: decoder.moe, drill: moe}
+      - {id: ffn_mhc_post, label: feed-forward mHC place and doubly-stochastic mix, shape: block, semantic_op: decoder.ffn_mhc_post}
+      - {id: stack_out, label: residual streams out, shape: io, semantic_op: decoder.output, boundary_direction: output}
+    edges:
+      - {from: stack_in, to: schedule, identity: layer_residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: schedule, to: attention_mhc_pre, identity: scheduled_layer_residuals, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: attention_mhc_pre, to: attention_norm, identity: collapsed_attention_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_norm, to: attention_choice, identity: normalized_attention_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_choice, to: csa_attention, kind: conditional, label: compress_ratio_4, identity: csa_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_choice, to: hca_attention, kind: conditional, label: compress_ratio_128, identity: hca_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: csa_attention, to: attention_mhc_post, kind: conditional, label: csa_layer, identity: attention_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: hca_attention, to: attention_mhc_post, kind: conditional, label: hca_layer, identity: attention_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_mhc_post, to: ffn_mhc_pre, identity: post_attention_residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: ffn_mhc_pre, to: ffn_norm, identity: collapsed_ffn_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ffn_norm, to: moe, identity: normalized_ffn_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: moe, to: ffn_mhc_post, identity: ffn_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ffn_mhc_post, to: stack_out, identity: next_layer_residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+
+  mhc_transform:
+    title: One mHC read and update transition
+    nodes:
+      - {id: streams, label: residual streams, shape: io, semantic_op: mhc.input, boundary_direction: input}
+      - id: flatten_rms
+        label: FP32 flattened RMS statistic
+        shape: norm
+        semantic_op: mhc.flatten_rms
+        semantic_details: {math: ["z = vec(R) / sqrt(mean(vec(R)^2)+epsilon_norm)"]}
+      - id: affine
+        label: dynamic coefficient projection plus static bases
+        shape: gemm
+        semantic_op: mhc.affine
+        semantic_details: {math: ["raw = W_hc z + base_hc"]}
+      - id: pre_gate
+        label: positive read weights
+        shape: elem
+        semantic_op: mhc.pre_gate
+        semantic_details: {math: ["A = sigmoid(scale_A raw_A + base_A) + epsilon_hc"]}
+      - id: post_gate
+        label: bounded placement weights
+        shape: elem
+        semantic_op: mhc.post_gate
+        semantic_details: {math: ["C = 2 sigmoid(scale_C raw_C + base_C)"]}
+      - id: combine_sinkhorn
+        label: 20-step doubly-stochastic combination
+        shape: elem
+        semantic_op: mhc.combine_sinkhorn
+        semantic_details:
+          math: ["B = Sinkhorn20(exp(scale_B raw_B + base_B))"]
+          invariants: ["sum_s B[r,s] = 1", "sum_r B[r,s] = 1"]
+      - id: read
+        label: weighted residual-stream read
+        shape: elem
+        semantic_op: mhc.read
+        semantic_details: {math: ["x = sum_r A[r] R[r]"]}
+      - {id: delta, label: sublayer delta, shape: io, semantic_op: mhc.delta, boundary_direction: handoff}
+      - id: place
+        label: place sublayer delta into streams
+        shape: elem
+        semantic_op: mhc.place
+        semantic_details: {math: ["placed[r] = C[r] delta"]}
+      - id: mix
+        label: doubly-stochastic residual transition
+        shape: elem
+        semantic_op: mhc.mix
+        semantic_details: {math: ["mixed[r] = sum_s B[r,s] R[s]"]}
+      - {id: updated_streams, label: updated residual streams, shape: io, semantic_op: mhc.output, boundary_direction: output}
+    edges:
+      - {from: streams, to: flatten_rms, identity: residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: flatten_rms, to: affine, identity: normalized_flat_streams, shape: "[B,T,HC]", layout: batch_sequence_flat_stream_hidden, dtype: fp32, state: ephemeral_activation}
+      - {from: affine, to: pre_gate, identity: pre_logits, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: affine, to: post_gate, identity: post_logits, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: affine, to: combine_sinkhorn, identity: combination_logits, shape: "[B,T,R,R]", layout: batch_sequence_destination_source_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: pre_gate, to: read, identity: pre_weights, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: read, to: delta, kind: control, identity: collapsed_sublayer_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: delta, to: place, identity: sublayer_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: post_gate, to: place, identity: post_weights, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: combine_sinkhorn, to: mix, identity: combination_matrix, shape: "[B,T,R,R]", layout: batch_sequence_destination_source_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: place, to: updated_streams, identity: placed_delta, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: mix, to: updated_streams, identity: mixed_residuals, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+
+  final_hc_read:
+    title: Final learned read from four residual streams
+    nodes:
+      - {id: streams, label: final residual streams, shape: io, semantic_op: final_hc.input, boundary_direction: input}
+      - id: flatten_rms
+        label: FP32 flattened RMS statistic
+        shape: norm
+        semantic_op: final_hc.flatten_rms
+        semantic_details: {math: ["z = vec(R) / sqrt(mean(vec(R)^2)+epsilon_norm)"]}
+      - id: pre_gate
+        label: learned positive stream weights
+        shape: gemm
+        semantic_op: final_hc.pre_gate
+        semantic_details: {math: ["A = sigmoid(scale W z + base) + epsilon_hc"]}
+      - id: read
+        label: weighted stream reduction
+        shape: elem
+        semantic_op: final_hc.read
+        semantic_details: {math: ["h = sum_r A[r] R[r]"]}
+      - {id: hidden, label: final hidden, shape: io, semantic_op: final_hc.output, boundary_direction: output}
+    edges:
+      - {from: streams, to: flatten_rms, identity: final_residual_streams, shape: "[B,T,R,H]", layout: batch_sequence_stream_hidden, dtype: model_activation_dtype, state: residual_stream_state}
+      - {from: flatten_rms, to: pre_gate, identity: normalized_final_streams, shape: "[B,T,HC]", layout: batch_sequence_flat_stream_hidden, dtype: fp32, state: ephemeral_activation}
+      - {from: pre_gate, to: read, identity: final_pre_weights, shape: "[B,T,R]", layout: batch_sequence_stream, dtype: fp32, state: ephemeral_activation}
+      - {from: read, to: hidden, identity: final_hidden, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  csa_attention:
+    title: Context Sparse Attention with learned compressed-block indexer
+    nodes:
+      - {id: attn_in, label: normalized CSA input, shape: io, semantic_op: attention.input, boundary_direction: input}
+      - id: q_a
+        label: query latent projection
+        shape: gemm
+        semantic_op: attention.q_a
+        semantic_details: {math: ["q_latent_raw = x W_qa^T"]}
+      - id: q_norm
+        label: query latent RMSNorm
+        shape: norm
+        semantic_op: attention.q_norm
+        semantic_details: {math: ["q_latent = RMSNorm(q_latent_raw)"]}
+      - id: q_b
+        label: 128 query-head expansion
+        shape: gemm
+        semantic_op: attention.q_b
+        semantic_details: {math: ["q_heads = reshape(q_latent W_qb^T, [B,T,N,D])"]}
+      - id: q_head_norm
+        label: per-head RMS normalization
+        shape: norm
+        semantic_op: attention.q_head_norm
+        semantic_details: {math: ["q = q_heads / sqrt(mean(q_heads^2)+epsilon)"]}
+      - id: q_rope
+        label: partial RoPE on 64 dimensions
+        shape: elem
+        semantic_op: attention.q_rope
+        semantic_details: {math: ["q[...,Dn:D] = RoPE(q[...,Dn:D], position)"]}
+      - id: window_kv
+        label: one-head exact window KV projection
+        shape: gemm
+        semantic_op: attention.window_kv
+        semantic_details: {math: ["kv_window = QuantNoPE(RoPE(RMSNorm(x W_kv^T)))"]}
+      - id: window_cache
+        label: 128-token exact KV ring
+        shape: cache
+        semantic_op: attention.window_cache
+        semantic_details:
+          state: [{name: window_kv, shape: "[B,W,D]", dtype: mixed_fp8_nope_bf16_rope, lifecycle: per_layer_per_request, update: ring append at position modulo W}]
+      - id: window_indices
+        label: causal exact-window indices
+        shape: elem
+        semantic_op: attention.window_indices
+        semantic_details: {math: ["window_ids(t) = max(0,t-W+1)..t"]}
+      - {id: csa_compressor, label: overlapping 4-token main-KV compressor, shape: block, semantic_op: compressor.softmax_pool, drill: csa_compressor}
+      - {id: indexer, label: learned 64-head compressed-block indexer, shape: block, semantic_op: csa_indexer.score, drill: csa_indexer}
+      - id: index_union
+        label: exact window plus selected compressed history
+        shape: elem
+        semantic_op: attention.index_union
+        semantic_details: {math: ["selected_ids = concat(window_ids, selected_compressed_ids)"]}
+      - id: sparse_mqa
+        label: sparse multi-query attention with learned sink
+        shape: attn
+        semantic_op: attention.sparse_mqa
+        semantic_details: {math: ["o_h = Softmax(q_h K_selected^T/sqrt(D), sink_h) V_selected"]}
+      - id: inverse_rope
+        label: inverse RoPE on output suffix
+        shape: elem
+        semantic_op: attention.inverse_rope
+        semantic_details: {math: ["o[...,Dn:D] = inverse_RoPE(o[...,Dn:D])"]}
+      - id: grouped_o_a
+        label: 16-group low-rank output projection
+        shape: gemm
+        semantic_op: attention.grouped_o_a
+        semantic_details: {math: ["u_g = o_group_g W_oa_g^T"]}
+      - id: o_b
+        label: row-composed output projection
+        shape: gemm
+        semantic_op: attention.o_b
+        semantic_details: {math: ["delta_attn = concat(u_g) W_ob^T"]}
+      - {id: attn_out, label: CSA delta, shape: io, semantic_op: attention.output, boundary_direction: output}
+    edges:
+      - {from: attn_in, to: q_a, identity: csa_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a, to: q_norm, identity: query_latent_raw, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_norm, to: q_b, identity: normalized_query_latent, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_b, to: q_head_norm, identity: expanded_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_head_norm, to: q_rope, identity: normalized_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: window_kv, identity: csa_input_for_kv, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: window_kv, to: window_cache, identity: exact_window_kv, shape: "[B,T,D]", layout: batch_sequence_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: token_growing_ring_state}
+      - {from: window_cache, to: window_indices, identity: exact_window_cache, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: attn_in, to: csa_compressor, identity: csa_hidden_for_compression, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a, to: indexer, identity: shared_query_latent_raw, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: indexer, identity: csa_hidden_for_indexer, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: window_indices, to: index_union, identity: exact_window_ids, shape: "[B,T,W]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: indexer, to: index_union, identity: selected_compressed_ids, shape: "[B,T,Ki]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: csa_compressor, to: sparse_mqa, identity: compressed_csa_kv, shape: "[B,ceil(S/P),D]", layout: batch_compressed_sequence_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: window_cache, to: sparse_mqa, identity: exact_window_kv_for_attention, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: q_rope, to: sparse_mqa, identity: positioned_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: index_union, to: sparse_mqa, identity: selected_kv_indices, shape: "[B,T,W+Ki]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: sparse_mqa, to: inverse_rope, identity: attention_head_outputs, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: inverse_rope, to: grouped_o_a, identity: derotated_attention_heads, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: grouped_o_a, to: o_b, identity: grouped_output_latents, shape: "[B,T,Go,Co]", layout: batch_sequence_group_rank, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: o_b, to: attn_out, identity: csa_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  hca_attention:
+    title: Hierarchical Compressed Attention over exact window and all completed 128-token blocks
+    nodes:
+      - {id: attn_in, label: normalized HCA input, shape: io, semantic_op: attention.input, boundary_direction: input}
+      - id: q_a
+        label: query latent projection
+        shape: gemm
+        semantic_op: attention.q_a
+        semantic_details: {math: ["q_latent_raw = x W_qa^T"]}
+      - id: q_norm
+        label: query latent RMSNorm
+        shape: norm
+        semantic_op: attention.q_norm
+        semantic_details: {math: ["q_latent = RMSNorm(q_latent_raw)"]}
+      - id: q_b
+        label: 128 query-head expansion
+        shape: gemm
+        semantic_op: attention.q_b
+        semantic_details: {math: ["q_heads = reshape(q_latent W_qb^T, [B,T,N,D])"]}
+      - id: q_head_norm
+        label: per-head RMS normalization
+        shape: norm
+        semantic_op: attention.q_head_norm
+        semantic_details: {math: ["q = q_heads / sqrt(mean(q_heads^2)+epsilon)"]}
+      - id: q_rope
+        label: partial RoPE on 64 dimensions
+        shape: elem
+        semantic_op: attention.q_rope
+        semantic_details: {math: ["q[...,Dn:D] = RoPE(q[...,Dn:D], position)"]}
+      - id: window_kv
+        label: one-head exact window KV projection
+        shape: gemm
+        semantic_op: attention.window_kv
+        semantic_details: {math: ["kv_window = QuantNoPE(RoPE(RMSNorm(x W_kv^T)))"]}
+      - id: window_cache
+        label: 128-token exact KV ring
+        shape: cache
+        semantic_op: attention.window_cache
+        semantic_details:
+          state: [{name: window_kv, shape: "[B,W,D]", dtype: mixed_fp8_nope_bf16_rope, lifecycle: per_layer_per_request, update: ring append at position modulo W}]
+      - id: window_indices
+        label: causal exact-window indices
+        shape: elem
+        semantic_op: attention.window_indices
+        semantic_details: {math: ["window_ids(t) = max(0,t-W+1)..t"]}
+      - {id: hca_compressor, label: non-overlapping 128-token main-KV compressor, shape: block, semantic_op: compressor.softmax_pool, drill: hca_compressor}
+      - {id: history_indices, label: all causally completed HCA blocks, shape: block, semantic_op: hca_history.all_completed, drill: hca_history}
+      - id: index_union
+        label: exact window plus hierarchical compressed history
+        shape: elem
+        semantic_op: attention.index_union
+        semantic_details: {math: ["selected_ids = concat(window_ids, all_completed_hca_ids)"]}
+      - id: sparse_mqa
+        label: sparse multi-query attention with learned sink
+        shape: attn
+        semantic_op: attention.sparse_mqa
+        semantic_details: {math: ["o_h = Softmax(q_h K_selected^T/sqrt(D), sink_h) V_selected"]}
+      - id: inverse_rope
+        label: inverse RoPE on output suffix
+        shape: elem
+        semantic_op: attention.inverse_rope
+        semantic_details: {math: ["o[...,Dn:D] = inverse_RoPE(o[...,Dn:D])"]}
+      - id: grouped_o_a
+        label: 16-group low-rank output projection
+        shape: gemm
+        semantic_op: attention.grouped_o_a
+        semantic_details: {math: ["u_g = o_group_g W_oa_g^T"]}
+      - id: o_b
+        label: row-composed output projection
+        shape: gemm
+        semantic_op: attention.o_b
+        semantic_details: {math: ["delta_attn = concat(u_g) W_ob^T"]}
+      - {id: attn_out, label: HCA delta, shape: io, semantic_op: attention.output, boundary_direction: output}
+    edges:
+      - {from: attn_in, to: q_a, identity: hca_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_a, to: q_norm, identity: query_latent_raw, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_norm, to: q_b, identity: normalized_query_latent, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_b, to: q_head_norm, identity: expanded_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_head_norm, to: q_rope, identity: normalized_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attn_in, to: window_kv, identity: hca_input_for_kv, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: window_kv, to: window_cache, identity: exact_window_kv, shape: "[B,T,D]", layout: batch_sequence_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: token_growing_ring_state}
+      - {from: window_cache, to: window_indices, identity: exact_window_cache, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: attn_in, to: hca_compressor, identity: hca_hidden_for_compression, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: window_indices, to: index_union, identity: exact_window_ids, shape: "[B,T,W]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: history_indices, to: index_union, identity: completed_hca_ids, shape: "[B,T,floor(S/Ph)]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: hca_compressor, to: sparse_mqa, identity: compressed_hca_kv, shape: "[B,floor(S/Ph),D]", layout: batch_compressed_sequence_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: window_cache, to: sparse_mqa, identity: exact_window_kv_for_attention, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+      - {from: q_rope, to: sparse_mqa, identity: positioned_queries, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: index_union, to: sparse_mqa, identity: selected_kv_indices, shape: "[B,T,W+floor(S/Ph)]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+      - {from: sparse_mqa, to: inverse_rope, identity: attention_head_outputs, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: inverse_rope, to: grouped_o_a, identity: derotated_attention_heads, shape: "[B,T,N,D]", layout: batch_sequence_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: grouped_o_a, to: o_b, identity: grouped_output_latents, shape: "[B,T,Go,Co]", layout: batch_sequence_group_rank, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: o_b, to: attn_out, identity: hca_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  csa_compressor:
+    title: Overlapping ratio-4 gated compressor for CSA main KV
+    nodes:
+      - {id: hidden_block, label: hidden tokens for compression, shape: io, semantic_op: compressor.input, boundary_direction: input}
+      - id: kv_gate_projection
+        label: dual KV and gate projections with absolute position embedding
+        shape: gemm
+        semantic_op: compressor.kv_gate_projection
+        semantic_details: {math: ["kv_j=x_j W_kv^T; gate_j=x_j W_gate^T+APE_j"]}
+      - id: overlap_layout
+        label: current and one-block-shifted windows
+        shape: elem
+        semantic_op: compressor.overlap_layout
+        semantic_details: {math: ["windows = {x[4p:4p+4], x[4p-4:4p]} with boundary masking"]}
+      - id: softmax_pool
+        label: per-dimension softmax gated pooling
+        shape: elem
+        semantic_op: compressor.softmax_pool
+        semantic_details: {math: ["kv_bar = sum_j softmax_j(gate)_j elementwise_mul kv_j"]}
+      - id: norm_rope
+        label: RMSNorm partial RoPE and non-RoPE quantization
+        shape: norm
+        semantic_op: compressor.norm_rope
+        semantic_details: {math: ["kv_comp = QuantNoPE(RoPE(RMSNorm(kv_bar)))"]}
+      - id: partial_state
+        label: two-window incremental KV and score state
+        shape: cache
+        semantic_op: compressor.state
+        semantic_details:
+          state:
+            - {name: kv_state, shape: "[B,2P,2D]", dtype: fp32, lifecycle: per_layer_per_request, update: append and roll each completed P-token block}
+            - {name: score_state, shape: "[B,2P,2D]", dtype: fp32, lifecycle: per_layer_per_request, update: append APE-adjusted scores and roll}
+      - id: compressed_cache
+        label: token-growing compressed CSA KV cache
+        shape: cache
+        semantic_op: compressor.cache
+        semantic_details:
+          state: [{name: compressed_kv, shape: "[B,ceil(S/P),D]", dtype: mixed_fp8_nope_bf16_rope, lifecycle: per_layer_per_request, update: append one vector per completed block}]
+      - {id: compressed_kv, label: compressed CSA KV, shape: io, semantic_op: compressor.output, boundary_direction: output}
+    edges:
+      - {from: hidden_block, to: kv_gate_projection, identity: csa_compressor_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: kv_gate_projection, to: overlap_layout, identity: projected_kv_and_gate, shape: "[B,T,2D]", layout: batch_sequence_dual_compression_channel, dtype: fp32, state: ephemeral_activation}
+      - {from: overlap_layout, to: softmax_pool, identity: overlapping_compression_windows, shape: "[B,blocks,2P,D]", layout: batch_block_window_dimension, dtype: fp32, state: ephemeral_activation}
+      - {from: partial_state, to: softmax_pool, identity: incremental_compression_state, shape: "[B,2P,2D]", layout: batch_window_dual_channel_dimension, dtype: fp32, state: per_layer_per_request_state}
+      - {from: softmax_pool, to: norm_rope, identity: pooled_csa_kv, shape: "[B,completed,D]", layout: batch_compressed_sequence_dimension, dtype: fp32, state: ephemeral_activation}
+      - {from: norm_rope, to: compressed_cache, identity: normalized_csa_kv, shape: "[B,completed,D]", layout: batch_compressed_sequence_dimension, dtype: mixed_fp8_nope_bf16_rope, state: cache_update}
+      - {from: compressed_cache, to: compressed_kv, identity: csa_compressed_cache_view, shape: "[B,ceil(S/P),D]", layout: batch_compressed_sequence_dimension, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+
+  hca_compressor:
+    title: Non-overlapping ratio-128 gated compressor for HCA main KV
+    nodes:
+      - {id: hidden_block, label: hidden tokens for compression, shape: io, semantic_op: compressor.input, boundary_direction: input}
+      - id: kv_gate_projection
+        label: KV and gate projections with absolute position embedding
+        shape: gemm
+        semantic_op: compressor.kv_gate_projection
+        semantic_details: {math: ["kv_j=x_j W_kv^T; gate_j=x_j W_gate^T+APE_j"]}
+      - id: overlap_layout
+        label: one non-overlapping 128-token window
+        shape: elem
+        semantic_op: compressor.overlap_layout
+        semantic_details: {math: ["block_p = x[128p:128p+128]"]}
+      - id: softmax_pool
+        label: per-dimension softmax gated pooling
+        shape: elem
+        semantic_op: compressor.softmax_pool
+        semantic_details: {math: ["kv_bar = sum_j softmax_j(gate)_j elementwise_mul kv_j"]}
+      - id: norm_rope
+        label: RMSNorm partial RoPE and non-RoPE quantization
+        shape: norm
+        semantic_op: compressor.norm_rope
+        semantic_details: {math: ["kv_comp = QuantNoPE(RoPE(RMSNorm(kv_bar)))"]}
+      - id: partial_state
+        label: one-window incremental KV and score state
+        shape: cache
+        semantic_op: compressor.state
+        semantic_details:
+          state:
+            - {name: kv_state, shape: "[B,Ph,D]", dtype: fp32, lifecycle: per_layer_per_request, update: append and clear each completed Ph-token block}
+            - {name: score_state, shape: "[B,Ph,D]", dtype: fp32, lifecycle: per_layer_per_request, update: append APE-adjusted scores and clear}
+      - id: compressed_cache
+        label: token-growing compressed HCA KV cache
+        shape: cache
+        semantic_op: compressor.cache
+        semantic_details:
+          state: [{name: compressed_kv, shape: "[B,floor(S/Ph),D]", dtype: mixed_fp8_nope_bf16_rope, lifecycle: per_layer_per_request, update: append one vector per completed block}]
+      - {id: compressed_kv, label: compressed HCA KV, shape: io, semantic_op: compressor.output, boundary_direction: output}
+    edges:
+      - {from: hidden_block, to: kv_gate_projection, identity: hca_compressor_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: kv_gate_projection, to: overlap_layout, identity: projected_kv_and_gate, shape: "[B,T,2D]", layout: batch_sequence_dual_compression_channel, dtype: fp32, state: ephemeral_activation}
+      - {from: overlap_layout, to: softmax_pool, identity: nonoverlapping_compression_windows, shape: "[B,blocks,Ph,D]", layout: batch_block_window_dimension, dtype: fp32, state: ephemeral_activation}
+      - {from: partial_state, to: softmax_pool, identity: incremental_compression_state, shape: "[B,Ph,2D]", layout: batch_window_dual_channel_dimension, dtype: fp32, state: per_layer_per_request_state}
+      - {from: softmax_pool, to: norm_rope, identity: pooled_hca_kv, shape: "[B,completed,D]", layout: batch_compressed_sequence_dimension, dtype: fp32, state: ephemeral_activation}
+      - {from: norm_rope, to: compressed_cache, identity: normalized_hca_kv, shape: "[B,completed,D]", layout: batch_compressed_sequence_dimension, dtype: mixed_fp8_nope_bf16_rope, state: cache_update}
+      - {from: compressed_cache, to: compressed_kv, identity: hca_compressed_cache_view, shape: "[B,floor(S/Ph),D]", layout: batch_compressed_sequence_dimension, dtype: mixed_fp8_nope_bf16_rope, state: per_layer_per_request_cache}
+
+  csa_indexer:
+    title: Learned CSA compressed-block selector
+    nodes:
+      - {id: indexer_in, label: CSA hidden and shared query latent, shape: io, semantic_op: csa_indexer.input, boundary_direction: input}
+      - id: q_projection
+        label: 64-head index-query projection
+        shape: gemm
+        semantic_op: csa_indexer.q
+        semantic_details: {math: ["q_i = reshape(q_latent_raw W_iq^T,[B,T,Ni,Di])"]}
+      - id: q_rope_rotate
+        label: partial RoPE Hadamard rotation and FP4 quantization
+        shape: elem
+        semantic_op: csa_indexer.q_rope_rotate
+        semantic_details: {math: ["q_i = FP4(Hadamard(RoPE(q_i)))"]}
+      - id: k_compress
+        label: independent overlapping index-key compressor
+        shape: block
+        semantic_op: csa_indexer.k_compress
+        semantic_details: {math: ["k_p = FP4(Hadamard(Compressor_P(x)_p))"]}
+      - id: weight_projection
+        label: per-token index-head weights
+        shape: gemm
+        semantic_op: csa_indexer.weight
+        semantic_details: {math: ["alpha_i = (x W_weight^T)_i / sqrt(Di Ni)"]}
+      - id: score
+        label: ReLU weighted index score
+        shape: attn
+        semantic_op: csa_indexer.score
+        semantic_details: {math: ["score_p = sum_i alpha_i ReLU(q_i dot k_p)"]}
+      - id: causal_topk
+        label: causal top-1024 compressed blocks
+        shape: elem
+        semantic_op: csa_indexer.topk
+        semantic_details: {math: ["block_ids = TopK(mask_causal(score), min(Ki,completed_blocks))"]}
+      - id: expand
+        label: convert blocks to main compressed-cache positions
+        shape: elem
+        semantic_op: csa_indexer.expand
+        semantic_details: {math: ["compressed_history_ids = block_ids + exact_window_offset"]}
+      - {id: selected_ids, label: selected CSA compressed positions, shape: io, semantic_op: csa_indexer.output, boundary_direction: output}
+    edges:
+      - {from: indexer_in, to: q_projection, identity: query_latent_raw, shape: "[B,T,Cq]", layout: batch_sequence_query_latent, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_projection, to: q_rope_rotate, identity: index_queries, shape: "[B,T,Ni,Di]", layout: batch_sequence_index_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: indexer_in, to: k_compress, identity: csa_hidden_for_index_key, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: indexer_in, to: weight_projection, identity: csa_hidden_for_head_weight, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: q_rope_rotate, to: score, identity: quantized_index_queries, shape: "[B,T,Ni,Di]", layout: batch_sequence_index_head_dimension, dtype: fp4_e2m1, state: ephemeral_activation}
+      - {from: k_compress, to: score, identity: compressed_index_keys, shape: "[B,ceil(S/P),Di]", layout: batch_compressed_sequence_index_dimension, dtype: fp4_e2m1, state: per_layer_per_request_cache}
+      - {from: weight_projection, to: score, identity: index_head_weights, shape: "[B,T,Ni]", layout: batch_sequence_index_head, dtype: bf16, state: ephemeral_activation}
+      - {from: score, to: causal_topk, identity: block_scores, shape: "[B,T,ceil(S/P)]", layout: batch_sequence_compressed_position, dtype: fp32_accumulator, state: ephemeral_activation}
+      - {from: causal_topk, to: expand, identity: selected_block_ids, shape: "[B,T,Ki]", layout: batch_sequence_index, dtype: int64, state: ephemeral_metadata}
+      - {from: expand, to: selected_ids, identity: selected_compressed_cache_ids, shape: "[B,T,Ki]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+
+  hca_history:
+    title: Deterministic HCA compressed-history selection
+    nodes:
+      - {id: position, label: position and completed blocks, shape: io, semantic_op: hca_history.input, boundary_direction: input}
+      - id: all_completed
+        label: enumerate all causally completed 128-token blocks
+        shape: elem
+        semantic_op: hca_history.all_completed
+        semantic_details: {math: ["ids = offset + arange(floor((t+1)/Ph)) with causal mask"]}
+      - {id: selected_ids, label: completed HCA compressed positions, shape: io, semantic_op: hca_history.output, boundary_direction: output}
+    edges:
+      - {from: position, to: all_completed, identity: current_position, shape: "[B,T]", layout: batch_sequence, dtype: int64, state: ephemeral_metadata}
+      - {from: all_completed, to: selected_ids, identity: completed_hca_ids, shape: "[B,T,floor(S/Ph)]", layout: batch_sequence_index, dtype: int32, state: ephemeral_metadata}
+
+  moe:
+    title: Hash/learned routed experts plus one shared expert
+    nodes:
+      - {id: moe_in, label: normalized MoE input, shape: io, semantic_op: moe.input, boundary_direction: input}
+      - id: score_projection
+        label: 384-expert router projection
+        shape: gemm
+        semantic_op: moe.score_projection
+        semantic_details: {math: ["s_raw = x W_router^T"]}
+      - id: sqrt_softplus
+        label: square-root softplus scores
+        shape: elem
+        semantic_op: moe.sqrt_softplus
+        semantic_details: {math: ["s = sqrt(softplus(s_raw))"]}
+      - id: hash_select
+        label: token-id hash routing on layers 0 to 2
+        shape: elem
+        semantic_op: moe.hash_select
+        semantic_details: {math: ["expert_ids = token_to_expert[token_ids]"]}
+      - id: learned_select
+        label: bias-corrected learned top-6 on layers 3 to 60
+        shape: elem
+        semantic_op: moe.learned_select
+        semantic_details: {math: ["expert_ids = TopK(s + correction_bias,K)"]}
+      - id: weights
+        label: normalized unbiased routed weights
+        shape: elem
+        semantic_op: moe.weights
+        semantic_details: {math: ["w = 2.5 gather(s,expert_ids) / sum(gather(s,expert_ids))"]}
+      - id: dispatch
+        label: duplicate and group tokens by expert
+        shape: elem
+        semantic_op: moe.dispatch
+        semantic_details: {math: ["x_e = StableGroupByExpert(x,expert_ids)"]}
+      - id: routed_gate_up
+        label: selected routed-expert gate and up projections
+        shape: gemm
+        semantic_op: moe.routed_gate_up
+        semantic_details: {math: ["[g_e,u_e] = x_e [W1_e,W3_e]^T"]}
+      - id: routed_activation
+        label: clamped routed SwiGLU
+        shape: elem
+        semantic_op: moe.routed_activation
+        semantic_details: {math: ["m_e = SiLU(min(g_e,10)) elementwise_mul clamp(u_e,-10,10)"]}
+      - id: routed_down
+        label: selected routed-expert down projections
+        shape: gemm
+        semantic_op: moe.routed_down
+        semantic_details: {math: ["y_e = m_e W2_e^T"]}
+      - id: routed_combine
+        label: weighted routed-expert reduction
+        shape: elem
+        semantic_op: moe.routed_combine
+        semantic_details: {math: ["y_routed = sum_j w_j y_expert_j"]}
+      - id: shared_gate_up
+        label: shared-expert gate and up projections
+        shape: gemm
+        semantic_op: moe.shared_gate_up
+        semantic_details: {math: ["[g_s,u_s] = x [W1_s,W3_s]^T"]}
+      - id: shared_activation
+        label: clamped shared SwiGLU
+        shape: elem
+        semantic_op: moe.shared_activation
+        semantic_details: {math: ["m_s = SiLU(min(g_s,10)) elementwise_mul clamp(u_s,-10,10)"]}
+      - id: shared_down
+        label: shared-expert down projection
+        shape: gemm
+        semantic_op: moe.shared_down
+        semantic_details: {math: ["y_shared = m_s W2_s^T"]}
+      - id: combine
+        label: routed plus shared sum
+        shape: elem
+        semantic_op: moe.combine
+        semantic_details: {math: ["delta_ffn = y_routed + y_shared"]}
+      - {id: moe_out, label: MoE delta, shape: io, semantic_op: moe.output, boundary_direction: output}
+    edges:
+      - {from: moe_in, to: score_projection, identity: moe_input_for_router, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: score_projection, to: sqrt_softplus, identity: raw_router_scores, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: sqrt_softplus, to: hash_select, kind: conditional, label: layer_lt_3, identity: router_scores_hash_layers, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: sqrt_softplus, to: learned_select, kind: conditional, label: layer_ge_3, identity: router_scores_learned_layers, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: hash_select, to: weights, kind: conditional, label: layer_lt_3, identity: hash_expert_ids, shape: "[B,T,K]", layout: batch_sequence_route, dtype: int32, state: ephemeral_metadata}
+      - {from: learned_select, to: weights, kind: conditional, label: layer_ge_3, identity: learned_expert_ids, shape: "[B,T,K]", layout: batch_sequence_route, dtype: int64, state: ephemeral_metadata}
+      - {from: sqrt_softplus, to: weights, identity: unbiased_router_scores, shape: "[B,T,E]", layout: batch_sequence_expert, dtype: fp32, state: ephemeral_activation}
+      - {from: weights, to: dispatch, identity: expert_ids_and_weights, shape: "[B,T,K] ids + [B,T,K] weights", layout: batch_sequence_route, dtype: int32_plus_fp32, state: ephemeral_metadata}
+      - {from: moe_in, to: dispatch, identity: token_activations, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dispatch, to: routed_gate_up, identity: expert_grouped_tokens, shape: "[N_e,H] per selected expert", layout: expert_grouped_token_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_gate_up, to: routed_activation, identity: routed_gate_up_values, shape: "[N_e,2I]", layout: expert_grouped_token_gate_up, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_activation, to: routed_down, identity: routed_intermediate, shape: "[N_e,I]", layout: expert_grouped_token_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_down, to: routed_combine, identity: routed_expert_outputs, shape: "[B,T,K,H]", layout: batch_sequence_route_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: weights, to: routed_combine, identity: routed_weights, shape: "[B,T,K]", layout: batch_sequence_route, dtype: fp32, state: ephemeral_activation}
+      - {from: moe_in, to: shared_gate_up, identity: shared_expert_input, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_gate_up, to: shared_activation, identity: shared_gate_up_values, shape: "[B,T,2I]", layout: batch_sequence_gate_up, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_activation, to: shared_down, identity: shared_intermediate, shape: "[B,T,I]", layout: batch_sequence_intermediate, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: routed_combine, to: combine, identity: routed_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: shared_down, to: combine, identity: shared_output, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: combine, to: moe_out, identity: moe_delta, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  dspark_generation:
+    title: Optional attached three-stage DSpark draft model
+    nodes:
+      - {id: dspark_in, label: current token and target hidden states 58 to 60, shape: io, semantic_op: dspark.input, boundary_direction: input}
+      - id: target_concat
+        label: concatenate three mean-stream target features
+        shape: elem
+        semantic_op: dspark.target_concat
+        semantic_details: {math: ["h_target = concat(mean_R(R_58),mean_R(R_59),mean_R(R_60))"]}
+      - id: target_projection
+        label: target-feature projection and RMSNorm
+        shape: gemm
+        semantic_op: dspark.target_projection
+        semantic_details: {math: ["main_x = RMSNorm(h_target W_main^T)"]}
+      - id: noise_block
+        label: current token followed by four noise tokens
+        shape: elem
+        semantic_op: dspark.noise_block
+        semantic_details: {math: ["draft_ids[0]=current_id; draft_ids[1:G]=128799"]}
+      - id: embedding
+        label: shared embedding expanded to mHC streams
+        shape: gemm
+        semantic_op: dspark.embedding
+        semantic_details: {math: ["R_draft = repeat_R(W_embed[draft_ids])"]}
+      - {id: stage_schedule, label: repeat three sequential DSpark stages, shape: block, semantic_op: dspark.stage_schedule}
+      - {id: stage_stack, label: three DSpark decoder stages, shape: block, semantic_op: dspark.stage, drill: dspark_stage}
+      - {id: final_hc, label: DSpark final mHC read, shape: block, semantic_op: dspark.final_hc, drill: final_hc_read}
+      - id: norm_lm
+        label: shared norm and vocabulary projection
+        shape: gemm
+        semantic_op: dspark.norm_lm
+        semantic_details: {math: ["draft_logits_base = RMSNorm(h_draft) W_vocab^T"]}
+      - id: markov
+        label: rank-512 Markov vocabulary logits
+        shape: gemm
+        semantic_op: dspark.markov
+        semantic_details: {math: ["markov_logits_i = W_markov2 W_markov1[token_i]"]}
+      - id: logit_add
+        label: add Markov correction to draft logits
+        shape: elem
+        semantic_op: dspark.logit_add
+        semantic_details: {math: ["draft_logits_i = draft_logits_base_i + markov_logits_i"]}
+      - id: autoregressive_sample
+        label: sample five draft positions sequentially
+        shape: elem
+        semantic_op: dspark.autoregressive_sample
+        semantic_details: {math: ["token_(i+1)=Sample(draft_logits_i), i=0..G-1"]}
+      - id: confidence
+        label: FP32 confidence projection
+        shape: gemm
+        semantic_op: dspark.confidence
+        semantic_details: {math: ["confidence_i = Linear_fp32(concat(h_draft_i,markov_embedding_i))"]}
+      - {id: dspark_out, label: draft ids logits and confidence, shape: io, semantic_op: dspark.output, boundary_direction: output}
+    edges:
+      - {from: dspark_in, to: target_concat, identity: target_layer_hidden_states, shape: "[B,T,3H]", layout: batch_sequence_concatenated_hidden, dtype: model_activation_dtype, state: captured_target_state}
+      - {from: target_concat, to: target_projection, identity: concatenated_target_features, shape: "[B,T,3H]", layout: batch_sequence_concatenated_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dspark_in, to: noise_block, identity: current_token_ids, shape: "[B]", layout: batch, dtype: int64, state: ephemeral_input}
+      - {from: noise_block, to: embedding, identity: seeded_draft_ids, shape: "[B,G]", layout: batch_draft_position, dtype: int64, state: ephemeral_activation}
+      - {from: embedding, to: stage_schedule, identity: initial_draft_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+      - {from: target_projection, to: stage_stack, identity: normalized_target_feature, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: captured_target_state}
+      - {from: stage_schedule, to: stage_stack, identity: scheduled_draft_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+      - {from: stage_stack, to: final_hc, identity: final_draft_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+      - {from: final_hc, to: norm_lm, identity: final_draft_hidden, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: dspark_in, to: markov, identity: sequential_draft_token_ids, shape: "[B,G]", layout: batch_draft_position, dtype: int64, state: autoregressive_draft_state}
+      - {from: norm_lm, to: logit_add, identity: base_draft_logits, shape: "[B,G,V]", layout: batch_draft_vocabulary, dtype: logits_dtype, state: ephemeral_activation}
+      - {from: markov, to: logit_add, identity: markov_logits, shape: "[B,G,V]", layout: batch_draft_vocabulary, dtype: logits_dtype, state: ephemeral_activation}
+      - {from: logit_add, to: autoregressive_sample, identity: corrected_draft_logits, shape: "[B,G,V]", layout: batch_draft_vocabulary, dtype: logits_dtype, state: ephemeral_activation}
+      - {from: final_hc, to: confidence, identity: draft_hidden_for_confidence, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: markov, to: confidence, identity: markov_embeddings, shape: "[B,G,Dm]", layout: batch_draft_markov_rank, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: autoregressive_sample, to: dspark_out, identity: sampled_draft_ids, shape: "[B,G+1]", layout: batch_draft_position, dtype: int64, state: ephemeral_output}
+      - {from: confidence, to: dspark_out, identity: draft_confidence, shape: "[B,G]", layout: batch_draft_position, dtype: fp32, state: ephemeral_output}
+
+  dspark_stage:
+    title: One DSpark decoder stage
+    nodes:
+      - {id: stage_in, label: draft residual state and target feature, shape: io, semantic_op: dspark_stage.input, boundary_direction: input}
+      - {id: attention_mhc_pre, label: attention mHC read and coefficients, shape: block, semantic_op: dspark_stage.attention_mhc_pre, drill: mhc_transform}
+      - {id: attention, label: DSpark target-window plus draft attention, shape: block, semantic_op: dspark_stage.attention, drill: dspark_attention}
+      - {id: attention_mhc_post, label: attention mHC place and mix, shape: block, semantic_op: dspark_stage.attention_mhc_post}
+      - {id: ffn_mhc_pre, label: feed-forward mHC read and coefficients, shape: block, semantic_op: dspark_stage.ffn_mhc_pre, drill: mhc_transform}
+      - id: ffn_norm
+        label: feed-forward RMSNorm
+        shape: norm
+        semantic_op: dspark_stage.ffn_norm
+        semantic_details: {math: ["x_ffn_norm = RMSNorm(x_ffn)"]}
+      - {id: moe, label: routed plus shared MoE, shape: block, semantic_op: dspark_stage.moe, drill: moe}
+      - {id: ffn_mhc_post, label: feed-forward mHC place and mix, shape: block, semantic_op: dspark_stage.ffn_mhc_post}
+      - {id: stage_out, label: next draft residual state, shape: io, semantic_op: dspark_stage.output, boundary_direction: output}
+    edges:
+      - {from: stage_in, to: attention_mhc_pre, identity: draft_residual_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+      - {from: attention_mhc_pre, to: attention, identity: collapsed_draft_attention_input, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: stage_in, to: attention, identity: target_feature, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: captured_target_state}
+      - {from: attention, to: attention_mhc_post, identity: dspark_attention_delta, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: attention_mhc_post, to: ffn_mhc_pre, identity: post_attention_draft_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+      - {from: ffn_mhc_pre, to: ffn_norm, identity: collapsed_draft_ffn_input, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ffn_norm, to: moe, identity: normalized_draft_ffn_input, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: moe, to: ffn_mhc_post, identity: dspark_ffn_delta, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ffn_mhc_post, to: stage_out, identity: next_draft_streams, shape: "[B,G,R,H]", layout: batch_draft_stream_hidden, dtype: model_activation_dtype, state: draft_residual_state}
+
+  dspark_attention:
+    title: DSpark attention over target sliding window and local draft block
+    nodes:
+      - {id: attn_in, label: draft state and target feature, shape: io, semantic_op: dspark_attention.input, boundary_direction: input}
+      - id: target_kv
+        label: target-feature KV projection
+        shape: gemm
+        semantic_op: dspark_attention.target_kv
+        semantic_details: {math: ["target_kv = QuantNoPE(RoPE(RMSNorm(main_x W_kv^T)))"]}
+      - id: ring_update
+        label: update exact target-window KV ring
+        shape: cache
+        semantic_op: dspark_attention.ring_update
+        semantic_details:
+          state: [{name: target_window_kv, shape: "[B,W,D]", dtype: mixed_fp8_nope_bf16_rope, lifecycle: per_stage_per_request, update: append main target KV in ring order}]
+      - id: draft_qkv
+        label: draft low-rank query and shared KV projections
+        shape: gemm
+        semantic_op: dspark_attention.draft_qkv
+        semantic_details: {math: ["draft_q,draft_kv = TargetAttentionProjections(draft_hidden)"]}
+      - id: fixed_indices
+        label: target window plus all five draft positions
+        shape: elem
+        semantic_op: dspark_attention.fixed_indices
+        semantic_details: {math: ["selected_ids = concat(all_W_target_slots, all_G_draft_positions)"]}
+      - id: sparse_mqa
+        label: draft sparse multi-query attention
+        shape: attn
+        semantic_op: dspark_attention.sparse_mqa
+        semantic_details: {math: ["draft_o = MQA(draft_q,concat(target_window_kv,draft_kv),selected_ids,sink)"]}
+      - id: output_projection
+        label: inverse RoPE and grouped low-rank output
+        shape: gemm
+        semantic_op: dspark_attention.output_projection
+        semantic_details: {math: ["delta_attn = GroupedLowRankOutput(inverse_RoPE(draft_o))"]}
+      - {id: attn_out, label: DSpark attention delta, shape: io, semantic_op: dspark_attention.output, boundary_direction: output}
+    edges:
+      - {from: attn_in, to: target_kv, identity: target_feature, shape: "[B,T,H]", layout: batch_sequence_hidden, dtype: model_activation_dtype, state: captured_target_state}
+      - {from: target_kv, to: ring_update, identity: target_window_kv_update, shape: "[B,T,D]", layout: batch_sequence_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: cache_update}
+      - {from: attn_in, to: draft_qkv, identity: collapsed_draft_hidden, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ring_update, to: fixed_indices, identity: target_window_cache, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_stage_per_request_cache}
+      - {from: draft_qkv, to: sparse_mqa, identity: draft_queries_and_kv, shape: "[B,G,N,D] + [B,G,D]", layout: draft_heads_plus_single_kv_head, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: ring_update, to: sparse_mqa, identity: target_window_kv_for_draft, shape: "[B,W,D]", layout: batch_ring_single_kv_head, dtype: mixed_fp8_nope_bf16_rope, state: per_stage_per_request_cache}
+      - {from: fixed_indices, to: sparse_mqa, identity: dspark_selected_ids, shape: "[B,G,W+G]", layout: batch_draft_index, dtype: int32, state: ephemeral_metadata}
+      - {from: sparse_mqa, to: output_projection, identity: draft_attention_heads, shape: "[B,G,N,D]", layout: batch_draft_head_dimension, dtype: model_activation_dtype, state: ephemeral_activation}
+      - {from: output_projection, to: attn_out, identity: dspark_attention_delta, shape: "[B,G,H]", layout: batch_draft_hidden, dtype: model_activation_dtype, state: ephemeral_activation}

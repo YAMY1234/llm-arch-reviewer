@@ -12,9 +12,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from models.common.trace_mapping import (  # noqa: E402
     FrameRef,
+    ForwardWindow,
     StackFrameRules,
     TraceMappingRules,
     build_trace_mapping,
+    close_window_phase_tails,
     find_eagle_mtp_cudagraph_decode_windows,
     find_eagle_mtp_cudagraph_substages,
     find_eagle_mtp_decode_windows,
@@ -112,6 +114,93 @@ class CommonTraceMappingTest(unittest.TestCase):
             [(window.start_us, window.end_us) for window in windows],
             [(10, 50)],
         )
+
+    def test_phase_tail_closure_admits_only_smallest_enclosing_python_tail(self):
+        window = ForwardWindow(
+            start_us=100.0,
+            end_us=180.0,
+            iter_bounds_us=[(100.0, 180.0)],
+            anchor_kernel_count=0,
+        )
+        events = [
+            _python_event("runner.py(1): execute_model", 1, None, 90.0, 140.0),
+            _python_event("worker.py(2): execute_model", 2, 1, 95.0, 105.0),
+            _python_event("unrelated.py(3): execute_model", 3, None, 250.0, 50.0),
+        ]
+
+        closed = close_window_phase_tails(
+            events, window, phase_frame="execute_model"
+        )
+
+        self.assertEqual(closed.start_us, 100.0)
+        self.assertEqual(closed.end_us, 200.0)
+        self.assertEqual(closed.iter_bounds_us, [(100.0, 200.0)])
+
+    def test_phase_tail_closure_keeps_longer_gpu_annotation(self):
+        window = ForwardWindow(
+            start_us=100.0,
+            end_us=240.0,
+            iter_bounds_us=[(100.0, 240.0)],
+            anchor_kernel_count=0,
+        )
+        events = [
+            _python_event("runner.py(1): execute_model", 1, None, 90.0, 110.0)
+        ]
+
+        closed = close_window_phase_tails(
+            events, window, phase_frame="execute_model"
+        )
+
+        self.assertEqual(closed.iter_bounds_us, [(100.0, 240.0)])
+
+    def test_phase_tail_closure_includes_late_async_kernel_from_owned_launch(self):
+        window = ForwardWindow(
+            start_us=100.0,
+            end_us=180.0,
+            iter_bounds_us=[(100.0, 180.0)],
+            anchor_kernel_count=0,
+        )
+        events = [
+            _python_event("runner.py(1): execute_model", 1, None, 90.0, 110.0),
+            {
+                "ph": "X",
+                "cat": "cuda_runtime",
+                "name": "cudaLaunchKernel",
+                "ts": 195.0,
+                "dur": 1.0,
+                "args": {"correlation": 7},
+            },
+            {
+                "ph": "X",
+                "cat": "kernel",
+                "name": "late_collective",
+                "ts": 250.0,
+                "dur": 25.0,
+                "args": {"correlation": 7},
+            },
+            {
+                "ph": "X",
+                "cat": "cuda_runtime",
+                "name": "cudaLaunchKernel",
+                "ts": 220.0,
+                "dur": 1.0,
+                "args": {"correlation": 8},
+            },
+            {
+                "ph": "X",
+                "cat": "kernel",
+                "name": "next_step_kernel",
+                "ts": 280.0,
+                "dur": 20.0,
+                "args": {"correlation": 8},
+            },
+        ]
+
+        closed = close_window_phase_tails(
+            events, window, phase_frame="execute_model"
+        )
+
+        self.assertEqual(closed.iter_bounds_us, [(100.0, 275.0)])
 
     def test_vllm_execute_context_preserves_chunked_prefill_and_decode(self):
         def annotation(name, ts, dur, tid=19):
@@ -331,6 +420,12 @@ class CommonTraceMappingTest(unittest.TestCase):
                 phase="forward_decode",
                 rules=TOY_RULES,
                 skip_first=False,
+                capture_contract={
+                    "job_id": "job-1",
+                    "phase": "decode",
+                    "concurrency": 1,
+                    "selected_formal_step": 7,
+                },
             )
 
             self.assertEqual(
@@ -340,6 +435,18 @@ class CommonTraceMappingTest(unittest.TestCase):
             self.assertEqual(result.manifest["window"]["start_us"], 10)
             self.assertEqual(result.validation["kernel_count"], 1)
             self.assertEqual(result.mappings[0].selected_node, "toy_node")
+            self.assertEqual(
+                len(result.manifest["selected_forward_events_sha256"]), 64
+            )
+            self.assertEqual(
+                result.manifest["capture_contract"],
+                {
+                    "job_id": "job-1",
+                    "phase": "decode",
+                    "concurrency": 1,
+                    "selected_formal_step": 7,
+                },
+            )
 
     def test_common_engine_uses_supplied_rules_not_qwen_names(self):
         with TemporaryDirectory() as td:

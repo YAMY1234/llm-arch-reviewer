@@ -1,0 +1,1264 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_71de97b_dsv4pro0813_tp8
+label: SGLang 71de97b DeepSeek-V4-Pro-0813 pure TP8
+model_id: deepseek_v4_pro
+execution_path_id: tp8_moe_intermediate_shard
+source_repo: https://github.com/sgl-project/sglang
+source_commit: 71de97b264b04dcd514cf904003028aefe9775c8
+container: sglang-arm64-db37df8aded8.sqsh@sha256:ddec5cc59fa15be11e0b0b06de381cc2e0588e2d6098bd86f12a83cb4b1d58e2
+backend: sglang_native_dsv4_flashinfer_mxfp4
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_6178deeaa361c4f1
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  evidence:
+  - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
+  - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager_prefill/3422245
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421642
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421643
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421644
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421645
+  - current/deepseek-v4-pro-ir-profile/contracts/sglang-eager/matrix_report.json
+  - current/deepseek-v4-pro-ir-profile/contracts/sglang-binding-validation.json
+  notes: >-
+    Exact graph-off prefill GBS1 and decode GBS1/16/64/256 passed on all eight
+    TP ranks. The eager compiler closes every rank over the official 61-layer
+    30-CSA/31-HCA schedule and all 122 attention/FFN occurrences, including
+    the prefill-only indexer, sparse-cache dequantization, index-union, and
+    sparse-attention paths. Asynchronous all-reduce and GEMM launches are
+    admitted only between their exact ordered semantic neighbors. Every GPU
+    event has a concrete model owner or typed runtime-support class, and every
+    one of the 153 execution nodes has a commit-specific link across eleven
+    runtime-verified source files. Rank-specific ordered fingerprints and all
+    N:1 fused semantic members remain explicit.
+node_bindings:
+  top.token_ids:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 3043
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.runtime_support:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 3043
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.embedding:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4Model.forward
+      line: 2784
+      display: embedding and decoder entry
+  top.hc_expand:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4Model.forward
+      line: 2784
+      display: replicated mHC stream initialization
+  top.decoder_stack:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4Model.forward
+      line: 2784
+      display: 61-layer decoder loop
+  top.final_hc_read:
+    symbols:
+    - DeepseekV4Model.hc_head
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4Model.hc_head
+      line: 2520
+      display: final mHC head dispatch
+  top.final_norm:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 3043
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.lm_head:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 3043
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.logits:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 3043
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.dspark_extension:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark
+      line: 643
+      display: optional DSpark implementation retained outside stage-1
+  decoder_stack.stack_in:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.schedule:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4Model.forward
+      line: 2784
+      display: runtime 61-layer schedule
+  decoder_stack.attention_mhc_pre:
+    symbols:
+    - DeepseekV4DecoderLayer.hc_pre
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.hc_pre
+      line: 1705
+      display: attention mHC pre-transform
+  decoder_stack.attention_norm:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.attention_choice:
+    symbols:
+    - DeepseekV4DecoderLayer._build_self_attn
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer._build_self_attn
+      line: 1677
+      display: per-layer CSA/HCA construction
+  decoder_stack.csa_attention:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.hca_attention:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.attention_mhc_post:
+    symbols:
+    - DeepseekV4DecoderLayer.hc_post
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.hc_post
+      line: 1838
+      display: attention mHC post-transform
+  decoder_stack.ffn_mhc_pre:
+    symbols:
+    - DeepseekV4DecoderLayer.hc_pre
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.hc_pre
+      line: 1705
+      display: FFN mHC pre-transform
+  decoder_stack.ffn_norm:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.moe:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.ffn_mhc_post:
+    symbols:
+    - DeepseekV4DecoderLayer.hc_post
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.hc_post
+      line: 1838
+      display: FFN mHC post-transform
+  decoder_stack.stack_out:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 1884
+      display: hybrid CSA/HCA decoder schedule
+  mhc_transform.streams:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.flatten_rms:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.affine:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.pre_gate:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.post_gate:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.combine_sinkhorn:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.read:
+    symbols:
+    - mhc_pre
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_pre
+      line: 782
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.delta:
+    symbols:
+    - mhc_post
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_post
+      line: 1039
+      display: mHC delta placement
+  mhc_transform.place:
+    symbols:
+    - mhc_post
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_post
+      line: 1039
+      display: mHC stream placement
+  mhc_transform.mix:
+    symbols:
+    - mhc_post
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_post
+      line: 1039
+      display: mHC residual stream mixing
+  mhc_transform.updated_streams:
+    symbols:
+    - mhc_post
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc.py
+      symbol: mhc_post
+      line: 1039
+      display: mHC updated streams
+  final_hc_read.streams:
+    symbols:
+    - fused_hc_head
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc_head.py
+      symbol: fused_hc_head
+      line: 90
+      display: final mHC read projection
+  final_hc_read.flatten_rms:
+    symbols:
+    - fused_hc_head
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc_head.py
+      symbol: fused_hc_head
+      line: 90
+      display: final mHC read projection
+  final_hc_read.pre_gate:
+    symbols:
+    - fused_hc_head
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc_head.py
+      symbol: fused_hc_head
+      line: 90
+      display: final mHC read projection
+  final_hc_read.read:
+    symbols:
+    - fused_hc_head
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc_head.py
+      symbol: fused_hc_head
+      line: 90
+      display: final mHC read projection
+  final_hc_read.hidden:
+    symbols:
+    - fused_hc_head
+    links:
+    - file: python/sglang/kernels/ops/layernorm/mhc_head.py
+      symbol: fused_hc_head
+      line: 90
+      display: final mHC read projection
+  csa_attention.attn_in:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.q_a:
+    symbols:
+    - MQALayer._compute_q_a
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_a
+      line: 814
+      display: query low-rank projection and norm
+  csa_attention.q_norm:
+    symbols:
+    - MQALayer._compute_q_a
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_a
+      line: 814
+      display: query low-rank RMSNorm
+  csa_attention.q_b:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: query up-projection
+  csa_attention.q_head_norm:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: per-head query RMSNorm
+  csa_attention.q_rope:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: fused query RMSNorm and RoPE
+  csa_attention.window_kv:
+    symbols:
+    - MQALayer._compute_kv_to_cache
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_kv_to_cache
+      line: 839
+      display: fused KV projection source, norm, RoPE and quantization
+  csa_attention.window_cache:
+    symbols:
+    - MQALayer._compute_kv_to_cache
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_kv_to_cache
+      line: 839
+      display: fused sliding-window cache write
+  csa_attention.window_indices:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.csa_compressor:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compressor
+  csa_attention.indexer:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA causal top-k indexer
+  csa_attention.index_union:
+    symbols:
+    - combine_topk_swa_indices
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: combine_topk_swa_indices
+      line: 89
+      display: compressed-history and sliding-window index union
+  csa_attention.sparse_mqa:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.inverse_rope:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.grouped_o_a:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.o_b:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  csa_attention.attn_out:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: CSA sparse MQA path
+  hca_attention.attn_in:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.q_a:
+    symbols:
+    - MQALayer._compute_q_a
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_a
+      line: 814
+      display: query low-rank projection and norm
+  hca_attention.q_norm:
+    symbols:
+    - MQALayer._compute_q_a
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_a
+      line: 814
+      display: query low-rank RMSNorm
+  hca_attention.q_b:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: query up-projection
+  hca_attention.q_head_norm:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: per-head query RMSNorm
+  hca_attention.q_rope:
+    symbols:
+    - MQALayer._compute_q_b
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_q_b
+      line: 825
+      display: fused query RMSNorm and RoPE
+  hca_attention.window_kv:
+    symbols:
+    - MQALayer._compute_kv_to_cache
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_kv_to_cache
+      line: 839
+      display: fused KV projection source, norm, RoPE and quantization
+  hca_attention.window_cache:
+    symbols:
+    - MQALayer._compute_kv_to_cache
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer._compute_kv_to_cache
+      line: 839
+      display: fused sliding-window cache write
+  hca_attention.window_indices:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.hca_compressor:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compressor
+  hca_attention.history_indices:
+    symbols:
+    - SparsePrefillChunkCache.ensure_c128
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: SparsePrefillChunkCache.ensure_c128
+      line: 377
+      display: all-completed HCA compressed-history indices
+  hca_attention.index_union:
+    symbols:
+    - combine_topk_swa_indices
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: combine_topk_swa_indices
+      line: 89
+      display: compressed-history and sliding-window index union
+  hca_attention.sparse_mqa:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.inverse_rope:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.grouped_o_a:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.o_b:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  hca_attention.attn_out:
+    symbols:
+    - MQALayer.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4.py
+      symbol: MQALayer.forward
+      line: 1388
+      display: HCA sparse MQA path
+  csa_compressor.hidden_block:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.kv_gate_projection:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.overlap_layout:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.softmax_pool:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.norm_rope:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.partial_state:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.compressed_cache:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  csa_compressor.compressed_kv:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: CSA compression state machine
+  hca_compressor.hidden_block:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.kv_gate_projection:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.overlap_layout:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.softmax_pool:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.norm_rope:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.partial_state:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.compressed_cache:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  hca_compressor.compressed_kv:
+    symbols:
+    - Compressor.forward_native
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/compressor.py
+      symbol: Compressor.forward_native
+      line: 454
+      display: HCA compression state machine
+  csa_indexer.indexer_in:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  csa_indexer.q_projection:
+    symbols:
+    - C4Indexer.compute_q
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4Indexer.compute_q
+      line: 930
+      display: CSA index query projection
+  csa_indexer.q_rope_rotate:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  csa_indexer.k_compress:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  csa_indexer.weight_projection:
+    symbols:
+    - C4Indexer.compute_weights
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4Indexer.compute_weights
+      line: 946
+      display: CSA index per-head weights
+  csa_indexer.score:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  csa_indexer.causal_topk:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: causal top-k and physical-page transform
+  csa_indexer.expand:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  csa_indexer.selected_ids:
+    symbols:
+    - C4IndexerBackendMixin.forward_c4_indexer
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/indexer.py
+      symbol: C4IndexerBackendMixin.forward_c4_indexer
+      line: 637
+      display: CSA index scoring and causal top-k
+  hca_history.position:
+    symbols:
+    - SparsePrefillChunkCache.ensure_c128
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: SparsePrefillChunkCache.ensure_c128
+      line: 377
+      display: HCA all-completed compressed-history selection
+  hca_history.all_completed:
+    symbols:
+    - SparsePrefillChunkCache.ensure_c128
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: SparsePrefillChunkCache.ensure_c128
+      line: 377
+      display: HCA all-completed compressed-history selection
+  hca_history.selected_ids:
+    symbols:
+    - SparsePrefillChunkCache.ensure_c128
+    links:
+    - file: python/sglang/srt/layers/attention/dsv4/sparse_prefill_utils.py
+      symbol: SparsePrefillChunkCache.ensure_c128
+      line: 377
+      display: HCA all-completed compressed-history selection
+  moe.moe_in:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.score_projection:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.sqrt_softplus:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.hash_select:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: token-hash expert selection in layers 0-2
+  moe.learned_select:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: learned biased top-k expert selection
+  moe.weights:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.dispatch:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.routed_gate_up:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.routed_activation:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.routed_down:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.routed_combine:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.shared_gate_up:
+    symbols:
+    - DeepseekV2MoE._forward_shared_experts
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE._forward_shared_experts
+      line: 1473
+      display: shared-expert gate/up projections
+  moe.shared_activation:
+    symbols:
+    - DeepseekV2MoE._forward_shared_experts
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE._forward_shared_experts
+      line: 1473
+      display: shared-expert SwiGLU
+  moe.shared_down:
+    symbols:
+    - DeepseekV2MoE._forward_shared_experts
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE._forward_shared_experts
+      line: 1473
+      display: shared-expert down projection
+  moe.combine:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  moe.moe_out:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: DeepSeek-V4 routed and shared MoE
+  top.tp_embedding_output_collective:
+    symbols:
+    - VocabParallelEmbedding.forward
+    links:
+    - file: python/sglang/srt/layers/vocab_parallel_embedding.py
+      symbol: VocabParallelEmbedding.forward
+      line: 566
+      display: TP8 masked vocabulary-shard embedding all-reduce
+  csa_attention.tp_csa_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1596
+      display: TP8 CSA row-parallel output all-reduce
+  hca_attention.tp_hca_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1596
+      display: TP8 HCA row-parallel output all-reduce
+  moe.tp_moe_output_collective:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: TP8 routed-plus-shared MoE output all-reduce
+  top.tp_logits_collective:
+    symbols:
+    - LogitsProcessor._get_logits
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: LogitsProcessor._get_logits
+      line: 648
+      display: TP8 vocabulary logits all-gather
+  dspark_generation.dspark_in:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.target_concat:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.target_projection:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.noise_block:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.embedding:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.stage_schedule:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.stage_stack:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.final_hc:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.norm_lm:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.markov:
+    symbols:
+    - DSparkV4MarkovHead.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4MarkovHead.forward
+      line: 477
+      display: Markov logit-bias head
+  dspark_generation.logit_add:
+    symbols:
+    - DSparkV4MarkovHead.apply_step_logits
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4MarkovHead.apply_step_logits
+      line: 444
+      display: Markov bias addition
+  dspark_generation.autoregressive_sample:
+    symbols:
+    - DSparkV4MarkovHead.sample_block
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4MarkovHead.sample_block
+      line: 482
+      display: autoregressive block sampling
+  dspark_generation.confidence:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_generation.dspark_out:
+    symbols:
+    - DeepseekV4ForCausalLMDSpark.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DeepseekV4ForCausalLMDSpark.forward
+      line: 828
+      display: DSpark multi-stage generation
+  dspark_stage.stage_in:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.attention_mhc_pre:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.attention:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.attention_mhc_post:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.ffn_mhc_pre:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.ffn_norm:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.moe:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.ffn_mhc_post:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_stage.stage_out:
+    symbols:
+    - DSparkV4Stage.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkV4Stage.forward
+      line: 610
+      display: one DSpark stage
+  dspark_attention.attn_in:
+    symbols:
+    - DSparkAttention.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.forward
+      line: 229
+      display: DSpark attention over target and draft KV
+  dspark_attention.target_kv:
+    symbols:
+    - DSparkAttention.kv_proj_only
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.kv_proj_only
+      line: 141
+      display: target hidden-state KV projection
+  dspark_attention.ring_update:
+    symbols:
+    - DSparkAttention._store_block_kv
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention._store_block_kv
+      line: 145
+      display: DSpark ring-cache update
+  dspark_attention.draft_qkv:
+    symbols:
+    - DSparkAttention._compute_q
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention._compute_q
+      line: 178
+      display: DSpark draft query construction
+  dspark_attention.fixed_indices:
+    symbols:
+    - DSparkAttention.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.forward
+      line: 229
+      display: DSpark attention over target and draft KV
+  dspark_attention.sparse_mqa:
+    symbols:
+    - DSparkAttention.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.forward
+      line: 229
+      display: DSpark attention over target and draft KV
+  dspark_attention.output_projection:
+    symbols:
+    - DSparkAttention.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.forward
+      line: 229
+      display: DSpark attention over target and draft KV
+  dspark_attention.attn_out:
+    symbols:
+    - DSparkAttention.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v4_dspark.py
+      symbol: DSparkAttention.forward
+      line: 229
+      display: DSpark attention over target and draft KV

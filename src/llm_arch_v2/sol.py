@@ -249,7 +249,9 @@ def validate_sol_manifest(manifest: dict[str, Any], *, source: Path) -> None:
     for key in ("semantic_math", "fusion_policy", "overlap_policy"):
         if not assumptions.get(key):
             raise SolError(f"{source}: assumptions.{key} is required")
-    observed_policy = manifest.get("observed_timing_policy", "all_profile_metrics")
+    observed_policy = manifest.get(
+        "observed_timing_policy", "exclusive_owner_only"
+    )
     if observed_policy not in {"all_profile_metrics", "exclusive_owner_only"}:
         raise SolError(f"{source}: unsupported observed_timing_policy")
 
@@ -1259,14 +1261,16 @@ def build_sol_artifacts(
         estimate = estimates[target]
         cell = _profile_cell(measured, target)
         observed = None
-        # A manifest may explicitly keep comparison coverage owner-exclusive.
-        # Inclusive drill roll-ups remain visible navigation envelopes but do
-        # not become additional observed owners under that policy.
-        owner_exclusive = (
-            manifest.get("observed_timing_policy") == "exclusive_owner_only"
+        # Inclusive drill roll-ups are navigation envelopes, not additional
+        # physical owners. Preserve that established default while allowing a
+        # manifest to opt in explicitly when it truly intends to compare all
+        # profile metrics.
+        observed_policy = manifest.get(
+            "observed_timing_policy", "exclusive_owner_only"
         )
-        if cell and not (
-            owner_exclusive and cell.get("metric_kind") == "inclusive_rollup"
+        if cell and (
+            observed_policy == "all_profile_metrics"
+            or cell.get("metric_kind") != "inclusive_rollup"
         ):
             observed = cell.get("active_gpu_ms", cell.get("ms_per_iter"))
             if observed is not None:
@@ -1445,6 +1449,20 @@ def build_sol_artifacts(
         "hardware_spec_sha256": _canonical_hash(hardware),
         "measured_profile_id": measured_id,
     }
+    measured_runtime = copy.deepcopy(
+        (((measured.get("meta") or {}).get("profile_summary") or {}).get(
+            "production_wall_timing"
+        ))
+    )
+    if measured_runtime is not None and measured_runtime.get("status") == "unavailable":
+        measured_runtime = None
+    if measured_runtime is not None:
+        if measured_runtime.get("authority") != "profiler_off_matched_scheduler_step":
+            raise SolError(
+                f"{manifest_source}: production wall timing must use the "
+                "profiler-off matched scheduler-step authority"
+            )
+        provenance["measured_runtime"] = measured_runtime
     sol_profile = {
         "schema_version": "sol-profile.v1",
         "sol_profile_id": manifest["sol_profile_id"],
@@ -1495,6 +1513,8 @@ def build_sol_artifacts(
         "nodes": gap_nodes,
         "provenance": provenance,
     }
+    if measured_runtime is not None:
+        gap_report["measured_runtime"] = measured_runtime
     return sol_profile, gap_report
 
 

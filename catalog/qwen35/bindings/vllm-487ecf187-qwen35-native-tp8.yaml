@@ -1,0 +1,1653 @@
+schema_version: implementation-binding.v2
+implementation_id: vllm_487ecf187_qwen35_native_tp8
+label: vLLM 487ecf187 native Qwen3.5 pure TP8
+model_id: qwen35
+execution_path_id: tp8
+source_repo: https://github.com/vllm-project/vllm
+source_commit: 487ecf187d3dfe74d2cf6119a92881dba403c219
+container: vllm-glm53-flash-arm64-905c0293.sqsh@sha256:efdfe25952dc672d4415032e2755df7d7f2bab549992a2e3f2c429334f366756
+backend: native_multi_node_tp8
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_50bb583c3a3d0557
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  semantic_capture_cuda_graph_enabled: false
+  production_decode_cuda_graph_enabled: true
+  evidence:
+  - runtime preflight job 3413155
+  - eager graph-off semantic job 3414287, prefill and decode on all TP ranks
+  - production prefill job 3414288
+  - production CUDA Graph decode jobs 3414289, 3414290, 3414291, and 3414292
+  notes: The package and all inspected Qwen3.5 modules match vLLM commit 487ecf187 byte-for-byte. Eager stack/signature/sequence
+    reconciliation closes every production semantic owner, including the reused add plus RMSNorm kernel family's N:1 roles.
+node_bindings:
+  top.token_input:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.vision_inputs:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.embedding:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.tp_embedding_output_collective:
+    symbols:
+    - RowParallelLinear
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: row-parallel TP all-reduce contract
+  top.vision_frontend:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.multimodal_injection:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  top.decoder_stack:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.state_store:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.final_norm:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.lm_head:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.tp_logits_all_gather:
+    symbols:
+    - LogitsProcessor
+    links:
+    - file: vllm/model_executor/layers/logits_processor.py
+      symbol: LogitsProcessor
+      line: 23
+      display: TP vocabulary all-gather contract
+  top.target_logits:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  top.generation_controller:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  top.accepted_tokens:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  stack.stack_input:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  stack.schedule:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  stack.gdn_layer:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  stack.full_attention_layer:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  stack.stack_output:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_00:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_01:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_02:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_03:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_04:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_05:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_06:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_07:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_08:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_09:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_10:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_11:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_12:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_13:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_14:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_15:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_16:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_17:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_18:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_19:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_20:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_21:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_22:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_23:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_24:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_25:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_26:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_27:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_28:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_29:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_30:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_31:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_32:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_33:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_34:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_35:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_36:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_37:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_38:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_39:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_40:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_41:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_42:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_43:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_44:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_45:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_46:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_47:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_48:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_49:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_50:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_51:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_52:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_53:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_54:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_55:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_56:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_57:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_58:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  layer_schedule.layer_59:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.input_norm:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.attention:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.tp_attention_output_collective:
+    symbols:
+    - RowParallelLinear
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: row-parallel TP all-reduce contract
+  gdn_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.moe:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.tp_moe_output_collective:
+    symbols:
+    - RowParallelLinear
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: row-parallel TP all-reduce contract
+  gdn_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  gdn_attention.module_input:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  gdn_attention.qkvz_projection:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  gdn_attention.ba_projection:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  gdn_attention.conv_state_read:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  gdn_attention.causal_conv:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  gdn_attention.recurrent_state_read:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  gdn_attention.gated_delta_recurrence:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  gdn_attention.state_write:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  gdn_attention.output_gate_norm:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  gdn_attention.output_projection:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  gdn_attention.module_output:
+    symbols:
+    - QwenGatedDeltaNetAttention
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: QwenGatedDeltaNetAttention
+      line: 345
+      display: Qwen3.5 GDN projections, recurrence state and output
+  full_attention_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.input_norm:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.attention:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.tp_attention_output_collective:
+    symbols:
+    - RowParallelLinear
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: row-parallel TP all-reduce contract
+  full_attention_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.moe:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.tp_moe_output_collective:
+    symbols:
+    - RowParallelLinear
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear
+      line: 1504
+      display: row-parallel TP all-reduce contract
+  full_attention_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5DecoderLayer
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5DecoderLayer
+      line: 119
+      display: Qwen3.5 hybrid decoder construction with Qwen3Next layer flow
+  full_attention.module_input:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.qkv_projection:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.qk_norm:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.partial_rope:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.kv_state_read:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.causal_gqa:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.kv_state_write:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.attention_output_gate:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.output_projection:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  full_attention.module_output:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  moe_block.input_hidden:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  moe_block.router:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  moe_block.routed_experts:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  moe_block.shared_expert:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  moe_block.weighted_combine:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  moe_block.output_hidden:
+    symbols:
+    - Qwen3NextSparseMoeBlock
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextSparseMoeBlock
+      line: 101
+      display: router, routed experts, shared expert and combine
+  mtp_full_attention_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.input_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.attention:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.attention_residual:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.post_attention_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.moe:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.layer_residual:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.module_input:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.qkv_projection:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.qk_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.partial_rope:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.kv_state_read:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.causal_gqa:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.kv_state_write:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.attention_output_gate:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.output_projection:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_full_attention.module_output:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.input_hidden:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.router:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.routed_experts:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.shared_expert:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.weighted_combine:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_moe_block.output_hidden:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.attention_keys:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  state_tensors.attention_values:
+    symbols:
+    - Qwen3NextAttention
+    links:
+    - file: vllm/model_executor/models/qwen3_next.py
+      symbol: Qwen3NextAttention
+      line: 215
+      display: full attention projection, QK norm, RoPE, cache and gate
+  state_tensors.mtp_draft_keys:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.mtp_draft_values:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.gdn_conv_windows:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  state_tensors.gdn_recurrent_states:
+    symbols:
+    - ChunkGatedDeltaRule
+    links:
+    - file: vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+      symbol: ChunkGatedDeltaRule
+      line: 216
+      display: GDN prefill/decode recurrence backend
+  state_tensors.verify_journal:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  state_tensors.committed_lengths:
+    symbols:
+    - Qwen3_5ForCausalLMBase
+    links:
+    - file: vllm/model_executor/models/qwen3_5.py
+      symbol: Qwen3_5ForCausalLMBase
+      line: 287
+      display: Qwen3.5 target wrapper, embedding, norm and logits
+  mtp_draft_head.draft_input_token:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.target_hidden:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.shared_embedding:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.embedding_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.hidden_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.concat:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.fc_projection:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_decoder_layer:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_final_norm:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.shared_lm_head:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  mtp_draft_head.draft_logits:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.committed_context:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.draft_propose:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.candidate_tokens:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.target_verify:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.tentative_state:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.accept_prefix:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.replay_gdn:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_kv:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_gdn:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.commit_tokens:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  generation_loop.next_iteration:
+    symbols:
+    - Qwen3_5MultiTokenPredictor
+    links:
+    - file: vllm/model_executor/models/qwen3_5_mtp.py
+      symbol: Qwen3_5MultiTokenPredictor
+      line: 64
+      display: optional Qwen3.5 MTP path, disabled by TP8 Stage 1
+  vision_frontend.vision_input:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.patch_projection:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.position_embedding:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.rotary_coordinates:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.vision_blocks:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.spatial_group:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_norm:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_fc1:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_gelu:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.merger_fc2:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_frontend.vision_output:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.block_input:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.norm1:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.qkv_projection:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.rotary:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention_output:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.attention_residual:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.norm2:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.fc1:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.gelu:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.fc2:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+  vision_block.block_output:
+    symbols:
+    - Qwen3VLForConditionalGeneration
+    links:
+    - file: vllm/model_executor/models/qwen3_vl.py
+      symbol: Qwen3VLForConditionalGeneration
+      line: 1733
+      display: optional Qwen3 vision encoder inherited by Qwen3.5
+checkpoint_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8

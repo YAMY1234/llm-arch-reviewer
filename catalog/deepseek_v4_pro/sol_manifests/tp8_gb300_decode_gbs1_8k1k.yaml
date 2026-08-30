@@ -1,0 +1,233 @@
+schema_version: sol-manifest.v1
+sol_profile_id: deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_ideal_v1
+gap_report_id: deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_gap_v1
+label: DeepSeek V4 Pro pure TP8 · GB300 · decode GBS1 · semantic ideal SoL
+gap_label: DeepSeek V4 Pro pure TP8 measured-to-ideal gap · calibration incomplete
+model_id: deepseek_v4_pro
+execution_path_id: tp8_moe_intermediate_shard
+measured_profile_id: deepseek_v4_pro_tp8_vllm_cg_decode_gbs001_8k1k
+hardware_spec_id: nvidia_gb300_nvl72_per_gpu_v1
+phase: decode
+correctness_tolerance_pct: 2.0
+
+variables:
+  T: 1
+  S: 8192
+  L: 61
+  L_CSA: 30
+  L_HCA: 31
+  L_HASH: 3
+  L_LEARNED: 58
+  H: 7168
+  HC: 28672
+  R: 4
+  C_Q: 1536
+  N_LOCAL: 16
+  D: 512
+  D_ROTARY: 64
+  GROUPS_LOCAL: 2
+  C_O: 1024
+  W: 128
+  CSA_KV: 1152
+  HCA_KV: 192
+  INDEX_HEADS: 64
+  INDEX_DIM: 128
+  INDEX_KV: 1024
+  EXPERTS: 384
+  TOPK: 6
+  I_LOCAL: 384
+  V: 129280
+  MHC_REPEATS: 2*L
+
+assumptions:
+  semantic_math: Every stage-1 autoregressive Model/Execution-IR target is declared. Costs use the public DeepSeek-V4-Pro-0813 dimensions and the pure-TP8 payload/state contracts; DSpark remains a structural branch because the measured generation mode excludes it.
+  fusion_policy: Each semantic operation has one cost owner. SGLang/vLLM fused non-owners are explicit structural aliases and never receive duplicate duration or ideal cost.
+  overlap_policy: The ideal step follows the explicit decoder schedule with no speculative cross-layer or cross-branch overlap credit. Physical overlap in a measured trace does not change the semantic lower-bound inputs.
+  tensor_core_policy: The shared hardware catalog exposes only the dense BF16 Tensor Core ceiling. Mixed FP8/FP4 projection and expert work therefore uses that published ceiling as a conservative physical lower bound, never as an attainable projection.
+  cache_policy: Decode attention reads the exact 128-token window plus at most 1024 CSA compressed blocks or all 64 completed HCA blocks at ISL 8192. State owners are rank-local replicas under pure TP8.
+  evidence_policy: Shapes, schedule, repetitions, collectives, and cache ownership come from the framework-independent Model IR and portable Execution IR; no framework timing appears in Cost IR.
+
+schedule:
+  complete_step: true
+  note: Full stage-1 semantic ideal coverage. Attainable SoL is intentionally unavailable until exact plan-identified calibration surfaces are published.
+
+fused_owner_aliases:
+  csa_attention.q_rope: csa_attention.q_head_norm
+  hca_attention.q_rope: hca_attention.q_head_norm
+  csa_attention.window_kv: csa_attention.q_head_norm
+  csa_attention.window_cache: csa_attention.q_head_norm
+  hca_attention.window_kv: hca_attention.q_head_norm
+  hca_attention.window_cache: hca_attention.q_head_norm
+  csa_indexer.q_rope_rotate: csa_indexer.q_projection
+  csa_indexer.selected_ids: csa_indexer.k_compress
+  csa_compressor.norm_rope: csa_compressor.partial_state
+  csa_compressor.compressed_cache: csa_compressor.partial_state
+  hca_compressor.norm_rope: hca_compressor.partial_state
+  hca_compressor.compressed_cache: hca_compressor.partial_state
+  moe.routed_activation: moe.routed_gate_up
+
+nodes:
+  top.token_ids: {model: structural, reason: input boundary}
+  top.runtime_support: {model: structural, reason: typed scheduler and launch metadata outside model-value math}
+  top.embedding: {model: memory, bytes: 4*B*T*H, assumptions: [one local vocabulary-shard read plus one hidden write]}
+  top.tp_embedding_output_collective: {model: collective, collective: all_reduce, group_size: TP, payload_bytes: 2*B*T*H, fabric: nvlink, depends_on: [top.embedding]}
+  top.hc_expand: {model: memory, bytes: 2*B*T*(H+R*H), depends_on: [top.tp_embedding_output_collective]}
+  top.decoder_stack: {model: structural, reason: serial 61-layer container; leaf costs carry repetitions}
+  top.final_hc_read: {model: structural, reason: drill container costed by final_hc_read leaves}
+  top.final_norm: {model: elementwise, bytes: 6*B*T*H, ops: 6*B*T*H}
+  top.lm_head: {model: gemm, m: B*T, n: V/TP, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, depends_on: [top.final_norm]}
+  top.tp_logits_collective: {model: collective, collective: all_gather, group_size: TP, payload_bytes: 2*B*T*(V/TP), fabric: nvlink, depends_on: [top.lm_head]}
+  top.logits: {model: structural, reason: output boundary}
+  top.dspark_extension: {model: structural, reason: stage-1 generation_mode is autoregressive_without_dspark; branch retained without a zero-timing claim}
+
+  decoder_stack.stack_in: {model: structural, reason: residual-stream input boundary}
+  decoder_stack.schedule: {model: structural, reason: exact 61-layer CSA/HCA repeat descriptor}
+  decoder_stack.attention_mhc_pre: {model: structural, reason: costed by mhc_transform owners}
+  decoder_stack.attention_norm: {model: structural, reason: fused into the attention mHC-pre timing and cost owner}
+  decoder_stack.attention_choice: {model: structural, reason: exact CSA/HCA schedule control}
+  decoder_stack.csa_attention: {model: structural, reason: drill container costed by CSA leaves}
+  decoder_stack.hca_attention: {model: structural, reason: drill container costed by HCA leaves}
+  decoder_stack.attention_mhc_post: {model: structural, reason: costed by mhc_transform.mix}
+  decoder_stack.ffn_mhc_pre: {model: structural, reason: costed by mhc_transform owners}
+  decoder_stack.ffn_norm: {model: structural, reason: fused into the FFN mHC-pre timing and cost owner}
+  decoder_stack.moe: {model: structural, reason: drill container costed by MoE leaves}
+  decoder_stack.ffn_mhc_post: {model: structural, reason: costed by mhc_transform.mix}
+  decoder_stack.stack_out: {model: structural, reason: residual-stream output boundary}
+
+  mhc_transform.streams: {model: structural, reason: four-stream state boundary}
+  mhc_transform.flatten_rms: {model: memory, operator_family: hyperconnection, bytes: 4*B*T*HC, repetitions: MHC_REPEATS}
+  mhc_transform.affine: {model: roofline, operator_family: hyperconnection, ops: 2*B*T*HC*(2*R+R*R), bytes: 2*HC*(2*R+R*R)+4*B*T*(HC+2*R+R*R), dtype: bf16, repetitions: MHC_REPEATS}
+  mhc_transform.pre_gate: {model: elementwise, operator_family: hyperconnection, bytes: 8*B*T*R, ops: 6*B*T*R, repetitions: MHC_REPEATS}
+  mhc_transform.post_gate: {model: elementwise, operator_family: hyperconnection, bytes: 8*B*T*R, ops: 6*B*T*R, repetitions: MHC_REPEATS}
+  mhc_transform.combine_sinkhorn: {model: roofline, operator_family: hyperconnection, ops: 20*12*B*T*R*R, bytes: 8*B*T*R*R, dtype: bf16, repetitions: MHC_REPEATS}
+  mhc_transform.read: {model: elementwise, operator_family: hyperconnection, bytes: 2*B*T*(R*H+H), ops: 2*B*T*R*H, repetitions: MHC_REPEATS}
+  mhc_transform.delta: {model: structural, reason: sublayer handoff boundary}
+  mhc_transform.place: {model: elementwise, operator_family: hyperconnection, bytes: 2*B*T*(H+R+R*H), ops: 2*B*T*R*H, repetitions: MHC_REPEATS}
+  mhc_transform.mix: {model: roofline, operator_family: hyperconnection, ops: 2*B*T*R*R*H, bytes: 2*B*T*(R*R+2*R*H), dtype: bf16, repetitions: MHC_REPEATS}
+  mhc_transform.updated_streams: {model: structural, reason: four-stream state boundary}
+
+  final_hc_read.streams: {model: structural, reason: final residual-stream state boundary}
+  final_hc_read.flatten_rms: {model: memory, operator_family: hyperconnection, bytes: 4*B*T*HC}
+  final_hc_read.pre_gate: {model: roofline, operator_family: hyperconnection, ops: 2*B*T*HC*R, bytes: 2*HC*R+4*B*T*(HC+R), dtype: bf16}
+  final_hc_read.read: {model: elementwise, operator_family: hyperconnection, bytes: 2*B*T*(R*H+H), ops: 2*B*T*R*H}
+  final_hc_read.hidden: {model: structural, reason: final hidden-state boundary}
+
+  csa_attention.attn_in: {model: structural, reason: normalized attention input boundary}
+  csa_attention.q_a: {model: gemm, m: B*T, n: C_Q, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_CSA}
+  csa_attention.q_norm: {model: elementwise, bytes: 6*B*T*C_Q, ops: 6*B*T*C_Q, repetitions: L_CSA}
+  csa_attention.q_b: {model: gemm, m: B*T, n: N_LOCAL*D, k: C_Q, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_CSA}
+  csa_attention.q_head_norm: {model: roofline, bytes: 8*B*T*N_LOCAL*D+2*H*D+8*B*T*(H+D), ops: 16*B*T*N_LOCAL*D+2*B*T*H*D+16*B*T*D, dtype: bf16, repetitions: L_CSA, assumptions: [physical owner combines per-head Q norm and partial RoPE with window KV projection norm RoPE quantization and cache append]}
+  csa_attention.q_rope: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
+  csa_attention.window_kv: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
+  csa_attention.window_cache: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
+  csa_attention.window_indices: {model: elementwise, bytes: 8*B*W, ops: B*W, repetitions: L_CSA}
+  csa_attention.csa_compressor: {model: structural, reason: drill container costed by csa_compressor leaves}
+  csa_attention.indexer: {model: structural, reason: drill container costed by csa_indexer leaves}
+  csa_attention.index_union: {model: elementwise, bytes: 8*B*(W+INDEX_KV), ops: B*(W+INDEX_KV), repetitions: L_CSA}
+  csa_attention.sparse_mqa: {model: attention, operator_family: attention, batch: B, query_tokens: T, kv_tokens: CSA_KV, heads: N_LOCAL, head_dim: D, dtype: bf16, dtype_bytes: 2, repetitions: L_CSA}
+  csa_attention.inverse_rope: {model: elementwise, bytes: 8*B*T*N_LOCAL*D_ROTARY, ops: 12*B*T*N_LOCAL*D_ROTARY, repetitions: L_CSA}
+  csa_attention.grouped_o_a: {model: roofline, ops: 2*B*T*GROUPS_LOCAL*(N_LOCAL/GROUPS_LOCAL)*D*C_O, bytes: 2*GROUPS_LOCAL*(N_LOCAL/GROUPS_LOCAL)*D*C_O+4*B*T*(N_LOCAL*D+GROUPS_LOCAL*C_O), dtype: bf16, repetitions: L_CSA}
+  csa_attention.o_b: {model: gemm, m: B*T, n: H, k: GROUPS_LOCAL*C_O, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_CSA}
+  csa_attention.tp_csa_output_collective: {model: collective, collective: all_reduce, group_size: TP, payload_bytes: 2*B*T*H, fabric: nvlink, repetitions: L_CSA}
+  csa_attention.attn_out: {model: structural, reason: CSA delta output boundary}
+
+  hca_attention.attn_in: {model: structural, reason: normalized attention input boundary}
+  hca_attention.q_a: {model: gemm, m: B*T, n: C_Q, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_HCA}
+  hca_attention.q_norm: {model: elementwise, bytes: 6*B*T*C_Q, ops: 6*B*T*C_Q, repetitions: L_HCA}
+  hca_attention.q_b: {model: gemm, m: B*T, n: N_LOCAL*D, k: C_Q, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_HCA}
+  hca_attention.q_head_norm: {model: roofline, bytes: 8*B*T*N_LOCAL*D+2*H*D+8*B*T*(H+D), ops: 16*B*T*N_LOCAL*D+2*B*T*H*D+16*B*T*D, dtype: bf16, repetitions: L_HCA, assumptions: [physical owner combines per-head Q norm and partial RoPE with window KV projection norm RoPE quantization and cache append]}
+  hca_attention.q_rope: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
+  hca_attention.window_kv: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
+  hca_attention.window_cache: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
+  hca_attention.window_indices: {model: elementwise, bytes: 8*B*W, ops: B*W, repetitions: L_HCA}
+  hca_attention.hca_compressor: {model: structural, reason: drill container costed by hca_compressor leaves}
+  hca_attention.history_indices: {model: structural, reason: drill container costed by hca_history leaves}
+  hca_attention.index_union: {model: elementwise, bytes: 8*B*HCA_KV, ops: B*HCA_KV, repetitions: L_HCA}
+  hca_attention.sparse_mqa: {model: attention, operator_family: attention, batch: B, query_tokens: T, kv_tokens: HCA_KV, heads: N_LOCAL, head_dim: D, dtype: bf16, dtype_bytes: 2, repetitions: L_HCA}
+  hca_attention.inverse_rope: {model: elementwise, bytes: 8*B*T*N_LOCAL*D_ROTARY, ops: 12*B*T*N_LOCAL*D_ROTARY, repetitions: L_HCA}
+  hca_attention.grouped_o_a: {model: roofline, ops: 2*B*T*GROUPS_LOCAL*(N_LOCAL/GROUPS_LOCAL)*D*C_O, bytes: 2*GROUPS_LOCAL*(N_LOCAL/GROUPS_LOCAL)*D*C_O+4*B*T*(N_LOCAL*D+GROUPS_LOCAL*C_O), dtype: bf16, repetitions: L_HCA}
+  hca_attention.o_b: {model: gemm, m: B*T, n: H, k: GROUPS_LOCAL*C_O, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_HCA}
+  hca_attention.tp_hca_output_collective: {model: collective, collective: all_reduce, group_size: TP, payload_bytes: 2*B*T*H, fabric: nvlink, repetitions: L_HCA}
+  hca_attention.attn_out: {model: structural, reason: HCA delta output boundary}
+
+  csa_compressor.hidden_block: {model: structural, reason: compressor input boundary}
+  csa_compressor.kv_gate_projection: {model: roofline, ops: 4*B*T*H*D, bytes: 4*H*D+4*B*T*(H+2*D), dtype: bf16, repetitions: L_CSA}
+  csa_compressor.overlap_layout: {model: elementwise, bytes: 8*B*T*D, ops: 2*B*T*D, repetitions: L_CSA}
+  csa_compressor.softmax_pool: {model: elementwise, bytes: 12*B*T*D, ops: 12*B*T*D, repetitions: L_CSA}
+  csa_compressor.norm_rope: {model: structural, reason: fused into csa_compressor.partial_state, included_in_target: csa_compressor.partial_state}
+  csa_compressor.partial_state: {model: elementwise, bytes: 16*B*T*D, ops: 16*B*T*D, repetitions: L_CSA, assumptions: [fused norm RoPE state update and compressed-cache append owner]}
+  csa_compressor.compressed_cache: {model: structural, reason: fused into csa_compressor.partial_state, included_in_target: csa_compressor.partial_state}
+  csa_compressor.compressed_kv: {model: structural, reason: compressor output boundary}
+
+  hca_compressor.hidden_block: {model: structural, reason: compressor input boundary}
+  hca_compressor.kv_gate_projection: {model: roofline, ops: 4*B*T*H*D, bytes: 4*H*D+4*B*T*(H+2*D), dtype: bf16, repetitions: L_HCA}
+  hca_compressor.overlap_layout: {model: elementwise, bytes: 8*B*T*D, ops: 2*B*T*D, repetitions: L_HCA}
+  hca_compressor.softmax_pool: {model: elementwise, bytes: 12*B*T*D, ops: 12*B*T*D, repetitions: L_HCA}
+  hca_compressor.norm_rope: {model: structural, reason: fused into hca_compressor.partial_state, included_in_target: hca_compressor.partial_state}
+  hca_compressor.partial_state: {model: elementwise, bytes: 16*B*T*D, ops: 16*B*T*D, repetitions: L_HCA, assumptions: [fused norm RoPE state update and compressed-cache append owner]}
+  hca_compressor.compressed_cache: {model: structural, reason: fused into hca_compressor.partial_state, included_in_target: hca_compressor.partial_state}
+  hca_compressor.compressed_kv: {model: structural, reason: compressor output boundary}
+
+  csa_indexer.indexer_in: {model: structural, reason: indexer input boundary}
+  csa_indexer.q_projection: {model: roofline, operator_family: qsa_indexer, ops: 2*B*T*C_Q*INDEX_HEADS*INDEX_DIM, bytes: 2*C_Q*INDEX_HEADS*INDEX_DIM+4*B*T*(C_Q+INDEX_HEADS*INDEX_DIM), dtype: bf16, repetitions: L_CSA, assumptions: [includes fused RoPE Hadamard and FP4 quantization owner]}
+  csa_indexer.q_rope_rotate: {model: structural, reason: fused into csa_indexer.q_projection, included_in_target: csa_indexer.q_projection}
+  csa_indexer.k_compress: {model: roofline, operator_family: qsa_indexer, ops: 4*B*T*H*INDEX_DIM, bytes: 4*H*INDEX_DIM+8*B*T*(H+INDEX_DIM), dtype: bf16, repetitions: L_CSA, assumptions: [includes ratio-4 pooling norm RoPE Hadamard quantization and cache append]}
+  csa_indexer.weight_projection: {model: gemm, m: B*T, n: INDEX_HEADS, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 4, repetitions: L_CSA}
+  csa_indexer.score: {model: attention, operator_family: qsa_indexer, batch: B, query_tokens: T, kv_tokens: INDEX_KV, heads: INDEX_HEADS, head_dim: INDEX_DIM, dtype: bf16, dtype_bytes: 2, repetitions: L_CSA}
+  csa_indexer.causal_topk: {model: elementwise, operator_family: qsa_indexer, bytes: 8*B*INDEX_KV, ops: B*INDEX_KV, repetitions: L_CSA}
+  csa_indexer.expand: {model: elementwise, operator_family: qsa_indexer, bytes: 8*B*INDEX_KV, ops: B*INDEX_KV, repetitions: L_CSA}
+  csa_indexer.selected_ids: {model: structural, reason: fused output of csa_indexer.k_compress and causal_topk path, included_in_target: csa_indexer.k_compress}
+
+  hca_history.position: {model: structural, reason: decode position input boundary}
+  hca_history.all_completed: {model: elementwise, bytes: 8*B*(S/128), ops: B*(S/128), repetitions: L_HCA}
+  hca_history.selected_ids: {model: structural, reason: deterministic completed-block index output boundary}
+
+  moe.moe_in: {model: structural, reason: normalized FFN input boundary}
+  moe.score_projection: {model: gemm, m: B*T, n: EXPERTS, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 4, repetitions: L}
+  moe.sqrt_softplus: {model: elementwise, bytes: 8*B*T*EXPERTS, ops: 8*B*T*EXPERTS, repetitions: L_LEARNED}
+  moe.hash_select: {model: elementwise, bytes: 16*B*T*TOPK, ops: B*T*TOPK, repetitions: L_HASH}
+  moe.learned_select: {model: elementwise, bytes: 4*B*T*(EXPERTS+3*TOPK), ops: B*T*EXPERTS, repetitions: L_LEARNED}
+  moe.weights: {model: elementwise, bytes: 12*B*T*TOPK, ops: 6*B*T*TOPK, repetitions: L}
+  moe.dispatch: {model: elementwise, operator_family: moe_grouped_gemm, bytes: 4*B*T*TOPK*H, ops: B*T*TOPK, repetitions: L}
+  moe.routed_gate_up: {model: roofline, operator_family: moe_grouped_gemm, ops: 4*B*T*TOPK*H*I_LOCAL+12*B*T*TOPK*I_LOCAL, bytes: 4*TOPK*H*I_LOCAL+4*B*T*TOPK*(H+2*I_LOCAL), dtype: bf16, repetitions: L, assumptions: [includes the fused clamped SwiGLU activation owner]}
+  moe.routed_activation: {model: structural, reason: fused into moe.routed_gate_up, included_in_target: moe.routed_gate_up}
+  moe.routed_down: {model: roofline, operator_family: moe_grouped_gemm, ops: 2*B*T*TOPK*I_LOCAL*H, bytes: 2*TOPK*I_LOCAL*H+4*B*T*TOPK*(I_LOCAL+H), dtype: bf16, repetitions: L}
+  moe.routed_combine: {model: elementwise, bytes: 2*B*T*TOPK*H+2*B*T*H, ops: 2*B*T*TOPK*H, repetitions: L}
+  moe.shared_gate_up: {model: roofline, operator_family: moe_grouped_gemm, ops: 4*B*T*H*I_LOCAL, bytes: 4*H*I_LOCAL+4*B*T*(H+2*I_LOCAL), dtype: bf16, repetitions: L}
+  moe.shared_activation: {model: elementwise, bytes: 12*B*T*I_LOCAL, ops: 12*B*T*I_LOCAL, repetitions: L}
+  moe.shared_down: {model: roofline, operator_family: moe_grouped_gemm, ops: 2*B*T*I_LOCAL*H, bytes: 2*I_LOCAL*H+4*B*T*(I_LOCAL+H), dtype: bf16, repetitions: L}
+  moe.combine: {model: elementwise, bytes: 6*B*T*H, ops: 2*B*T*H, repetitions: L}
+  moe.tp_moe_output_collective: {model: collective, collective: all_reduce, group_size: TP, payload_bytes: 2*B*T*H, fabric: nvlink, repetitions: L}
+  moe.moe_out: {model: structural, reason: MoE delta output boundary}
+
+  dspark_generation.dspark_in: {model: structural, reason: DSpark boundary retained outside stage-1 autoregressive execution}
+  dspark_generation.target_concat: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.target_projection: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.noise_block: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.embedding: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.stage_schedule: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.stage_stack: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.final_hc: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.norm_lm: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.markov: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.logit_add: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.autoregressive_sample: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.confidence: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_generation.dspark_out: {model: structural, reason: DSpark boundary retained outside stage-1 autoregressive execution}
+  dspark_stage.stage_in: {model: structural, reason: DSpark stage boundary retained outside stage-1 autoregressive execution}
+  dspark_stage.attention_mhc_pre: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.attention: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.attention_mhc_post: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.ffn_mhc_pre: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.ffn_norm: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.moe: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.ffn_mhc_post: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_stage.stage_out: {model: structural, reason: DSpark stage boundary retained outside stage-1 autoregressive execution}
+  dspark_attention.attn_in: {model: structural, reason: DSpark attention boundary retained outside stage-1 autoregressive execution}
+  dspark_attention.target_kv: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.ring_update: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.draft_qkv: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.fixed_indices: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.sparse_mqa: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.output_projection: {model: structural, reason: DSpark excluded by exact stage-1 generation_mode}
+  dspark_attention.attn_out: {model: structural, reason: DSpark attention boundary retained outside stage-1 autoregressive execution}

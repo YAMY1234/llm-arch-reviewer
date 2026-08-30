@@ -9,6 +9,7 @@ kernel + stack to an IR node. The rest of the pipeline is deliberately common.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -654,6 +655,78 @@ def choose_forward_window(
     )
 
 
+def close_window_phase_tails(
+    trace_events: list[dict[str, Any]],
+    window: ForwardWindow,
+    *,
+    phase_frame: str,
+) -> ForwardWindow:
+    """Extend GPU annotation bounds through the enclosing Python phase tail.
+
+    Some runtimes end a GPU step annotation after enqueuing the model body but
+    before the final asynchronous collective has completed.  The enclosing
+    Python phase is the stronger ownership boundary when stacks are available:
+    any kernel launched from that phase remains part of the same executor step
+    even if queueing makes its device interval start later.  This opt-in helper
+    only extends the end of each selected bound; it never moves a start earlier
+    or admits a kernel whose correlated launch is outside the owning phase.
+    """
+
+    phase_spans = [
+        event
+        for event in trace_events
+        if event.get("cat") == "python_function"
+        and event.get("ph") == "X"
+        and phase_frame in str(event.get("name", ""))
+    ]
+    launch_by_correlation: dict[int, float] = {}
+    for event in trace_events:
+        if event.get("cat") not in {"cuda_runtime", "cuda_driver"}:
+            continue
+        correlation = _as_int(_args(event).get("correlation"))
+        if correlation is not None:
+            launch_by_correlation[correlation] = float(event.get("ts", 0.0))
+
+    closed_bounds: list[tuple[float, float]] = []
+    for start, end in window.iter_bounds_us:
+        enclosing = [
+            event
+            for event in phase_spans
+            if float(event.get("ts", 0.0)) <= start
+            and _event_end_us(event) >= start
+        ]
+        if not enclosing:
+            raise ValueError(
+                f"no {phase_frame!r} Python phase owns selected bound start {start}"
+            )
+        owner = min(enclosing, key=lambda event: float(event.get("dur", 0.0)))
+        owner_start = float(owner.get("ts", 0.0))
+        owner_end = _event_end_us(owner)
+        owned_kernel_ends = []
+        for event in trace_events:
+            if event.get("cat") != "kernel" or event.get("ph") != "X":
+                continue
+            correlation = _as_int(_args(event).get("correlation"))
+            launch_ts = (
+                launch_by_correlation.get(correlation)
+                if correlation is not None
+                else None
+            )
+            if launch_ts is not None and owner_start <= launch_ts <= owner_end:
+                owned_kernel_ends.append(_event_end_us(event))
+        # Preserve the enclosing Python phase boundary, and extend beyond it
+        # only for asynchronous kernels whose correlated launch it owned. A
+        # longer GPU annotation (for example multi-stream prefill) remains
+        # authoritative when it already outlives both.
+        closed_bounds.append((start, max([end, owner_end, *owned_kernel_ends])))
+    return ForwardWindow(
+        start_us=closed_bounds[0][0],
+        end_us=closed_bounds[-1][1],
+        iter_bounds_us=closed_bounds,
+        anchor_kernel_count=window.anchor_kernel_count,
+    )
+
+
 _FILE_FRAME_RE = re.compile(r"(?P<file>[^()]+\.py)\((?P<line>\d+)\): (?P<func>.+)$")
 _MODULE_FRAME_RE = re.compile(r"nn\.Module: (?P<module>.+)$")
 
@@ -1107,6 +1180,9 @@ def build_trace_mapping(
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
     expected_phase_frame: str | None = None,
+    close_phase_tails: bool = False,
+    phase_tail_owner_frame: str | None = None,
+    capture_contract: dict[str, Any] | None = None,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
@@ -1131,6 +1207,15 @@ def build_trace_mapping(
         n_iters=n_iters,
         skip_first=skip_first,
     )
+    if close_phase_tails:
+        if not expected_phase_frame:
+            raise ValueError("close_phase_tails requires expected_phase_frame")
+        window = close_window_phase_tails(
+            trace_events,
+            window,
+            phase_frame=phase_tail_owner_frame or expected_phase_frame,
+        )
+        window_method = f"{window_method}+python_phase_tail"
     events = normalize_kernel_events(
         trace_events,
         window=window,
@@ -1142,8 +1227,20 @@ def build_trace_mapping(
         mappings,
         expected_phase=expected_phase_frame or phase,
     )
+    trace_digest = hashlib.sha256()
+    with trace_path.open("rb") as trace_file:
+        for chunk in iter(lambda: trace_file.read(1024 * 1024), b""):
+            trace_digest.update(chunk)
+    selected_events_digest = hashlib.sha256(
+        json.dumps(
+            [asdict(event) for event in events],
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     manifest = {
         "trace_path": str(trace_path),
+        "trace_sha256": trace_digest.hexdigest(),
         "config_path": str(config_path) if config_path else None,
         "source_root": str(source_root) if source_root else None,
         "source_repo": source_repo,
@@ -1177,7 +1274,14 @@ def build_trace_mapping(
         "kernel_event_count": sum(
             1 for event in trace_events if event.get("cat") == "kernel"
         ),
+        "selected_forward_kernel_count": len(events),
+        "selected_forward_kernel_duration_us": sum(
+            float(event.dur_us) for event in events
+        ),
+        "selected_forward_events_sha256": selected_events_digest,
     }
+    if capture_contract is not None:
+        manifest["capture_contract"] = capture_contract
     if phase.lower() in {
         "eagle_mtp_cudagraph_decode",
         "mtp_cudagraph_decode",
@@ -1272,10 +1376,28 @@ def write_validation_markdown(path: Path, validation: dict[str, Any]) -> None:
 
 
 def write_build_result(out_dir: Path, result: BuildResult, *, rank: int) -> None:
-    write_json(out_dir / "input_manifest.json", result.manifest)
+    # Rank-specific manifests/reports are the immutable contract used by
+    # all-rank reconciliation.  Keep the legacy unqualified files for rank 0
+    # so existing single-rank consumers remain compatible without allowing a
+    # later rank to overwrite TP0 identity.
+    write_json(out_dir / f"input_manifest.tp{rank}.json", result.manifest)
     write_jsonl(out_dir / f"events.tp{rank}.jsonl", result.events)
     write_jsonl(out_dir / f"kernel_mapping.tp{rank}.jsonl", result.mappings)
-    write_json(out_dir / "validation_report.json", result.validation)
-    write_validation_markdown(out_dir / "validation_report.md", result.validation)
-    write_json(out_dir / "stack_samples.json", result.stack_samples)
-    write_stack_samples_markdown(out_dir / "stack_samples.md", result.stack_samples)
+    write_json(out_dir / f"validation_report.tp{rank}.json", result.validation)
+    write_validation_markdown(
+        out_dir / f"validation_report.tp{rank}.md", result.validation
+    )
+    write_json(out_dir / f"stack_samples.tp{rank}.json", result.stack_samples)
+    write_stack_samples_markdown(
+        out_dir / f"stack_samples.tp{rank}.md", result.stack_samples
+    )
+    if rank == 0:
+        write_json(out_dir / "input_manifest.json", result.manifest)
+        write_json(out_dir / "validation_report.json", result.validation)
+        write_validation_markdown(
+            out_dir / "validation_report.md", result.validation
+        )
+        write_json(out_dir / "stack_samples.json", result.stack_samples)
+        write_stack_samples_markdown(
+            out_dir / "stack_samples.md", result.stack_samples
+        )

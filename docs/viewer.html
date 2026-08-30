@@ -1045,6 +1045,7 @@ function updateProfileSummary() {
   const summary = meta.profile_summary || {};
   const accounting = meta.evidence?.accounting || {};
   const timing = summary.timing || {};
+  const productionWall = summary.production_wall_timing || {};
   const elapsedMs = Number(timing.elapsed_ms);
   const activeGpuMs = Number(timing.active_gpu_ms);
   const declaredBusyPct = Number(timing.gpu_busy_pct);
@@ -1054,7 +1055,16 @@ function updateProfileSummary() {
       ? (100 * activeGpuMs / elapsedMs)
       : null);
   const timingBits = timing.elapsed_ms != null ? [
-    `elapsed ${formatMs(timing.elapsed_ms)} ms`,
+    productionWall.elapsed_ms != null
+      ? `production wall ${formatMs(productionWall.elapsed_ms)} ms (profiler-off authority)`
+      : productionWall.status === "unavailable"
+        ? "production wall unavailable (no matched profiler-off authority)"
+        : `elapsed ${formatMs(timing.elapsed_ms)} ms`,
+    productionWall.elapsed_ms != null
+      ? `instrumented trace ${formatMs(timing.elapsed_ms)} ms (attribution only)`
+      : productionWall.status === "unavailable"
+        ? `instrumented trace ${formatMs(timing.elapsed_ms)} ms (attribution only)`
+        : "",
     `active ${formatMs(timing.active_gpu_ms)} ms`,
     `device gap ${formatMs(timing.device_gap_ms)} ms`,
     gpuBusyPct != null ? `GPU busy ${gpuBusyPct.toFixed(1)}%` : "",
@@ -2210,9 +2220,17 @@ function decodeTimelineArtifact(artifact) {
       event._substage = timelineStringFrom(artifact, event.substage);
       event._occurrenceId = timelineStringFrom(artifact, event.occurrence_id);
       event._eagerEventId = timelineStringFrom(artifact, event.eager_event_id);
+      event._eagerEventIds = (event.eager_event_ids || [])
+        .map(index => timelineStringFrom(artifact, index))
+        .filter(Boolean);
+      if (!event._eagerEventIds.length && event._eagerEventId) {
+        event._eagerEventIds = [event._eagerEventId];
+      }
       event._kernelKind = timelineStringFrom(artifact, event.kernel_kind);
       event._attributionMethod = timelineStringFrom(artifact, event.attribution_method);
       event._confidence = timelineStringFrom(artifact, event.confidence);
+      event._reconciliationStatus = timelineStringFrom(artifact, event.reconciliation_status);
+      event._reconciliationReason = timelineStringFrom(artifact, event.reconciliation_reason);
       event._supportClass = timelineStringFrom(artifact, event.support_class);
       event._supportReason = timelineStringFrom(artifact, event.support_reason);
       event._cpuOpName = timelineStringFrom(artifact, event.cpu_op_name);
@@ -3014,9 +3032,10 @@ function showTimelineEventDetail(event) {
       <div class="k">layer</div><div>${event.layer_id == null ? "—" : event.layer_id} · ${escapeHtml(event._layerKind || "")}</div>
       <div class="k">substage</div><div>${escapeHtml(event._substage || "—")}</div>
       ${event._occurrenceId ? `<div class="k">occurrence</div><div>${escapeHtml(event._occurrenceId)}</div>` : ""}
-      ${event._eagerEventId ? `<div class="k">eager evidence</div><div>${escapeHtml(event._eagerEventId)}</div>` : ""}
+      ${event._eagerEventIds?.length ? `<div class="k">eager evidence</div><div>${escapeHtml(event._eagerEventIds.join(", "))}</div>` : ""}
       <div class="k">CPU op</div><div>${escapeHtml(event._cpuOpName || "—")}</div>
       <div class="k">attribution</div><div>${escapeHtml(event._attributionMethod || "—")} · ${escapeHtml(event._confidence || "—")}</div>
+      ${event._reconciliationStatus ? `<div class="k">reconciliation</div><div>${escapeHtml(event._reconciliationStatus)}${event._reconciliationReason ? ` · ${escapeHtml(event._reconciliationReason)}` : ""}</div>` : ""}
       ${event._supportClass ? `<div class="k">runtime/support class</div><div>${escapeHtml(event._supportClass)}</div>` : ""}
       ${event._supportReason ? `<div class="k">outside-IR reason</div><div>${escapeHtml(event._supportReason)}</div>` : ""}
       <div class="k">Python stack</div><div>${escapeHtml(stackNote)}</div>
