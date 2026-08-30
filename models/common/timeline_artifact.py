@@ -84,8 +84,13 @@ def _idle_intervals(
 def timeline_targets(event: dict[str, Any]) -> list[str]:
     """Return direct and roll-up IR targets for one attributed event."""
 
-    node = str(event.get("node") or "")
+    node = str(event.get("timing_owner") or event.get("node") or "")
     targets: list[str] = [node] if node else []
+    # Model-independent attribution builders may already know the exact
+    # execution-view ancestors and many-to-many fusion members.  Preserve
+    # those authored targets before adding the legacy model-specific roll-ups
+    # below; the final stable de-duplication keeps the direct owner first.
+    targets.extend(str(target) for target in event.get("ir_targets") or [])
     qsa_indexer_drill_target = event.get("qsa_indexer_drill_target")
     if qsa_indexer_drill_target:
         targets.append(str(qsa_indexer_drill_target))
@@ -499,7 +504,9 @@ def build_timeline_artifact(
                     "tid": event.get("tid"),
                     "kernel_name": strings.add(event.get("kernel_name")),
                     "kernel_label": strings.add(event.get("kernel_label")),
-                    "ir_node": strings.add(event.get("node")),
+                    "ir_node": strings.add(
+                        event.get("timing_owner") or event.get("node")
+                    ),
                     "ir_targets": [strings.add(target) for target in targets],
                     "layer_id": event.get("layer_id"),
                     "layer_kind": strings.add(event.get("layer_kind")),
@@ -507,6 +514,10 @@ def build_timeline_artifact(
                     "segment_id": event.get("segment_id"),
                     "occurrence_id": strings.add(event.get("occurrence_id")),
                     "eager_event_id": strings.add(event.get("eager_event_id")),
+                    "eager_event_ids": [
+                        strings.add(event_id)
+                        for event_id in event.get("eager_event_ids") or []
+                    ],
                     "kernel_kind": strings.add(_kernel_kind(event)),
                     "attribution_method": strings.add(
                         event.get("attribution_method")

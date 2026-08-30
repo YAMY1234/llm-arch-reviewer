@@ -81,7 +81,45 @@ def test_targets_include_direct_node_and_architecture_rollups() -> None:
     ]
 
 
+def test_targets_preserve_explicit_model_independent_rollups() -> None:
+    event = _event(
+        "detail.owner",
+        timestamp=0.0,
+        duration=1.0,
+        stream=1,
+    )
+    event["ir_targets"] = ["detail.owner", "top.module", "detail.fused_member"]
+
+    assert timeline_targets(event) == [
+        "detail.owner",
+        "top.module",
+        "detail.fused_member",
+        "stack.linear_layer",
+        "top.decoder_stack",
+        "linear_layer.linear_attention",
+    ]
+
+
+def test_targets_put_explicit_timing_owner_before_fusion_members() -> None:
+    event = _event("detail.fused_member", timestamp=0.0, duration=1.0, stream=1)
+    event["timing_owner"] = "detail.owner"
+    event["ir_targets"] = ["detail.fused_member", "top.module"]
+
+    assert timeline_targets(event)[:3] == [
+        "detail.owner",
+        "detail.fused_member",
+        "top.module",
+    ]
+
+
 def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
+    event = _event(
+        "linear_attention.recurrent_update",
+        timestamp=1.0,
+        duration=2.0,
+        stream=7,
+    )
+    event["eager_event_ids"] = ["eager-r0-k42", "eager-r0-k43"]
     artifact = build_timeline_artifact(
         profile_id="p",
         phase="decode",
@@ -90,7 +128,7 @@ def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
             "step_index": 0,
             "trace_start_us": 0.0,
             "duration_us": 10.0,
-            "events": [_event("linear_attention.recurrent_update", timestamp=1.0, duration=2.0, stream=7)],
+            "events": [event],
         }],
         timing_summary={},
         raw_trace={},
@@ -101,6 +139,10 @@ def test_timeline_persists_occurrence_and_eager_event_identity() -> None:
     assert event["segment_id"] == 6
     assert strings[event["occurrence_id"]] == "layer_03.attention"
     assert strings[event["eager_event_id"]] == "eager-r0-k42"
+    assert [strings[index] for index in event["eager_event_ids"]] == [
+        "eager-r0-k42",
+        "eager-r0-k43",
+    ]
 
 
 def test_timeline_persists_explicit_runtime_support_contract() -> None:

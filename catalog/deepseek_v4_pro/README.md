@@ -49,3 +49,28 @@ Any mode, phase, shape, rank, source, or selected-window mismatch is rejected.
 Raw traces and checkpoint files stay under
 `current/deepseek-v4-pro-ir-profile/`; only manifests, bindings, profiles,
 timelines, and reproducible hashes belong in this repository.
+
+## Accepted vLLM production profiles
+
+The source-locked vLLM implementation has five accepted pure-TP8 profiles. All
+eight TP ranks passed exact source, mode, phase, shape, selected-window, and
+ordered eager-to-production reconciliation. The published timeline uses the
+slowest selected-window rank for each point; elapsed time is the selected wall
+interval, active time is the cross-stream interval union, and residency is the
+sum of kernel durations.
+
+| Phase | GBS | CUDA Graph | Critical-rank elapsed (ms) | Kernel mapping |
+|---|---:|---|---:|---:|
+| Prefill | 1 | off | 507.298 | 100% |
+| Decode | 1 | on | 11.179 | 100% |
+| Decode | 16 | on | 14.502 | 100% |
+| Decode | 64 | on | 20.016 | 100% |
+| Decode | 256 | on | 31.430 | 100% |
+
+Every graph-on decode event retains its exact same-rank eager event IDs and
+stack/shape evidence. Many-to-one and one-to-many mappings remain explicit,
+while each fused physical event set has one timing owner. Semantic non-owners
+are marked `fused into <owner>` and navigate to that owner; hierarchy totals are
+interval-union rollups rather than additional timing owners. The five timelines
+have 100% mapped kernel-count and residency coverage. No attainable projection
+is claimed without an exact kernel-plan calibration surface.
