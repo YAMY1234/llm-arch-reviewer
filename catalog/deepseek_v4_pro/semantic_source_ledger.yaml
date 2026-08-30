@@ -1,0 +1,429 @@
+schema_version: semantic-source-ledger.v1
+model_id: deepseek_v4_pro
+scope_id: official_target_text_plus_attached_dspark
+
+source_snapshot:
+  repository: https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813
+  revision: 72e1d3230f6c080a530b0a1d46f8eb4602340597
+  files:
+    - {path: config.json, git_blob_oid: 7fc3b0c42c815a0a7481b5ca15f42139f94ac4ab, role: canonical Hugging Face architecture configuration}
+    - {path: inference/config.json, git_blob_oid: 1e35b694f10a64330588a0591d804b5727520435, role: official reference-inference configuration including three DSpark stages}
+    - {path: inference/model.py, git_blob_oid: 76122da98a9abd3ecab9e3e6d6ed181abcba3bee, role: official mathematical and state-transition reference}
+    - {path: inference/kernel.py, git_blob_oid: ad550ce13382a964ec5613acddcd96315b662f9a, role: reference sparse attention quantization and mHC primitive equations}
+
+audit_views:
+  - top
+  - decoder_stack
+  - mhc_transform
+  - final_hc_read
+  - csa_attention
+  - hca_attention
+  - csa_compressor
+  - hca_compressor
+  - csa_indexer
+  - hca_history
+  - moe
+  - dspark_generation
+  - dspark_stage
+  - dspark_attention
+
+entrypoints:
+  - id: model_config
+    component: exact architecture dimensions and layer variants
+    source_file: inference/model.py
+    symbol: ModelArgs
+    anchor: "class ModelArgs:"
+    review_status: verified
+    member_dispositions: []
+    expected_ir_views: [top, decoder_stack, csa_attention, hca_attention, moe, dspark_generation]
+    obligations:
+      - id: config_dimensions
+        kind: shape_only_omitted
+        source_anchor: "class ModelArgs:"
+        disposition: excluded
+        reason: dimensions and schedule constants parameterize mapped operators and state rather than adding another runtime operation
+
+  - id: transformer
+    component: target and DSpark outer data flow
+    source_file: inference/model.py
+    symbol: Transformer
+    anchor: "class Transformer(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+      - {name: forward_spec, disposition: reviewed}
+    expected_ir_views: [top, decoder_stack, dspark_generation]
+    obligations:
+      - id: target_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, input_ids: torch.Tensor, start_pos: int = 0):"
+        disposition: mapped
+        ir_targets: [top.token_ids, top.logits, decoder_stack.stack_in, decoder_stack.stack_out]
+      - id: embedding_and_hc_expand
+        kind: model_ir_primitive
+        source_anchor: "h = h.unsqueeze(2).repeat(1, 1, self.hc_mult, 1)"
+        disposition: mapped
+        ir_targets: [top.embedding, top.hc_expand]
+      - id: target_norm_and_head
+        kind: model_ir_primitive
+        source_anchor: "logits = self.head(self.norm(h))"
+        disposition: mapped
+        ir_targets: [top.final_norm, top.lm_head]
+      - id: layer_schedule
+        kind: model_ir_primitive
+        source_anchor: "for i, layer in enumerate(self.layers):"
+        disposition: mapped
+        ir_targets: [decoder_stack.schedule, decoder_stack.attention_choice]
+      - id: dspark_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward_spec(self, input_ids: torch.Tensor, main_hidden: torch.Tensor, start_pos: int = 0):"
+        disposition: mapped
+        ir_targets: [dspark_generation.dspark_in, dspark_generation.dspark_out]
+      - id: target_feature_concat
+        kind: model_ir_primitive
+        source_anchor: "main_hidden = torch.cat(main_hiddens, dim=-1) if main_hiddens else None"
+        disposition: mapped
+        ir_targets: [dspark_generation.target_concat]
+      - id: dspark_stage_schedule
+        kind: model_ir_primitive
+        source_anchor: "for layer in self.mtp:"
+        disposition: mapped
+        ir_targets: [dspark_generation.stage_schedule]
+
+  - id: decoder_block
+    component: repeated mHC attention and MoE transition
+    source_file: inference/model.py
+    symbol: Block
+    anchor: "class Block(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: hc_pre, disposition: reviewed}
+      - {name: hc_post, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+      - {name: hc_head, disposition: reviewed}
+    expected_ir_views: [decoder_stack, mhc_transform, final_hc_read, dspark_stage]
+    obligations:
+      - id: decoder_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, x: torch.Tensor, start_pos: int, input_ids: Optional[torch.Tensor], *attn_args)"
+        disposition: mapped
+        ir_targets: [decoder_stack.stack_in, decoder_stack.stack_out]
+      - id: decoder_norms_and_post_transitions
+        kind: model_ir_primitive
+        source_anchor: "x = self.hc_post(x, residual, post, comb)"
+        disposition: mapped
+        ir_targets: [decoder_stack.attention_norm, decoder_stack.attention_mhc_post, decoder_stack.ffn_norm, decoder_stack.ffn_mhc_post]
+      - id: mhc_boundaries
+        kind: tensor_boundary
+        source_anchor: "# x: [b,s,hc,d]"
+        disposition: mapped
+        ir_targets: [mhc_transform.streams, mhc_transform.delta, mhc_transform.updated_streams, final_hc_read.streams, final_hc_read.hidden]
+      - id: mhc_pre_equations
+        kind: model_ir_primitive
+        source_anchor: "pre, post, comb = hc_split_sinkhorn"
+        disposition: mapped
+        ir_targets: [mhc_transform.flatten_rms, mhc_transform.affine, mhc_transform.pre_gate, mhc_transform.post_gate, mhc_transform.combine_sinkhorn, mhc_transform.read]
+      - id: mhc_post_equations
+        kind: model_ir_primitive
+        source_anchor: "post.unsqueeze(-1) * x.unsqueeze(-2)"
+        disposition: mapped
+        ir_targets: [mhc_transform.place, mhc_transform.mix]
+      - id: final_hc_equations
+        kind: model_ir_primitive
+        source_anchor: "def hc_head(self, x: torch.Tensor, hc_fn: torch.Tensor, hc_scale: torch.Tensor, hc_base: torch.Tensor):"
+        disposition: mapped
+        ir_targets: [final_hc_read.flatten_rms, final_hc_read.pre_gate, final_hc_read.read]
+      - id: dspark_inherited_boundaries
+        kind: tensor_boundary
+        source_anchor: "return y.type_as(x)"
+        disposition: mapped
+        ir_targets: [dspark_stage.stage_in, dspark_stage.stage_out]
+      - id: dspark_inherited_transitions
+        kind: model_ir_primitive
+        source_anchor: "x = self.ffn_norm(x)"
+        disposition: mapped
+        ir_targets: [dspark_stage.attention_mhc_post, dspark_stage.ffn_norm, dspark_stage.ffn_mhc_post]
+
+  - id: attention
+    component: shared CSA and HCA query KV window compression selection and grouped output
+    source_file: inference/model.py
+    symbol: Attention
+    anchor: "class Attention(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [csa_attention, hca_attention, hca_history]
+    obligations:
+      - id: attention_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, x: torch.Tensor, start_pos: int):"
+        disposition: mapped
+        ir_targets: [csa_attention.attn_in, csa_attention.attn_out, hca_attention.attn_in, hca_attention.attn_out]
+      - id: query_and_window_kv
+        kind: model_ir_primitive
+        source_anchor: "qr = q = self.q_norm(self.wq_a(x))"
+        disposition: mapped
+        ir_targets: [csa_attention.q_a, csa_attention.q_norm, csa_attention.q_b, csa_attention.q_head_norm, csa_attention.q_rope, csa_attention.window_kv, hca_attention.q_a, hca_attention.q_norm, hca_attention.q_b, hca_attention.q_head_norm, hca_attention.q_rope, hca_attention.window_kv]
+      - id: window_state
+        kind: state_update
+        source_anchor: "self.kv_cache[:bsz, start_pos % win] = kv.squeeze(1)"
+        disposition: mapped
+        ir_targets: [csa_attention.window_cache, hca_attention.window_cache]
+      - id: window_and_history_indices
+        kind: model_ir_primitive
+        source_anchor: "topk_idxs = get_window_topk_idxs(win, bsz, seqlen, start_pos)"
+        disposition: mapped
+        ir_targets: [csa_attention.window_indices, csa_attention.index_union, hca_attention.window_indices, hca_attention.index_union, hca_history.all_completed]
+      - id: hca_history_boundaries
+        kind: tensor_boundary
+        source_anchor: "compress_topk_idxs = get_compress_topk_idxs"
+        disposition: mapped
+        ir_targets: [hca_history.position, hca_history.selected_ids]
+      - id: attention_core_and_output
+        kind: model_ir_primitive
+        source_anchor: "o = sparse_attn(q, self.kv_cache[:bsz], self.attn_sink, topk_idxs, self.softmax_scale)"
+        disposition: mapped
+        ir_targets: [csa_attention.sparse_mqa, csa_attention.inverse_rope, csa_attention.grouped_o_a, csa_attention.o_b, hca_attention.sparse_mqa, hca_attention.inverse_rope, hca_attention.grouped_o_a, hca_attention.o_b]
+
+  - id: compressor
+    component: CSA overlap and HCA non-overlap gated compression with incremental state
+    source_file: inference/model.py
+    symbol: Compressor
+    anchor: "class Compressor(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: overlap_transform, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [csa_compressor, hca_compressor]
+    obligations:
+      - id: compressor_boundaries
+        kind: tensor_boundary
+        source_anchor: "assert self.kv_cache is not None"
+        disposition: mapped
+        ir_targets: [csa_compressor.hidden_block, csa_compressor.compressed_kv, hca_compressor.hidden_block, hca_compressor.compressed_kv]
+      - id: projection_and_layout
+        kind: model_ir_primitive
+        source_anchor: "score = self.wgate(x)"
+        disposition: mapped
+        ir_targets: [csa_compressor.kv_gate_projection, csa_compressor.overlap_layout, hca_compressor.kv_gate_projection, hca_compressor.overlap_layout]
+      - id: gated_pool_and_encoding
+        kind: model_ir_primitive
+        source_anchor: "kv = (self.kv_state[:bsz] * self.score_state[:bsz].softmax(dim=1)).sum(dim=1, keepdim=True)"
+        disposition: mapped
+        ir_targets: [csa_compressor.softmax_pool, csa_compressor.norm_rope, hca_compressor.softmax_pool, hca_compressor.norm_rope]
+      - id: partial_state
+        kind: state_update
+        source_anchor: "self.kv_state[:bsz, start_pos % ratio] = kv.squeeze(1)"
+        disposition: mapped
+        ir_targets: [csa_compressor.partial_state, hca_compressor.partial_state]
+      - id: compressed_cache
+        kind: state_update
+        source_anchor: "self.kv_cache[:bsz, start_pos // ratio] = kv.squeeze(1)"
+        disposition: mapped
+        ir_targets: [csa_compressor.compressed_cache, hca_compressor.compressed_cache]
+
+  - id: csa_indexer
+    component: learned compressed-block scoring and selection
+    source_file: inference/model.py
+    symbol: Indexer
+    anchor: "class Indexer(torch.nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [csa_indexer]
+    obligations:
+      - id: indexer_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, x: torch.Tensor, qr: torch.Tensor, start_pos: int, offset: int):"
+        disposition: mapped
+        ir_targets: [csa_indexer.indexer_in, csa_indexer.selected_ids]
+      - id: index_query_and_key
+        kind: model_ir_primitive
+        source_anchor: "q = self.wq_b(qr)"
+        disposition: mapped
+        ir_targets: [csa_indexer.q_projection, csa_indexer.q_rope_rotate, csa_indexer.k_compress]
+      - id: score_and_selection
+        kind: model_ir_primitive
+        source_anchor: "index_score = (index_score.relu_() * weights.unsqueeze(-1)).sum(dim=2)"
+        disposition: mapped
+        ir_targets: [csa_indexer.weight_projection, csa_indexer.score, csa_indexer.causal_topk, csa_indexer.expand]
+      - id: reference_tp_collective
+        kind: execution_ir
+        source_anchor: "dist.all_reduce(index_score)"
+        disposition: excluded
+        reason: the official reference shards index heads, while both selected production framework bindings replicate the full indexer; collective placement therefore belongs to commit-specific Execution IR
+
+  - id: moe_gate
+    component: hash and learned expert selection with unbiased routed weights
+    source_file: inference/model.py
+    symbol: Gate
+    anchor: "class Gate(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [moe]
+    obligations:
+      - id: router_math
+        kind: model_ir_primitive
+        source_anchor: "scores = F.softplus(scores).sqrt()"
+        disposition: mapped
+        ir_targets: [moe.score_projection, moe.sqrt_softplus, moe.hash_select, moe.learned_select, moe.weights]
+
+  - id: expert
+    component: clamped routed and shared expert MLP mathematics
+    source_file: inference/model.py
+    symbol: Expert
+    anchor: "class Expert(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [moe]
+    obligations:
+      - id: routed_and_shared_expert_math
+        kind: model_ir_primitive
+        source_anchor: "x = F.silu(gate) * up"
+        disposition: mapped
+        ir_targets: [moe.routed_gate_up, moe.routed_activation, moe.routed_down, moe.shared_gate_up, moe.shared_activation, moe.shared_down]
+
+  - id: moe_composition
+    component: token dispatch routed reduction and shared merge
+    source_file: inference/model.py
+    symbol: MoE
+    anchor: "class MoE(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [moe]
+    obligations:
+      - id: moe_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, x: torch.Tensor, input_ids: torch.Tensor)"
+        disposition: mapped
+        ir_targets: [moe.moe_in, moe.moe_out]
+      - id: dispatch_combine
+        kind: model_ir_primitive
+        source_anchor: "y[idx] += expert(x[idx], weights[idx, top, None])"
+        disposition: mapped
+        ir_targets: [moe.dispatch, moe.routed_combine, moe.combine]
+      - id: reference_expert_placement
+        kind: execution_ir
+        source_anchor: "self.n_local_experts = args.n_routed_experts // world_size"
+        disposition: excluded
+        reason: framework production paths use distinct pure-TP expert layouts captured by separate Execution IR fingerprints
+
+  - id: dspark_block
+    component: target projection noise seed draft stage and final target heads
+    source_file: inference/model.py
+    symbol: DSparkBlock
+    anchor: "class DSparkBlock(Block):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+      - {name: forward_embed, disposition: reviewed}
+      - {name: forward_head, disposition: reviewed}
+    expected_ir_views: [dspark_generation, dspark_stage]
+    obligations:
+      - id: seed_and_target_projection
+        kind: model_ir_primitive
+        source_anchor: "draft_input_ids[:, 0] = input_ids"
+        disposition: mapped
+        ir_targets: [dspark_generation.target_projection, dspark_generation.noise_block, dspark_generation.embedding]
+      - id: final_head_math
+        kind: model_ir_primitive
+        source_anchor: "logits[:, i].add_(logits_bias)"
+        disposition: mapped
+        ir_targets: [dspark_generation.norm_lm, dspark_generation.logit_add]
+
+  - id: dspark_attention
+    component: draft attention over target ring and draft positions
+    source_file: inference/model.py
+    symbol: DSparkAttention
+    anchor: "class DSparkAttention(Attention):"
+    review_status: verified
+    member_dispositions:
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [dspark_attention]
+    obligations:
+      - id: dspark_attention_boundaries
+        kind: tensor_boundary
+        source_anchor: "def forward(self, x: torch.Tensor, start_pos: int, main_x: torch.Tensor):"
+        disposition: mapped
+        ir_targets: [dspark_attention.attn_in, dspark_attention.attn_out]
+      - id: target_and_draft_projection
+        kind: model_ir_primitive
+        source_anchor: "main_kv = self.kv_norm(self.wkv(main_x))"
+        disposition: mapped
+        ir_targets: [dspark_attention.target_kv, dspark_attention.draft_qkv]
+      - id: target_ring_state
+        kind: state_update
+        source_anchor: "self.kv_cache[:bsz, start_pos % win] = main_kv.squeeze(1)"
+        disposition: mapped
+        ir_targets: [dspark_attention.ring_update]
+      - id: fixed_selection_and_attention
+        kind: model_ir_primitive
+        source_anchor: "topk_idxs = get_dspark_topk_idxs(win, bsz, block_size, start_pos)"
+        disposition: mapped
+        ir_targets: [dspark_attention.fixed_indices, dspark_attention.sparse_mqa, dspark_attention.output_projection]
+
+  - id: dspark_markov
+    component: rank-512 token-conditioned Markov logits
+    source_file: inference/model.py
+    symbol: DSparkMarkovHead
+    anchor: "class DSparkMarkovHead(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [dspark_generation]
+    obligations:
+      - id: markov_logits
+        kind: model_ir_primitive
+        source_anchor: "logits = self.markov_w2(embed, full_logits=True)"
+        disposition: mapped
+        ir_targets: [dspark_generation.markov]
+
+  - id: dspark_confidence
+    component: FP32 draft confidence head
+    source_file: inference/model.py
+    symbol: DSparkConfidenceHead
+    anchor: "class DSparkConfidenceHead(nn.Module):"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [dspark_generation]
+    obligations:
+      - id: confidence
+        kind: model_ir_primitive
+        source_anchor: "return self.proj(hidden.float()).squeeze(-1)"
+        disposition: mapped
+        ir_targets: [dspark_generation.confidence]
+
+  - id: sampling
+    component: sequential DSpark draft sampling transition
+    source_file: inference/model.py
+    symbol: sample
+    anchor: "def sample(logits, temperature: float = 1.0):"
+    review_status: verified
+    member_dispositions:
+      - {name: sample, disposition: reviewed}
+    expected_ir_views: [dspark_generation]
+    obligations:
+      - id: autoregressive_sample
+        kind: model_ir_primitive
+        source_anchor: "return probs.div_(torch.empty_like(probs).exponential_(1)).argmax(dim=-1)"
+        disposition: mapped
+        ir_targets: [dspark_generation.autoregressive_sample]
+
+reverse_exclusions:
+  - target: top.runtime_support
+    reason: explicit serving metadata boundary; it is execution support rather than a stable mathematical operation in the official model source

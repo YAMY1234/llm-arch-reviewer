@@ -1,0 +1,110 @@
+schema_version: ir-pipeline-manifest.v1
+model_id: deepseek_v4_pro
+target: cross_framework_pure_tp4_stage1
+evidence_root: current/deepseek-v4-pro-ir-profile
+
+source_lock:
+  model_id: deepseek-ai/DeepSeek-V4-Pro-0813
+  model_revision: 72e1d3230f6c080a530b0a1d46f8eb4602340597
+  model_config_sha256: 9dd2a89255469e120b333668ef5a169b7ae46c00f6bbab786bf0be457546aec0
+  canonical_semantics_revision: 72e1d3230f6c080a530b0a1d46f8eb4602340597
+  official_identity_policy: exact_0813_checkpoint_only_no_preview_v3_dsv4_or_internal_substitution
+  framework_targets:
+    - framework: sglang
+      support_state: runtime_verified_semantic_validation_pending
+      source_commit: 71de97b264b04dcd514cf904003028aefe9775c8
+      container: sglang-arm64-db37df8aded8.sqsh@sha256:ddec5cc59fa15be11e0b0b06de381cc2e0588e2d6098bd86f12a83cb4b1d58e2
+      runtime_source_verification: passed
+      runtime_model_module_sha256: a65472eb24fe6bc3582e8f46f32ebd94c27fee62907ca86e57bb7a54c0ba1d54
+      runtime_preflight: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
+      runtime_source_hash_manifest: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
+      eager_reconciliation: pending
+    - framework: vllm
+      support_state: runtime_verified_semantic_validation_pending
+      source_commit: dd10e03f95f94edbea1975c67ace3a35ec9a8a40
+      container: vllm-arm64-2f726db9babd.sqsh@sha256:111d0967a4054e22dbc8fccddfe7446cebe7b5cede51e555b563a77a5574d28c
+      runtime_source_verification: passed
+      runtime_model_module_sha256: a0cbb88b7a0ac5ba9419e07f8922bb84c861f41611596d719efdd86ce95a2e50
+      runtime_preflight: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
+      runtime_source_hash_manifest: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
+      eager_reconciliation: pending
+
+execution:
+  serving_mode: aggregated
+  generation_mode: autoregressive
+  modality: text_only
+  default_topology: pure_tp
+  tp_size: 4
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  attention_dp: false
+  dspark_enabled: false
+  mtp_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+  prefix_cache_enabled: false
+  framework_execution_paths:
+    sglang: tp4_moe_intermediate_shard
+    vllm: tp4_moe_intermediate_shard
+  candidate_plan_requires_eager_reconciliation: true
+
+workload:
+  fixed_lengths: true
+  isl: 8192
+  osl: 1024
+  random_range_ratio: 1.0
+  ignore_eos: true
+  request_rate: inf
+  prompt_seed: 0
+  decode_global_batch_sizes: [1, 16, 64, 256]
+  stable_prefill_global_batch_sizes: [1]
+  warmup_request_multiplier: 3
+  formal_request_multiplier: 1
+
+capture_policy:
+  baseline_discovery:
+    cuda_graph_enabled: false
+    profiler_enabled: false
+    ordinary_serving_run: true
+    discover_stable_scheduler_steps_before_capture: true
+    preserve_trajectory_fields: true
+  eager_semantic:
+    cuda_graph_enabled: false
+    phases: [prefill, decode]
+    collect: [python_stack, cpp_stack, shapes, dtypes, ranks, streams, collective_order, state_transitions, invocation_scope]
+    timing_authority: false
+  production:
+    prefill:
+      cuda_graph_enabled: false
+      global_batch_sizes: [1]
+      accept_only_stable_complete_request_window: true
+    decode:
+      cuda_graph_enabled: true
+      global_batch_sizes: [1, 16, 64, 256]
+      require_all_tp_rank_traces: true
+      require_eager_signature_and_order_reconciliation: true
+  post_capture_validation:
+    require_actual_window_match: true
+    require_realized_lengths: [8192, 1024]
+    require_exact_batch_composition: true
+    require_mode_phase_shape_rank_source_window_match: true
+    reject_partial_rank_windows: true
+
+acceptance:
+  expected_profile_points: 10
+  unsupported_profile_policy: retain_reproducible_exact_evidence_and_mark_unsupported
+  cross_framework_performance_policy: same_gpu_sku_only
+  raw_artifact_policy: task_evidence_only_with_sha256_manifest
+  fused_timing_owner_policy: exactly_one_owner_preserve_n_to_one_and_one_to_n_links
+  unmapped_policy: forbidden_without_evidence_backed_unsupported_status
+  viewer_special_cases_allowed: false
+  deterministic_build_repetitions: 2
+  viewer_audit_required_for_every_accepted_profile: true
+  second_phase_non_blocking: [dspark_on, attention_dp, expert_parallel, context_parallel, pd_disaggregation, hicache_or_kv_offload]
+
+stage1_result:
+  status: in_progress
+  measured_profile_count: 0
+  unsupported_profile_count: 0
+  pending_profile_count: 10
