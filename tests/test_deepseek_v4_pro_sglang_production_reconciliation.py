@@ -5,9 +5,19 @@ import pytest
 from models.deepseek_v4_pro.build.build_deepseek_v4_pro_sglang_profiles import (
     fusion_specs,
 )
+from models.deepseek_v4_pro.build.build_deepseek_v4_pro_vllm_profiles import (
+    prepare_events,
+)
+from models.deepseek_v4_pro.build.audit_deepseek_v4_pro_sglang_production_matrix import (
+    audit_collective_rank_durations,
+    audit_prefill_prime_coordinate,
+)
 from models.deepseek_v4_pro.build.reconcile_deepseek_v4_pro_sglang_production import (
     _close_decode_graph_prefix,
     select_production_window,
+)
+from models.deepseek_v4_pro.build.validate_deepseek_v4_pro_sglang_formal_window import (
+    validate_formal_window,
 )
 
 
@@ -63,6 +73,27 @@ def test_gpu_only_prefill_selects_unique_same_rank_eager_sequence() -> None:
     assert metadata["method"] == "exact_same_rank_eager_ordered_kernel_window"
 
 
+def test_gpu_only_prefill_selects_formal_sequence_after_decode_activation_prime() -> None:
+    trace = {
+        "traceEvents": [
+            _range("cuda_runtime", "cudaGraphLaunch", 100, 2, correlation=70),
+            _range("kernel", "decode_prime", 105, 5, correlation=70),
+            _range("kernel", "prefill_a", 200, 5, correlation=80),
+            _range("kernel", "prefill_b", 210, 5, correlation=81),
+        ]
+    }
+    selected, metadata = select_production_window(
+        trace,
+        phase="prefill",
+        batch_size=1,
+        eager_kernel_names=["prefill_a", "prefill_b"],
+        graph_launch_index=1,
+    )
+    assert [row["kernel_name"] for row in selected] == ["prefill_a", "prefill_b"]
+    assert metadata["profile_priming_launch_count"] == 1
+    assert metadata["graph_launch_index"] is None
+
+
 def test_decode_requires_one_graph_launch_in_exact_scheduler_annotation() -> None:
     trace = {
         "traceEvents": [
@@ -100,6 +131,26 @@ def test_gpu_only_decode_selects_exact_cuda_graph_correlation() -> None:
     assert metadata["runtime_tail_kernel_count"] == 0
 
 
+def test_gpu_only_decode_selects_formal_launch_after_profiler_prime() -> None:
+    trace = {
+        "traceEvents": [
+            _range("cuda_runtime", "cudaGraphLaunch", 100, 2, correlation=70),
+            _range("kernel", "priming_graph", 105, 5, correlation=70),
+            _range("cuda_runtime", "cudaGraphLaunch", 200, 2, correlation=77),
+            _range("kernel", "formal_graph", 205, 5, correlation=77),
+        ]
+    }
+
+    selected, metadata = select_production_window(
+        trace, phase="decode", batch_size=16, graph_launch_index=1
+    )
+
+    assert [row["kernel_name"] for row in selected] == ["formal_graph"]
+    assert metadata["cuda_graph_correlation"] == 77
+    assert metadata["graph_launch_index"] == 1
+    assert metadata["profile_priming_launch_count"] == 1
+
+
 @pytest.mark.parametrize("launch_count", [0, 2])
 def test_decode_rejects_wrong_graph_launch_count(launch_count: int) -> None:
     events = [_range("gpu_user_annotation", "step[DECODE bs=64]", 100, 50)]
@@ -120,6 +171,147 @@ def test_sglang_fusion_groups_have_one_owner_and_disjoint_semantic_members() -> 
     assert len(members) == len(set(members))
     assert all(group["owner"] in group["ir_nodes"] for group in groups.values())
     assert all(group["source_nodes"] for group in groups.values())
+    assert all(group["source_nodes"] == {group["owner"]} for group in groups.values())
+
+
+def test_fusion_group_rejects_distinct_physical_source_sets() -> None:
+    invalid = {
+        "invalid": {
+            "owner": "moe.score_projection",
+            "ir_nodes": ["moe.score_projection", "moe.hash_select"],
+            "source_nodes": {"moe.score_projection", "moe.hash_select"},
+            "proof": "invalid aggregate",
+        }
+    }
+    with pytest.raises(ValueError, match="must prove one physical owner event set"):
+        prepare_events([], invalid)
+
+
+def test_collective_rank_duration_gate_rejects_activation_skew() -> None:
+    rows = {
+        rank: [
+            {
+                "node": "top.tp_embedding_output_collective",
+                "occurrence_id": None,
+                "kernel_name": "two-shot-allreduce",
+                "dur_us": 33_000.0 if rank < 7 else 12.0,
+            }
+        ]
+        for rank in range(8)
+    }
+    audit, errors = audit_collective_rank_durations(rows)
+    assert audit["outlier_count"] == 1
+    assert errors and "activation skew" in errors[0]
+
+
+def test_collective_rank_duration_gate_accepts_aligned_ranks() -> None:
+    rows = {
+        rank: [
+            {
+                "node": "top.tp_embedding_output_collective",
+                "occurrence_id": None,
+                "kernel_name": "two-shot-allreduce",
+                "dur_us": 23.0 + rank,
+            }
+        ]
+        for rank in range(8)
+    }
+    audit, errors = audit_collective_rank_durations(rows)
+    assert audit["outlier_count"] == 0
+    assert errors == []
+
+
+def test_prefill_prime_coordinate_requires_last_warmup_decode_then_formal() -> None:
+    client = {
+        "contract": {"warmup_request_count": 3, "formal_request_count": 1},
+        "profile_coordinate": {
+            "mode": "last_warmup_decode_prime_then_formal_prefill",
+            "resolved_absolute_start_step": 3086,
+            "resolved_absolute_target_step": 3087,
+            "formal_start_forward_ct": 3087,
+        },
+        "profile_controls": [
+            {"request": {"start_step": 3086, "num_steps": 2}}
+        ],
+    }
+    assert audit_prefill_prime_coordinate(client) == []
+    client["profile_coordinate"]["formal_start_forward_ct"] = 3086
+    assert audit_prefill_prime_coordinate(client) == [
+        "prime_immediately_precedes_formal"
+    ]
+
+
+def _formal_window_inputs(throughput: float = 1400.0) -> tuple[dict, str, dict]:
+    client = {
+        "state": "passed",
+        "contract": {
+            "isl": 8192,
+            "osl": 1024,
+            "random_range_ratio": 1.0,
+            "concurrency": 16,
+            "warmup_request_count": 48,
+            "formal_request_count": 16,
+            "no_intentionally_shared_prefix": True,
+            "dspark_enabled": False,
+        },
+        "profile_coordinate": {
+            "profile_prime_steps": 1,
+            "resolved_absolute_start_step": 3657,
+            "resolved_absolute_target_step": 3658,
+        },
+        "profile_controls": [
+            {
+                "http_status": 200,
+                "request": {"start_step": 3657, "num_steps": 2},
+            }
+        ],
+    }
+    scheduler_log = (
+        "Decode batch [3656], #running-req: 16, cuda graph: True, "
+        "gen throughput (token/s): 83.90\n"
+        f"Decode batch [3657], #running-req: 16, cuda graph: True, "
+        f"gen throughput (token/s): {throughput}\n"
+    )
+    baseline = {
+        "concurrencies": {"16": {"selected_decode": {"throughput_token_s": 1361.97}}}
+    }
+    return client, scheduler_log, baseline
+
+
+def test_formal_window_validator_selects_stable_second_launch() -> None:
+    client, scheduler_log, baseline = _formal_window_inputs()
+    gate = validate_formal_window(
+        client=client,
+        scheduler_log=scheduler_log,
+        baseline=baseline,
+        concurrency=16,
+    )
+    assert gate["activation_affected_scheduler_step"] == 3656
+    assert gate["formal_target_step"] == 3657
+    assert gate["formal_target"]["throughput_token_s"] == 1400.0
+
+
+def test_formal_window_validator_rejects_throughput_collapse() -> None:
+    client, scheduler_log, baseline = _formal_window_inputs(83.0)
+    with pytest.raises(ValueError, match="profile-start collapse"):
+        validate_formal_window(
+            client=client,
+            scheduler_log=scheduler_log,
+            baseline=baseline,
+            concurrency=16,
+        )
+
+
+def test_formal_window_validator_rejects_single_launch_coordinate() -> None:
+    client, scheduler_log, baseline = _formal_window_inputs()
+    client["profile_coordinate"]["profile_prime_steps"] = 0
+    with pytest.raises(ValueError, match="activation-prime plus formal"):
+        validate_formal_window(
+            client=client,
+            scheduler_log=scheduler_log,
+            baseline=baseline,
+            concurrency=16,
+        )
 
 
 def test_decode_graph_prefix_closes_only_exact_bounded_dependencies() -> None:

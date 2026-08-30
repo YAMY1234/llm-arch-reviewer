@@ -25,14 +25,38 @@ from models.deepseek_v4_pro.build.build_deepseek_v4_pro_vllm_profiles import (
 SOURCE_COMMIT = "71de97b264b04dcd514cf904003028aefe9775c8"
 CONTAINER_SHA256 = "ddec5cc59fa15be11e0b0b06de381cc2e0588e2d6098bd86f12a83cb4b1d58e2"
 IMPLEMENTATION_ID = "sglang_71de97b_dsv4pro0813_tp8"
-MATRIX_REPORT_SHA256 = "8e32e6acc965680634673621c98c020c70f1a2cc75c646b4cd91a76a24881a53"
-MATRIX_MANIFEST_SHA256 = "e655f54234f118fc28819233e50d3703b8d14f4e4a8b74c5558138f1f84aa064"
+MATRIX_REPORT_SHA256 = "27fc33f8929b51309d9265c7a13c5195bc9c7a42c8a915d377269a9287e4523b"
+MATRIX_MANIFEST_SHA256 = "40f6168af097f274d26b0fc86ad355e8267b4dd3c95e0d03f129558e318a3aaf"
+PROFILER_OVERLAY_V1 = {
+    "base_source_commit": SOURCE_COMMIT,
+    "source_lock_file": "overlays/sglang-tp-sync-profiler/source-lock.json",
+    "source_lock_sha256": "0bb67bf626256b34cd3c5d69254a595323fc014d57a345afcd9be915caaa58e1",
+    "scheduler_sha256": "ca39957402cc383aaed01ec4749b03c00eb7e3967001da0e517faf25ad328391",
+    "profiler_manager_sha256": "31e2b1c19a9901233a3f28b15289f76a0932786b05232c185d6035f80781792d",
+    "scope": "profiler activation and post-input-preparation TP CPU barriers only",
+}
+PROFILER_OVERLAY_V2 = {
+    "base_source_commit": SOURCE_COMMIT,
+    "source_lock_file": "overlays/sglang-tp-sync-profiler/source-lock.json",
+    "source_lock_sha256": "d235d5e41c5a3926cc7500bb2e8d79f6e311e37dffb812242eef4144aea53702",
+    "scheduler_sha256": "ca39957402cc383aaed01ec4749b03c00eb7e3967001da0e517faf25ad328391",
+    "profiler_manager_sha256": "f51b5a5928656362731a81624126a6f6bdd8f821a05710c11cca5bcf662ceb7e",
+    "scope": "profiler activation and post-input-preparation TP CPU barriers with per-rank CUDA backlog drains before each barrier",
+}
+PROFILER_OVERLAY_V3 = {
+    "base_source_commit": SOURCE_COMMIT,
+    "source_lock_file": "overlays/sglang-tp-sync-profiler/source-lock.json",
+    "source_lock_sha256": "060e008ce5724ebb5d073d5269ad3db3c13c3203db0ee828ab870bed072e8ddb",
+    "scheduler_sha256": "ca39957402cc383aaed01ec4749b03c00eb7e3967001da0e517faf25ad328391",
+    "profiler_manager_sha256": "82d74e7caace8379aecde00ea5ca91afb392bc369676f31f830653c0c5bba582",
+    "scope": "activation-prime and formal prefill input fences with per-rank CUDA backlog drains before each TP CPU barrier",
+}
 
 PROFILE_SPECS = {
     "prefill-c1": {
         "phase": "prefill",
         "batch_size": 1,
-        "job_id": "3422982",
+        "job_id": "3426447",
         "eager_job_id": "3422245",
         "eager_kind": "sglang-eager-prefill",
         "production_kind": "sglang-prefill_timing",
@@ -42,7 +66,7 @@ PROFILE_SPECS = {
     "decode-c1": {
         "phase": "decode",
         "batch_size": 1,
-        "job_id": "3422983",
+        "job_id": "3424801",
         "eager_job_id": "3421642",
         "eager_kind": "sglang-eager-decode",
         "production_kind": "sglang-production",
@@ -52,7 +76,7 @@ PROFILE_SPECS = {
     "decode-c16": {
         "phase": "decode",
         "batch_size": 16,
-        "job_id": "3422984",
+        "job_id": "3424802",
         "eager_job_id": "3421643",
         "eager_kind": "sglang-eager-decode",
         "production_kind": "sglang-production",
@@ -62,7 +86,7 @@ PROFILE_SPECS = {
     "decode-c64": {
         "phase": "decode",
         "batch_size": 64,
-        "job_id": "3422985",
+        "job_id": "3424803",
         "eager_job_id": "3421644",
         "eager_kind": "sglang-eager-decode",
         "production_kind": "sglang-production",
@@ -72,7 +96,7 @@ PROFILE_SPECS = {
     "decode-c256": {
         "phase": "decode",
         "batch_size": 256,
-        "job_id": "3422986",
+        "job_id": "3424804",
         "eager_job_id": "3421645",
         "eager_kind": "sglang-eager-decode",
         "production_kind": "sglang-production",
@@ -149,22 +173,6 @@ def fusion_specs() -> dict[str, dict]:
             "source_nodes": {"hca_compressor.partial_state"},
             "proof": "fused_norm_rope_flashmla exact C128 partial-state and compressed-cache update",
         },
-        "sglang_router_paths": {
-            "owner": "moe.score_projection",
-            "ir_nodes": [
-                "moe.score_projection",
-                "moe.sqrt_softplus",
-                "moe.hash_select",
-                "moe.learned_select",
-                "moe.weights",
-            ],
-            "source_nodes": {
-                "moe.score_projection",
-                "moe.hash_select",
-                "moe.learned_select",
-            },
-            "proof": "profile aggregate retains the separate score projection and exact hash/learned fused selection events with layer IDs",
-        },
         "sglang_routed_gate_up_swiglu": {
             "owner": "moe.routed_gate_up",
             "ir_nodes": ["moe.routed_gate_up", "moe.routed_activation"],
@@ -225,11 +233,28 @@ def main() -> int:
     if file_sha256(matrix_path) != MATRIX_REPORT_SHA256:
         raise ValueError("production matrix report hash does not match the accepted gate")
     matrix = load_json(matrix_path)
-    if not matrix.get("ok") or matrix.get("profile_count") != 5:
-        raise ValueError("production matrix did not pass all five SGLang profiles")
+    if (
+        not matrix.get("ok")
+        or matrix.get("profile_count") != 5
+        or matrix.get("measured_profile_count") != 4
+        or matrix.get("unsupported_profile_count") != 1
+    ):
+        raise ValueError(
+            "production matrix must retain four measured SGLang profiles and "
+            "one evidence-backed unsupported prefill contract"
+        )
 
     outputs = []
     for name, spec in PROFILE_SPECS.items():
+        if matrix["profiles"][name].get("status") == "unsupported":
+            outputs.append(
+                {
+                    "profile_contract": name,
+                    "status": "unsupported",
+                    "reason": matrix["profiles"][name]["unsupported_reason"],
+                }
+            )
+            continue
         path, digest = build_one(
             repo_root=repo_root,
             task_root=task_root,
@@ -248,6 +273,12 @@ def main() -> int:
             matrix_manifest_sha256=MATRIX_MANIFEST_SHA256,
             fusion_spec_map=fusion_specs(),
             trace_pattern="*TP-{rank}.trace.json.gz",
+            source_overlay=(
+                PROFILER_OVERLAY_V3
+                if spec["phase"] == "prefill"
+                else PROFILER_OVERLAY_V1
+            ),
+            mapping_root_name="mappings",
         )
         try:
             reported_path = path.relative_to(repo_root)

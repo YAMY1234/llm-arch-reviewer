@@ -19,8 +19,10 @@ source_lock:
       runtime_preflight: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
       runtime_source_hash_manifest: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
       eager_reconciliation: passed
-      production_reconciliation: passed_all_5_profiles_all_40_rank_windows
-      accepted_profile_count: 5
+      eager_evidence_retention: passed_all_5_profiles_all_40_raw_and_derived_rank_contracts
+      production_reconciliation: passed_4_measured_profiles_32_rank_windows_and_retained_1_unsupported_prefill_8_rank_window
+      accepted_profile_count: 4
+      unsupported_profile_count: 1
     - framework: vllm
       support_state: runtime_verified_semantic_validation_passed
       source_commit: dd10e03f95f94edbea1975c67ace3a35ec9a8a40
@@ -30,6 +32,7 @@ source_lock:
       runtime_preflight: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
       runtime_source_hash_manifest: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
       eager_reconciliation: passed
+      eager_evidence_retention: passed_all_5_profiles_all_40_raw_and_derived_rank_contracts
       production_reconciliation: passed_all_5_profiles_all_40_rank_windows
       accepted_profile_count: 5
 
@@ -40,9 +43,21 @@ topology_basis:
     source_commit: 71de97b264b04dcd514cf904003028aefe9775c8
     file: docs/src/snippets/configs/deepseek-ai/deepseek-v4.jsx
     lines: 1413-1433
-    public_recipe_state: verified_exact_end_to_end_on_two_node_gb300
+    file_sha256: f84dbec21993cf94e2ac1c0db678f89f6fa484708707f29d111989810a99516c
+    upstream_hardware: b300
+    upstream_nodes: single
+    upstream_verified: false
+    upstream_note: NOT yet run end-to-end on this hardware
+    public_recipe_state: unverified_single_node_configuration_basis_only
     exact_reused_fields: [tp_8, flashinfer_mxfp4, chunked_prefill_8192, swa_full_tokens_ratio_0.1, mem_fraction_static_0.90]
     intentionally_disabled_for_stage1: DSPARK
+  task_runtime_validation:
+    provenance: independent_from_upstream_recipe_status
+    topology: pure_tp8_two_nodes_four_gb300_per_node
+    exact_model: deepseek-ai/DeepSeek-V4-Pro-0813
+    workload: fixed_8k_1k_warmup_3x_formal_1x
+    status: verified_by_this_task_all_8_tp_ranks
+    evidence: current/deepseek-v4-pro-ir-profile/production-reconciliation/sglang/matrix_report.json
   acceptance_rule: this_task_must_supply_the_missing_exact_end_to_end_evidence_for_both_frameworks
 
 execution:
@@ -115,6 +130,9 @@ acceptance:
   expected_profile_points: 10
   unsupported_profile_policy: retain_reproducible_exact_evidence_and_mark_unsupported
   cross_framework_performance_policy: same_gpu_sku_only
+  cross_framework_wall_authority: profiler_off_matched_scheduler_step
+  instrumented_trace_timing_policy: attribution_and_active_evidence_only_not_production_latency
+  prefill_wall_authority: unavailable_without_a_matched_profiler_off_pure_prefill_scheduler_wall_artifact
   raw_artifact_policy: task_evidence_only_with_sha256_manifest
   fused_timing_owner_policy: exactly_one_owner_preserve_n_to_one_and_one_to_n_links
   unmapped_policy: forbidden_without_evidence_backed_unsupported_status
@@ -128,8 +146,13 @@ stage1_result:
   execution_fingerprint: exec_6178deeaa361c4f1
   model_ir_nodes: 148
   execution_ir_nodes: 153
-  measured_profile_count: 10
-  unsupported_profile_count: 0
+  measured_profile_count: 9
+  unsupported_profile_count: 1
+  unsupported_profiles:
+    - profile_id: deepseek_v4_pro_tp8_sglang_eager_prefill_gbs001_8k
+      evidence_job: 3426447
+      reason: synchronized_formal_prefill_collective_rank_duration_skew
+      matrix_evidence: current/deepseek-v4-pro-ir-profile/production-reconciliation/sglang/matrix_report.json
   pending_profile_count: 0
   accepted_frameworks: [sglang, vllm]
   pending_frameworks: []
@@ -140,7 +163,7 @@ stage1_result:
     sglang: 40/40
     vllm: 40/40
   production_rank_windows:
-    sglang: 40/40
+    sglang: 32/32 measured; 8/8 rejected evidence retained
     vllm: 40/40
   mapping_coverage:
     sglang_kernel_count: 1.0
@@ -151,20 +174,20 @@ stage1_result:
     sglang_binding_validation: 5e0fcc007b840e98fd2cb3e2f04267a41130369e584dfa291b568969d3cee0bb
     sglang_eager_matrix: 3147f8daf9b510489675d64d5b015873786a8f971d6260fefaee9c69e000284a
     sglang_eager_manifest: 6571c65064fba43be99ed762cbb9d974ed2a5188ade38e3d7b713858eacc6ac3
-    sglang_production_matrix: 8e32e6acc965680634673621c98c020c70f1a2cc75c646b4cd91a76a24881a53
-    sglang_production_manifest: e655f54234f118fc28819233e50d3703b8d14f4e4a8b74c5558138f1f84aa064
+    sglang_production_matrix: 27fc33f8929b51309d9265c7a13c5195bc9c7a42c8a915d377269a9287e4523b
+    sglang_production_manifest: 40f6168af097f274d26b0fc86ad355e8267b4dd3c95e0d03f129558e318a3aaf
     vllm_binding_validation: d6781b6b9635de4ace2335ce39958ceab101f5199c45a2e156478ff7f9f6228d
-    vllm_eager_matrix: 6e6147aaea5726c6a0c4e10da762dfbd95c273c1edaeef7b1159947e8eb21b7b
-    vllm_eager_manifest: 63795f599972332ebaba807421a3613edf2f698e8a25c6013a5eab937e986bb5
+    vllm_eager_matrix: 6b531b3d2cc8a2b426e75c31c649f24667267f2620036f9e5be4d8247c52a7a2
+    vllm_eager_manifest: 8588236bb64e156309c42dd839a8ea55432ca52ddea24aa6f5557e627b647fcc
     vllm_production_matrix: a98426df442efccd113042435a98b08a3b3341593c332585c868777832cb0fc3
     vllm_production_manifest: bbf22613f92f601826d529a5d16642e527874392d8f0644223d1ee2da6483789
-    viewer_audit: 5219cf459b45c3112e643557832053bcb0d1b82f13491182346cef24f9f06907
-  deterministic_generated_tree_sha256: da662073c644df37c4d1ddfa2c2448fb0fce29781acf0a2177a6f965e4d2aa9a
-  canonical_bundle_sha256: 03e7d36b7596f2f08dd09fbe6712272a450987734242a5a60f15ce0e13a1749d
+    viewer_audit: d16e91d6e6d2cf37da7340ef93c810a95a2f174f264718150c94fb10c0c9e506
+  deterministic_generated_tree_sha256: b22a30942722b1c53d2b769696191b4e96a8c27c25cb54f740da7dd6ae108971
+  canonical_bundle_sha256: 77fdea325376f7ce2f63a3ce8dd2ed875b469e24a16a19f5ddaf239cf785f2f0
   viewer_audit:
-    profiles: 10
-    routes: 190
-    architecture_nodes: 1530
-    fused_owner_links: 857
-    real_gestures: 30
+    profiles: 9
+    routes: 171
+    architecture_nodes: 1377
+    fused_owner_links: 839
+    real_gestures: 27
     failures: 0

@@ -113,6 +113,60 @@ def test_semantic_source_ledger_has_no_pending_dispositions() -> None:
         )
 
 
+def test_upstream_sglang_recipe_claim_matches_pinned_source_ledger() -> None:
+    ledger = _load("semantic_source_ledger.yaml")
+    pipeline = _load("pipeline.yaml")
+    source = ledger["framework_recipe_sources"][0]
+    recipe = pipeline["topology_basis"]["official_framework_recipe"]
+
+    assert source["framework"] == recipe["framework"] == "sglang"
+    assert source["revision"] == recipe["source_commit"]
+    assert source["file"] == recipe["file"]
+    assert source["lines"] == recipe["lines"]
+    assert source["file_sha256"] == recipe["file_sha256"] == (
+        "f84dbec21993cf94e2ac1c0db678f89f6fa484708707f29d111989810a99516c"
+    )
+    claims = source["upstream_claims"]
+    assert source["source_selection"] == {
+        "hardware": "b300",
+        "variant": "pro-official",
+        "quantization": "fp4",
+        "strategy": "low-latency",
+    }
+    assert recipe["upstream_hardware"] == source["source_selection"]["hardware"]
+    assert claims == {
+        "nodes": "single",
+        "verified": False,
+        "note": "NOT yet run end-to-end on this hardware",
+    }
+    assert recipe["upstream_nodes"] == claims["nodes"]
+    assert recipe["upstream_verified"] is claims["verified"]
+    assert recipe["upstream_note"] == claims["note"]
+    assert recipe["public_recipe_state"] == (
+        "unverified_single_node_configuration_basis_only"
+    )
+    task_validation = pipeline["topology_basis"]["task_runtime_validation"]
+    assert task_validation["provenance"] == "independent_from_upstream_recipe_status"
+    assert task_validation["topology"] == "pure_tp8_two_nodes_four_gb300_per_node"
+
+
+def test_stage1_retains_exact_ten_point_contract_with_one_unsupported_prefill() -> None:
+    pipeline = _load("pipeline.yaml")
+    result = pipeline["stage1_result"]
+    assert pipeline["acceptance"]["expected_profile_points"] == 10
+    assert result["measured_profile_count"] == 9
+    assert result["unsupported_profile_count"] == 1
+    assert result["measured_profile_count"] + result["unsupported_profile_count"] == 10
+    assert result["unsupported_profiles"] == [
+        {
+            "profile_id": "deepseek_v4_pro_tp8_sglang_eager_prefill_gbs001_8k",
+            "evidence_job": 3426447,
+            "reason": "synchronized_formal_prefill_collective_rank_duration_skew",
+            "matrix_evidence": "current/deepseek-v4-pro-ir-profile/production-reconciliation/sglang/matrix_report.json",
+        }
+    ]
+
+
 def test_both_commit_specific_bindings_cover_every_architecture_node() -> None:
     bundle = compile_catalog(MODEL_ROOT)
     execution = next(iter(bundle["execution_variants"].values()))
@@ -168,18 +222,26 @@ def test_stage1_sol_gap_input_covers_execution_ir_without_framework_costs() -> N
     assert sol["critical_path"]["complete_step"] is True
     assert sol["coverage"] == {
         "declared_node_count": 153,
-        "ideal_estimated_node_count": 70,
+        "ideal_estimated_node_count": 68,
         "calibrated_node_count": 0,
         "plan_identified_node_count": 0,
-        "transition_simulated_node_count": 70,
+        "transition_simulated_node_count": 68,
         "legacy_sensitivity_node_count": 0,
-        "observed_comparison_node_count": 60,
-        "structural_node_count": 83,
+        "observed_comparison_node_count": 54,
+        "structural_node_count": 85,
         "unsupported_targets": [],
         "coverage_semantics": "declared adapter nodes; not additive timing coverage",
     }
     assert not gap["model_violations"]
     assert not gap["projection_violations"]
+    assert gap["measured_runtime"]["authority"] == (
+        "profiler_off_matched_scheduler_step"
+    )
+    assert gap["measured_runtime"]["elapsed_ms"] == 10.93
+    assert gap["nodes"]["moe.sqrt_softplus"]["observed_active_ms"] is None
+    assert gap["nodes"]["moe.weights"]["observed_active_ms"] is None
+    assert gap["nodes"]["moe.hash_select"]["observed_active_ms"] > 0
+    assert gap["nodes"]["moe.learned_select"]["observed_active_ms"] > 0
 
     cost_ir = json.dumps(
         {

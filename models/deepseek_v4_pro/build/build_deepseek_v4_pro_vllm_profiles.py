@@ -37,6 +37,16 @@ EXECUTION_PATH = "tp8_moe_intermediate_shard"
 IMPLEMENTATION_ID = "vllm_dd10e03_dsv4pro0813_tp8"
 MATRIX_REPORT_SHA256 = "a98426df442efccd113042435a98b08a3b3341593c332585c868777832cb0fc3"
 MATRIX_MANIFEST_SHA256 = "bbf22613f92f601826d529a5d16642e527874392d8f0644223d1ee2da6483789"
+BASELINE_SELECTIONS = {
+    "vllm": {
+        "path": "evidence/vllm-baseline/3415253/baseline-selection.json",
+        "sha256": "8dbf1bb862ae9471a60b6d0a0b002fc8e8ce4a034916cab989226c047c9f3176",
+    },
+    "sglang": {
+        "path": "evidence/sglang-baseline/3417439/baseline-selection.json",
+        "sha256": "182e5d3c1149975795dd6c4e9e45a69e1ad2be7340f26a10c18452cff6c8812c",
+    },
+}
 
 
 PROFILE_SPECS = {
@@ -232,39 +242,27 @@ def fusion_specs() -> dict[str, dict[str, Any]]:
             "source_nodes": {"final_hc_read.read"},
             "proof": "hc_head fused normalization, gate, and residual-stream read",
         },
-        "vllm_csa_q_and_window_kv": {
-            "owner": "csa_attention.q_a",
+        "vllm_csa_q_head_rope_window_kv": {
+            "owner": "csa_attention.q_head_norm",
             "ir_nodes": [
-                "csa_attention.q_a",
-                "csa_attention.q_norm",
                 "csa_attention.q_head_norm",
                 "csa_attention.q_rope",
                 "csa_attention.window_kv",
                 "csa_attention.window_cache",
             ],
-            "source_nodes": {
-                "csa_attention.q_a",
-                "csa_attention.q_norm",
-                "csa_attention.q_head_norm",
-            },
-            "proof": "fused Wqa/Wkv, Q/KV RMSNorm, Q RoPE, KV RoPE/quantize/cache-insert sequence",
+            "source_nodes": {"csa_attention.q_head_norm"},
+            "proof": "one exact fused Q-head norm/RoPE and KV RoPE/quantize/cache-insert physical event set; q_a and q_norm retain their independent events",
         },
-        "vllm_hca_q_and_window_kv": {
-            "owner": "hca_attention.q_a",
+        "vllm_hca_q_head_rope_window_kv": {
+            "owner": "hca_attention.q_head_norm",
             "ir_nodes": [
-                "hca_attention.q_a",
-                "hca_attention.q_norm",
                 "hca_attention.q_head_norm",
                 "hca_attention.q_rope",
                 "hca_attention.window_kv",
                 "hca_attention.window_cache",
             ],
-            "source_nodes": {
-                "hca_attention.q_a",
-                "hca_attention.q_norm",
-                "hca_attention.q_head_norm",
-            },
-            "proof": "fused Wqa/Wkv, Q/KV RMSNorm, Q RoPE, KV RoPE/quantize/cache-insert sequence",
+            "source_nodes": {"hca_attention.q_head_norm"},
+            "proof": "one exact fused Q-head norm/RoPE and KV RoPE/quantize/cache-insert physical event set; q_a and q_norm retain their independent events",
         },
         "vllm_csa_compressor": {
             "owner": "csa_compressor.softmax_pool",
@@ -313,28 +311,21 @@ def fusion_specs() -> dict[str, dict[str, Any]]:
             "source_nodes": {"hca_attention.index_union"},
             "proof": "exact window-plus-compressed-history index construction kernels",
         },
-        "vllm_router_paths": {
-            "owner": "moe.score_projection",
-            "ir_nodes": [
-                "moe.score_projection",
-                "moe.sqrt_softplus",
-                "moe.hash_select",
-                "moe.learned_select",
-                "moe.weights",
-            ],
-            "source_nodes": {
-                "moe.score_projection",
-                "moe.hash_select",
-                "moe.learned_select",
-            },
-            "proof": "profile aggregate retains hash layers 0..2 and learned layers 3..60 as distinct events",
-        },
         "vllm_routed_gate_up_swiglu": {
             "owner": "moe.routed_gate_up",
             "ir_nodes": ["moe.routed_gate_up", "moe.routed_activation"],
             "source_nodes": {"moe.routed_gate_up"},
             "proof": "FlashInfer routed gate/up BMM clmp_swiGlu epilogue signature",
         },
+    }
+
+
+def semantic_rollup_specs() -> dict[str, set[str]]:
+    """Return non-exclusive semantic views over distinct physical event sets."""
+
+    return {
+        "moe.sqrt_softplus": {"moe.hash_select", "moe.learned_select"},
+        "moe.weights": {"moe.hash_select", "moe.learned_select"},
     }
 
 
@@ -396,16 +387,29 @@ def parent_targets(event: dict[str, Any]) -> list[str]:
 
 
 def prepare_events(
-    events: list[dict[str, Any]], groups: dict[str, dict[str, Any]]
+    events: list[dict[str, Any]],
+    groups: dict[str, dict[str, Any]],
+    rollups: dict[str, set[str]] | None = None,
 ) -> list[dict[str, Any]]:
     group_targets_by_source: dict[str, list[str]] = defaultdict(list)
     owner_by_source: dict[str, str] = {}
-    for group in groups.values():
+    for group_id, group in groups.items():
+        owner = str(group["owner"])
+        sources = {str(source) for source in group["source_nodes"]}
+        if sources != {owner}:
+            raise ValueError(
+                f"fusion group {group_id} must prove one physical owner event set; "
+                f"source_nodes={sorted(sources)} owner={owner}"
+            )
         for source in group["source_nodes"]:
             group_targets_by_source[source].extend(group["ir_nodes"])
             if source in owner_by_source and owner_by_source[source] != group["owner"]:
                 raise ValueError(f"source node {source} has multiple timing owners")
             owner_by_source[source] = str(group["owner"])
+    rollup_targets_by_source: dict[str, list[str]] = defaultdict(list)
+    for target, sources in (rollups or semantic_rollup_specs()).items():
+        for source in sources:
+            rollup_targets_by_source[source].append(target)
     prepared = []
     for raw in events:
         event = dict(raw)
@@ -418,6 +422,7 @@ def prepare_events(
                 [
                     str(event["node"]),
                     *group_targets_by_source.get(str(event["node"]), []),
+                    *rollup_targets_by_source.get(str(event["node"]), []),
                     *parent_targets(event),
                 ]
             )
@@ -436,13 +441,29 @@ def fusion_groups_and_metrics(
     metrics: dict[str, dict[str, Any]] = {}
     nonowners: set[str] = set()
     for group_id, spec in specs.items():
-        selected = [event for event in events if event["node"] in spec["source_nodes"]]
+        owner = str(spec["owner"])
+        sources = {str(source) for source in spec["source_nodes"]}
+        if sources != {owner}:
+            raise ValueError(
+                f"fusion group {group_id} cannot share different physical event sets: "
+                f"source_nodes={sorted(sources)} owner={owner}"
+            )
+        conflicting = [
+            event
+            for event in events
+            if event["node"] in set(spec["ir_nodes"]) - {owner}
+        ]
+        if conflicting:
+            raise ValueError(
+                f"fusion group {group_id} member has an independent physical event set: "
+                f"{sorted({str(event['node']) for event in conflicting})}"
+            )
+        selected = [event for event in events if event["node"] == owner]
         if not selected:
             # Index-union launches are decode-shape dependent.  A group with no
             # physical event is not authored; its semantic controls remain an
             # explicit source-defined structural state in that profile.
             continue
-        owner = str(spec["owner"])
         production_event_ids = sorted({str(event["event_id"]) for event in selected})
         eager_event_ids = sorted(
             {str(eager) for event in selected for eager in event["eager_event_ids"]}
@@ -456,6 +477,21 @@ def fusion_groups_and_metrics(
         substages = sorted(
             {str(event["substage"]) for event in selected if event.get("substage")}
         )
+        production_event_set_sha256 = hashlib.sha256(
+            json.dumps(production_event_ids, separators=(",", ":")).encode()
+        ).hexdigest()
+        eager_event_set_sha256 = hashlib.sha256(
+            json.dumps(eager_event_ids, separators=(",", ":")).encode()
+        ).hexdigest()
+        member_event_sets = {
+            member: {
+                "production_event_count": len(production_event_ids),
+                "production_event_set_sha256": production_event_set_sha256,
+                "eager_event_count": len(eager_event_ids),
+                "eager_event_set_sha256": eager_event_set_sha256,
+            }
+            for member in spec["ir_nodes"]
+        }
         groups[group_id] = {
             "owner": owner,
             "ir_nodes": list(spec["ir_nodes"]),
@@ -463,6 +499,8 @@ def fusion_groups_and_metrics(
             "provenance": str(spec["proof"]),
             "mapping_method": "graph-on production events reconciled to exact graph-off eager event sets",
             "confidence": "exact",
+            "event_set_identity": "all semantic members map to this exact same physical event-id set",
+            "member_event_sets": member_event_sets,
             "evidence_scope": {
                 "resolution": "profile_aggregate",
                 "layer_ids": layer_ids,
@@ -476,7 +514,7 @@ def fusion_groups_and_metrics(
             selected,
             attribution_status="measured_fusion_owner",
             metric_kind="exclusive_fusion_owner",
-            timing_semantics="union of one exact many-to-many production event set; counted once",
+            timing_semantics="one exact shared physical production event-id set; counted once",
         )
         nonowners.update(set(spec["ir_nodes"]) - {owner})
     return groups, metrics, nonowners
@@ -620,7 +658,79 @@ def profile_timing(events: list[dict[str, Any]], report: dict[str, Any]) -> dict
         "device_gap_ms": round(max(0.0, elapsed_us - active_us) / 1000.0, 6),
         "gpu_overlap_ms": round(max(0.0, residency_us - active_us) / 1000.0, 6),
         "kernel_envelope_ms": round(elapsed_us / 1000.0, 6),
-        "semantics": "critical-rank selected wall interval; active is the cross-stream interval union and residency is the kernel-duration sum",
+        "authority": "instrumented_trace_attribution_only",
+        "semantics": "instrumented critical-rank trace interval; active is the cross-stream interval union and residency is the kernel-duration sum; this is not production wall-latency authority",
+    }
+
+
+def production_wall_timing(
+    *,
+    task_root: Path,
+    framework: str,
+    phase: str,
+    batch_size: int,
+    source_commit: str,
+) -> dict[str, Any] | None:
+    """Load the exact profiler-off matched scheduler-step wall authority."""
+
+    if phase != "decode":
+        return {
+            "status": "unavailable",
+            "authority": "none",
+            "comparison_policy": "do_not_use_instrumented_trace_as_cross-framework_production_latency",
+            "instrumented_trace_policy": "attribution evidence only",
+            "reason": "no matched profiler-off pure-prefill scheduler-wall artifact is retained for this profile",
+        }
+    selection_spec = BASELINE_SELECTIONS[framework]
+    selection_path = task_root / str(selection_spec["path"])
+    if not selection_path.is_file():
+        raise ValueError(f"missing profiler-off wall authority: {selection_path}")
+    digest = file_sha256(selection_path)
+    if digest != selection_spec["sha256"]:
+        raise ValueError(
+            f"profiler-off wall authority hash mismatch: {selection_path}"
+        )
+    baseline = load_json(selection_path)
+    source_lock = baseline.get("source_lock") or {}
+    if source_lock.get("commit") != source_commit:
+        raise ValueError("profiler-off wall authority source commit mismatch")
+    key = str(batch_size)
+    if framework == "vllm":
+        selection = (baseline.get("selections") or {}).get(key) or {}
+        selected = selection.get("selected_decode_iteration") or {}
+        elapsed_ms = selected.get("elapsed_ms")
+        coordinate = {
+            "iteration": selected.get("iteration"),
+            "formal_step_index_1_based": selected.get("formal_step_index_1_based"),
+            "plateau_median_elapsed_ms": (
+                selection.get("exact_decode_plateau") or {}
+            ).get("median_elapsed_ms"),
+        }
+    else:
+        selection = (baseline.get("concurrencies") or {}).get(key) or {}
+        selected = selection.get("selected_decode") or {}
+        elapsed_ms = selected.get("baseline_mean_elapsed_ms")
+        coordinate = {
+            "baseline_global_step": selected.get("baseline_global_step"),
+            "profile_relative_step": selected.get("profile_relative_step"),
+            "throughput_token_s": selected.get("throughput_token_s"),
+        }
+    if elapsed_ms is None or float(elapsed_ms) <= 0:
+        raise ValueError(
+            f"profiler-off wall authority lacks decode GBS{batch_size} elapsed time"
+        )
+    if any(value is None for value in coordinate.values()):
+        raise ValueError(
+            f"profiler-off wall authority lacks decode GBS{batch_size} coordinate"
+        )
+    return {
+        "elapsed_ms": round(float(elapsed_ms), 6),
+        "authority": "profiler_off_matched_scheduler_step",
+        "comparison_policy": "cross-framework performance and gap analysis must use this wall value",
+        "instrumented_trace_policy": "attribution evidence only; never substitute its elapsed time as production latency",
+        "source_file": str(selection_spec["path"]),
+        "source_sha256": digest,
+        "coordinate": coordinate,
     }
 
 
@@ -643,6 +753,8 @@ def build_one(
     matrix_manifest_sha256: str = MATRIX_MANIFEST_SHA256,
     fusion_spec_map: dict[str, dict[str, Any]] | None = None,
     trace_pattern: str = "*rank{rank}.*trace.json.gz",
+    source_overlay: dict[str, Any] | None = None,
+    mapping_root_name: str = "mappings-phase-tail",
 ) -> tuple[Path, str]:
     matrix_profile = matrix["profiles"][name]
     rank = int(
@@ -667,7 +779,13 @@ def build_one(
     if report["kernel_count"] != len(events) or report["mapped_kernel_count_ratio"] != 1.0:
         raise ValueError(f"critical-rank event closure failed: {report_path}")
 
-    mapping_dir = task_root / "mappings" / spec["eager_kind"] / spec["eager_job_id"] / f"rank{rank}"
+    mapping_dir = (
+        task_root
+        / mapping_root_name
+        / spec["eager_kind"]
+        / spec["eager_job_id"]
+        / f"rank{rank}"
+    )
     mapping_path = find_single(mapping_dir, "kernel_mapping.*.jsonl")
     selected_fusion_specs = fusion_spec_map or fusion_specs()
     prepared = prepare_events(events, selected_fusion_specs)
@@ -682,12 +800,55 @@ def build_one(
 
     phase = str(spec["phase"])
     batch = int(spec["batch_size"])
+    wall_timing = production_wall_timing(
+        task_root=task_root,
+        framework=profile_framework,
+        phase=phase,
+        batch_size=batch,
+        source_commit=source_commit,
+    )
     profile_id = f"deepseek_v4_pro_tp8_{profile_framework}_{spec['variant_id']}"
     trace_dir = task_root / "evidence" / spec["production_kind"] / spec["job_id"] / "traces"
     trace_path = find_single(trace_dir, trace_pattern.format(rank=rank))
     if file_sha256(trace_path) != report["trace"]["sha256"]:
         raise ValueError(f"raw trace hash mismatch: {trace_path}")
+    if source_overlay is not None:
+        source_lock_path = trace_dir.parent / "profiler-overlay-source-lock.json"
+        if not source_lock_path.is_file():
+            raise ValueError(f"profile lacks profiler overlay source lock: {source_lock_path}")
+        actual_source_lock_sha256 = file_sha256(source_lock_path)
+        if actual_source_lock_sha256 != source_overlay["source_lock_sha256"]:
+            raise ValueError(
+                f"profiler overlay source lock hash mismatch: {source_lock_path}"
+            )
+        source_lock = load_json(source_lock_path)
+        if (source_lock.get("base") or {}).get("commit") != source_commit:
+            raise ValueError("profiler overlay base source commit mismatch")
+        overlay_files = (source_lock.get("overlay") or {}).get("files") or {}
+        if overlay_files.get("python/sglang/srt/managers/scheduler.py") != source_overlay[
+            "scheduler_sha256"
+        ]:
+            raise ValueError("profiler overlay scheduler hash mismatch")
+        if overlay_files.get(
+            "python/sglang/srt/managers/scheduler_components/profiler_manager.py"
+        ) != source_overlay["profiler_manager_sha256"]:
+            raise ValueError("profiler overlay manager hash mismatch")
+        source_overlay = {
+            **source_overlay,
+            "evidence_source_lock_file": source_lock_path.name,
+            "evidence_source_lock_sha256": actual_source_lock_sha256,
+        }
     validation_path = trace_dir.parent / "validation.json"
+    validation = load_json(validation_path)
+    expected_run_kind = "production" if phase == "decode" else "prefill_timing"
+    if validation.get("status") != "pass":
+        raise ValueError(f"run validation did not pass: {validation_path}")
+    if validation.get("framework") != profile_framework:
+        raise ValueError(f"run validation framework mismatch: {validation_path}")
+    if validation.get("run_kind") != expected_run_kind:
+        raise ValueError(f"run validation kind mismatch: {validation_path}")
+    if validation.get("trace_ranks") != list(range(8)):
+        raise ValueError(f"run validation does not retain all TP ranks: {validation_path}")
     validation_sha256 = file_sha256(validation_path)
 
     step = {
@@ -791,13 +952,15 @@ def build_one(
             "mhc_implementation_path": report["mhc_implementation_path"],
             "critical_rank": rank,
             "rank_count": matrix_profile["rank_count"],
-            "rank_selected_wall_ms": rank_wall,
+            "rank_instrumented_trace_elapsed_ms": rank_wall,
+            "rank_instrumented_trace_policy": "attribution and rank-alignment evidence only; not profiler-off production wall authority",
             "rank_reconciliation_fingerprints": matrix_profile["rank_reconciliation_fingerprints"],
             "rank_ordered_structural_fingerprints": matrix_profile["rank_ordered_structural_fingerprints"],
             "structural_multiset_fingerprint": matrix_profile["structural_multiset_fingerprint"],
             "rank_ordering_policy": matrix_profile["rank_ordering_policy"],
             "mapping_policy": "100% graph-on events reconciled to same-phase, same-shape, same-rank eager event sets; N:1 and 1:N event IDs retained",
-            "timing": timing,
+            "attribution_timing": timing,
+            "production_wall_timing": wall_timing,
         },
         "timeline": {
             "schema_version": "timeline.v1",
@@ -812,15 +975,25 @@ def build_one(
         "fusion_groups": groups,
         "profile_summary": {
             "timing": timing,
+            "production_wall_timing": wall_timing,
             "kernel_count": len(prepared),
             "mapped_kernel_count": len(prepared),
             "mapped_kernel_count_ratio": 1.0,
             "mapped_kernel_duration_ratio": 1.0,
             "semantic_occurrence_count": report["occurrence_count"],
-            "timing_owner_policy": "one owner per shared physical event set; module rollups are interval unions",
+            "timing_owner_policy": "one owner only for an identical physical event-id set; direct independent sets remain separate and module rollups are non-exclusive interval unions",
         },
         "node_metrics": dict(sorted(metrics.items())),
     }
+    if source_overlay is not None:
+        profile["profiler"]["source_overlay"] = source_overlay
+        profile["evidence"]["source_overlay"] = source_overlay
+    for evidence_key in (
+        "collective_rank_duration_audit",
+        "formal_step_throughput_gate",
+    ):
+        if matrix_profile.get(evidence_key) is not None:
+            profile["evidence"][evidence_key] = matrix_profile[evidence_key]
     profile_path = output_dir / f"{spec['file_stem']}.yaml"
     profile_path.write_text(
         yaml.safe_dump(profile, sort_keys=False, allow_unicode=True, width=120)

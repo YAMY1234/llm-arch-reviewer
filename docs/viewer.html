@@ -1039,6 +1039,7 @@ function updateProfileSummary() {
   const summary = meta.profile_summary || {};
   const accounting = meta.evidence?.accounting || {};
   const timing = summary.timing || {};
+  const productionWall = summary.production_wall_timing || {};
   const elapsedMs = Number(timing.elapsed_ms);
   const activeGpuMs = Number(timing.active_gpu_ms);
   const declaredBusyPct = Number(timing.gpu_busy_pct);
@@ -1048,7 +1049,16 @@ function updateProfileSummary() {
       ? (100 * activeGpuMs / elapsedMs)
       : null);
   const timingBits = timing.elapsed_ms != null ? [
-    `elapsed ${formatMs(timing.elapsed_ms)} ms`,
+    productionWall.elapsed_ms != null
+      ? `production wall ${formatMs(productionWall.elapsed_ms)} ms (profiler-off authority)`
+      : productionWall.status === "unavailable"
+        ? "production wall unavailable (no matched profiler-off authority)"
+        : `elapsed ${formatMs(timing.elapsed_ms)} ms`,
+    productionWall.elapsed_ms != null
+      ? `instrumented trace ${formatMs(timing.elapsed_ms)} ms (attribution only)`
+      : productionWall.status === "unavailable"
+        ? `instrumented trace ${formatMs(timing.elapsed_ms)} ms (attribution only)`
+        : "",
     `active ${formatMs(timing.active_gpu_ms)} ms`,
     `device gap ${formatMs(timing.device_gap_ms)} ms`,
     gpuBusyPct != null ? `GPU busy ${gpuBusyPct.toFixed(1)}%` : "",

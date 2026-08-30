@@ -54,8 +54,10 @@ schedule:
 fused_owner_aliases:
   csa_attention.q_rope: csa_attention.q_head_norm
   hca_attention.q_rope: hca_attention.q_head_norm
-  csa_attention.window_cache: csa_attention.window_kv
-  hca_attention.window_cache: hca_attention.window_kv
+  csa_attention.window_kv: csa_attention.q_head_norm
+  csa_attention.window_cache: csa_attention.q_head_norm
+  hca_attention.window_kv: hca_attention.q_head_norm
+  hca_attention.window_cache: hca_attention.q_head_norm
   csa_indexer.q_rope_rotate: csa_indexer.q_projection
   csa_indexer.selected_ids: csa_indexer.k_compress
   csa_compressor.norm_rope: csa_compressor.partial_state
@@ -114,10 +116,10 @@ nodes:
   csa_attention.q_a: {model: gemm, m: B*T, n: C_Q, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_CSA}
   csa_attention.q_norm: {model: elementwise, bytes: 6*B*T*C_Q, ops: 6*B*T*C_Q, repetitions: L_CSA}
   csa_attention.q_b: {model: gemm, m: B*T, n: N_LOCAL*D, k: C_Q, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_CSA}
-  csa_attention.q_head_norm: {model: elementwise, bytes: 8*B*T*N_LOCAL*D, ops: 16*B*T*N_LOCAL*D, repetitions: L_CSA, assumptions: [includes the fused partial-RoPE owner interval]}
+  csa_attention.q_head_norm: {model: roofline, bytes: 8*B*T*N_LOCAL*D+2*H*D+8*B*T*(H+D), ops: 16*B*T*N_LOCAL*D+2*B*T*H*D+16*B*T*D, dtype: bf16, repetitions: L_CSA, assumptions: [physical owner combines per-head Q norm and partial RoPE with window KV projection norm RoPE quantization and cache append]}
   csa_attention.q_rope: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
-  csa_attention.window_kv: {model: roofline, ops: 2*B*T*H*D+16*B*T*D, bytes: 2*H*D+8*B*T*(H+D), dtype: bf16, repetitions: L_CSA, assumptions: [includes fused norm RoPE quantize and ring append]}
-  csa_attention.window_cache: {model: structural, reason: fused into csa_attention.window_kv, included_in_target: csa_attention.window_kv}
+  csa_attention.window_kv: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
+  csa_attention.window_cache: {model: structural, reason: fused into csa_attention.q_head_norm, included_in_target: csa_attention.q_head_norm}
   csa_attention.window_indices: {model: elementwise, bytes: 8*B*W, ops: B*W, repetitions: L_CSA}
   csa_attention.csa_compressor: {model: structural, reason: drill container costed by csa_compressor leaves}
   csa_attention.indexer: {model: structural, reason: drill container costed by csa_indexer leaves}
@@ -133,10 +135,10 @@ nodes:
   hca_attention.q_a: {model: gemm, m: B*T, n: C_Q, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_HCA}
   hca_attention.q_norm: {model: elementwise, bytes: 6*B*T*C_Q, ops: 6*B*T*C_Q, repetitions: L_HCA}
   hca_attention.q_b: {model: gemm, m: B*T, n: N_LOCAL*D, k: C_Q, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 2, repetitions: L_HCA}
-  hca_attention.q_head_norm: {model: elementwise, bytes: 8*B*T*N_LOCAL*D, ops: 16*B*T*N_LOCAL*D, repetitions: L_HCA, assumptions: [includes the fused partial-RoPE owner interval]}
+  hca_attention.q_head_norm: {model: roofline, bytes: 8*B*T*N_LOCAL*D+2*H*D+8*B*T*(H+D), ops: 16*B*T*N_LOCAL*D+2*B*T*H*D+16*B*T*D, dtype: bf16, repetitions: L_HCA, assumptions: [physical owner combines per-head Q norm and partial RoPE with window KV projection norm RoPE quantization and cache append]}
   hca_attention.q_rope: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
-  hca_attention.window_kv: {model: roofline, ops: 2*B*T*H*D+16*B*T*D, bytes: 2*H*D+8*B*T*(H+D), dtype: bf16, repetitions: L_HCA, assumptions: [includes fused norm RoPE quantize and ring append]}
-  hca_attention.window_cache: {model: structural, reason: fused into hca_attention.window_kv, included_in_target: hca_attention.window_kv}
+  hca_attention.window_kv: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
+  hca_attention.window_cache: {model: structural, reason: fused into hca_attention.q_head_norm, included_in_target: hca_attention.q_head_norm}
   hca_attention.window_indices: {model: elementwise, bytes: 8*B*W, ops: B*W, repetitions: L_HCA}
   hca_attention.hca_compressor: {model: structural, reason: drill container costed by hca_compressor leaves}
   hca_attention.history_indices: {model: structural, reason: drill container costed by hca_history leaves}

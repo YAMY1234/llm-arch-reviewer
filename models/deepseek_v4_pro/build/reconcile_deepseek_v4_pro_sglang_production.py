@@ -17,7 +17,16 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any, Callable
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from models.deepseek_v4_pro.build.validate_deepseek_v4_pro_sglang_formal_window import (
+    validate_formal_window,
+)
 
 
 SOURCE_COMMIT = "71de97b264b04dcd514cf904003028aefe9775c8"
@@ -31,6 +40,10 @@ MHC_POST_NAMES = ("mhc_post_tilelang_kernel", "mhc_fused_post_pre_fma_tilelang_k
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text())
 
 
 def load_trace(path: Path) -> dict[str, Any]:
@@ -95,6 +108,7 @@ def select_production_window(
     phase: str,
     batch_size: int,
     eager_kernel_names: list[str] | None = None,
+    graph_launch_index: int = 0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     events = trace.get("traceEvents") or []
     annotation_name = (
@@ -114,25 +128,30 @@ def select_production_window(
             f"allows at most one {annotation_name!r} GPU annotation, "
             f"got {len(annotations)}"
         )
-    graph_launches = [
+    graph_launches = sorted(
+        [
         event
         for event in events
         if event.get("cat") == "cuda_runtime"
         and event.get("ph") == "X"
         and event.get("name") == "cudaGraphLaunch"
-    ]
-    expected_graph_launches = 1 if phase == "decode" else 0
+        ],
+        key=lambda event: float(event.get("ts", 0.0)),
+    )
+    expected_graph_launches = (
+        graph_launch_index + 1 if phase == "decode" else graph_launch_index
+    )
     if len(graph_launches) != expected_graph_launches:
         raise ValueError(
             f"{phase} requires {expected_graph_launches} cudaGraphLaunch, "
             f"got {len(graph_launches)}"
         )
     graph_correlation = (
-        (graph_launches[0].get("args") or {}).get("correlation")
-        if graph_launches
+        (graph_launches[graph_launch_index].get("args") or {}).get("correlation")
+        if phase == "decode" and graph_launches
         else None
     )
-    if graph_launches and graph_correlation is None:
+    if phase == "decode" and graph_launches and graph_correlation is None:
         raise ValueError("cudaGraphLaunch lacks a correlation ID")
 
     kernels = _kernel_rows(trace)
@@ -213,6 +232,10 @@ def select_production_window(
         "cuda_graph_correlation": graph_correlation,
         "graph_body_kernel_count": graph_kernel_count,
         "runtime_tail_kernel_count": len(selected) - graph_kernel_count,
+        "graph_launch_index": graph_launch_index if phase == "decode" else None,
+        "profile_priming_launch_count": (
+            graph_launch_index if phase == "decode" else len(graph_launches)
+        ),
     }
 
 
@@ -446,12 +469,14 @@ def reconcile(
     batch_size: int,
     rank: int,
     job_id: str,
+    graph_launch_index: int = 0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     production, selector = select_production_window(
         trace,
         phase=phase,
         batch_size=batch_size,
         eager_kernel_names=[str(row.get("kernel_name") or "") for row in source],
+        graph_launch_index=graph_launch_index,
     )
     source_prefix, source_occurrences, source_suffix = _source_occurrences(source)
     prefix, scopes, suffix, mhc_path = _production_scopes(production)
@@ -587,8 +612,19 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, choices=(1, 16, 64, 256), required=True)
     parser.add_argument("--rank", type=int, choices=range(8), required=True)
     parser.add_argument("--job-id", required=True)
+    parser.add_argument(
+        "--graph-launch-index",
+        type=int,
+        choices=(0, 1),
+        default=0,
+        help="select the formal launch after any profiler-activation priming launch",
+    )
     parser.add_argument("--output-events", type=Path, required=True)
     parser.add_argument("--output-report", type=Path, required=True)
+    parser.add_argument("--run-validation", type=Path)
+    parser.add_argument("--client-artifact", type=Path)
+    parser.add_argument("--scheduler-log", type=Path)
+    parser.add_argument("--baseline-selection", type=Path)
     args = parser.parse_args()
     if not re.search(rf"TP-{args.rank}(?:\.|-)", args.trace.name):
         raise ValueError("trace filename rank differs from --rank")
@@ -599,6 +635,7 @@ def main() -> int:
         batch_size=args.batch_size,
         rank=args.rank,
         job_id=args.job_id,
+        graph_launch_index=args.graph_launch_index,
     )
     report["trace"] = {
         "path": str(args.trace),
@@ -608,6 +645,69 @@ def main() -> int:
         "path": str(args.eager_contract),
         "sha256": sha256_file(args.eager_contract),
     }
+    if args.phase == "decode":
+        required_formal_inputs = {
+            "client_artifact": args.client_artifact,
+            "scheduler_log": args.scheduler_log,
+            "baseline_selection": args.baseline_selection,
+        }
+        missing_formal_inputs = [
+            name
+            for name, path in required_formal_inputs.items()
+            if path is None or not path.is_file()
+        ]
+        independently_validated_gate = None
+        if missing_formal_inputs:
+            report["errors"].append(
+                "decode reconciliation lacks formal-window inputs: "
+                + ", ".join(missing_formal_inputs)
+            )
+        else:
+            try:
+                independently_validated_gate = validate_formal_window(
+                    client=load_json(args.client_artifact),
+                    scheduler_log=args.scheduler_log.read_text(errors="replace"),
+                    baseline=load_json(args.baseline_selection),
+                    concurrency=args.batch_size,
+                )
+            except ValueError as exc:
+                report["errors"].append(f"formal-window validation failed: {exc}")
+            report["formal_window_inputs"] = {
+                name: {"path": str(path), "sha256": sha256_file(path)}
+                for name, path in required_formal_inputs.items()
+            }
+        if args.run_validation is None or not args.run_validation.is_file():
+            report["errors"].append("decode reconciliation lacks run validation")
+        else:
+            validation = load_json(args.run_validation)
+            gate = (validation.get("throughput_gate") or {}).get(
+                str(args.batch_size)
+            )
+            if validation.get("status") != "pass":
+                report["errors"].append("decode run validation did not pass")
+            if not gate:
+                report["errors"].append("decode run lacks formal-step throughput gate")
+            else:
+                if gate != independently_validated_gate:
+                    report["errors"].append(
+                        "retained throughput gate differs from direct source-artifact validation"
+                    )
+                target = gate.get("formal_target") or {}
+                if gate.get("profile_start_step") != gate.get("formal_target_step"):
+                    report["errors"].append(
+                        "formal scheduler step does not match the synchronized second-launch coordinate"
+                    )
+                if float(target.get("throughput_token_s") or 0.0) < float(
+                    gate.get("minimum_accepted_throughput_token_s") or 0.0
+                ):
+                    report["errors"].append("formal step is a profile-start throughput collapse")
+            report["run_validation"] = {
+                "path": str(args.run_validation),
+                "sha256": sha256_file(args.run_validation),
+                "status": validation.get("status"),
+            }
+            report["formal_step_throughput_gate"] = gate
+    report["ok"] = not report["errors"]
     write_jsonl(args.output_events, events)
     args.output_report.parent.mkdir(parents=True, exist_ok=True)
     args.output_report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

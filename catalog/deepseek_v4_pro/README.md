@@ -54,18 +54,20 @@ timelines, and reproducible hashes belong in this repository.
 
 The source-locked vLLM implementation has five accepted pure-TP8 profiles. All
 eight TP ranks passed exact source, mode, phase, shape, selected-window, and
-ordered eager-to-production reconciliation. The published timeline uses the
-slowest selected-window rank for each point; elapsed time is the selected wall
+ordered eager-to-production reconciliation. Decode production latency is the
+matched profiler-off scheduler wall. The published timeline separately uses the
+critical instrumented rank for attribution: its elapsed time is the trace
 interval, active time is the cross-stream interval union, and residency is the
-sum of kernel durations.
+sum of kernel durations. Instrumented elapsed is not cross-framework latency
+authority.
 
-| Phase | GBS | CUDA Graph | Critical-rank elapsed (ms) | Kernel mapping |
-|---|---:|---|---:|---:|
-| Prefill | 1 | off | 507.298 | 100% |
-| Decode | 1 | on | 11.179 | 100% |
-| Decode | 16 | on | 14.502 | 100% |
-| Decode | 64 | on | 20.016 | 100% |
-| Decode | 256 | on | 31.430 | 100% |
+| Phase | GBS | CUDA Graph | Profiler-off production wall (ms) | Instrumented trace (ms) | Kernel mapping |
+|---|---:|---|---:|---:|---:|
+| Prefill | 1 | off | unavailable | 507.298 | 100% |
+| Decode | 1 | on | 10.930 | 11.179 | 100% |
+| Decode | 16 | on | 13.820 | 14.502 | 100% |
+| Decode | 64 | on | 19.020 | 20.016 | 100% |
+| Decode | 256 | on | 26.790 | 31.430 | 100% |
 
 Every graph-on decode event retains its exact same-rank eager event IDs and
 stack/shape evidence. Many-to-one and one-to-many mappings remain explicit,
@@ -75,33 +77,43 @@ interval-union rollups rather than additional timing owners. The five timelines
 have 100% mapped kernel-count and residency coverage. No attainable projection
 is claimed without an exact kernel-plan calibration surface.
 
-## Accepted SGLang production profiles
+## SGLang production contracts
 
-The source-locked SGLang implementation has the same five accepted pure-TP8
-points. Every point passed exact all-rank source, mode, phase, shape, selected-
-window, and ordered eager-to-production reconciliation. CUDA Graph launch-body
-events are mapped through exact same-rank eager IDs; the bounded launch-prefix
-copies that are absent from the captured graph body remain explicit runtime
-support nodes rather than being hidden or assigned proxy semantics.
+The source-locked SGLang implementation has four accepted pure-TP8 decode
+points. Each passed exact all-rank source, mode, phase, shape, selected-window,
+formal-step throughput, collective-duration, and ordered eager-to-production
+reconciliation. CUDA Graph launch-body events are mapped through exact
+same-rank eager IDs; the bounded launch-prefix copies that are absent from the
+captured graph body remain explicit runtime support nodes rather than being
+hidden or assigned proxy semantics.
 
-| Phase | GBS | CUDA Graph | Critical-rank elapsed (ms) | Kernel mapping |
-|---|---:|---|---:|---:|
-| Prefill | 1 | off | 335.843 | 100% |
-| Decode | 1 | on | 19.433 | 100% |
-| Decode | 16 | on | 48.671 | 100% |
-| Decode | 64 | on | 21.943 | 100% |
-| Decode | 256 | on | 36.790 | 100% |
+| Phase | GBS | CUDA Graph | Status | Profiler-off production wall (ms) | Instrumented trace (ms) | Kernel mapping |
+|---|---:|---|---|---:|---:|---:|
+| Prefill | 1 | off | unsupported | unavailable | 335.814–336.015 rejected evidence | not published |
+| Decode | 1 | on | measured | 9.290 | 9.393 | 100% |
+| Decode | 16 | on | measured | 11.748 | 11.504 | 100% |
+| Decode | 64 | on | measured | 17.649 | 17.521 | 100% |
+| Decode | 256 | on | measured | 29.861 | 29.751 | 100% |
 
-Across both frameworks, 80/80 eager and 80/80 production rank windows pass the
-fixed contract. Both bindings cover all 153 Execution-IR nodes, all 122 layer
-occurrences close in every profile, and all ten production timelines have 100%
-mapped kernel-count and residency coverage. A two-pass rebuild of all 31
+SGLang prefill job `3426447` retained all eight exact synchronized-rank traces,
+but the first HCA collective ranged from 0.338 to 7.113 ms across ranks and
+failed the fail-closed outlier gate. It is retained as evidence-backed
+`unsupported`, not zero-filled or substituted with another model, mode, or
+shape.
+
+Across both frameworks, 80/80 eager rank windows pass the fixed contract. The
+measured production set closes 72/72 rank windows; the additional eight-rank
+SGLang prefill rejection is retained and hash-checked. Both bindings cover all
+153 Execution-IR nodes, all 122 layer occurrences close in every measured
+profile, and all nine published timelines have 100% mapped kernel-count and
+residency coverage. A two-pass rebuild of all 28
 generated DeepSeek files was byte-identical with combined tree SHA-256
-`da662073c644df37c4d1ddfa2c2448fb0fce29781acf0a2177a6f965e4d2aa9a`;
+`b22a30942722b1c53d2b769696191b4e96a8c27c25cb54f740da7dd6ae108971`;
 the canonical bundle SHA-256 is
-`03e7d36b7596f2f08dd09fbe6712272a450987734242a5a60f15ce0e13a1749d`.
-The real browser audit exercised all ten profiles, 190 routes, 1,530 expanded
-architecture nodes, 857 fused-owner links, and 30 zoom/pan/scroll gestures with
+`77fdea325376f7ce2f63a3ce8dd2ed875b469e24a16a19f5ddaf239cf785f2f0`.
+The real browser audit exercised all nine published profiles, 171 routes, 1,377
+expanded architecture nodes, 839 fused-owner card/detail links, and 27 real
+zoom/pan/scroll gestures with
 no failure or clipping/overlap report.
 
 Direct Viewer links:
