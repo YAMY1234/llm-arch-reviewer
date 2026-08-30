@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile and audit the complete DeepSeek-V4-Pro vLLM eager rank matrix."""
+"""Compile and audit one complete DeepSeek-V4-Pro eager rank matrix."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from models.deepseek_v4_pro.build.compile_deepseek_v4_pro_vllm_eager_contract im
 )
 
 
-SOURCE_COMMIT = "dd10e03f95f94edbea1975c67ace3a35ec9a8a40"
+DEFAULT_SOURCE_COMMIT = "dd10e03f95f94edbea1975c67ace3a35ec9a8a40"
 
 
 def sha256_file(path: Path) -> str:
@@ -47,6 +47,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mapping-root", type=Path, required=True)
     parser.add_argument("--out-root", type=Path, required=True)
+    parser.add_argument("--source-commit", default=DEFAULT_SOURCE_COMMIT)
+    parser.add_argument("--profile-prefix", default="vllm-")
+    parser.add_argument(
+        "--expected-phase-counts",
+        default="vllm_prefill=1,vllm_decode=4",
+        help="comma-separated phase=count contract",
+    )
     args = parser.parse_args()
     mapping_root = args.mapping_root.resolve()
     output_root = args.out_root.resolve()
@@ -55,7 +62,10 @@ def main() -> int:
     artifacts: list[dict[str, Any]] = []
     errors: list[str] = []
     rank_dirs = sorted(
-        path.parent for path in mapping_root.glob("**/validation_report.json")
+        path.parent
+        for path in mapping_root.glob(
+            f"{args.profile_prefix}*/**/validation_report.json"
+        )
     )
     if len(rank_dirs) != 40:
         errors.append(f"expected 40 rank mappings, got {len(rank_dirs)}")
@@ -78,7 +88,7 @@ def main() -> int:
                 report["errors"].append(
                     f"manifest rank {manifest.get('rank')} != directory rank {rank}"
                 )
-            if manifest.get("source_commit") != SOURCE_COMMIT:
+            if manifest.get("source_commit") != args.source_commit:
                 report["errors"].append("source commit mismatch")
             report["ok"] = not report["errors"]
             write_jsonl(out_dir / "eager_contract.jsonl", rows)
@@ -167,7 +177,14 @@ def main() -> int:
             },
         }
 
-    if phase_counts != Counter({"vllm_prefill": 1, "vllm_decode": 4}):
+    expected_phase_counts = Counter(
+        {
+            phase: int(count)
+            for item in args.expected_phase_counts.split(",")
+            for phase, count in [item.split("=", 1)]
+        }
+    )
+    if phase_counts != expected_phase_counts:
         errors.append(
             "expected one prefill and four decode profiles, got "
             + json.dumps(dict(phase_counts), sort_keys=True)
@@ -176,7 +193,7 @@ def main() -> int:
     matrix_report = {
         "ok": not errors,
         "errors": errors,
-        "source_commit": SOURCE_COMMIT,
+        "source_commit": args.source_commit,
         "profile_count": len(profiles),
         "rank_mapping_count": len(reports),
         "phase_profile_counts": dict(phase_counts),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile one vLLM eager mapping into exact DeepSeek-V4-Pro occurrences.
+"""Compile one eager mapping into exact DeepSeek-V4-Pro occurrences.
 
 The low-level mapper deliberately emits shared ``attention.*`` and
 ``compressor.*`` labels where CUDA symbols do not encode the official layer
@@ -172,7 +172,18 @@ def _runtime_support(row: dict[str, Any]) -> None:
     if row.get("selected_node") != "top.runtime_support":
         return
     text = f"{row.get('kernel_name') or ''}\n{row.get('cpu_op_name') or ''}\n{_frame_text(row)}".lower()
-    if "block_table" in text or "slot_mapping" in text:
+    if "cuda_graph_buffer_registry.py" in text or "load_batch" in text:
+        support_class = "eager_input_buffer_copy"
+        reason = "formal-batch tensors copied into the eager runner input registry"
+    elif any(
+        token in text
+        for token in (
+            "block_table",
+            "slot_mapping",
+            "mem_cache/allocator",
+            "translate_loc_from_full_to_swa",
+        )
+    ):
         support_class = "cache_slot_metadata"
         reason = "request-to-KV-cache slot and block-table address preparation"
     elif any(
@@ -184,11 +195,23 @@ def _runtime_support(row: dict[str, Any]) -> None:
             "attention/backends/mla/indexer.py",
             "sparse_swa.py",
             "get_mla_metadata_kernel",
+            "deepseek_v4_backend.py",
+            "dsv4_attn_metadata_kernels.py",
+            "metadata_kernel.py",
+            "paged_mqa_metadata",
+            "topk_plan",
         )
     ):
         support_class = "attention_plan_metadata"
         reason = "shape, compressed-slot, sparse-index, or FlashMLA launch metadata; no model value is produced"
-    elif "compressor.py(101): build" in text:
+    elif any(
+        token in text
+        for token in (
+            "compressor.py(101): build",
+            "create_paged_compressor_data",
+            "plan_compress_decode_kernel",
+        )
+    ):
         support_class = "compressor_plan_metadata"
         reason = "compressor scheduler bounds and slot metadata; no compressed model value is produced"
     elif "_prepare_inputs" in text:
@@ -197,6 +220,12 @@ def _runtime_support(row: dict[str, Any]) -> None:
     elif any(token in text for token in ("sampl", "execute_model", "output")):
         support_class = "sampling_and_output"
         reason = "token-selection or output materialization outside the stable model graph"
+    elif "request_receiver.py" in text or "broadcast_pyobj" in text:
+        support_class = "request_broadcast_overlap"
+        reason = "asynchronous request broadcast launch correlated inside the forward window"
+    elif "scheduler.py" in text or "schedule_batch.py" in text:
+        support_class = "scheduler_overlap"
+        reason = "asynchronous next-step scheduler work correlated inside the forward window"
     else:
         support_class = "framework_runtime_metadata"
         reason = "typed framework bookkeeping outside the stable Model-IR value flow"
@@ -239,7 +268,9 @@ MHC_PRE_FUSED_MEMBERS = (
 )
 
 
-def _annotate_schedule(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _annotate_schedule(
+    rows: list[dict[str, Any]], *, source_commit: str | None = None
+) -> list[dict[str, Any]]:
     attention_collectives = _indices(rows, "attention.tp_output_collective")
     moe_collectives = _indices(rows, "moe.tp_moe_output_collective")
     mixes = _indices(rows, "mhc_transform.mix")
@@ -402,24 +433,36 @@ def _annotate_schedule(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if row.get("selected_node") == "compressor.partial_state"
         ]
         if kind == "csa":
-            if len(partial_states) != 2:
+            if len(partial_states) == 2:
+                partial_states[0].update(
+                    {
+                        "selected_node": "csa_indexer.k_compress",
+                        "mapping_method": "source_order_indexer_compressor_state_write",
+                        "confidence": "high",
+                    }
+                )
+                partial_states[1].update(
+                    {
+                        "selected_node": "csa_compressor.partial_state",
+                        "mapping_method": "source_order_main_compressor_state_write",
+                        "confidence": "high",
+                    }
+                )
+            elif len(partial_states) == 1 and sum(
+                row.get("selected_node") == "csa_indexer.k_compress"
+                for row in attention
+            ) >= 3:
+                partial_states[0].update(
+                    {
+                        "selected_node": "csa_compressor.partial_state",
+                        "mapping_method": "source_proved_sglang_main_compressor_state_write",
+                        "confidence": "high",
+                    }
+                )
+            else:
                 raise ValueError(
                     f"CSA layer {layer_id} requires indexer and main-compressor state writes"
                 )
-            partial_states[0].update(
-                {
-                    "selected_node": "csa_indexer.k_compress",
-                    "mapping_method": "source_order_indexer_compressor_state_write",
-                    "confidence": "high",
-                }
-            )
-            partial_states[1].update(
-                {
-                    "selected_node": "csa_compressor.partial_state",
-                    "mapping_method": "source_order_main_compressor_state_write",
-                    "confidence": "high",
-                }
-            )
         elif len(partial_states) != 1:
             raise ValueError(
                 f"HCA layer {layer_id} requires one main-compressor state write"
@@ -444,11 +487,76 @@ def _annotate_schedule(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "mapping_method",
                         "official_layer_schedule_inside_collective_bounded_occurrence",
                     )
+        shared = [
+            row for row in ffn if row.get("selected_node") == "moe.shared_gate_up"
+        ]
+        activations = [
+            row for row in ffn if row.get("selected_node") == "moe.shared_activation"
+        ]
+        if source_commit == "71de97b264b04dcd514cf904003028aefe9775c8" and (
+            shared or activations
+        ):
+            if len(shared) != 4 or len(activations) != 1:
+                raise ValueError(
+                    f"layer {layer_id} has invalid SGLang shared-expert launch group: "
+                    f"linear={len(shared)} activation={len(activations)}"
+                )
+            activation_index = rows.index(activations[0])
+            for row in shared:
+                if rows.index(row) > activation_index:
+                    row.update(
+                        {
+                            "selected_node": "moe.shared_down",
+                            "mapping_method": "ordered_shared_expert_projection_after_swiglu",
+                            "confidence": "high",
+                        }
+                    )
         start = ffn_end + 1
     for row in rows:
         if row.get("selected_node") == "mhc_transform.affine":
             row.setdefault("timing_role", "fusion_owner")
             row.setdefault("fused_semantic_nodes", list(MHC_PRE_FUSED_MEMBERS))
+        node = row.get("selected_node")
+        if node == "csa_indexer.q_projection":
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["csa_indexer.q_projection", "csa_indexer.q_rope_rotate"],
+            )
+        elif node == "attention.q_head_norm":
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["attention.q_head_norm", "attention.q_rope"],
+            )
+        elif node == "attention.window_kv":
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["attention.window_kv", "attention.window_cache"],
+            )
+        elif node in {"csa_compressor.partial_state", "hca_compressor.partial_state"}:
+            prefix = str(node).split(".", 1)[0]
+            row.setdefault(
+                "fused_semantic_nodes",
+                [
+                    f"{prefix}.norm_rope",
+                    f"{prefix}.partial_state",
+                    f"{prefix}.compressed_cache",
+                ],
+            )
+        elif node == "csa_indexer.k_compress":
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["csa_indexer.k_compress", "csa_indexer.selected_ids"],
+            )
+        elif node == "moe.routed_gate_up":
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["moe.routed_gate_up", "moe.routed_activation"],
+            )
+        elif node in {"moe.hash_select", "moe.learned_select"}:
+            row.setdefault(
+                "fused_semantic_nodes",
+                ["moe.sqrt_softplus", str(node), "moe.weights"],
+            )
     return rows
 
 
@@ -482,7 +590,17 @@ def _annotate_top_collective_group(
         row["launch_group_id"] = node
         row["launch_group_role"] = (
             "collective_kernel"
-            if "nccl" in kernel or "multimem_all_reduce" in kernel
+            if any(
+                token in kernel
+                for token in (
+                    "nccl",
+                    "multimem_all_reduce",
+                    "allreducefusionkernel",
+                    "allreducekernel",
+                    "all_gather",
+                    "allgather",
+                )
+            )
             else "result_materialization"
         )
     return indices
@@ -496,7 +614,36 @@ def compile_contract(
     rows = [dict(row) for row in mappings]
     for row in rows:
         _normalize_direct_evidence(row)
-    _annotate_schedule(rows)
+    embedding_collective = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row.get("selected_node") == "top.tp_embedding_output_collective"
+        ),
+        None,
+    )
+    first_affine = next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row.get("selected_node") == "mhc_transform.affine"
+        ),
+        None,
+    )
+    if embedding_collective is not None and first_affine is not None:
+        for row in rows[embedding_collective + 1 : first_affine]:
+            if (
+                row.get("selected_node") == "top.runtime_support"
+                and row.get("cpu_op_name") == "aten::copy_"
+            ):
+                row.update(
+                    {
+                        "selected_node": "top.hc_expand",
+                        "mapping_method": "ordered_model_forward_hc_initialization",
+                        "confidence": "high",
+                    }
+                )
+    _annotate_schedule(rows, source_commit=str(manifest.get("source_commit") or ""))
     for row in rows:
         _runtime_support(row)
 
@@ -529,6 +676,7 @@ def compile_contract(
         row["event_id"]
         for row in rows
         if row.get("selected_node") != "top.runtime_support"
+        and "unique_kernel_signature" not in (row.get("evidence") or [])
         and not any(
             (row.get(key) or {}).get("source_exists") is True
             for key in ("operator_frame", "semantic_frame", "phase_frame")
