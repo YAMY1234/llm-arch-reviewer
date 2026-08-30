@@ -1256,7 +1256,7 @@ def build_sol_artifacts(
         estimate = estimates[target]
         cell = _profile_cell(measured, target)
         observed = None
-        if cell:
+        if cell and cell.get("metric_kind") != "inclusive_rollup":
             observed = cell.get("active_gpu_ms", cell.get("ms_per_iter"))
             if observed is not None:
                 observed = float(observed)
@@ -1434,6 +1434,20 @@ def build_sol_artifacts(
         "hardware_spec_sha256": _canonical_hash(hardware),
         "measured_profile_id": measured_id,
     }
+    measured_runtime = copy.deepcopy(
+        (((measured.get("meta") or {}).get("profile_summary") or {}).get(
+            "production_wall_timing"
+        ))
+    )
+    if measured_runtime is not None and measured_runtime.get("status") == "unavailable":
+        measured_runtime = None
+    if measured_runtime is not None:
+        if measured_runtime.get("authority") != "profiler_off_matched_scheduler_step":
+            raise SolError(
+                f"{manifest_source}: production wall timing must use the "
+                "profiler-off matched scheduler-step authority"
+            )
+        provenance["measured_runtime"] = measured_runtime
     sol_profile = {
         "schema_version": "sol-profile.v1",
         "sol_profile_id": manifest["sol_profile_id"],
@@ -1484,6 +1498,8 @@ def build_sol_artifacts(
         "nodes": gap_nodes,
         "provenance": provenance,
     }
+    if measured_runtime is not None:
+        gap_report["measured_runtime"] = measured_runtime
     return sol_profile, gap_report
 
 

@@ -84,17 +84,16 @@ def _idle_intervals(
 def timeline_targets(event: dict[str, Any]) -> list[str]:
     """Return direct and roll-up IR targets for one attributed event."""
 
-    node = str(event.get("node") or "")
-    # Attribution builders may already know the exact semantic leaf, fusion
-    # members, and drill ancestors for an implementation interval.  Preserve
-    # those explicit targets before applying legacy model-name roll-up rules.
-    # This keeps the shared timeline schema portable without teaching the
-    # viewer (or this helper) every model's node naming convention.
-    targets: list[str] = [
+    node = str(event.get("timing_owner") or event.get("node") or "")
+    targets: list[str] = [node] if node else []
+    # Attribution builders may already know the exact semantic leaves, fusion
+    # members, and drill ancestors for an implementation interval. Preserve
+    # those portable targets after the single timing owner; stable
+    # de-duplication below keeps the owner first without teaching this helper
+    # every model's node naming convention.
+    targets.extend(
         str(target) for target in (event.get("ir_targets") or []) if target
-    ]
-    if node:
-        targets.insert(0, node)
+    )
     qsa_indexer_drill_target = event.get("qsa_indexer_drill_target")
     if qsa_indexer_drill_target:
         targets.append(str(qsa_indexer_drill_target))
@@ -570,7 +569,9 @@ def build_timeline_artifact(
                     "tid": event.get("tid"),
                     "kernel_name": strings.add(event.get("kernel_name")),
                     "kernel_label": strings.add(event.get("kernel_label")),
-                    "ir_node": strings.add(event.get("node")),
+                    "ir_node": strings.add(
+                        event.get("timing_owner") or event.get("node")
+                    ),
                     "ir_targets": [strings.add(target) for target in targets],
                     "layer_id": event.get("layer_id"),
                     "layer_kind": strings.add(event.get("layer_kind")),

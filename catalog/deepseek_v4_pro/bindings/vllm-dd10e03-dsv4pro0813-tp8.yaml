@@ -1,0 +1,1266 @@
+schema_version: implementation-binding.v2
+implementation_id: vllm_dd10e03_dsv4pro0813_tp8
+label: vLLM dd10e03 DeepSeek-V4-Pro-0813 pure TP8
+model_id: deepseek_v4_pro
+execution_path_id: tp8_moe_intermediate_shard
+source_repo: https://github.com/vllm-project/vllm
+source_commit: dd10e03f95f94edbea1975c67ace3a35ec9a8a40
+container: vllm-arm64-2f726db9babd.sqsh@sha256:111d0967a4054e22dbc8fccddfe7446cebe7b5cede51e555b563a77a5574d28c
+backend: vllm_native_dsv4_flashinfer_sm120_fused_moe
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_6178deeaa361c4f1
+  required_phases:
+  - prefill
+  - decode
+  cuda_graph_enabled: false
+  evidence:
+  - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
+  - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
+  - current/deepseek-v4-pro-ir-profile/evidence/vllm-eager-prefill/3417280
+  - current/deepseek-v4-pro-ir-profile/evidence/vllm-eager-decode/3417281
+  - current/deepseek-v4-pro-ir-profile/evidence/vllm-eager-decode/3417282
+  - current/deepseek-v4-pro-ir-profile/evidence/vllm-eager-decode/3417283
+  - current/deepseek-v4-pro-ir-profile/evidence/vllm-eager-decode/3417284
+  - current/deepseek-v4-pro-ir-profile/contracts/vllm-eager/matrix_report.json
+  - current/deepseek-v4-pro-ir-profile/contracts/vllm-binding-validation.json
+  notes: >-
+    Exact graph-off prefill GBS1 and decode GBS1/16/64/256 passed on all eight
+    TP ranks. The eager compiler closes every rank over the official 61-layer
+    30-CSA/31-HCA schedule and all 122 attention/FFN occurrences, types every
+    runtime-support event, and preserves rank-specific ordered fingerprints.
+    GBS1/16 use the source-proved two-kernel mhc_fused_post_pre launch groups;
+    GBS64/256 use the separate mHC pre/post path. All 153 execution nodes have
+    commit-specific links across nine runtime-verified source files. The eager
+    window is closed through the owning worker_busy_loop step and correlated
+    asynchronous launches. This retains the TP logits all-gather plus the
+    separately stack-backed sample_tokens/output tail on every rank. Larger
+    decode batches preserve the NCCL kernel plus result materialization as one
+    N:1 semantic collective group rather than duplicating timing ownership.
+node_bindings:
+  top.token_ids:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 1421
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.runtime_support:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 1421
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.embedding:
+    symbols:
+    - DeepseekV4Model.embed_input_ids
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4Model.embed_input_ids
+      line: 1038
+      display: embedding lookup
+  top.hc_expand:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4Model.forward
+      line: 1061
+      display: replicated mHC stream initialization
+  top.decoder_stack:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4Model.forward
+      line: 1061
+      display: 61-layer decoder loop
+  top.final_hc_read:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read
+  top.final_norm:
+    symbols:
+    - DeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4ForCausalLM.forward
+      line: 1421
+      display: DeepSeek-V4 causal-LM runtime boundary
+  top.lm_head:
+    symbols:
+    - DeepseekV4ForCausalLM.compute_logits
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4ForCausalLM.compute_logits
+      line: 1414
+      display: parallel LM head
+  top.logits:
+    symbols:
+    - DeepseekV4ForCausalLM.compute_logits
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4ForCausalLM.compute_logits
+      line: 1414
+      display: gathered logits
+  top.dspark_extension:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM
+      line: 267
+      display: optional DSpark implementation retained outside stage-1
+  decoder_stack.stack_in:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.schedule:
+    symbols:
+    - DeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4Model.forward
+      line: 1061
+      display: runtime 61-layer schedule
+  decoder_stack.attention_mhc_pre:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.attention_norm:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.attention_choice:
+    symbols:
+    - _select_dsv4_attn_cls
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: _select_dsv4_attn_cls
+      line: 759
+      display: NVIDIA DeepSeek-V4 attention backend selection
+  decoder_stack.csa_attention:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.hca_attention:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.attention_mhc_post:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.ffn_mhc_pre:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.ffn_norm:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.moe:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.ffn_mhc_post:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  decoder_stack.stack_out:
+    symbols:
+    - DeepseekV4DecoderLayer.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4DecoderLayer.forward
+      line: 866
+      display: hybrid CSA/HCA decoder schedule
+  mhc_transform.streams:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.flatten_rms:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.affine:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.pre_gate:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.post_gate:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.combine_sinkhorn:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.read:
+    symbols:
+    - MHCPreOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPreOp.forward_cuda
+      line: 47
+      display: mHC pre-transform and Sinkhorn mixing
+  mhc_transform.delta:
+    symbols:
+    - MHCPostOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPostOp.forward_cuda
+      line: 209
+      display: mHC delta placement
+  mhc_transform.place:
+    symbols:
+    - MHCPostOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPostOp.forward_cuda
+      line: 209
+      display: mHC stream placement
+  mhc_transform.mix:
+    symbols:
+    - MHCPostOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPostOp.forward_cuda
+      line: 209
+      display: mHC residual stream mixing
+  mhc_transform.updated_streams:
+    symbols:
+    - MHCPostOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: MHCPostOp.forward_cuda
+      line: 209
+      display: mHC updated streams
+  final_hc_read.streams:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read projection
+  final_hc_read.flatten_rms:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read projection
+  final_hc_read.pre_gate:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read projection
+  final_hc_read.read:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read projection
+  final_hc_read.hidden:
+    symbols:
+    - HCHeadOp.forward_cuda
+    links:
+    - file: vllm/model_executor/layers/mhc.py
+      symbol: HCHeadOp.forward_cuda
+      line: 286
+      display: final mHC read projection
+  csa_attention.attn_in:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.q_a:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query low-rank projection and norm
+  csa_attention.q_norm:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query low-rank RMSNorm
+  csa_attention.q_b:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query up-projection
+  csa_attention.q_head_norm:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused per-head query RMSNorm
+  csa_attention.q_rope:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused query RoPE
+  csa_attention.window_kv:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused KV norm, RoPE, quantization and insert
+  csa_attention.window_cache:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused sliding-window cache write
+  csa_attention.window_indices:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.csa_compressor:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compressor
+  csa_attention.indexer:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA causal top-k indexer
+  csa_attention.index_union:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: compressed-history and sliding-window index union
+  csa_attention.sparse_mqa:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.inverse_rope:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.grouped_o_a:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.o_b:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  csa_attention.attn_out:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: CSA sparse MQA path
+  hca_attention.attn_in:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.q_a:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query low-rank projection and norm
+  hca_attention.q_norm:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query low-rank RMSNorm
+  hca_attention.q_b:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: query up-projection
+  hca_attention.q_head_norm:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused per-head query RMSNorm
+  hca_attention.q_rope:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused query RoPE
+  hca_attention.window_kv:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused KV norm, RoPE, quantization and insert
+  hca_attention.window_cache:
+    symbols:
+    - DeepseekV4Attention._fused_qnorm_rope_kv_insert
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention._fused_qnorm_rope_kv_insert
+      line: 513
+      display: fused sliding-window cache write
+  hca_attention.window_indices:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.hca_compressor:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compressor
+  hca_attention.history_indices:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: all-completed HCA compressed-history indices
+  hca_attention.index_union:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: compressed-history and sliding-window index union
+  hca_attention.sparse_mqa:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.inverse_rope:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.grouped_o_a:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.o_b:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  hca_attention.attn_out:
+    symbols:
+    - DeepseekV4Attention.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Attention.forward
+      line: 324
+      display: HCA sparse MQA path
+  csa_compressor.hidden_block:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.kv_gate_projection:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.overlap_layout:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.softmax_pool:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.norm_rope:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.partial_state:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.compressed_cache:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  csa_compressor.compressed_kv:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: CSA compression state machine
+  hca_compressor.hidden_block:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.kv_gate_projection:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.overlap_layout:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.softmax_pool:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.norm_rope:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.partial_state:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.compressed_cache:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  hca_compressor.compressed_kv:
+    symbols:
+    - DeepseekCompressor.forward
+    links:
+    - file: vllm/models/deepseek_v4/compressor.py
+      symbol: DeepseekCompressor.forward
+      line: 271
+      display: HCA compression state machine
+  csa_indexer.indexer_in:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  csa_indexer.q_projection:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index query projection
+  csa_indexer.q_rope_rotate:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  csa_indexer.k_compress:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  csa_indexer.weight_projection:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index per-head weights
+  csa_indexer.score:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  csa_indexer.causal_topk:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: causal top-k and physical-page transform
+  csa_indexer.expand:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  csa_indexer.selected_ids:
+    symbols:
+    - DeepseekV4Indexer.forward
+    links:
+    - file: vllm/models/deepseek_v4/attention.py
+      symbol: DeepseekV4Indexer.forward
+      line: 773
+      display: CSA index scoring and causal top-k
+  hca_history.position:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: HCA all-completed compressed-history selection
+  hca_history.all_completed:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: HCA all-completed compressed-history selection
+  hca_history.selected_ids:
+    symbols:
+    - DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+      symbol: DeepseekV4FlashInferMLAAttention._build_sparse_index_metadata
+      line: 278
+      display: HCA all-completed compressed-history selection
+  moe.moe_in:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.score_projection:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.sqrt_softplus:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.hash_select:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.learned_select:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.weights:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.dispatch:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.routed_gate_up:
+    symbols:
+    - DeepseekV4MoE._forward_fused_moe
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE._forward_fused_moe
+      line: 733
+      display: rank-local FusedMoE routed-expert gate/up projection
+  moe.routed_activation:
+    symbols:
+    - DeepseekV4MoE._forward_fused_moe
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE._forward_fused_moe
+      line: 733
+      display: rank-local FusedMoE clamped SwiGLU
+  moe.routed_down:
+    symbols:
+    - DeepseekV4MoE._forward_fused_moe
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE._forward_fused_moe
+      line: 733
+      display: rank-local FusedMoE routed-expert down projection
+  moe.routed_combine:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.shared_gate_up:
+    symbols:
+    - DeepseekV4MLP.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MLP.forward
+      line: 134
+      display: shared-expert gate/up projections
+  moe.shared_activation:
+    symbols:
+    - DeepseekV4MLP.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MLP.forward
+      line: 134
+      display: shared-expert SwiGLU
+  moe.shared_down:
+    symbols:
+    - DeepseekV4MLP.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MLP.forward
+      line: 134
+      display: shared-expert down projection
+  moe.combine:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  moe.moe_out:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: DeepSeek-V4 routed and shared MoE
+  top.tp_embedding_output_collective:
+    symbols:
+    - VocabParallelEmbedding.forward
+    links:
+    - file: vllm/model_executor/layers/vocab_parallel_embedding.py
+      symbol: VocabParallelEmbedding.forward
+      line: 472
+      display: TP8 masked vocabulary-shard embedding all-reduce
+  csa_attention.tp_csa_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1672
+      display: TP8 CSA row-parallel output all-reduce
+  hca_attention.tp_hca_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: vllm/model_executor/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1672
+      display: TP8 HCA row-parallel output all-reduce
+  moe.tp_moe_output_collective:
+    symbols:
+    - DeepseekV4MoE.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/model.py
+      symbol: DeepseekV4MoE.forward
+      line: 692
+      display: TP8 routed-plus-shared MoE output all-reduce
+  top.tp_logits_collective:
+    symbols:
+    - LogitsProcessor._gather_logits
+    links:
+    - file: vllm/model_executor/layers/logits_processor.py
+      symbol: LogitsProcessor._gather_logits
+      line: 75
+      display: TP8 vocabulary logits all-gather
+  dspark_generation.dspark_in:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.target_concat:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.target_projection:
+    symbols:
+    - DSparkDeepseekV4Model.combine_hidden_states
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.combine_hidden_states
+      line: 126
+      display: target hidden-state projection
+  dspark_generation.noise_block:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.embedding:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.stage_schedule:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.stage_stack:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark stage stack
+  dspark_generation.final_hc:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.norm_lm:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.markov:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.markov_bias
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.markov_bias
+      line: 337
+      display: Markov logit-bias head
+  dspark_generation.logit_add:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.compute_draft_logits
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.compute_draft_logits
+      line: 327
+      display: Markov bias addition
+  dspark_generation.autoregressive_sample:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.confidence:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_generation.dspark_out:
+    symbols:
+    - DSparkDeepseekV4ForCausalLM.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4ForCausalLM.forward
+      line: 314
+      display: DSpark multi-stage generation
+  dspark_stage.stage_in:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.attention_mhc_pre:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.attention:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.attention_mhc_post:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.ffn_mhc_pre:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.ffn_norm:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.moe:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.ffn_mhc_post:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_stage.stage_out:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: one DSpark stage
+  dspark_attention.attn_in:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV
+  dspark_attention.target_kv:
+    symbols:
+    - DSparkDeepseekV4Model.precompute_and_store_context_kv
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.precompute_and_store_context_kv
+      line: 134
+      display: target hidden-state KV projection
+  dspark_attention.ring_update:
+    symbols:
+    - _insert_context_kv
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: _insert_context_kv
+      line: 200
+      display: DSpark context ring-cache update
+  dspark_attention.draft_qkv:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV
+  dspark_attention.fixed_indices:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV
+  dspark_attention.sparse_mqa:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV
+  dspark_attention.output_projection:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV
+  dspark_attention.attn_out:
+    symbols:
+    - DSparkDeepseekV4Model.forward
+    links:
+    - file: vllm/models/deepseek_v4/nvidia/dspark.py
+      symbol: DSparkDeepseekV4Model.forward
+      line: 166
+      display: DSpark attention over target and draft KV

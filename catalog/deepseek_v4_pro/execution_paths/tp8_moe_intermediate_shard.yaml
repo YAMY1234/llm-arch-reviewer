@@ -1,0 +1,275 @@
+schema_version: execution-plan.v2
+execution_path_id: tp8_moe_intermediate_shard
+label: Pure TP8 with per-expert intermediate sharding
+model_id: deepseek_v4_pro
+plan_version: 1
+
+parallelism_axes: {tp_size: 8, dp_size: 1, cp_size: 1, ep_size: 1}
+default_parameters: {tp_size: 8, dp_size: 1, cp_size: 1, ep_size: 1}
+constraints:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  attention_dp: false
+  serving_mode: aggregated
+  generation_mode: autoregressive
+  dspark_enabled: false
+  prefix_cache_enabled: false
+  expert_placement: every_logical_expert_present_on_every_tp_rank
+  expert_weight_sharding: intermediate_dimension_eight_way
+  validation_state: candidate_requires_graph_off_eager_reconciliation
+
+transforms:
+  - op: annotate_node
+    target: top.embedding
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocabulary_rows_sharded_8_way, parallelism: TP8}
+  - op: insert_after
+    after: top.embedding
+    node:
+      id: tp_embedding_output_collective
+      label: "TP embedding output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.embedding_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce_sum
+        parallelism: TP8
+        payload: masked local vocabulary-shard embedding partials [B,T,H]
+        result: replicated token embeddings [B,T,H]
+    edge: {identity: local_embedding_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: top.hc_expand
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_four_stream_state, parallelism: TP8}
+  - op: annotate_node
+    target: top.final_hc_read
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_four_stream_state, parallelism: TP8}
+  - op: annotate_node
+    target: top.dspark_extension
+    set:
+      execution: {selection: structurally_retained_not_executed_in_stage1, reason: autoregressive_generation_without_dspark}
+
+  - op: annotate_node
+    target: mhc_transform.flatten_rms
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_stream_hidden, parallelism: TP8}
+  - op: annotate_node
+    target: mhc_transform.affine
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_dynamic_coefficient_projection, parallelism: TP8}
+  - op: annotate_node
+    target: mhc_transform.combine_sinkhorn
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_4_by_4_transition_matrix, parallelism: TP8, state_boundary: no_cross_rank_state}
+  - op: annotate_node
+    target: mhc_transform.mix
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_four_stream_state, parallelism: TP8}
+
+  - op: annotate_node
+    target: csa_attention.q_a
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_query_latent, parallelism: TP8}
+  - op: annotate_node
+    target: csa_attention.q_b
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 16_of_128_query_heads_per_rank, parallelism: column_parallel}
+  - op: annotate_node
+    target: csa_attention.window_kv
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_single_kv_head, parallelism: TP8}
+  - op: annotate_node
+    target: csa_attention.window_cache
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_128_token_ring_on_every_rank, state_owner: each_tp_rank}
+  - op: annotate_node
+    target: csa_attention.csa_compressor
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_ratio4_compressor_and_cache_on_every_rank, parallelism: TP8}
+  - op: annotate_node
+    target: csa_attention.indexer
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_64_head_indexer_and_topk_on_every_rank, parallelism: replicated}
+  - op: annotate_node
+    target: csa_attention.sparse_mqa
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_16_query_heads_with_replicated_kv_and_indices, parallelism: head_parallel}
+  - op: annotate_node
+    target: csa_attention.grouped_o_a
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 2_of_16_output_groups_per_rank, parallelism: column_parallel_grouped}
+  - op: annotate_node
+    target: csa_attention.o_b
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_groups_sharded_8_way, parallelism: row_parallel}
+  - op: insert_after
+    after: csa_attention.o_b
+    node:
+      id: tp_csa_output_collective
+      label: "TP CSA output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.csa_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce_sum
+        parallelism: TP8
+        payload: row-parallel CSA output partials [B,T,H]
+        result: replicated CSA delta [B,T,H]
+    edge: {identity: local_csa_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: hca_attention.q_a
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_query_latent, parallelism: TP8}
+  - op: annotate_node
+    target: hca_attention.q_b
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 16_of_128_query_heads_per_rank, parallelism: column_parallel}
+  - op: annotate_node
+    target: hca_attention.window_kv
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_single_kv_head, parallelism: TP8}
+  - op: annotate_node
+    target: hca_attention.window_cache
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_128_token_ring_on_every_rank, state_owner: each_tp_rank}
+  - op: annotate_node
+    target: hca_attention.hca_compressor
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_ratio128_compressor_and_cache_on_every_rank, parallelism: TP8}
+  - op: annotate_node
+    target: hca_attention.history_indices
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: identical_causal_compressed_history_indices, parallelism: replicated}
+  - op: annotate_node
+    target: hca_attention.sparse_mqa
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_16_query_heads_with_replicated_kv_and_indices, parallelism: head_parallel}
+  - op: annotate_node
+    target: hca_attention.grouped_o_a
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 2_of_16_output_groups_per_rank, parallelism: column_parallel_grouped}
+  - op: annotate_node
+    target: hca_attention.o_b
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_groups_sharded_8_way, parallelism: row_parallel}
+  - op: insert_after
+    after: hca_attention.o_b
+    node:
+      id: tp_hca_output_collective
+      label: "TP HCA output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.hca_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce_sum
+        parallelism: TP8
+        payload: row-parallel HCA output partials [B,T,H]
+        result: replicated HCA delta [B,T,H]
+    edge: {identity: local_hca_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: csa_compressor.compressed_cache
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_csa_compressed_cache, state_owner: each_tp_rank}
+  - op: annotate_node
+    target: hca_compressor.compressed_cache
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_hca_compressed_cache, state_owner: each_tp_rank}
+  - op: annotate_node
+    target: csa_indexer.q_projection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_64_index_heads, parallelism: replicated}
+  - op: annotate_node
+    target: csa_indexer.k_compress
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_index_key_cache, state_owner: each_tp_rank}
+  - op: annotate_node
+    target: csa_indexer.causal_topk
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: identical_top1024_block_ids, parallelism: replicated}
+
+  - op: annotate_node
+    target: moe.score_projection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_384_router_scores, parallelism: replicated}
+  - op: annotate_node
+    target: moe.hash_select
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: identical_token_id_routes, parallelism: replicated}
+  - op: annotate_node
+    target: moe.learned_select
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: identical_bias_corrected_top6_routes, parallelism: replicated}
+  - op: annotate_node
+    target: moe.dispatch
+    set:
+      execution: {placement: local_on_every_tp_rank, tensor_layout: identical_tokens_and_routes_no_cross_rank_dispatch, parallelism: local_group_by_expert}
+  - op: annotate_node
+    target: moe.routed_gate_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: every_expert_intermediate_sharded_8_way, parallelism: tensor_parallel_expert_mlp}
+  - op: annotate_node
+    target: moe.routed_down
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: every_expert_intermediate_input_sharded_8_way, parallelism: row_parallel_expert_mlp}
+  - op: annotate_node
+    target: moe.shared_gate_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: shared_expert_intermediate_sharded_8_way, parallelism: tensor_parallel_shared_mlp}
+  - op: annotate_node
+    target: moe.shared_down
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: shared_expert_intermediate_input_sharded_8_way, parallelism: row_parallel_shared_mlp}
+  - op: insert_after
+    after: moe.combine
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce_sum
+        parallelism: TP8
+        payload: routed-plus-shared row-parallel output partials [B,T,H]
+        result: replicated MoE delta [B,T,H]
+    edge: {identity: local_moe_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: top.lm_head
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocabulary_rows_sharded_8_way, parallelism: column_parallel_vocabulary}
+  - op: insert_after
+    after: top.lm_head
+    node:
+      id: tp_logits_collective
+      label: "TP vocabulary logits\nall-gather"
+      shape: elem
+      semantic_op: execution.tp.logits_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_gather_concat
+        parallelism: TP8
+        payload: local vocabulary logits [B,T,V/8]
+        result: full vocabulary logits [B,T,V]
+    edge: {identity: local_vocabulary_logits, shape: "[B,T,V/8]", layout: batch_sequence_local_vocabulary, dtype: logits_dtype, state: ephemeral_output}

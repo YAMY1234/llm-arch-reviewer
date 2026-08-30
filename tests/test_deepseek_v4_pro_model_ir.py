@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import yaml
+
+from llm_arch_v2 import compile_catalog
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MODEL_ROOT = REPO_ROOT / "catalog" / "deepseek_v4_pro"
+
+
+def _load(relative: str) -> dict:
+    return yaml.safe_load((MODEL_ROOT / relative).read_text())
+
+
+def test_official_0813_identity_and_layer_schedule_are_exact() -> None:
+    model = _load("model_ir.yaml")
+    facts = model["facts"]
+    assert facts["checkpoint"] == "deepseek-ai/DeepSeek-V4-Pro-0813"
+    assert facts["checkpoint_revision"] == (
+        "72e1d3230f6c080a530b0a1d46f8eb4602340597"
+    )
+    assert facts["checkpoint_config_sha256"] == (
+        "9dd2a89255469e120b333668ef5a169b7ae46c00f6bbab786bf0be457546aec0"
+    )
+    assert facts["target_layers"] == 61
+    assert len(facts["csa_layers"]) == 30
+    assert len(facts["hca_layers"]) == 31
+    assert set(facts["csa_layers"]).isdisjoint(facts["hca_layers"])
+    assert sorted(facts["csa_layers"] + facts["hca_layers"]) == list(range(61))
+    assert facts["hash_router_layers"] == [0, 1, 2]
+    assert facts["dspark_stages"] == 3
+    assert facts["dspark_target_layer_ids"] == [58, 59, 60]
+
+
+def test_every_reachable_drill_has_a_boundary_contract_and_every_leaf_has_math() -> None:
+    model = _load("model_ir.yaml")
+    views = model["views"]
+    drills = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in views.items()
+        for node in view["nodes"]
+        if node.get("drill")
+    }
+    contracts = {row["parent_node"] for row in model["boundary_contracts"]}
+    assert contracts == drills
+
+    operations = model["semantic_contract"]["operations"]
+    for view in views.values():
+        for node in view["nodes"]:
+            assert node["semantic_op"] in operations
+            assert operations[node["semantic_op"]]["equation"]
+        for edge in view["edges"]:
+            for key in ("identity", "shape", "layout", "dtype", "state"):
+                assert edge.get(key), (view["title"], edge, key)
+
+
+def test_pure_tp8_execution_contract_preserves_attention_and_moe_sharding() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    variants = {
+        variant["execution_path_id"]: variant
+        for variant in bundle["execution_variants"].values()
+    }
+    assert set(variants) == {"tp8_moe_intermediate_shard"}
+    intermediate = variants["tp8_moe_intermediate_shard"]
+
+    for variant in (intermediate,):
+        parameters = variant["default_parameters"]
+        assert parameters == {"tp_size": 8, "dp_size": 1, "cp_size": 1, "ep_size": 1}
+        nodes = {
+            f"{view_id}.{node['id']}": node
+            for view_id, view in variant["views"].items()
+            for node in view["nodes"]
+        }
+        assert nodes["csa_attention.q_b"]["execution"]["tensor_layout"] == (
+            "16_of_128_query_heads_per_rank"
+        )
+        assert nodes["csa_attention.indexer"]["execution"]["parallelism"] == (
+            "replicated"
+        )
+        assert nodes["top.dspark_extension"]["execution"]["selection"] == (
+            "structurally_retained_not_executed_in_stage1"
+        )
+
+    intermediate_moe = next(
+        node
+        for node in intermediate["views"]["moe"]["nodes"]
+        if node["id"] == "routed_gate_up"
+    )
+    assert intermediate_moe["execution"]["parallelism"] == (
+        "tensor_parallel_expert_mlp"
+    )
+
+
+def test_semantic_source_ledger_has_no_pending_dispositions() -> None:
+    ledger = _load("semantic_source_ledger.yaml")
+    assert ledger["source_snapshot"]["revision"] == (
+        "72e1d3230f6c080a530b0a1d46f8eb4602340597"
+    )
+    assert len(ledger["audit_views"]) == 14
+    for entrypoint in ledger["entrypoints"]:
+        assert entrypoint["review_status"] == "verified"
+        assert all(
+            item["disposition"] != "pending"
+            for item in entrypoint.get("member_dispositions", [])
+        )
+        assert all(
+            item["disposition"] != "pending"
+            for item in entrypoint["obligations"]
+        )
+
+
+def test_upstream_sglang_recipe_claim_matches_pinned_source_ledger() -> None:
+    ledger = _load("semantic_source_ledger.yaml")
+    pipeline = _load("pipeline.yaml")
+    source = ledger["framework_recipe_sources"][0]
+    recipe = pipeline["topology_basis"]["official_framework_recipe"]
+
+    assert source["framework"] == recipe["framework"] == "sglang"
+    assert source["revision"] == recipe["source_commit"]
+    assert source["file"] == recipe["file"]
+    assert source["lines"] == recipe["lines"]
+    assert source["file_sha256"] == recipe["file_sha256"] == (
+        "f84dbec21993cf94e2ac1c0db678f89f6fa484708707f29d111989810a99516c"
+    )
+    claims = source["upstream_claims"]
+    assert source["source_selection"] == {
+        "hardware": "b300",
+        "variant": "pro-official",
+        "quantization": "fp4",
+        "strategy": "low-latency",
+    }
+    assert recipe["upstream_hardware"] == source["source_selection"]["hardware"]
+    assert claims == {
+        "nodes": "single",
+        "verified": False,
+        "note": "NOT yet run end-to-end on this hardware",
+    }
+    assert recipe["upstream_nodes"] == claims["nodes"]
+    assert recipe["upstream_verified"] is claims["verified"]
+    assert recipe["upstream_note"] == claims["note"]
+    assert recipe["public_recipe_state"] == (
+        "unverified_single_node_configuration_basis_only"
+    )
+    task_validation = pipeline["topology_basis"]["task_runtime_validation"]
+    assert task_validation["provenance"] == "independent_from_upstream_recipe_status"
+    assert task_validation["topology"] == "pure_tp8_two_nodes_four_gb300_per_node"
+
+
+def test_stage1_retains_exact_ten_point_contract_with_one_unsupported_prefill() -> None:
+    pipeline = _load("pipeline.yaml")
+    result = pipeline["stage1_result"]
+    assert pipeline["acceptance"]["expected_profile_points"] == 10
+    assert result["measured_profile_count"] == 9
+    assert result["unsupported_profile_count"] == 1
+    assert result["measured_profile_count"] + result["unsupported_profile_count"] == 10
+    assert result["unsupported_profiles"] == [
+        {
+            "profile_id": "deepseek_v4_pro_tp8_sglang_eager_prefill_gbs001_8k",
+            "evidence_job": 3426447,
+            "reason": "synchronized_formal_prefill_collective_rank_duration_skew",
+            "matrix_evidence": "current/deepseek-v4-pro-ir-profile/production-reconciliation/sglang/matrix_report.json",
+        }
+    ]
+
+
+def test_both_commit_specific_bindings_cover_every_architecture_node() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    execution = next(iter(bundle["execution_variants"].values()))
+    expected_nodes = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in execution["views"].items()
+        for node in view["nodes"]
+    }
+    bindings = {
+        path.name: yaml.safe_load(path.read_text())
+        for path in sorted((MODEL_ROOT / "bindings").glob("*.yaml"))
+    }
+    assert set(bindings) == {
+        "sglang-71de97b-dsv4pro0813-tp8.yaml",
+        "vllm-dd10e03-dsv4pro0813-tp8.yaml",
+    }
+    assert bindings["sglang-71de97b-dsv4pro0813-tp8.yaml"]["source_commit"] == (
+        "71de97b264b04dcd514cf904003028aefe9775c8"
+    )
+    assert bindings["vllm-dd10e03-dsv4pro0813-tp8.yaml"]["source_commit"] == (
+        "dd10e03f95f94edbea1975c67ace3a35ec9a8a40"
+    )
+    for binding in bindings.values():
+        assert set(binding["node_bindings"]) == expected_nodes
+        for node_id, node_binding in binding["node_bindings"].items():
+            assert node_binding["symbols"], node_id
+            assert node_binding["links"], node_id
+            assert all(link.get("line", 0) > 0 for link in node_binding["links"])
+
+
+def test_stage1_sol_gap_input_covers_execution_ir_without_framework_costs() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    execution = next(iter(bundle["execution_variants"].values()))
+    expected_nodes = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in execution["views"].items()
+        for node in view["nodes"]
+    }
+    manifest = _load("sol_manifests/tp8_gb300_decode_gbs1_8k1k.yaml")
+
+    assert set(manifest["nodes"]) == expected_nodes
+    assert bundle["meta"]["sol_profile_count"] == 1
+    assert bundle["meta"]["gap_report_count"] == 1
+
+    sol = bundle["sol_profiles"][
+        "deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_ideal_v1"
+    ]
+    gap = bundle["gap_reports"][
+        "deepseek_v4_pro_tp8_gb300_decode_gbs1_8k1k_gap_v1"
+    ]
+    assert sol["status"] == "partial"
+    assert gap["status"] == "partial_calibration"
+    assert sol["critical_path"]["complete_step"] is True
+    assert sol["coverage"] == {
+        "declared_node_count": 153,
+        "ideal_estimated_node_count": 68,
+        "calibrated_node_count": 0,
+        "plan_identified_node_count": 0,
+        "transition_simulated_node_count": 68,
+        "legacy_sensitivity_node_count": 0,
+        "observed_comparison_node_count": 54,
+        "structural_node_count": 85,
+        "unsupported_targets": [],
+        "coverage_semantics": "declared adapter nodes; not additive timing coverage",
+    }
+    assert not gap["model_violations"]
+    assert not gap["projection_violations"]
+    assert gap["measured_runtime"]["authority"] == (
+        "profiler_off_matched_scheduler_step"
+    )
+    assert gap["measured_runtime"]["elapsed_ms"] == 10.93
+    assert gap["nodes"]["moe.sqrt_softplus"]["observed_active_ms"] is None
+    assert gap["nodes"]["moe.weights"]["observed_active_ms"] is None
+    assert gap["nodes"]["moe.hash_select"]["observed_active_ms"] > 0
+    assert gap["nodes"]["moe.learned_select"]["observed_active_ms"] > 0
+
+    cost_ir = json.dumps(
+        {
+            node_id: estimate.get("cost_ir")
+            for node_id, estimate in sol["node_estimates"].items()
+            if estimate.get("cost_ir")
+        },
+        sort_keys=True,
+    ).lower()
+    assert "sglang" not in cost_ir
+    assert "vllm" not in cost_ir
+    assert "kernel" not in cost_ir
