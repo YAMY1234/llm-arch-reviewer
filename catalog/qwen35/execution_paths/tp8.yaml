@@ -89,9 +89,9 @@ transforms:
     set:
       execution: {placement: all_tp_ranks, tensor_layout: input_value_heads_sharded_8_way, parallelism: row_parallel}
   - op: insert_after
-    after: gdn_attention.output_projection
+    after: gdn_moe_block.attention
     node:
-      id: tp_gdn_output_collective
+      id: tp_attention_output_collective
       label: "TP GDN output\nall-reduce"
       shape: elem
       semantic_op: execution.tp.gdn_output_collective
@@ -133,7 +133,7 @@ transforms:
     set:
       execution: {placement: all_tp_ranks, tensor_layout: input_query_heads_sharded_8_way, parallelism: row_parallel}
   - op: insert_after
-    after: full_attention.output_projection
+    after: full_attention_moe_block.attention
     node:
       id: tp_attention_output_collective
       label: "TP attention output\nall-reduce"
@@ -171,7 +171,25 @@ transforms:
     set:
       execution: {placement: all_tp_ranks, tensor_layout: local_routed_plus_shared_output_partials, parallelism: TP8_EP1}
   - op: insert_after
-    after: moe_block.weighted_combine
+    after: gdn_moe_block.moe
+    node:
+      id: tp_moe_output_collective
+      label: "TP MoE output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.moe_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8_EP1
+        payload: routed plus shared expert output partials · bf16 [N,H]
+        result: replicated combined MoE output · bf16 [N,H]
+    edge: {identity: local_moe_output_partials, shape: "[N,H]", layout: token_hidden_partial_sum, dtype: bf16, state: ephemeral_activation}
+
+  - op: insert_after
+    after: full_attention_moe_block.moe
     node:
       id: tp_moe_output_collective
       label: "TP MoE output\nall-reduce"

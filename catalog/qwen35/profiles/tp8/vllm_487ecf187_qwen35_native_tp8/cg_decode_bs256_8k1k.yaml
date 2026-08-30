@@ -71,7 +71,7 @@ evidence:
   model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
   container: vllm-glm53-flash-arm64-905c0293.sqsh@sha256:efdfe25952dc672d4415032e2755df7d7f2bab549992a2e3f2c429334f366756
   validation_file: validation.json
-  validation_sha256: b3203488bad11f5cf315a7ce74a6e5c28f94277cd8f70cd4f270e3c6b0c0aa81
+  validation_sha256: bde859eaf7c518e1389ad7fcadd7a465ff4c9aca0f1389ba4075816d082e6b73
   baseline_selector:
     file: window-selection.json
     sha256: 1f27f658dbc406751f745ecb6148d54fed8ef0c21db8db1b80300778f6a76158
@@ -86,7 +86,7 @@ evidence:
     '5': d692b9cc81c863d2b2fa8ba692c3787f842a8f5b8d6a9308bf826977dfee7482
     '6': 82f6e8cbd30eafb953ce0abc721d59149b7dbec0f84557d5d36fc48c1aedc423
     '7': 754faa46821f786bbceeeea1f6f917a4229cecc8fc9750d4280bbe8a1f882bfb
-  eager_mapping_sha256: 9fcb9cf6cd8ef81d4a47de133e49a007eb4893b164d8713e14c30c512016ea82
+  eager_mapping_sha256: 896e7e12563b93039019fd885fc6a93e16597b632789e5886bda47dfbe243233
   mapped_kernel_count_ratio: 0.969261279127417
   mapped_kernel_duration_ratio: 0.9809836235009386
   unclassified_kernel_count: 0
@@ -135,7 +135,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: cg_decode_bs256_8k1k.timeline.json.gz
-  sha256: 265625a259e9418e42248fba1d92845a4b41906bccbed0196248691d659b11a0
+  sha256: c51637e66332d0738cbed2f9bb6d49a4c2c9e8c31fad34a98d0f325d44adb8e5
   reference_rank: 2
   step_count: 1
   event_count: 2017
@@ -146,13 +146,14 @@ node_states:
     label: profile aggregate contains explicit direct occurrences and/or occurrence-scoped fused intervals; Timeline retains
       the exact owner for every event
     shared_timing_owners:
-    - moe_block.tp_moe_output_collective
+    - gdn_moe_block.tp_moe_output_collective
   gdn_moe_block.input_norm:
     status: partially_fused
     label: profile aggregate contains explicit direct occurrences and/or occurrence-scoped fused intervals; Timeline retains
       the exact owner for every event
     shared_timing_owners:
-    - moe_block.tp_moe_output_collective
+    - full_attention_moe_block.tp_moe_output_collective
+    - gdn_moe_block.tp_moe_output_collective
   full_attention.kv_state_read:
     status: fused
     label: fused into full_attention.causal_gqa
@@ -165,14 +166,19 @@ node_states:
     fusion_group_id: qwen35_profile_aggregate_full_attention_qk_norm
   full_attention_moe_block.attention_residual:
     status: fused
-    label: fused into full_attention.tp_attention_output_collective
-    included_in: full_attention.tp_attention_output_collective
-    fusion_group_id: qwen35_profile_aggregate_full_attention_tp_attention_output_collective
+    label: fused into full_attention_moe_block.tp_attention_output_collective
+    included_in: full_attention_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective
   full_attention_moe_block.post_attention_norm:
     status: fused
-    label: fused into full_attention.tp_attention_output_collective
-    included_in: full_attention.tp_attention_output_collective
-    fusion_group_id: qwen35_profile_aggregate_full_attention_tp_attention_output_collective
+    label: fused into full_attention_moe_block.tp_attention_output_collective
+    included_in: full_attention_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective
+  full_attention_moe_block.layer_residual:
+    status: fused
+    label: fused into full_attention_moe_block.tp_moe_output_collective
+    included_in: full_attention_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective
   gdn_attention.conv_state_read:
     status: fused
     label: fused into gdn_attention.causal_conv
@@ -195,24 +201,19 @@ node_states:
     fusion_group_id: qwen35_profile_aggregate_gdn_attention_qkvz_projection
   gdn_moe_block.attention_residual:
     status: fused
-    label: fused into gdn_attention.tp_gdn_output_collective
-    included_in: gdn_attention.tp_gdn_output_collective
-    fusion_group_id: qwen35_profile_aggregate_gdn_attention_tp_gdn_output_collective
+    label: fused into gdn_moe_block.tp_attention_output_collective
+    included_in: gdn_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
   gdn_moe_block.post_attention_norm:
     status: fused
-    label: fused into gdn_attention.tp_gdn_output_collective
-    included_in: gdn_attention.tp_gdn_output_collective
-    fusion_group_id: qwen35_profile_aggregate_gdn_attention_tp_gdn_output_collective
-  full_attention_moe_block.layer_residual:
-    status: fused
-    label: fused into moe_block.tp_moe_output_collective
-    included_in: moe_block.tp_moe_output_collective
-    fusion_group_id: qwen35_profile_aggregate_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_attention_output_collective
+    included_in: gdn_moe_block.tp_attention_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
   gdn_moe_block.layer_residual:
     status: fused
-    label: fused into moe_block.tp_moe_output_collective
-    included_in: moe_block.tp_moe_output_collective
-    fusion_group_id: qwen35_profile_aggregate_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_moe_output_collective
+    included_in: gdn_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
   top.embedding:
     status: fused
     label: fused into top.tp_embedding_output_collective
@@ -771,10 +772,10 @@ fusion_groups:
       - r2-k450
       - r2-k716
       - r2-k982
-  qwen35_profile_aggregate_full_attention_tp_attention_output_collective:
-    owner: full_attention.tp_attention_output_collective
+  qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective:
+    owner: full_attention_moe_block.tp_attention_output_collective
     ir_nodes:
-    - full_attention.tp_attention_output_collective
+    - full_attention_moe_block.tp_attention_output_collective
     - full_attention_moe_block.attention_residual
     - full_attention_moe_block.post_attention_norm
     timing_semantics: shared_event_set
@@ -814,6 +815,48 @@ fusion_groups:
       - r2-k726
       - r2-k990
       - r2-k992
+  qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective:
+    owner: full_attention_moe_block.tp_moe_output_collective
+    ir_nodes:
+    - full_attention_moe_block.tp_moe_output_collective
+    - full_attention_moe_block.layer_residual
+    timing_semantics: shared_event_set
+    provenance: eager stack plus production signature/sequence reconciliation
+    mapping_method: explicit ir_targets on every production event
+    confidence: high
+    evidence_scope:
+      resolution: profile_aggregate
+      production_event_ids:
+      - r2-k1030
+      - r2-k1032
+      - r2-k1296
+      - r2-k1298
+      - r2-k1562
+      - r2-k1564
+      - r2-k1828
+      - r2-k1830
+      - r2-k2094
+      - r2-k2096
+      - r2-k2360
+      - r2-k2362
+      - r2-k2626
+      - r2-k2628
+      - r2-k2892
+      - r2-k2894
+      - r2-k3158
+      - r2-k3160
+      - r2-k3424
+      - r2-k3426
+      - r2-k3690
+      - r2-k3692
+      - r2-k3956
+      - r2-k3958
+      - r2-k4222
+      - r2-k4224
+      - r2-k498
+      - r2-k500
+      - r2-k764
+      - r2-k766
   qwen35_profile_aggregate_gdn_attention_causal_conv:
     owner: gdn_attention.causal_conv
     ir_nodes:
@@ -1180,10 +1223,10 @@ fusion_groups:
       - r2-k904
       - r2-k906
       - r2-k908
-  qwen35_profile_aggregate_gdn_attention_tp_gdn_output_collective:
-    owner: gdn_attention.tp_gdn_output_collective
+  qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective:
+    owner: gdn_moe_block.tp_attention_output_collective
     ir_nodes:
-    - gdn_attention.tp_gdn_output_collective
+    - gdn_moe_block.tp_attention_output_collective
     - gdn_moe_block.attention_residual
     - gdn_moe_block.post_attention_norm
     timing_semantics: shared_event_set
@@ -1283,11 +1326,10 @@ fusion_groups:
       - r2-k858
       - r2-k924
       - r2-k926
-  qwen35_profile_aggregate_moe_block_tp_moe_output_collective:
-    owner: moe_block.tp_moe_output_collective
+  qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective:
+    owner: gdn_moe_block.tp_moe_output_collective
     ir_nodes:
-    - moe_block.tp_moe_output_collective
-    - full_attention_moe_block.layer_residual
+    - gdn_moe_block.tp_moe_output_collective
     - gdn_moe_block.layer_residual
     timing_semantics: shared_event_set
     provenance: eager stack plus production signature/sequence reconciliation
@@ -1296,64 +1338,48 @@ fusion_groups:
     evidence_scope:
       resolution: profile_aggregate
       production_event_ids:
-      - r2-k1030
-      - r2-k1032
       - r2-k1096
       - r2-k1098
       - r2-k1162
       - r2-k1164
       - r2-k1230
       - r2-k1232
-      - r2-k1296
-      - r2-k1298
       - r2-k1362
       - r2-k1364
       - r2-k1428
       - r2-k1430
       - r2-k1496
       - r2-k1498
-      - r2-k1562
-      - r2-k1564
       - r2-k1628
       - r2-k1630
       - r2-k1694
       - r2-k1696
       - r2-k1762
       - r2-k1764
-      - r2-k1828
-      - r2-k1830
       - r2-k1894
       - r2-k1896
       - r2-k1960
       - r2-k1962
       - r2-k2028
       - r2-k2030
-      - r2-k2094
-      - r2-k2096
       - r2-k2160
       - r2-k2162
       - r2-k2226
       - r2-k2228
       - r2-k2294
       - r2-k2296
-      - r2-k2360
-      - r2-k2362
       - r2-k2426
       - r2-k2428
       - r2-k2492
       - r2-k2494
       - r2-k2560
       - r2-k2562
-      - r2-k2626
-      - r2-k2628
       - r2-k2692
       - r2-k2694
       - r2-k2758
       - r2-k2760
       - r2-k2826
       - r2-k2828
-      - r2-k2892
-      - r2-k2894
       - r2-k2958
       - r2-k2960
       - r2-k298
@@ -1362,16 +1388,12 @@ fusion_groups:
       - r2-k3026
       - r2-k3092
       - r2-k3094
-      - r2-k3158
-      - r2-k3160
       - r2-k3224
       - r2-k3226
       - r2-k3290
       - r2-k3292
       - r2-k3358
       - r2-k3360
-      - r2-k3424
-      - r2-k3426
       - r2-k3490
       - r2-k3492
       - r2-k3556
@@ -1380,36 +1402,26 @@ fusion_groups:
       - r2-k3626
       - r2-k364
       - r2-k368
-      - r2-k3690
-      - r2-k3692
       - r2-k3756
       - r2-k3758
       - r2-k3822
       - r2-k3824
       - r2-k3890
       - r2-k3892
-      - r2-k3956
-      - r2-k3958
       - r2-k4022
       - r2-k4024
       - r2-k4088
       - r2-k4090
       - r2-k4156
       - r2-k4158
-      - r2-k4222
-      - r2-k4224
       - r2-k432
       - r2-k434
-      - r2-k498
-      - r2-k500
       - r2-k564
       - r2-k566
       - r2-k630
       - r2-k632
       - r2-k698
       - r2-k700
-      - r2-k764
-      - r2-k766
       - r2-k830
       - r2-k832
       - r2-k896
@@ -1660,7 +1672,7 @@ node_metrics:
       share_in_node_residency_pct: 100.0
     source_rank: 2
     rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
-  gdn_attention.tp_gdn_output_collective:
+  gdn_moe_block.tp_attention_output_collective:
     ms_per_iter: 0.75748
     active_gpu_ms: 0.75748
     gpu_residency_ms: 1.221898
@@ -1909,31 +1921,31 @@ node_metrics:
       share_in_node_residency_pct: 24.788276
     source_rank: 2
     rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
-  moe_block.tp_moe_output_collective:
-    ms_per_iter: 0.819534
-    active_gpu_ms: 0.819534
-    gpu_residency_ms: 1.325423
-    gpu_residency_ms_per_iter: 1.325423
-    mapped_event_count: 120
+  gdn_moe_block.tp_moe_output_collective:
+    ms_per_iter: 0.617288
+    active_gpu_ms: 0.617288
+    gpu_residency_ms: 1.002187
+    gpu_residency_ms_per_iter: 1.002187
+    mapped_event_count: 90
     attribution_status: measured_direct
     metric_kind: exclusive_leaf
     timing_semantics: union of directly attributed production-kernel intervals
     kernels:
     - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
-      count: 60
-      total_us_per_iter: 664.137
-      count_per_iter: 60.0
-      avg_us: 11.06895
-      share_in_node_pct: 50.107551
-      share_in_node_residency_pct: 50.107551
+      count: 45
+      total_us_per_iter: 502.982
+      count_per_iter: 45.0
+      avg_us: 11.177378
+      share_in_node_pct: 50.188438
+      share_in_node_residency_pct: 50.188438
     - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
         false, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
-      count: 60
-      total_us_per_iter: 661.286
-      count_per_iter: 60.0
-      avg_us: 11.021433
-      share_in_node_pct: 49.892449
-      share_in_node_residency_pct: 49.892449
+      count: 45
+      total_us_per_iter: 499.205
+      count_per_iter: 45.0
+      avg_us: 11.093444
+      share_in_node_pct: 49.811562
+      share_in_node_residency_pct: 49.811562
     source_rank: 2
     rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
   full_attention.qkv_projection:
@@ -2104,7 +2116,7 @@ node_metrics:
       share_in_node_residency_pct: 100.0
     source_rank: 2
     rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
-  full_attention.tp_attention_output_collective:
+  full_attention_moe_block.tp_attention_output_collective:
     ms_per_iter: 0.179588
     active_gpu_ms: 0.179588
     gpu_residency_ms: 0.260964
@@ -2129,6 +2141,33 @@ node_metrics:
       avg_us: 8.232667
       share_in_node_pct: 47.320703
       share_in_node_residency_pct: 47.320703
+    source_rank: 2
+    rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
+  full_attention_moe_block.tp_moe_output_collective:
+    ms_per_iter: 0.202246
+    active_gpu_ms: 0.202246
+    gpu_residency_ms: 0.323236
+    gpu_residency_ms_per_iter: 0.323236
+    mapped_event_count: 30
+    attribution_status: measured_direct
+    metric_kind: exclusive_leaf
+    timing_semantics: union of directly attributed production-kernel intervals
+    kernels:
+    - name: void flashinfer::trtllm_mnnvl_allreduce::rmsNormLamport<__nv_bfloat16, (flashinfer::trtllm_mnnvl_allreduce::QuantType)0,
+        false, 1, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 15
+      total_us_per_iter: 162.081
+      count_per_iter: 15.0
+      avg_us: 10.8054
+      share_in_node_pct: 50.143239
+      share_in_node_residency_pct: 50.143239
+    - name: void flashinfer::trtllm_mnnvl_allreduce::twoshotAllreduceKernel<(unsigned char)8, __nv_bfloat16, false, float4>(flashinfer::trtllm_mnnvl_allreduce::AllReduceKernelParams<__nv_bfloat16>)
+      count: 15
+      total_us_per_iter: 161.155
+      count_per_iter: 15.0
+      avg_us: 10.743667
+      share_in_node_pct: 49.856761
+      share_in_node_residency_pct: 49.856761
     source_rank: 2
     rank_policy: one coherent critical global rank selected by mapped model-forward kernel envelope
   top.final_norm:

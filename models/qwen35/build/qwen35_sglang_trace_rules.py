@@ -42,11 +42,13 @@ def classify_qwen35_sglang_node(
         if "vocabparallelembedding" in names:
             return "top.tp_embedding_output_collective", "high"
         if "qwen3_5gateddeltanet" in names or "gdn_backend.py" in names:
-            return "gdn_attention.tp_gdn_output_collective", "high"
+            return "gdn_moe_block.tp_attention_output_collective", "high"
         if "qwen3_5attentiondecoderlayer" in names:
-            return "full_attention.tp_attention_output_collective", "high"
+            return "full_attention_moe_block.tp_attention_output_collective", "high"
         if _has_any(names, "qwen2moesparsemoeblock", "forward_normal"):
-            return "moe_block.tp_moe_output_collective", "high"
+            if "qwen3_5attentiondecoderlayer" in names:
+                return "full_attention_moe_block.tp_moe_output_collective", "high"
+            return "gdn_moe_block.tp_moe_output_collective", "high"
 
     # Model-unique GDN kernels override an occasionally stale neighboring
     # Python range because their implementation identity is unambiguous.

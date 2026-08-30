@@ -294,7 +294,7 @@ def _map_sglang_attention(
         )
         _assign_collective_group(
             rows[collective_start:],
-            "gdn_attention.tp_gdn_output_collective",
+            "gdn_moe_block.tp_attention_output_collective",
             ir_targets=residual_targets,
         )
         return
@@ -342,7 +342,7 @@ def _map_sglang_attention(
     )
     _assign_collective_group(
         rows[collective_start:],
-        "full_attention.tp_attention_output_collective",
+        "full_attention_moe_block.tp_attention_output_collective",
         ir_targets=residual_targets,
     )
 
@@ -402,7 +402,7 @@ def _map_sglang_moe(
             members.append(f"{next_block}.input_norm")
     _assign_collective_group(
         rows[collective_start:],
-        "moe_block.tp_moe_output_collective",
+        f"{block}.tp_moe_output_collective",
         ir_targets=members,
     )
 
@@ -473,7 +473,7 @@ def _map_vllm_attention(
         )
         _assign_collective_group(
             rows[collective_start:],
-            "gdn_attention.tp_gdn_output_collective",
+            "gdn_moe_block.tp_attention_output_collective",
             ir_targets=residual_targets,
         )
         return
@@ -525,7 +525,7 @@ def _map_vllm_attention(
     )
     _assign_collective_group(
         rows[collective_start:],
-        "full_attention.tp_attention_output_collective",
+        "full_attention_moe_block.tp_attention_output_collective",
         ir_targets=residual_targets,
     )
 
@@ -586,7 +586,7 @@ def _map_vllm_moe(
             members.append(f"{next_block}.input_norm")
     _assign_collective_group(
         rows[collective_start:],
-        "moe_block.tp_moe_output_collective",
+        f"{block}.tp_moe_output_collective",
         ir_targets=members,
     )
 

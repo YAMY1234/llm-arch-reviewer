@@ -130,6 +130,22 @@ def build(framework: str, status: str, evidence: list[str]) -> dict[str, Any]:
         if is_sglang
         else "vllm-glm53-flash-arm64-905c0293.sqsh@sha256:efdfe25952dc672d4415032e2755df7d7f2bab549992a2e3f2c429334f366756"
     )
+    framework_evidence = (
+        [
+            "runtime preflight job 3413155",
+            "eager graph-off semantic job 3414655, prefill and decode on all TP ranks",
+            "production prefill job 3414663",
+            "production CUDA Graph decode jobs 3414668, 3414675, 3414674, and 3414676",
+        ]
+        if is_sglang
+        else [
+            "runtime preflight job 3413155",
+            "eager graph-off semantic job 3414287, prefill and decode on all TP ranks",
+            "production prefill job 3414288",
+            "production CUDA Graph decode jobs 3414289, 3414290, 3414291, and 3414292",
+        ]
+    )
+    framework_evidence.extend(evidence)
     result: dict[str, Any] = {
         "schema_version": "implementation-binding.v2",
         "implementation_id": implementation_id,
@@ -152,15 +168,16 @@ def build(framework: str, status: str, evidence: list[str]) -> dict[str, Any]:
         "source_lock_status": "runtime_verified",
         "execution_validation": {
             "status": "pass" if status == "validated" else "pending",
-            "execution_fingerprint": "exec_56198943adacd2b6",
+            "execution_fingerprint": "exec_50bb583c3a3d0557",
             "required_phases": ["prefill", "decode"],
+            "cuda_graph_enabled": False,
             "semantic_capture_cuda_graph_enabled": False,
             "production_decode_cuda_graph_enabled": True,
-            "evidence": evidence,
+            "evidence": framework_evidence,
             "notes": (
-                "The package base is f609d677b while the Qwen3.5 model, config, GDN and MoE modules match inspected 033446bb source byte-for-byte; the mixed snapshot is explicit."
+                "The package base is f609d677b while the Qwen3.5 model, config, GDN and MoE modules match inspected 033446bb source byte-for-byte; the mixed snapshot is explicit. Eager stack/signature/sequence reconciliation closes every production semantic owner."
                 if is_sglang
-                else "The package and all inspected Qwen3.5 modules match vLLM commit 487ecf187 byte-for-byte."
+                else "The package and all inspected Qwen3.5 modules match vLLM commit 487ecf187 byte-for-byte. Eager stack/signature/sequence reconciliation closes every production semantic owner, including the reused add plus RMSNorm kernel family's N:1 roles."
             ),
         },
         "node_bindings": {

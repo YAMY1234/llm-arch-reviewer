@@ -41,11 +41,15 @@ def classify_qwen35_vllm_node(
         if "vocab_parallel_embedding" in names:
             return "top.tp_embedding_output_collective", "high"
         if in_gdn:
-            return "gdn_attention.tp_gdn_output_collective", "high"
+            return "gdn_moe_block.tp_attention_output_collective", "high"
         if in_attention:
-            return "full_attention.tp_attention_output_collective", "high"
+            return "full_attention_moe_block.tp_attention_output_collective", "high"
         if in_moe:
-            return "moe_block.tp_moe_output_collective", "high"
+            # Qwen3.5 uses one decoder-layer class for both layer kinds, so
+            # the eager stack closes this N:1 kernel family to the layer
+            # boundary. Production sequence order selects the exact GDN/full
+            # owner for every occurrence.
+            return "gdn_moe_block.tp_moe_output_collective", "high"
     if cpu == "vllm::all_gather" and "logits_processor" in names:
         return "top.tp_logits_all_gather", "high"
 

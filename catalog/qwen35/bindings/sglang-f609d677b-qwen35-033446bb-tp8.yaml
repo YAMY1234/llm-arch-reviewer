@@ -11,7 +11,7 @@ binding_status: validated
 source_lock_status: runtime_verified
 execution_validation:
   status: pass
-  execution_fingerprint: exec_56198943adacd2b6
+  execution_fingerprint: exec_50bb583c3a3d0557
   required_phases:
   - prefill
   - decode
@@ -24,7 +24,8 @@ execution_validation:
   - production prefill job 3414663
   - production CUDA Graph decode jobs 3414668, 3414675, 3414674, and 3414676
   notes: The package base is f609d677b while the Qwen3.5 model, config, GDN and MoE modules match inspected 033446bb source
-    byte-for-byte; the mixed snapshot is explicit. Eager stack/signature/sequence reconciliation closes every production semantic owner.
+    byte-for-byte; the mixed snapshot is explicit. Eager stack/signature/sequence reconciliation closes every production semantic
+    owner.
 node_bindings:
   top.token_input:
     symbols:
@@ -682,6 +683,14 @@ node_bindings:
       symbol: Qwen3_5LinearDecoderLayer
       line: 792
       display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.tp_attention_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
   gdn_moe_block.attention_residual:
     symbols:
     - Qwen3_5LinearDecoderLayer
@@ -706,6 +715,14 @@ node_bindings:
       symbol: Qwen3_5LinearDecoderLayer
       line: 792
       display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  gdn_moe_block.tp_moe_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
   gdn_moe_block.layer_residual:
     symbols:
     - Qwen3_5LinearDecoderLayer
@@ -802,14 +819,6 @@ node_bindings:
       symbol: Qwen3_5GatedDeltaNet
       line: 266
       display: Qwen3.5 GDN projections, state and output
-  gdn_attention.tp_gdn_output_collective:
-    symbols:
-    - tensor_model_parallel_all_reduce
-    links:
-    - file: python/sglang/srt/distributed/communication_op.py
-      symbol: tensor_model_parallel_all_reduce
-      line: 18
-      display: TP all-reduce contract
   gdn_attention.module_output:
     symbols:
     - Qwen3_5GatedDeltaNet
@@ -842,6 +851,14 @@ node_bindings:
       symbol: Qwen3_5LinearDecoderLayer
       line: 792
       display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.tp_attention_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
   full_attention_moe_block.attention_residual:
     symbols:
     - Qwen3_5LinearDecoderLayer
@@ -866,6 +883,14 @@ node_bindings:
       symbol: Qwen3_5LinearDecoderLayer
       line: 792
       display: Qwen3.5 hybrid decoder schedule and residual/norm flow
+  full_attention_moe_block.tp_moe_output_collective:
+    symbols:
+    - tensor_model_parallel_all_reduce
+    links:
+    - file: python/sglang/srt/distributed/communication_op.py
+      symbol: tensor_model_parallel_all_reduce
+      line: 18
+      display: TP all-reduce contract
   full_attention_moe_block.layer_residual:
     symbols:
     - Qwen3_5LinearDecoderLayer
@@ -954,14 +979,6 @@ node_bindings:
       symbol: Qwen3_5AttentionDecoderLayer
       line: 935
       display: Qwen3.5 full-attention layer
-  full_attention.tp_attention_output_collective:
-    symbols:
-    - tensor_model_parallel_all_reduce
-    links:
-    - file: python/sglang/srt/distributed/communication_op.py
-      symbol: tensor_model_parallel_all_reduce
-      line: 18
-      display: TP all-reduce contract
   full_attention.module_output:
     symbols:
     - Qwen3_5AttentionDecoderLayer
@@ -1010,14 +1027,6 @@ node_bindings:
       symbol: Qwen2MoeSparseMoeBlock
       line: 262
       display: router, routed experts, shared expert and combine
-  moe_block.tp_moe_output_collective:
-    symbols:
-    - tensor_model_parallel_all_reduce
-    links:
-    - file: python/sglang/srt/distributed/communication_op.py
-      symbol: tensor_model_parallel_all_reduce
-      line: 18
-      display: TP all-reduce contract
   moe_block.output_hidden:
     symbols:
     - Qwen2MoeSparseMoeBlock

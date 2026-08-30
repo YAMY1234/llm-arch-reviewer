@@ -264,14 +264,14 @@ def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
     bundle = compile_catalog(MODEL_ROOT)
     variant = next(iter(bundle["execution_variants"].values()))
     target_count = sum(len(view["nodes"]) for view in variant["views"].values())
-    assert target_count == 202
+    assert target_count == 203
     assert len(bundle["implementations"]) == 2
     for implementation in bundle["implementations"].values():
         assert implementation["binding_status"] == "validated"
         assert implementation["source_lock_status"] == "runtime_verified"
         assert implementation["execution_validation"]["status"] == "pass"
         assert implementation["execution_validation"]["cuda_graph_enabled"] is False
-        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_56198943adacd2b6"
+        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_50bb583c3a3d0557"
         assert len(implementation["node_bindings"]) == target_count
 
 
