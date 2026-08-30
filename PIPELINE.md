@@ -609,7 +609,27 @@ leaf fusion group; and the drill view exposes the same scoped owner evidence.
 
 ### Stage 8 — Build the Timeline hierarchy
 
-Each physical CUDA stream remains visible. Inside a stream:
+The Timeline has two deliberately separate layers:
+
+- the **evidence layer** retains every physical CUDA stream and every event's
+  exact `start_us`, `duration_us`, `stream_id`, IR attribution, and formal-step
+  timing fields;
+- the **presentation layer** defaults to concurrency-aware compact activity
+  lanes. It may reuse one row for non-overlapping activity segments only when
+  their stream roles are compatible. It never changes evidence or timing math.
+
+The compact projection follows these model-independent rules:
+
+- main compute is pinned to the first compute lane;
+- communication, copy/transfer, and stable catalog-authored role families stay
+  separate from generic compute;
+- physical-stream segments that overlap in time never share a compact lane;
+- overlap within one physical stream, including PDL, uses kernel sublanes and
+  remains visible rather than being serialized or represented as a fake stream;
+- clicking a compact lane expands the exact contributing physical streams;
+- **physical streams** mode remains the lossless debugging view.
+
+Inside each presented stream/activity lane:
 
 - upper IR lanes show stable layer/module-level ownership;
 - lower kernel lanes show individual kernels with kernel-family colors;
@@ -618,6 +638,10 @@ Each physical CUDA stream remains visible. Inside a stream:
 - PDL or other intentional overlap remains visible as overlap, not serialized;
 - selecting either an IR interval or kernel navigates to the canonical
   architecture drill path.
+
+Compact-lane count is presentation metadata only. It must never feed module
+rollups, active/idle/residency calculations, stream identity, execution
+fingerprints, or eager-to-production attribution transfer.
 
 Layer/module labels, timeline tiers, colors, and drill paths are compiled from
 catalog metadata. The viewer must not infer them from names such as `qsa`,
@@ -856,6 +880,18 @@ never copied into another merely because their Model IR nodes share names.
   kernel is the sole fully opaque kernel slice while unrelated slices are faded.
 - Stream, overlap, idle, module wall envelope, active GPU, and residency remain
   separately inspectable.
+- Compact activity lanes are the default presentation, while exact physical
+  streams remain selectable. Switching modes preserves the event fingerprint
+  (`start_us`, `duration_us`, physical `stream_id`, IR targets) and formal-step
+  timing fields byte-for-byte.
+- Every physical stream ID represented by production events is covered by the
+  compact projection; compact lane count never exceeds physical stream count;
+  and simultaneously active physical-stream segments never share a compact
+  lane. Same-stream overlap is preserved in kernel sublanes.
+- A real browser acceptance test opens every accepted profile, exercises both
+  stream modes, and clicks a compact row to reveal its exact physical-stream
+  contributors. The all-artifact contract test evaluates every formal step, so
+  a newly compiled model/profile enters this gate without viewer-specific code.
 - Raw trace/Perfetto handoff is content-hash checked.
 
 ### Reproducibility

@@ -17,8 +17,9 @@ This tool makes the mapping clickable:
 - click a block → see its source code links (GitHub permalinks pinned to a commit)
 - click a block → see its rolled-up ms + which kernels dominate
 - drill in → expand into a sub-diagram (fully orthogonal layout, ELK)
-- switch to Timeline → inspect measured kernels on every CUDA stream, with
-  device-idle intervals and the same IR/source attribution
+- switch to Timeline → inspect measured kernels in concurrency-aware compact
+  activity lanes by default, or expand the lossless physical CUDA streams;
+  both retain device-idle intervals and the same IR/source attribution
 - jump Architecture ↔ Timeline, or open the selected timestamp range in Perfetto
 - breadcrumb + URL hash for shareable deep links
 
@@ -83,6 +84,11 @@ python3 scripts/build_v2.py --all
 # canonical upstream checks
 python3 -m pytest -q
 git diff --exit-code -- docs
+
+# real-browser stream-mode acceptance for every compiled profile
+python3 scripts/audit_timeline_stream_modes.py docs/*/arch_data.json \
+  --base-url http://127.0.0.1:8765 \
+  --output /tmp/llm-arch-reviewer-stream-audit.json
 
 # serve docs/ locally; the allowlisted trace endpoint enables exact Perfetto jumps
 python3 scripts/serve_viewer.py --port 8765

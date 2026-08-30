@@ -29,6 +29,18 @@ const packedKernelLanes = compact.tracks.map(track =>
     event => Number(event.start_us) + Number(event.duration_us),
   ).laneCount
 );
+const compactLaneOverlapFree = compact.tracks.every(track => {{
+  const segments = timelineActivitySegments(track.events, compact.toleranceUs);
+  for (let left = 0; left < segments.length; left++) {{
+    for (let right = left + 1; right < segments.length; right++) {{
+      if (segments[left].streamId !== segments[right].streamId &&
+          timelineSegmentsOverlap(segments[left], segments[right], compact.toleranceUs)) {{
+        return false;
+      }}
+    }}
+  }}
+  return true;
+}});
 console.log(JSON.stringify({{
   physicalStreamCount: compact.physicalStreamCount,
   compactLaneCount: compact.compactLaneCount,
@@ -38,6 +50,7 @@ console.log(JSON.stringify({{
   compactEventCount: compact.tracks.reduce((total, track) => total + track.events.length, 0),
   physicalIds: compact.physicalStreamIds,
   lanePhysicalIds: compact.tracks.map(track => track.physical_stream_ids),
+  compactLaneOverlapFree,
   unchanged: before === JSON.stringify(step),
 }}));
 """
@@ -174,3 +187,45 @@ def test_deepseek_v4_pro_cuda_graph_step_compacts_65_streams_to_4_lanes() -> Non
     assert result["peakConcurrency"] == 4
     assert result["compactEventCount"] == 2675
     assert result["unchanged"]
+
+
+def test_every_checked_in_timeline_obeys_stream_presentation_contract() -> None:
+    """New model/profile artifacts automatically enter the generic stream gate."""
+
+    failures: list[str] = []
+    artifact_paths = sorted(ROOT.glob("docs/*/timelines/*.timeline.json.gz"))
+    assert artifact_paths, "no timeline artifacts found"
+
+    for artifact_path in artifact_paths:
+        with gzip.open(artifact_path, "rt") as handle:
+            artifact = json.load(handle)
+        for step_index, step in enumerate(artifact.get("steps") or []):
+            result = _run_compaction_case(step)
+            event_streams = {str(event["stream_id"]) for event in step.get("events") or []}
+            lane_streams = {
+                stream_id
+                for lane in result["lanePhysicalIds"]
+                for stream_id in lane
+            }
+            problems: list[str] = []
+            if not result["unchanged"]:
+                problems.append("compaction mutated timing evidence")
+            if result["compactEventCount"] != len(step.get("events") or []):
+                problems.append("compact event count differs from physical evidence")
+            if result["physicalStreamCount"] != len(event_streams):
+                problems.append("physical stream count differs from event stream IDs")
+            if set(result["physicalIds"]) != event_streams:
+                problems.append("reported physical stream IDs differ from event evidence")
+            if lane_streams != event_streams:
+                problems.append("compact lanes do not cover every physical stream")
+            if result["compactLaneCount"] > result["physicalStreamCount"]:
+                problems.append("compact lane count exceeds physical stream count")
+            if not result["compactLaneOverlapFree"]:
+                problems.append("simultaneously active physical streams share one compact lane")
+            if problems:
+                failures.append(
+                    f"{artifact_path.relative_to(ROOT)} step {step_index}: "
+                    + "; ".join(problems)
+                )
+
+    assert not failures, "\n" + "\n".join(failures)

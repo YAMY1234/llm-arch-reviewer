@@ -16,9 +16,39 @@ jobs:
           cache: pip
       - name: Install
         run: python -m pip install -e '.[dev]'
-      - name: Unit and contract tests
-        run: python -m pytest -q
       - name: Rebuild every audited catalog
         run: python scripts/build_v2.py --all
+      - name: Unit and contract tests
+        run: python -m pytest -q
       - name: Generated bundles are current
         run: git diff --exit-code -- docs
+
+  timeline-presentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Rebuild every audited catalog
+        run: python scripts/build_v2.py --all
+      - name: Audit compact and physical Timeline modes
+        run: |
+          python scripts/serve_viewer.py --host 127.0.0.1 --port 8765 > /tmp/viewer.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:8765/viewer.html > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8765/viewer.html > /dev/null
+          python scripts/audit_timeline_stream_modes.py docs/*/arch_data.json \
+            --base-url http://127.0.0.1:8765 \
+            --output /tmp/timeline-stream-audit.json

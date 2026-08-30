@@ -374,13 +374,37 @@ group；drill view 展示的是同一份 scoped owner evidence。
 
 ### Stage 8 — 构建 Timeline Hierarchy
 
-每个真实 CUDA stream 都保持可见。在每个 stream 内：
+Timeline 明确分成两个层次：
+
+- **证据层**保留每个真实 CUDA stream，以及每个 event 的精确
+  `start_us`、`duration_us`、`stream_id`、IR attribution 和 formal-step
+  timing fields；
+- **呈现层**默认使用 concurrency-aware compact activity lanes。只有 stream
+  role 兼容且 activity segment 在时间上不重叠时，才允许复用同一行；该投影
+  绝不能修改原始证据或参与 timing 计算。
+
+Compact 投影遵循以下与模型无关的规则：
+
+- main compute 固定在第一条 compute lane；
+- communication、copy/transfer，以及 catalog 显式声明的稳定 role family
+  与 generic compute 分开；
+- 时间上有重叠的 physical-stream segment 绝不能放到同一 compact lane；
+- 同一 physical stream 内的重叠（包括 PDL）使用 kernel sublane 展示，不能
+  被错误串行化，也不能伪造新的 physical stream；
+- 点击 compact lane 会展开所有且仅有为该 lane 提供 activity 的真实 stream；
+- **physical streams** 模式始终保留为无损 debug view。
+
+在每条呈现后的 stream/activity lane 内：
 
 - 上层 IR lane 显示稳定的 layer/module-level ownership；
 - 下层 kernel lane 显示单个 kernel，并使用 kernel-family color；
 - 重叠 interval 放入额外 lane，而不是覆盖绘制；
 - PDL 或其他有意 overlap 保持为 overlap，不能被错误串行化；
 - 选择 IR interval 或 kernel 时，都能跳转到 canonical architecture drill path。
+
+Compact lane 数量只属于 presentation metadata，绝不能参与 module rollup、
+active/idle/residency 计算、stream identity、Execution fingerprint 或
+eager-to-production attribution transfer。
 
 Layer/module label、timeline tier、color 和 drill path 都由 catalog metadata 编译生成。Viewer 不能从 `qsa`、`eagle_mtp` 或某个 framework class name 推断这些信息。
 
@@ -537,6 +561,17 @@ python3 scripts/run_pipeline_v2.py \
 - 选择 Architecture node 时高亮所有匹配的 Timeline event；选择 Timeline event 时自动展开、居中并选中精确的 Architecture leaf。
 - 发布验收必须真实点击渲染后的 SVG node 和 Canvas kernel/owner lane，分别验证两个方向；只调用内部导航函数不算通过。测试还必须证明被点击的 kernel 是唯一保持实色的 kernel slice，其他无关 slice 均被淡化。
 - Stream、overlap、idle、module wall envelope、active GPU 和 residency 可以分别查看。
+- 默认显示 compact activity lanes，同时允许切换到精确 physical streams。
+  两种模式切换前后，event fingerprint（`start_us`、`duration_us`、physical
+  `stream_id`、IR targets）以及 formal-step timing fields 必须逐字节不变。
+- 所有包含 production event 的 physical stream ID 都必须被 compact 投影覆盖；
+  compact lane 数不能大于 physical stream 数；同时活跃的不同 physical-stream
+  segment 不能共享一条 compact lane。同一 stream 的 overlap 必须保留在
+  kernel sublane 中。
+- 真实浏览器验收必须打开每个 accepted profile、切换两种 stream mode，并
+  点击 compact row 验证它能展开精确的 physical-stream contributors。全量
+  artifact contract test 必须覆盖每个 formal step，因此新编译的 model/profile
+  会自动进入该 gate，无需增加 viewer-specific 分支。
 - Raw trace/Perfetto handoff 必须经过 content-hash 校验。
 
 ### Reproducibility
