@@ -24,12 +24,24 @@ semantic capture is taken at the matched stable formal coordinate for the same
 framework, phase, batch, rank, source, and hardware contract.
 
 All model-bearing production events have exact same-rank, same-phase,
-occurrence-scoped eager closure. Exact signatures are used where graph-off and
-graph-on launches are identical; explicit ordered 1:N and N:1 relations retain
-the source event IDs, kernel names, Python stacks, and stack hashes where CUDA
-Graph specialization changes the physical decomposition. Framework scheduler,
-planning, sampling, and output helpers are separately typed as runtime support
-and are not used to hide unresolved Model IR work.
+occurrence-scoped eager closure. The graph-off semantic owner is derived
+independently from validated Python module stacks and pinned framework-source,
+kernel-family, layer-occurrence, and collective-order anchors; production
+sequence attribution is not its semantic oracle. Exact signatures are used
+where graph-off and graph-on launches are identical; explicit ordered 1:N and
+N:1 relations retain the source event IDs, kernel names, Python stacks, and
+stack hashes where CUDA Graph specialization changes the physical
+decomposition. A production/eager owner disagreement fails closed. Framework
+scheduler, planning, sampling, and output helpers are separately typed as
+runtime support and are not used to hide unresolved Model IR work.
+
+For vLLM, post-collective kernels whose eager stacks remain under
+`SharedExperts_<layer>` stay with that layer's shared-expert/MoE owner. Prefill
+maps only the independently anchored RMSNorm kernel to `top.final_norm`, then
+the logits-processor LM-head GEMM and logits collective. Decode retains the
+documented compiler fusion of the final norm into the last layer's TP MoE
+all-reduce/RMSNorm owner; no shared-expert tail kernel is relabeled as final
+norm and no duration is copied to the semantic target.
 
 Profile-aggregate fusion groups are emitted only when each member's physical
 production event set exactly equals its single timing owner's set and every

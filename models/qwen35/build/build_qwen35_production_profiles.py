@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+import copy
 from dataclasses import asdict
 import gzip
 import hashlib
@@ -39,6 +40,9 @@ from models.common.trace_mapping import (  # noqa: E402
 from models.qwen35.build.qwen35_production_attribution import (  # noqa: E402
     attribute_production_forward,
     is_all_reduce,
+)
+from models.qwen35.build.qwen35_eager_semantic_validation import (  # noqa: E402
+    validate_eager_semantic_attribution,
 )
 
 
@@ -1137,9 +1141,42 @@ def load_graph_off_rank(
         raise ValueError(
             f"graph-off TP{rank} has {len(missing_stacks)} kernels without Python stacks"
         )
+    # Production sequence recovery is allowed to propose the structural
+    # occurrence (layer/substage) for graph-off events, but it is not the eager
+    # semantic oracle.  Keep the proposal separate, then require every owner to
+    # pass the independent Python-stack/source contract before accepting it.
+    proposals = copy.deepcopy(rows)
     diagnostics = attribute_production_forward(
+        proposals, framework=item["framework"], phase=item["phase"]
+    )
+    proposal_fields = (
+        "semantic_sequence_index",
+        "node",
+        "kernel_label",
+        "attribution_method",
+        "confidence",
+        "ir_targets",
+        "support_class",
+        "support_reason",
+        "layer_id",
+        "layer_kind",
+        "substage",
+        "segment_id",
+        "occurrence_id",
+    )
+    proposals_by_id = {str(row["event_id"]): row for row in proposals}
+    if set(proposals_by_id) != {str(row["event_id"]) for row in rows}:
+        raise ValueError("graph-off structural proposal changed the eager event set")
+    for row in rows:
+        proposal = proposals_by_id[str(row["event_id"])]
+        row["structural_proposal_node"] = proposal.get("node")
+        for field in proposal_fields:
+            if field in proposal:
+                row[field] = copy.deepcopy(proposal[field])
+    semantic_validation = validate_eager_semantic_attribution(
         rows, framework=item["framework"], phase=item["phase"]
     )
+    diagnostics["independent_eager_semantic_owner_validation"] = semantic_validation
     capture_metadata_path = (
         directory / f"config_eager_{item['phase']}_c{item['batch']}.yaml"
         if item["framework"] == "sglang"
@@ -1199,6 +1236,7 @@ def load_graph_off_rank(
         "nonzero_graph_id_count": 0,
         "all_kernel_python_stack_count": len(rows),
         "attribution_diagnostics": diagnostics,
+        "independent_eager_semantic_owner_validation": semantic_validation,
         "client_contract": client["contract"],
     }
 
@@ -1460,6 +1498,22 @@ def build_matched_graph_off_mapping(
     ):
         binding = bindings[str(row["event_id"])]
         sources = binding["sources"]
+        source_owner_evidence = [
+            source.get("semantic_owner_evidence") for source in sources
+        ]
+        if any(not evidence for evidence in source_owner_evidence):
+            raise ValueError(
+                f"{row['event_id']}: production binding has an eager source "
+                "without independent semantic-owner evidence"
+            )
+        source_owners = {
+            str(evidence["owner"]) for evidence in source_owner_evidence
+        }
+        if source_owners != {str(row["node"])}:
+            raise ValueError(
+                f"{row['event_id']}: production owner {row['node']} disagrees "
+                f"with independently stack-derived eager owners {sorted(source_owners)}"
+            )
         stacks = [source["python_stack"] for source in sources]
         source_ids = [str(source["event_id"]) for source in sources]
         source_kernel_names = [str(source["kernel_name"]) for source in sources]
@@ -1480,7 +1534,27 @@ def build_matched_graph_off_mapping(
             "phase": item["phase"],
             "occurrence_id": row.get("occurrence_id") or "top",
             "production_sequence_index": row["semantic_sequence_index"],
+            "independent_eager_semantic_owner_evidence": source_owner_evidence,
         }
+        row["semantic_owner_evidence"] = {
+            "owner": row["node"],
+            "basis": "matched_independently_anchored_graph_off_eager_owner",
+            "source_eager_event_ids": source_ids,
+            "source_anchor_ids": [
+                evidence["anchor_id"] for evidence in source_owner_evidence
+            ],
+            "owner_disagreement_count": 0,
+        }
+        fused_target_evidence = [
+            source.get("semantic_fused_target_evidence")
+            for source in sources
+            if source.get("semantic_fused_target_evidence")
+        ]
+        if fused_target_evidence:
+            row["semantic_fused_target_evidence"] = fused_target_evidence[0]
+            row["stack_evidence"]["semantic_fused_target_evidence"] = (
+                fused_target_evidence
+            )
         relation_counts[binding["relation"]] += 1
         reconciled_events.append(
             {
@@ -1497,6 +1571,8 @@ def build_matched_graph_off_mapping(
                 "source_stack_sha256": stack_hashes,
                 "cpu_op_name": sources[0].get("cpu_op_name"),
                 "relation": binding["relation"],
+                "semantic_owner_evidence": source_owner_evidence,
+                "semantic_fused_target_evidence": fused_target_evidence,
             }
         )
         mappings.append(
@@ -1516,8 +1592,10 @@ def build_matched_graph_off_mapping(
                 "source_eager_event_ids": source_ids,
                 "source_eager_kernel_names": source_kernel_names,
                 "source_stack_sha256": stack_hashes,
+                "semantic_owner_evidence": source_owner_evidence,
                 "evidence": [
                     "same_rank_eager_python_stack",
+                    "independent_eager_semantic_owner_anchor",
                     "same_phase_graph_off_capture",
                     "phase_specific_raw_trace_identity",
                     "occurrence_scoped_ordered_sequence",
@@ -1581,6 +1659,9 @@ def build_matched_graph_off_mapping(
         "selected_formal_coordinate": capture["selected_formal_coordinate"],
         "selected_forward_events_sha256": capture[
             "selected_forward_events_sha256"
+        ],
+        "independent_eager_semantic_owner_validation": capture[
+            "independent_eager_semantic_owner_validation"
         ],
         "source_phase": capture["phase"],
         "kernel_count": capture["selected_forward_kernel_count"],
@@ -2120,7 +2201,11 @@ def build_one(
                 str(rank): sha256_file(path)
                 for rank, path in sorted(mapping_paths.items())
             },
-            "match_contract": "same rank + phase + occurrence + exact kernel-signature ordered sequence",
+            "match_contract": (
+                "independently Python-stack/source-anchored semantic owner + same rank + "
+                "phase + occurrence + exact kernel-signature ordered sequence; any "
+                "production/eager owner disagreement fails closed"
+            ),
             "representative_node_fallback": False,
             "production_capture_has_python_stack": False,
         },
@@ -2281,6 +2366,9 @@ def build_one(
                     "selected_forward_events_sha256": report[
                         "selected_forward_events_sha256"
                     ],
+                    "independent_eager_semantic_owner_validation": report[
+                        "independent_eager_semantic_owner_validation"
+                    ],
                 }
                 for rank, report in sorted(reconciliation_reports.items())
             },
@@ -2289,7 +2377,12 @@ def build_one(
             "unclassified_kernel_count": 0,
             "semantic_stack_closure_missing_node_count": len(missing_stack_nodes),
             "typed_unresolved_semantic_event_count": typed_unresolved_event_count,
-            "mapping_policy": "phase-specific same-rank eager stack plus exact occurrence-scoped physical kernel-signature sequence; no representative-node fallback; unresolved candidates are typed review_required",
+            "mapping_policy": (
+                "independently Python-stack/source-anchored phase-specific same-rank eager "
+                "owner plus exact occurrence-scoped physical kernel-signature sequence; "
+                "production/eager owner disagreement fails closed; no representative-node "
+                "fallback; unresolved candidates are typed review_required"
+            ),
             "attribution_diagnostics": rank_diagnostics[str(reference_rank)],
             "timing": timing,
             "acceptance_gate": acceptance_gate,

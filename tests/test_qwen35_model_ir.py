@@ -23,6 +23,10 @@ from models.qwen35.build.build_qwen35_production_profiles import (
 from models.qwen35.build.qwen35_production_attribution import (
     semantic_execution_order,
 )
+from models.qwen35.build.qwen35_eager_semantic_validation import (
+    PUBLISHED_NODE_FAMILIES,
+    validate_eager_semantic_attribution,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +170,7 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
     profile_path_by_id = {
         profile["profile_id"]: path for profile, path in zip(profiles, profile_paths)
     }
+    all_eager_anchor_families: set[str] = set()
     assert {
         (
             "sglang" if "sglang" in profile["implementation_id"] else "vllm",
@@ -349,6 +354,17 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
             assert contract["closed_production_event_count"] == contract[
                 "production_semantic_event_count"
             ]
+            owner_validation = contract[
+                "independent_eager_semantic_owner_validation"
+            ]
+            assert owner_validation["validated_semantic_event_count"] == contract[
+                "graph_off_semantic_event_count"
+            ]
+            assert owner_validation["unanchored_semantic_event_count"] == 0
+            assert owner_validation["owner_disagreement_count"] == 0
+            all_eager_anchor_families.update(
+                owner_validation["published_node_families"]
+            )
             coordinate = contract["selected_formal_coordinate"]
             if framework == "sglang":
                 assert coordinate["mode"] == "sglang_formal_relative_scheduler_forward"
@@ -361,6 +377,8 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
                 }
         assert len(profile["evidence"]["validation_sha256"]) == 64
 
+    assert all_eager_anchor_families == PUBLISHED_NODE_FAMILIES
+
     sglang_prefill = next(
         profile
         for profile in profiles
@@ -370,7 +388,7 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
     assert gate["state"] == "passed"
     assert gate["same_isolated_forward_proven"] is True
     assert gate["serving_wall_ms"] == pytest.approx(93.678078)
-    assert gate["instrumented_active_gpu_ms"] == 89.595218
+    assert gate["instrumented_active_gpu_ms"] == 89.582258
     assert gate["instrumented_kernel_envelope_ms"] == 93.450314
 
 
@@ -721,3 +739,111 @@ def test_qwen35_vllm_generated_fused_add_rms_norm_is_physical_proof() -> None:
         "full_attention_moe_block.post_attention_norm",
         "full_attention_moe_block.attention_residual",
     )
+
+
+def test_qwen35_eager_owner_gate_rejects_shared_expert_as_final_norm() -> None:
+    row = {
+        "event_id": "e-r0-regression",
+        "rank": 0,
+        "node": "top.final_norm",
+        "kernel_name": "triton_red_fused_add_rms_norm_3",
+        "cpu_op_name": "aten::copy_",
+        "ir_targets": ["top.final_norm"],
+        "python_stack": [
+            {"raw": "nn.Module: SiluAndMul_59"},
+            {"raw": "nn.Module: Qwen2MoeMLP_59"},
+            {"raw": "nn.Module: SharedExperts_59"},
+            {"raw": "vllm/model_executor/models/qwen3_next.py(632): forward"},
+        ],
+    }
+    with pytest.raises(ValueError, match="Python-stack owner.*disagrees"):
+        validate_eager_semantic_attribution(
+            [row], framework="vllm", phase="decode"
+        )
+
+
+def test_qwen35_vllm_tail_has_independent_final_norm_and_lm_head_anchors() -> None:
+    profile_root = (
+        MODEL_ROOT
+        / "profiles"
+        / "tp8"
+        / "vllm_487ecf187_qwen35_native_tp8"
+    )
+    saw_prefill_final_norm = False
+    saw_decode_fused_final_norm = False
+    saw_lm_head = False
+    for profile_path in sorted(profile_root.glob("*.yaml")):
+        profile = load_yaml(profile_path)
+        timeline_path = profile_path.with_name(profile["timeline"]["artifact"])
+        with gzip.open(timeline_path, "rt") as handle:
+            timeline = json.load(handle)
+        strings = timeline["strings"]
+
+        def text(value):
+            return strings[value] if isinstance(value, int) else value
+
+        def stack_text(event):
+            stack_id = event.get("stack_id")
+            if stack_id is None:
+                return ""
+            return "\n".join(
+                str(text(frame["raw"]))
+                for frame in timeline["stacks"][stack_id]["frames"]
+            ).lower()
+
+        events = [event for step in timeline["steps"] for event in step["events"]]
+        for event in events:
+            node = text(event.get("ir_node"))
+            targets = [text(target) for target in event.get("ir_targets") or []]
+            stack = stack_text(event)
+            kernel = str(text(event.get("kernel_name")) or "").lower()
+            if node == "top.final_norm":
+                assert profile["phase"] == "prefill"
+                assert not any(
+                    token in stack
+                    for token in ("sharedexperts", "qwen2moemlp", "siluandmul")
+                )
+                assert "qwen3_next.py" in stack
+                assert "rms_norm" in kernel or "rmsnorm" in kernel
+                saw_prefill_final_norm = True
+            if node == "top.lm_head":
+                assert (
+                    "logits_processor.py" in stack
+                    or (
+                        "compute_logits" in stack
+                        and "layers/linear.py" in stack
+                    )
+                )
+                assert not any(
+                    token in stack
+                    for token in ("sharedexperts", "qwen2moemlp", "siluandmul")
+                )
+                saw_lm_head = True
+            if "top.final_norm" in targets and profile["phase"] == "decode":
+                assert node == "full_attention_moe_block.tp_moe_output_collective"
+                assert "allreduce" in kernel or "all_reduce" in kernel
+                evidence = timeline["stacks"][event["stack_id"]]["evidence"]
+                anchored = str(text(evidence["independent_eager_semantic_owner_evidence"]))
+                assert "full_attention_moe_block.tp_moe_output_collective" in anchored
+                final_norm_evidence = str(
+                    text(evidence["semantic_fused_target_evidence"])
+                )
+                assert (
+                    "qwen35-vllm-decode-final-norm-fused-last-tp-moe-ar-v1"
+                    in final_norm_evidence
+                )
+                assert "'copied_timing': False" in final_norm_evidence
+                saw_decode_fused_final_norm = True
+
+        if profile["profile_id"] == "qwen35_tp8_vllm_cg_decode_bs1_8k1k":
+            bad_old_owner = next(
+                event
+                for event in events
+                if text(event.get("raw_event_id")) == "r0-k3878"
+            )
+            assert text(bad_old_owner["ir_node"]) == "moe_block.shared_expert"
+            assert "sharedexperts_59" in stack_text(bad_old_owner)
+
+    assert saw_prefill_final_norm
+    assert saw_decode_fused_final_norm
+    assert saw_lm_head

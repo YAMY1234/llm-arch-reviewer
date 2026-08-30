@@ -753,6 +753,13 @@ def _map_vllm_moe(
         next_block = _next_block(layer_id)
         if next_block:
             members.append(f"{next_block}.input_norm")
+        elif layer_id == LAYER_COUNT - 1:
+            # At the pinned vLLM commit the decode graph compiler fuses the
+            # model's terminal ``self.norm(hidden_states, residual)`` into the
+            # last TP MoE all-reduce.  The physical collective remains the
+            # sole timing owner; final norm is an IR target of that exact
+            # event set, never a copied duration or a tail-position guess.
+            members.append("top.final_norm")
     _assign_collective_group(
         rows[collective_start:],
         f"{block}.tp_moe_output_collective",
@@ -779,27 +786,37 @@ def _map_suffix(rows: list[dict[str, Any]], framework: str) -> None:
     if gather is None:
         raise ValueError("Qwen3.5 production forward is missing logits all-gather")
     # The pinned implementations end with final norm, the vocabulary GEMM,
-    # its split-K reduction, and the logits all-gather.  The names differ after
-    # torch compilation, so the bounded tail order is the portable contract.
+    # its optional split-K reduction, and the logits all-gather.  vLLM also
+    # launches the last layer's auxiliary-stream shared-expert epilogue after
+    # the layer collective.  Those events must remain in layer_59.moe; tail
+    # position alone is never evidence of final norm or LM-head ownership.
     final_norm = next(
         (
             i
             for i, row in enumerate(rows[: int(gather)])
-            if "rmsnorm" in _lower(row) or "layer_norm" in _lower(row)
+            if any(
+                token in _lower(row)
+                for token in ("rmsnorm", "rms_norm", "layer_norm")
+            )
         ),
         None,
     )
-    lm_start = (
-        int(final_norm) + 1
-        if framework == "sglang" and final_norm is not None
-        else max(0, int(gather) - 2)
-    )
+    lm_candidates = [
+        i
+        for i, row in enumerate(rows[: int(gather)])
+        if (
+            ("tst_" in _lower(row) and "qqtst_" not in _lower(row))
+            or "splitkreduce" in _lower(row)
+        )
+    ]
+    if not lm_candidates:
+        raise ValueError(f"Qwen3.5 {framework} production forward is missing LM head")
+    lm_start = min(lm_candidates)
     if framework == "sglang" and final_norm is None:
         raise ValueError("Qwen3.5 SGLang production forward is missing final norm")
-    if framework == "vllm" and not rows[:lm_start]:
-        raise ValueError("Qwen3.5 vLLM production forward is missing final norm")
+    shared_expert_tail: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
-        if index == final_norm or (framework == "vllm" and index < lm_start):
+        if index == final_norm:
             _assign(
                 row,
                 "top.final_norm",
@@ -810,17 +827,32 @@ def _map_suffix(rows: list[dict[str, Any]], framework: str) -> None:
                 ),
             )
         elif index < lm_start:
-            _support(
-                row,
-                "logits_input_selection",
-                "framework selection and packing of the final hidden state before the vocabulary head",
-            )
+            if framework == "vllm":
+                _assign(
+                    row,
+                    "moe_block.shared_expert",
+                    method="vllm_eager_stack_validated_last_layer_shared_expert_tail",
+                )
+                shared_expert_tail.append(row)
+            else:
+                _support(
+                    row,
+                    "logits_input_selection",
+                    "framework selection and packing of the final hidden state before the vocabulary head",
+                )
         elif index < int(gather):
             _assign(row, "top.lm_head", method=f"{framework}_bounded_lm_head_tail")
         elif index == gather:
             _assign(row, "top.tp_logits_all_gather", method="complete_eager_validated_tp_collective_order")
         else:
             _support(row, "sampling_and_output", "sampling, token selection, or output materialization after full logits")
+    if shared_expert_tail:
+        _annotate_occurrence(
+            shared_expert_tail,
+            LAYER_COUNT - 1,
+            LAYER_PATTERN[-1],
+            "moe",
+        )
 
 
 def attribute_production_forward(
