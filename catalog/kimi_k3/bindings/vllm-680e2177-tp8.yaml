@@ -1,0 +1,174 @@
+schema_version: implementation-binding.v2
+implementation_id: vllm_680e2177_kimi_k3_tp8
+label: vLLM 680e2177 Kimi K3 pure TP8
+model_id: kimi_k3
+execution_path_id: tp8
+source_repo: https://github.com/vllm-project/vllm
+source_commit: 680e2177e473ed8dfaa9773f7ead185b369cab46
+container: vllm/vllm-openai@sha256:d61eb329832ea78aeae233c840a78b5022dca5f1200df12cb54f3f2304f63131
+backend: vllm_kimi_k3_nvidia_mxfp4_kda_mla_attnres
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_0940e544ee7886d6
+  required_phases: [prefill, decode]
+  cuda_graph_enabled: false
+  evidence:
+    - task_evidence_sha256:439bc6712b42a70b57da53637d0940726cccbc02f85d1ccbf67d96c66e47e563
+    - task_evidence_sha256:24955ba2addb59ef26aabe97d471fcfdc7824e2cf48423f7f25a7adcdf614ba3
+  notes: The exact mounted source and release extension passed full-model pure-TP8 load plus graph-off prefill C1 and decode C1/C16/C64 reconciliation. All 32 worker traces matched the pinned phase, shape, rank, source, collective, state, 187-call AttnRes skeleton, and single fusion-owner contract with complete kernel-duration and Python-stack coverage.
+
+node_bindings:
+  top.token_ids: &vl_text
+    symbols: [KimiK3ForConditionalGeneration, KimiLinearForCausalLM, KimiLinearModel]
+    links: [{file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiK3ForConditionalGeneration, line: 1745, display: model.py - native NVIDIA K3 multimodal and text model}]
+  top.embedding: *vl_text
+  top.decoder_stack: *vl_text
+  top.final_norm:
+    symbols: [KimiLinearForCausalLM.compute_logits, RMSNorm]
+    links: [{file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiLinearForCausalLM.compute_logits, line: 1704, display: model.py - final model RMSNorm is executed immediately before logits processing}]
+  top.lm_head: *vl_text
+  top.logits: *vl_text
+  decoder_stack.stack_in: *vl_text
+  decoder_stack.stack_out: *vl_text
+
+  top.vision_inputs: &vl_vision
+    symbols: [MoonViT3dPretrainedModel, KimiK25MultiModalProjector, vision_tower_forward]
+    links:
+      - {file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiK3ForConditionalGeneration, line: 1745, display: model.py - K3 wrapper selects the pinned vision configuration}
+      - {file: vllm/model_executor/models/kimi_k25_vit.py, symbol: MoonViT3dEncoder, line: 518, display: kimi_k25_vit.py - reused implementation performs one packed joint t*h*w attention pass per media item despite the legacy spatial_temporal configuration label}
+  top.vision_frontend: *vl_vision
+  top.multimodal_injection: *vl_vision
+  vision_frontend.vision_in: *vl_vision
+  vision_frontend.patch_projection: *vl_vision
+  vision_frontend.position_encoding: *vl_vision
+  vision_frontend.vision_blocks: *vl_vision
+  vision_frontend.temporal_pool: *vl_vision
+  vision_frontend.spatial_group: *vl_vision
+  vision_frontend.projector_norm: *vl_vision
+  vision_frontend.projector_hidden_activation: *vl_vision
+  vision_frontend.projector_down: *vl_vision
+  vision_frontend.vision_out: *vl_vision
+  vision_block.block_in: *vl_vision
+  vision_block.norm1: *vl_vision
+  vision_block.qkv_projection: *vl_vision
+  vision_block.joint_spatiotemporal_attention: *vl_vision
+  vision_block.output_projection: *vl_vision
+  vision_block.attention_residual: *vl_vision
+  vision_block.norm2: *vl_vision
+  vision_block.mlp_up: *vl_vision
+  vision_block.gelu: *vl_vision
+  vision_block.mlp_down: *vl_vision
+  vision_block.block_out: *vl_vision
+
+  decoder_stack.schedule: &vl_layer
+    symbols: [KimiDecoderLayer, KimiLinearModel]
+    links: [{file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiDecoderLayer, line: 856, display: model.py - immutable KDA MLA and feed-forward layer schedule}]
+  decoder_stack.input_norm: *vl_layer
+  decoder_stack.attention_schedule: *vl_layer
+  decoder_stack.prefix_after_attention: *vl_layer
+  decoder_stack.post_attention_norm: *vl_layer
+  decoder_stack.feed_forward_schedule: *vl_layer
+  decoder_stack.prefix_after_ffn: *vl_layer
+
+  top.output_attn_res: &vl_attnres
+    symbols: [attn_res, KimiDecoderLayer, KimiLinearModel]
+    kernel_signatures: [kimi_k3_attn_res, _attn_res_kernel]
+    links: [{file: vllm/models/kimi_k3/nvidia/ops/attn_res.py, symbol: attn_res, line: 170, display: attn_res.py - K3 source-bank scoring and merge}]
+  decoder_stack.attn_res_read: *vl_attnres
+  decoder_stack.block_write: *vl_attnres
+  decoder_stack.ffn_attn_res_read: *vl_attnres
+  attn_res.bank_in: *vl_attnres
+  attn_res.prefix_in: *vl_attnres
+  attn_res.source_concat: *vl_attnres
+  attn_res.rms_normalize: *vl_attnres
+  attn_res.score_projection: *vl_attnres
+  attn_res.source_softmax: *vl_attnres
+  attn_res.weighted_merge: *vl_attnres
+  attn_res.attn_res_out: *vl_attnres
+
+  decoder_stack.kda: &vl_kda
+    symbols: [KimiK3DeltaAttention, GatedDeltaNetAttention]
+    kernel_signatures: [fused_kda_decode, fused_recurrent_kda_packed_decode, flashkda_prefill, causal_conv1d_fwd, causal_conv1d_update]
+    links: [{file: vllm/models/kimi_k3/nvidia/kda.py, symbol: KimiK3DeltaAttention, line: 359, display: kda.py - phase-specific KDA projections state and fused decode}]
+  kda.kda_in: *vl_kda
+  kda.qkv_projection: *vl_kda
+  kda.q_short_conv: *vl_kda
+  kda.k_short_conv: *vl_kda
+  kda.v_short_conv: *vl_kda
+  kda.qk_l2_norm: *vl_kda
+  kda.decay_projection: *vl_kda
+  kda.lower_bounded_decay: *vl_kda
+  kda.beta_projection: *vl_kda
+  kda.recurrent_update: *vl_kda
+  kda.query_readout: *vl_kda
+  kda.output_gate: *vl_kda
+  kda.gated_rmsnorm: *vl_kda
+  kda.output_projection: *vl_kda
+  kda.kda_out: *vl_kda
+  kda.tp_kda_output_collective: *vl_kda
+
+  decoder_stack.gated_mla: &vl_mla
+    symbols: [MultiHeadLatentAttention]
+    kernel_signatures: [fused_mla_decode_q_concat_kv_cache_insert, fused_mla_key_concat_kv_cache, forward_mqa, run_prefill_new_tokens]
+    links: [{file: vllm/models/kimi_k3/nvidia/mla.py, symbol: MultiHeadLatentAttention, line: 122, display: mla.py - explicit K3 prefill and decode NoPE MLA paths}]
+  gated_mla.mla_in: *vl_mla
+  gated_mla.q_down: *vl_mla
+  gated_mla.q_norm: *vl_mla
+  gated_mla.q_up: *vl_mla
+  gated_mla.kv_down: *vl_mla
+  gated_mla.kv_norm: *vl_mla
+  gated_mla.kv_up: *vl_mla
+  gated_mla.key_compose: *vl_mla
+  gated_mla.cache_update: *vl_mla
+  gated_mla.attention: *vl_mla
+  gated_mla.output_gate: *vl_mla
+  gated_mla.gated_context: *vl_mla
+  gated_mla.output_projection: *vl_mla
+  gated_mla.mla_out: *vl_mla
+  gated_mla.tp_mla_output_collective: *vl_mla
+
+  decoder_stack.dense_mlp: &vl_dense
+    symbols: [KimiMLP, SituAndMul]
+    kernel_signatures: [fused_gate_up_situ, row_parallel_down_proj]
+    links: [{file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiMLP, line: 213, display: model.py - dense K3 SiTU feed-forward network}]
+  dense_mlp.dense_in: *vl_dense
+  dense_mlp.gate_up: *vl_dense
+  dense_mlp.situ: *vl_dense
+  dense_mlp.down: *vl_dense
+  dense_mlp.dense_out: *vl_dense
+  dense_mlp.tp_dense_output_collective: *vl_dense
+
+  decoder_stack.stable_latent_moe: &vl_moe
+    symbols: [KimiMoE, LatentMoERunner, KimiRoutedOutputTransform]
+    kernel_signatures: [grouped_topk, fused_moe, latent_moe_tail, allreduce_rmsnorm_reduce_scatter_early_exit]
+    links:
+      - {file: vllm/models/kimi_k3/nvidia/model.py, symbol: KimiMoE, line: 543, display: model.py - router and latent/shared branch construction}
+      - {file: vllm/models/kimi_k3/nvidia/latent_moe_runner.py, symbol: LatentMoERunner, line: 54, display: latent_moe_runner.py - ordered latent reduction norm up-projection and shared merge}
+  stable_latent_moe.moe_in: *vl_moe
+  stable_latent_moe.router_logits: *vl_moe
+  stable_latent_moe.router_sigmoid: *vl_moe
+  stable_latent_moe.corrected_selection: *vl_moe
+  stable_latent_moe.weight_normalize: *vl_moe
+  stable_latent_moe.routed_down: *vl_moe
+  stable_latent_moe.dispatch: *vl_moe
+  stable_latent_moe.expert_gate_up: *vl_moe
+  stable_latent_moe.expert_situ: *vl_moe
+  stable_latent_moe.expert_down: *vl_moe
+  stable_latent_moe.weighted_reduce: *vl_moe
+  stable_latent_moe.tp_routed_latent_collective: *vl_moe
+  stable_latent_moe.latent_norm: *vl_moe
+  stable_latent_moe.routed_up: *vl_moe
+  stable_latent_moe.shared_gate_up: *vl_moe
+  stable_latent_moe.shared_situ: *vl_moe
+  stable_latent_moe.shared_down: *vl_moe
+  stable_latent_moe.tp_shared_expert_collective: *vl_moe
+  stable_latent_moe.combine: *vl_moe
+  stable_latent_moe.moe_out: *vl_moe
+
+  top.tp_embedding_output_collective: &vl_collective
+    symbols: [tensor_model_parallel_all_reduce, tensor_model_parallel_all_gather]
+    kernel_signatures: [custom_all_reduce, ncclAllReduce, ncclAllGather]
+    links: [{file: vllm/distributed/communication_op.py, symbol: tensor_model_parallel_all_reduce, display: communication_op.py - TP collective boundary}]
+  top.tp_logits_materialization: *vl_collective

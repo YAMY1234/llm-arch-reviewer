@@ -22,6 +22,7 @@ from models.common.profile_rollup import (
     unique_drill_ancestors,
 )
 from models.common.timeline_artifact import write_timeline_artifact
+from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
 
 
 def parse_args() -> argparse.Namespace:
@@ -227,6 +228,8 @@ def main() -> int:
         profile.setdefault("node_metrics", {}).update(rollups)
         for target in rollups:
             profile.get("node_states", {}).pop(target, None)
+
+        validate_executable_drill_rollups(model_ir, profile)
 
         timeline_sha = write_timeline_artifact(timeline_path, timeline)
         profile["timeline"]["sha256"] = timeline_sha

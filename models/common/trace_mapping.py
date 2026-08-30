@@ -206,6 +206,82 @@ def find_step_annotation_windows(
         return []
 
     kernels = [event for event in trace_events if event.get("cat") == "kernel"]
+
+    # SGLang can launch the model on more than one CUDA stream.  In that
+    # case the outer step's GPU annotation covers only setup on the launch
+    # stream, while the nested ``sglang.vlm.language_model_prefill`` record
+    # function (the name is retained for decode too) is materialized on every
+    # model-compute stream.  Join the nested GPU spans to their enclosing CPU
+    # step by External id and take their union.  Selecting only the short
+    # outer GPU span would silently reduce a full model step to metadata plus
+    # embedding work.
+    cpu_steps = [
+        event
+        for event in trace_events
+        if event.get("cat") == "user_annotation"
+        and event.get("ph") == "X"
+        and str(event.get("name", "")).startswith(f"step[{step_kind}")
+    ]
+    cpu_model_spans = [
+        event
+        for event in trace_events
+        if event.get("cat") == "user_annotation"
+        and event.get("ph") == "X"
+        and event.get("name") == "sglang.vlm.language_model_prefill"
+    ]
+    gpu_annotations_by_external: dict[int, list[dict[str, Any]]] = {}
+    for event in trace_events:
+        if event.get("cat") != "gpu_user_annotation" or event.get("ph") != "X":
+            continue
+        external = _as_int(_args(event).get("External id"))
+        if external is not None:
+            gpu_annotations_by_external.setdefault(external, []).append(event)
+
+    async_windows: list[ForwardWindow] = []
+    for step in sorted(cpu_steps, key=lambda event: float(event.get("ts", 0.0))):
+        cpu_start = float(step.get("ts", 0.0))
+        cpu_end = _event_end_us(step)
+        nested = [
+            event
+            for event in cpu_model_spans
+            if cpu_start <= float(event.get("ts", 0.0))
+            and _event_end_us(event) <= cpu_end
+        ]
+        if not nested:
+            continue
+        external_ids = {
+            external
+            for event in [step, *nested]
+            if (external := _as_int(_args(event).get("External id"))) is not None
+        }
+        gpu_spans = [
+            event
+            for external in external_ids
+            for event in gpu_annotations_by_external.get(external, [])
+        ]
+        if not gpu_spans:
+            continue
+        start = min(float(event.get("ts", 0.0)) for event in gpu_spans)
+        end = max(_event_end_us(event) for event in gpu_spans)
+        anchor_count = 0
+        if signature:
+            anchor_count = sum(
+                1
+                for kernel in kernels
+                if signature in str(kernel.get("name", ""))
+                and start <= float(kernel.get("ts", 0.0)) <= end
+            )
+        async_windows.append(
+            ForwardWindow(
+                start_us=start,
+                end_us=end,
+                iter_bounds_us=[(start, end)],
+                anchor_kernel_count=anchor_count,
+            )
+        )
+    if async_windows:
+        return async_windows
+
     windows: list[ForwardWindow] = []
     for event in trace_events:
         if event.get("cat") != "gpu_user_annotation" or event.get("ph") != "X":
@@ -254,8 +330,16 @@ def find_vllm_execute_context_windows(
     annotations, _track = _primary_gpu_annotations(
         trace_events, name_prefix="execute_context_"
     )
+    kernels = sorted(
+        (
+            event
+            for event in trace_events
+            if event.get("cat") == "kernel" and event.get("ph") == "X"
+        ),
+        key=lambda event: float(event.get("ts", 0.0)),
+    )
     windows: list[ForwardWindow] = []
-    for event in annotations:
+    for index, event in enumerate(annotations):
         match = _VLLM_EXECUTE_CONTEXT_RE.match(str(event.get("name", "")))
         if not match:
             continue
@@ -266,7 +350,27 @@ def find_vllm_execute_context_windows(
         if phase == "vllm_decode" and not (context_tokens == 0 and generation_tokens > 0):
             continue
         start = float(event.get("ts", 0.0))
-        end = _event_end_us(event)
+        annotation_end = _event_end_us(event)
+        next_start = (
+            float(annotations[index + 1].get("ts", 0.0))
+            if index + 1 < len(annotations)
+            else float("inf")
+        )
+        postprocess_kernels = [
+            kernel
+            for kernel in kernels
+            if annotation_end < float(kernel.get("ts", 0.0)) < next_start
+        ]
+        # The vLLM execute-context GPU annotation closes at the language-model
+        # forward boundary.  Final norm, LM head, TP logits materialization,
+        # sampling, and state bookkeeping are launched immediately afterwards
+        # but still belong to the same worker step.  Extend only over observed
+        # kernels before the next exact execute annotation; never bridge an
+        # unobserved gap by assumption.
+        end = max(
+            [annotation_end]
+            + [_event_end_us(kernel) for kernel in postprocess_kernels]
+        )
         windows.append(
             ForwardWindow(
                 start_us=start,
