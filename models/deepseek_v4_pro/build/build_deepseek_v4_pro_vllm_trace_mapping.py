@@ -39,6 +39,7 @@ def main() -> int:
         skip_first=False,
         expected_phase_frame="execute_model",
         close_phase_tails=True,
+        phase_tail_owner_frame="worker_busy_loop",
     )
     write_build_result(args.out_dir.resolve(), result, rank=args.rank)
     print(

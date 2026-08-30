@@ -1076,6 +1076,7 @@ def build_trace_mapping(
     expected_signature_count: int | None = None,
     expected_phase_frame: str | None = None,
     close_phase_tails: bool = False,
+    phase_tail_owner_frame: str | None = None,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
@@ -1106,7 +1107,7 @@ def build_trace_mapping(
         window = close_window_phase_tails(
             trace_events,
             window,
-            phase_frame=expected_phase_frame,
+            phase_frame=phase_tail_owner_frame or expected_phase_frame,
         )
         window_method = f"{window_method}+python_phase_tail"
     events = normalize_kernel_events(
