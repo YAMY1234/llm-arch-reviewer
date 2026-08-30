@@ -104,6 +104,8 @@ def main(args: argparse.Namespace | None = None) -> int:
         "fusion_owner_navigations": 0,
         "fusion_owner_dom_clicks": 0,
         "timeline_interaction_performance": 0,
+        "timeline_stream_mode_invariants": 0,
+        "compact_lane_expansions": 0,
         "real_timeline_gestures": 0,
         "architecture_only_implementations": 0,
     }
@@ -585,6 +587,74 @@ def main(args: argparse.Namespace | None = None) -> int:
                     / f"{profile['implementation_id']}-{profile_id}-split.png",
                     full_page=False,
                 )
+
+            # Compact lanes are presentation-only. Exercise both modes and a
+            # real compact-label click while proving that the production event
+            # set and all timing inputs remain byte-for-byte unchanged.
+            stream_modes = page.evaluate(
+                """async () => {
+                  const step = currentTimelineStep();
+                  const eventEvidence = () => JSON.stringify((step.events || []).map(event => [
+                    event.start_us, event.duration_us, event.stream_id,
+                    event._irNode, event._irTargets,
+                  ]));
+                  const timingEvidence = () => JSON.stringify([
+                    step.duration_us, step.active_gpu_us, step.device_gap_us,
+                    step.gpu_residency_us, step.gpu_overlap_us,
+                  ]);
+                  const beforeEvents = eventEvidence();
+                  const beforeTiming = timingEvidence();
+                  TIMELINE_STREAM_MODE = 'compact';
+                  document.getElementById('timeline-stream-mode').value = 'compact';
+                  renderTimeline();
+                  const compact = {...TIMELINE_LAST_RENDER_STATS};
+                  const compactHit = TIMELINE_TRACK_HIT_RECTS[0];
+                  let expandedByClick = false;
+                  if (compactHit) {
+                    const canvas = document.getElementById('timeline-canvas');
+                    const rect = canvas.getBoundingClientRect();
+                    const clientX = rect.left + compactHit.x + 8;
+                    const clientY = rect.top + compactHit.y + 8;
+                    canvas.dispatchEvent(new MouseEvent('mousedown', {
+                      button: 0, bubbles: true, cancelable: true, clientX, clientY,
+                    }));
+                    window.dispatchEvent(new MouseEvent('mouseup', {
+                      button: 0, bubbles: true, cancelable: true, clientX, clientY,
+                    }));
+                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    expandedByClick = TIMELINE_STREAM_MODE === 'physical';
+                  }
+                  if (!expandedByClick) {
+                    TIMELINE_STREAM_MODE = 'physical';
+                    document.getElementById('timeline-stream-mode').value = 'physical';
+                    renderTimeline();
+                  }
+                  const physical = {...TIMELINE_LAST_RENDER_STATS};
+                  const unchanged = beforeEvents === eventEvidence() && beforeTiming === timingEvidence();
+                  TIMELINE_STREAM_MODE = 'compact';
+                  document.getElementById('timeline-stream-mode').value = 'compact';
+                  renderTimeline();
+                  return {compact, physical, unchanged, expandedByClick};
+                }"""
+            )
+            checks["timeline_stream_mode_invariants"] += 1
+            if stream_modes.get("expandedByClick"):
+                checks["compact_lane_expansions"] += 1
+            compact_stats = stream_modes.get("compact") or {}
+            physical_stats = stream_modes.get("physical") or {}
+            if (
+                not stream_modes.get("unchanged")
+                or compact_stats.get("streamMode") != "compact"
+                or physical_stats.get("streamMode") != "physical"
+                or physical_stats.get("trackCount")
+                != physical_stats.get("physicalStreamCount")
+                or compact_stats.get("trackCount")
+                != compact_stats.get("compactLaneCount")
+                or compact_stats.get("compactLaneCount", 0)
+                > compact_stats.get("physicalStreamCount", 0)
+                or not stream_modes.get("expandedByClick")
+            ):
+                fail("timeline_stream_modes", profile=profile_id, **stream_modes)
 
             # Exercise the user-facing event bindings, not only the helper
             # functions above.  This caught a real merge regression where the

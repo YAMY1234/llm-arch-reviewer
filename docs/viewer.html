@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-29-bidirectional-selection-v5" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-30-compact-stream-lanes-v1" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -476,6 +476,12 @@
     <div class="timeline-toolbar">
       <label>step <select id="timeline-step"></select></label>
       <label>layer <select id="timeline-layer"><option value="">all layers</option></select></label>
+      <label title="Compact lanes preserve every kernel's physical stream ID while reusing rows for non-overlapping activity.">streams
+        <select id="timeline-stream-mode">
+          <option value="compact">compact activity lanes</option>
+          <option value="physical">physical streams</option>
+        </select>
+      </label>
       <label>find <input id="timeline-search" type="search" placeholder="kernel or IR node" /></label>
       <button id="timeline-reset">reset range</button>
       <button id="timeline-perfetto">Open range in Perfetto ↗</button>
@@ -542,9 +548,12 @@ let TIMELINE_CURSOR_US = null;
 let TIMELINE_RANGE = {startUs: 0, endUs: 1};
 let TIMELINE_HIT_RECTS = [];
 let TIMELINE_OWNER_HIT_RECTS = [];
+let TIMELINE_TRACK_HIT_RECTS = [];
 let TIMELINE_LOAD_TOKEN = 0;
 let TIMELINE_RENDER_FRAME = 0;
 let TIMELINE_TRACK_LAYOUT_CACHE = new WeakMap();
+let TIMELINE_COMPACT_TRACK_CACHE = new WeakMap();
+let TIMELINE_STREAM_MODE = "compact";
 let TIMELINE_LAST_GESTURE_AT = null;
 let TIMELINE_LAST_GESTURE_RENDER_AT = null;
 // Timeline canvases can be extremely tall (one profile currently has 119
@@ -2291,6 +2300,8 @@ async function loadTimelineForCurrentProfile() {
     }
     TIMELINE_DATA = decodeTimelineArtifact(artifact);
     TIMELINE_TRACK_LAYOUT_CACHE = new WeakMap();
+    TIMELINE_COMPACT_TRACK_CACHE = new WeakMap();
+    TIMELINE_STREAM_MODE = "compact";
     TIMELINE_PROFILE_ID = CURRENT_PROFILE;
     TIMELINE_STEP_INDEX = 0;
     refreshTimelineControls();
@@ -2324,6 +2335,7 @@ function refreshTimelineControls() {
     stepSelect.appendChild(option);
   }
   stepSelect.value = String(TIMELINE_STEP_INDEX);
+  document.getElementById("timeline-stream-mode").value = TIMELINE_STREAM_MODE;
 
   const layers = new Set();
   for (const step of (TIMELINE_DATA?.steps || [])) {
@@ -2351,10 +2363,14 @@ function resetTimelineRange() {
   renderTimeline();
 }
 
+function timelineLabelWidth(width) {
+  return Math.min(230, Math.max(150, width * 0.22));
+}
+
 function timelineTimeAtCanvasX(offsetX) {
   const canvas = document.getElementById("timeline-canvas");
   const rect = canvas.getBoundingClientRect();
-  const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+  const labelWidth = timelineLabelWidth(rect.width);
   const plotWidth = Math.max(100, rect.width - labelWidth - 14);
   const ratio = (offsetX - labelWidth) / plotWidth;
   if (ratio < 0 || ratio > 1) return null;
@@ -2633,6 +2649,258 @@ function packTimelineIntervals(items, startOf, endOf) {
   return {lanes, laneCount: laneEnds.length};
 }
 
+// BEGIN TIMELINE COMPACTION CORE
+// These functions are deliberately model- and framework-independent.  They
+// transform only the presentation rows; event timestamps, physical stream
+// IDs, IR targets, and timing ownership remain untouched.
+function timelineDecimalResolution(values) {
+  let digits = 0;
+  for (const raw of values) {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) continue;
+    const text = String(value).toLowerCase();
+    const [mantissa, exponentText] = text.split("e");
+    const decimals = (mantissa.split(".")[1] || "").length;
+    const exponent = Number(exponentText || 0);
+    digits = Math.max(digits, Math.max(0, decimals - exponent));
+  }
+  return 10 ** -Math.min(12, digits);
+}
+
+function timelineTraceTolerance(events, pixelScaleUs = null) {
+  const values = [];
+  let magnitude = 1;
+  for (const event of events || []) {
+    const start = Number(event.start_us);
+    const duration = Number(event.duration_us);
+    const end = start + duration;
+    if (Number.isFinite(start)) values.push(start);
+    if (Number.isFinite(duration)) values.push(duration);
+    if (Number.isFinite(end)) values.push(end);
+    magnitude = Math.max(magnitude, Math.abs(start || 0), Math.abs(end || 0));
+  }
+  const traceResolutionUs = timelineDecimalResolution(values);
+  const floatingPointUs = Number.EPSILON * magnitude * 32;
+  const pixelBoundUs = Number.isFinite(pixelScaleUs) && pixelScaleUs > 0
+    ? pixelScaleUs / 1024
+    : Number.POSITIVE_INFINITY;
+  return {
+    traceResolutionUs,
+    toleranceUs: Math.max(
+      floatingPointUs,
+      Math.min(traceResolutionUs / 2, pixelBoundUs),
+    ),
+  };
+}
+
+function timelineRoleFamily(track) {
+  const role = String(track?.role || "auxiliary compute").trim();
+  const normalized = role.toLowerCase();
+  if (/communication|collective|nccl/.test(normalized)) {
+    return {key: "collective", label: "collective", order: 1, pinned: false};
+  }
+  if (/copy|memcpy|transfer|memory/.test(normalized)) {
+    return {key: "copy", label: "copy", order: 2, pinned: false};
+  }
+  if (/main|critical/.test(normalized)) {
+    return {key: "compute", label: "compute", order: 0, pinned: true};
+  }
+  if (/^(auxiliary )?compute$|^cuda stream$/.test(normalized)) {
+    return {key: "compute", label: "compute", order: 0, pinned: false};
+  }
+  // Artifact-authored roles such as QSA indexer and shared expert are stable
+  // evidence and therefore remain distinct. Unknown/generic roles fall back
+  // to compute packing instead of inventing a logical family.
+  if (role && !/^(unknown|auxiliary)$/i.test(role)) {
+    return {key: `role:${normalized}`, label: role, order: 3, pinned: false};
+  }
+  return {key: "compute", label: "compute", order: 0, pinned: false};
+}
+
+function timelineActivitySegments(events, toleranceUs = 0) {
+  const byStream = new Map();
+  for (const event of events || []) {
+    const streamId = String(event.stream_id);
+    if (!byStream.has(streamId)) byStream.set(streamId, []);
+    byStream.get(streamId).push(event);
+  }
+  const segments = [];
+  for (const [streamId, streamEvents] of byStream) {
+    const ordered = [...streamEvents].sort((left, right) => {
+      const delta = Number(left.start_us) - Number(right.start_us);
+      return delta || Number(right.duration_us) - Number(left.duration_us);
+    });
+    let segment = null;
+    for (const event of ordered) {
+      const startUs = Number(event.start_us);
+      const endUs = startUs + Math.max(0, Number(event.duration_us));
+      if (!segment || startUs > segment.endUs + toleranceUs) {
+        segment = {streamId, startUs, endUs, events: []};
+        segments.push(segment);
+      } else {
+        segment.endUs = Math.max(segment.endUs, endUs);
+      }
+      segment.events.push(event);
+    }
+  }
+  return segments;
+}
+
+function timelineSegmentsOverlap(left, right, toleranceUs = 0) {
+  return left.startUs < right.endUs - toleranceUs &&
+    left.endUs > right.startUs + toleranceUs;
+}
+
+function packTimelineActivitySegments(segments, pinnedStreamIds, toleranceUs = 0) {
+  const pinned = new Set([...pinnedStreamIds].map(String));
+  const lanes = [];
+  const ordered = [...segments].sort((left, right) => {
+    const leftPinned = pinned.has(left.streamId) ? 0 : 1;
+    const rightPinned = pinned.has(right.streamId) ? 0 : 1;
+    if (leftPinned !== rightPinned) return leftPinned - rightPinned;
+    const delta = left.startUs - right.startUs;
+    return delta || right.endUs - left.endUs;
+  });
+  for (const segment of ordered) {
+    let laneIndex = lanes.findIndex(lane =>
+      !lane.some(existing => timelineSegmentsOverlap(segment, existing, toleranceUs))
+    );
+    if (laneIndex < 0) {
+      laneIndex = lanes.length;
+      lanes.push([]);
+    }
+    lanes[laneIndex].push(segment);
+  }
+  for (const lane of lanes) lane.sort((left, right) => left.startUs - right.startUs);
+  return lanes;
+}
+
+function timelinePeakActiveStreams(segments) {
+  const points = [];
+  for (const segment of segments) {
+    if (!(segment.endUs > segment.startUs)) continue;
+    points.push({timeUs: segment.startUs, delta: 1});
+    points.push({timeUs: segment.endUs, delta: -1});
+  }
+  points.sort((left, right) => left.timeUs - right.timeUs || left.delta - right.delta);
+  let active = 0;
+  let peak = 0;
+  for (const point of points) {
+    active += point.delta;
+    peak = Math.max(peak, active);
+  }
+  return peak;
+}
+
+function timelineIntervalUnionDuration(segments) {
+  const ordered = [...segments].sort((left, right) => left.startUs - right.startUs);
+  let total = 0;
+  let start = null;
+  let end = null;
+  for (const segment of ordered) {
+    if (start == null || segment.startUs > end) {
+      if (start != null) total += end - start;
+      start = segment.startUs;
+      end = segment.endUs;
+    } else {
+      end = Math.max(end, segment.endUs);
+    }
+  }
+  if (start != null) total += end - start;
+  return total;
+}
+
+function buildCompactTimelineTracks(step, pixelScaleUs = null) {
+  const physicalTracks = step?.tracks || [];
+  const trackByStream = new Map(
+    physicalTracks.map(track => [String(track.stream_id), track])
+  );
+  const {traceResolutionUs, toleranceUs} = timelineTraceTolerance(
+    step?.events || [], pixelScaleUs
+  );
+  const segments = timelineActivitySegments(step?.events || [], toleranceUs);
+  const families = new Map();
+  for (const segment of segments) {
+    const track = trackByStream.get(segment.streamId) || {
+      stream_id: segment.streamId,
+      role: "auxiliary compute",
+    };
+    const family = timelineRoleFamily(track);
+    if (!families.has(family.key)) {
+      families.set(family.key, {...family, segments: [], pinnedStreamIds: new Set()});
+    }
+    const entry = families.get(family.key);
+    entry.segments.push(segment);
+    if (family.pinned) entry.pinnedStreamIds.add(segment.streamId);
+  }
+
+  const compactTracks = [];
+  const groups = [];
+  const orderedFamilies = [...families.values()].sort((left, right) =>
+    left.order - right.order || left.label.localeCompare(right.label)
+  );
+  for (const family of orderedFamilies) {
+    const lanes = packTimelineActivitySegments(
+      family.segments,
+      family.pinnedStreamIds,
+      toleranceUs,
+    );
+    const familyStreamIds = [...new Set(family.segments.map(segment => segment.streamId))]
+      .sort((left, right) => left.localeCompare(right, undefined, {numeric: true}));
+    const familyPeak = timelinePeakActiveStreams(family.segments);
+    const familyActiveUs = timelineIntervalUnionDuration(family.segments);
+    groups.push({
+      key: family.key,
+      label: family.label,
+      physicalStreamIds: familyStreamIds,
+      compactLaneCount: lanes.length,
+      peakConcurrency: familyPeak,
+      activeUs: familyActiveUs,
+    });
+    lanes.forEach((laneSegments, laneIndex) => {
+      const events = laneSegments.flatMap(segment => segment.events)
+        .sort((left, right) => Number(left.start_us) - Number(right.start_us));
+      const physicalStreamIds = [...new Set(laneSegments.map(segment => segment.streamId))]
+        .sort((left, right) => left.localeCompare(right, undefined, {numeric: true}));
+      const hasPinnedMain = physicalStreamIds.some(streamId =>
+        family.pinnedStreamIds.has(streamId)
+      );
+      compactTracks.push({
+        stream_id: `compact:${family.key}:${laneIndex}`,
+        role: hasPinnedMain ? "main compute" : `${family.label} activity`,
+        label: hasPinnedMain
+          ? `main compute · compact lane ${laneIndex + 1}`
+          : `${family.label} activity · compact lane ${laneIndex + 1}`,
+        event_count: events.length,
+        gpu_residency_us: events.reduce(
+          (total, event) => total + Number(event.duration_us), 0
+        ),
+        active_us: timelineIntervalUnionDuration(laneSegments),
+        physical_stream_ids: physicalStreamIds,
+        compact_lane: true,
+        compact_family: family.key,
+        compact_lane_index: laneIndex,
+        events,
+      });
+    });
+  }
+
+  const physicalStreamIds = [...new Set(
+    (step?.events || []).map(event => String(event.stream_id))
+  )].sort((left, right) => left.localeCompare(right, undefined, {numeric: true}));
+  return {
+    tracks: compactTracks,
+    groups,
+    physicalStreamIds,
+    physicalStreamCount: physicalStreamIds.length,
+    compactLaneCount: compactTracks.length,
+    peakConcurrency: timelinePeakActiveStreams(segments),
+    traceResolutionUs,
+    toleranceUs,
+  };
+}
+// END TIMELINE COMPACTION CORE
+
 function timelineOwnerSpans(events, ownerResolver) {
   // Form semantic runs in launch order.  This keeps a layer/module together
   // across its internal kernel gaps, but splits it if execution transitions to
@@ -2644,8 +2912,9 @@ function timelineOwnerSpans(events, ownerResolver) {
     const owner = ownerResolver(event);
     const start = Number(event.start_us);
     const end = start + Number(event.duration_us);
-    if (!span || owner.key !== span.owner.key) {
-      span = {owner, start_us: start, end_us: end, events: [], kindDurations: new Map()};
+    const streamId = String(event.stream_id);
+    if (!span || owner.key !== span.owner.key || streamId !== span.streamId) {
+      span = {owner, streamId, start_us: start, end_us: end, events: [], kindDurations: new Map()};
       spans.push(span);
     } else {
       span.end_us = Math.max(span.end_us, end);
@@ -2673,7 +2942,7 @@ function buildTimelineTrackLayouts(step, tracks) {
   const laneGap = 2;
   const layouts = [];
   for (const track of tracks) {
-    const events = eventsByStream.get(String(track.stream_id)) || [];
+    const events = track.events || eventsByStream.get(String(track.stream_id)) || [];
     const layerSpans = timelineOwnerSpans(events, timelineLayerOwner);
     const layerPacking = packTimelineIntervals(
       layerSpans,
@@ -2729,13 +2998,25 @@ function buildTimelineTrackLayouts(step, tracks) {
   return layouts;
 }
 
-function cachedTimelineTrackLayouts(step, tracks) {
-  let layouts = TIMELINE_TRACK_LAYOUT_CACHE.get(step);
-  if (!layouts) {
-    layouts = buildTimelineTrackLayouts(step, tracks);
-    TIMELINE_TRACK_LAYOUT_CACHE.set(step, layouts);
+function cachedTimelineTrackLayouts(step, tracks, cacheKey) {
+  let cached = TIMELINE_TRACK_LAYOUT_CACHE.get(step);
+  if (!cached) {
+    cached = new Map();
+    TIMELINE_TRACK_LAYOUT_CACHE.set(step, cached);
   }
-  return layouts;
+  if (!cached.has(cacheKey)) {
+    cached.set(cacheKey, buildTimelineTrackLayouts(step, tracks));
+  }
+  return cached.get(cacheKey);
+}
+
+function compactTimelineData(step, pixelScaleUs = null) {
+  let cached = TIMELINE_COMPACT_TRACK_CACHE.get(step);
+  if (!cached) {
+    cached = buildCompactTimelineTracks(step, pixelScaleUs);
+    TIMELINE_COMPACT_TRACK_CACHE.set(step, cached);
+  }
+  return cached;
 }
 
 function scheduleTimelineRender() {
@@ -2756,11 +3037,17 @@ function renderTimeline() {
   const viewport = document.getElementById("timeline-viewport");
   const canvas = document.getElementById("timeline-canvas");
   if (!step || viewport.clientWidth < 10) return;
-  const tracks = step.tracks || [];
   const cssWidth = Math.max(600, viewport.clientWidth);
   const top = 36;
   const idleRowHeight = 38;
-  const trackLayouts = cachedTimelineTrackLayouts(step, tracks);
+  const labelWidth = timelineLabelWidth(cssWidth);
+  const plotWidth = Math.max(100, cssWidth - labelWidth - 14);
+  const span = Math.max(0.001, TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs);
+  const compact = compactTimelineData(step, span / plotWidth);
+  const tracks = TIMELINE_STREAM_MODE === "physical"
+    ? (step.tracks || [])
+    : compact.tracks;
+  const trackLayouts = cachedTimelineTrackLayouts(step, tracks, TIMELINE_STREAM_MODE);
   let nextTrackY = top;
   for (const layout of trackLayouts) {
     layout.y = nextTrackY;
@@ -2783,6 +3070,10 @@ function renderTimeline() {
     pixelHeight,
     backingPixels: pixelWidth * pixelHeight,
     trackCount: tracks.length,
+    physicalStreamCount: compact.physicalStreamCount,
+    compactLaneCount: compact.compactLaneCount,
+    peakConcurrency: compact.peakConcurrency,
+    streamMode: TIMELINE_STREAM_MODE,
   };
   if (canvas.style.width !== `${cssWidth}px`) canvas.style.width = `${cssWidth}px`;
   if (canvas.style.height !== `${cssHeight}px`) canvas.style.height = `${cssHeight}px`;
@@ -2792,10 +3083,7 @@ function renderTimeline() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-  const labelWidth = Math.min(190, Math.max(125, cssWidth * 0.2));
   const plotLeft = labelWidth;
-  const plotWidth = Math.max(100, cssWidth - plotLeft - 14);
-  const span = Math.max(0.001, TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs);
   const toX = value => plotLeft + (value - TIMELINE_RANGE.startUs) / span * plotWidth;
   ctx.font = "10px ui-monospace, monospace";
   ctx.textBaseline = "middle";
@@ -2812,24 +3100,37 @@ function renderTimeline() {
     ctx.fillText(`${(timestamp / 1000).toFixed(span < 100 ? 3 : 2)} ms`, x, 15);
   }
 
-  const trackLayoutByStream = new Map();
+  TIMELINE_TRACK_HIT_RECTS = [];
   for (const [index, layout] of trackLayouts.entries()) {
     const {track, y, height} = layout;
-    trackLayoutByStream.set(String(track.stream_id), layout);
     ctx.fillStyle = index % 2 ? "#ffffff" : "#f8fafc";
     ctx.fillRect(labelWidth, y, plotWidth, height);
     ctx.strokeStyle = "#e4e7eb";
     ctx.beginPath(); ctx.moveTo(0, y + height); ctx.lineTo(cssWidth, y + height); ctx.stroke();
     ctx.fillStyle = "#1f2328"; ctx.textAlign = "left";
-    ctx.fillText(shorten(track.role || "CUDA stream", Math.max(16, Math.floor(labelWidth / 6.5))), 8, y + 13);
+    const compactIds = track.physical_stream_ids || [String(track.stream_id)];
+    ctx.fillText(shorten(track.label || track.role || "CUDA stream", Math.max(16, Math.floor(labelWidth / 6.5))), 8, y + 13);
     ctx.fillStyle = "#656d76";
-    ctx.fillText(`stream ${track.stream_id} · ${(track.gpu_residency_us / 1000).toFixed(3)} ms`, 8, y + 27);
+    const streamLine = track.compact_lane
+      ? `${compactIds.length} physical · ${(track.active_us / 1000).toFixed(3)} ms active`
+      : `stream ${track.stream_id} · ${(track.gpu_residency_us / 1000).toFixed(3)} ms residency`;
+    ctx.fillText(shorten(streamLine, Math.max(20, Math.floor(labelWidth / 6.5))), 8, y + 27);
     ctx.fillText(
       `${layout.layerLaneCount} layer · ${layout.moduleLaneCount} module · ` +
       `${layout.actualKernelLaneCount || 0} kernel lane${layout.actualKernelLaneCount === 1 ? "" : "s"}`,
       8,
       y + 42,
     );
+    if (track.compact_lane) {
+      TIMELINE_TRACK_HIT_RECTS.push({
+        x: 0,
+        y,
+        width: labelWidth,
+        height,
+        track,
+        layout,
+      });
+    }
 
     const separatorY = y + layout.kernelTop - 2;
     ctx.strokeStyle = "#d8dee4";
@@ -2937,10 +3238,14 @@ function renderTimeline() {
   const maxLayerLanes = Math.max(0, ...trackLayouts.map(layout => layout.layerLaneCount));
   const maxModuleLanes = Math.max(0, ...trackLayouts.map(layout => layout.moduleLaneCount));
   const maxKernelLanes = Math.max(0, ...trackLayouts.map(layout => layout.actualKernelLaneCount));
+  const streamSummary = TIMELINE_STREAM_MODE === "compact"
+    ? `${compact.physicalStreamCount} physical streams → ${compact.compactLaneCount} compact lanes; ` +
+      `peak concurrency ${compact.peakConcurrency}; tolerance ${compact.toleranceUs.toExponential(1)} µs`
+    : `${compact.physicalStreamCount} physical streams · debug rows; observed peak concurrency ${compact.peakConcurrency}`;
   document.getElementById("timeline-summary").textContent =
     `elapsed ${(step.duration_us / 1000).toFixed(3)} ms · active ${(step.active_gpu_us / 1000).toFixed(3)} ms · ` +
     `device idle/gap ${(step.device_gap_us / 1000).toFixed(3)} ms · residency ${(step.gpu_residency_us / 1000).toFixed(3)} ms · ` +
-    `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${tracks.length} streams · ` +
+    `overlap ${(step.gpu_overlap_us / 1000).toFixed(3)} ms · ${streamSummary} · ` +
     `max ${maxLayerLanes} layer / ${maxModuleLanes} module / ${maxKernelLanes} kernel lanes per stream · ` +
     `${matching}/${step.events.length} kernels visible`;
   if (TIMELINE_LAST_GESTURE_AT != null) {
@@ -2964,6 +3269,14 @@ function timelineOwnerAt(x, y) {
   return null;
 }
 
+function timelineTrackAt(x, y) {
+  for (let index = TIMELINE_TRACK_HIT_RECTS.length - 1; index >= 0; index--) {
+    const hit = TIMELINE_TRACK_HIT_RECTS[index];
+    if (x >= hit.x && x <= hit.x + hit.width && y >= hit.y && y <= hit.y + hit.height) return hit;
+  }
+  return null;
+}
+
 function timelineEventForOwner(hit) {
   if (!hit?.ownerSpan?.events?.length) return null;
   const target = hit.ownerSpan.owner.target;
@@ -2981,9 +3294,21 @@ function timelineOwnerTooltip(hit) {
   const span = hit.ownerSpan;
   const elapsedUs = Math.max(0, Number(span.end_us) - Number(span.start_us));
   const residencyUs = span.events.reduce((total, event) => total + Number(event.duration_us), 0);
+  const streamIds = [...new Set(span.events.map(event => String(event.stream_id)))];
   return `${hit.tier} · ${span.owner.label}\n${span.owner.target || "unmapped"} · ` +
     `${elapsedUs.toFixed(3)} µs span · ${residencyUs.toFixed(3)} µs residency · ` +
-    `${span.events.length} kernels · stream ${hit.track.stream_id}\nclick to show in architecture`;
+    `${span.events.length} kernels · physical stream${streamIds.length === 1 ? "" : "s"} ${streamIds.join(", ")}\n` +
+    `click to show in architecture`;
+}
+
+function timelineTrackTooltip(hit) {
+  const track = hit.track;
+  const streamIds = track.physical_stream_ids || [String(track.stream_id)];
+  return `${track.label || track.role || "compute activity"}\n` +
+    `${streamIds.length} physical stream${streamIds.length === 1 ? "" : "s"}: ${streamIds.join(", ")}\n` +
+    `${Number(track.active_us || 0).toFixed(3)} µs active · ` +
+    `${Number(track.gpu_residency_us || 0).toFixed(3)} µs residency\n` +
+    `click to expand exact physical-stream rows`;
 }
 
 function timelineTrackForEvent(event) {
@@ -3168,16 +3493,20 @@ async function showTimelineEventInArchitecture(options = {}) {
       syncV2SelectionQuery();
     }
     const route = architectureRouteForEvent(event);
-    VIEW_STACK = route.views.filter(view => DATA.views[view]);
-    DRILL_FROM = route.from.slice(0, VIEW_STACK.length);
-    SELECTED = {view: route.view, nodeId: route.nodeId};
     // Explicit button use keeps the original full-Architecture behavior. Direct
     // timeline selection keeps Split visible (or opens it from Timeline-only)
     // so both linked selections remain on screen.
     const nextViewMode = options.preserveViewMode
       ? (CURRENT_VIEW_MODE === "timeline" ? "split" : CURRENT_VIEW_MODE)
       : "architecture";
+    // Enter the requested presentation mode before installing the destination
+    // route. setViewMode() normalizes a stale route back to the profile entry
+    // view; doing that after installing a valid direct leaf route would erase
+    // SELECTED for canonical-but-not-drill-reachable compatibility views.
     setViewMode(nextViewMode, true, false);
+    VIEW_STACK = route.views.filter(view => DATA.views[view]);
+    DRILL_FROM = route.from.slice(0, VIEW_STACK.length);
+    SELECTED = {view: route.view, nodeId: route.nodeId};
     syncHash(true);
     PAN = {x: 0, y: 0, scale: 1};
     applyPan();
@@ -3345,6 +3674,10 @@ function initTimelineUI() {
     TIMELINE_EXPLICIT_SELECTION = null;
     resetTimelineRange();
   };
+  document.getElementById("timeline-stream-mode").onchange = event => {
+    TIMELINE_STREAM_MODE = event.target.value === "physical" ? "physical" : "compact";
+    renderTimeline();
+  };
   document.getElementById("timeline-layer").onchange = event => {
     TIMELINE_LAYER = event.target.value;
     TIMELINE_SELECTED_EVENT = null;
@@ -3381,7 +3714,7 @@ function initTimelineUI() {
     const rect = canvas.getBoundingClientRect();
     const dx = event.clientX - rect.left - drag.x;
     if (Math.abs(dx) > 3) drag.moved = true;
-    const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+    const labelWidth = timelineLabelWidth(rect.width);
     const plotWidth = Math.max(100, rect.width - labelWidth - 14);
     const span = drag.range.endUs - drag.range.startUs;
     const shift = -dx / plotWidth * span;
@@ -3415,6 +3748,18 @@ function initTimelineUI() {
       selectTimelineOwner(ownerHit);
       renderTimeline();
       showTimelineEventInArchitecture({event: ownerEvent, preserveViewMode: true});
+      return;
+    }
+    const trackHit = timelineTrackAt(x, y);
+    if (trackHit && TIMELINE_STREAM_MODE === "compact") {
+      const representative = trackHit.track.events?.[0] || null;
+      TIMELINE_STREAM_MODE = "physical";
+      document.getElementById("timeline-stream-mode").value = "physical";
+      if (representative) selectTimelineEvent(representative);
+      renderTimeline();
+      if (representative) {
+        requestAnimationFrame(() => centerTimelineEventVertically(representative));
+      }
     }
   });
   canvas.addEventListener("mousemove", event => {
@@ -3423,14 +3768,15 @@ function initTimelineUI() {
     if (drag) { tooltip.style.display = "none"; canvas.style.cursor = "grabbing"; return; }
     const hit = timelineEventAt(event.offsetX, event.offsetY);
     const ownerHit = hit ? null : timelineOwnerAt(event.offsetX, event.offsetY);
-    canvas.style.cursor = hit || ownerHit ? "pointer" : "crosshair";
-    if (!hit && !ownerHit) { tooltip.style.display = "none"; return; }
+    const trackHit = hit || ownerHit ? null : timelineTrackAt(event.offsetX, event.offsetY);
+    canvas.style.cursor = hit || ownerHit || trackHit ? "pointer" : "crosshair";
+    if (!hit && !ownerHit && !trackHit) { tooltip.style.display = "none"; return; }
     tooltip.style.display = "block";
     tooltip.style.left = `${Math.min(window.innerWidth - 455, event.clientX + 14)}px`;
     tooltip.style.top = `${Math.min(window.innerHeight - 80, event.clientY + 14)}px`;
     tooltip.textContent = hit
       ? `${hit._irNode} · ${hit.duration_us.toFixed(3)} µs · stream ${hit.stream_id}\n${shorten(hit._kernelName, 100)}\nclick to show in architecture`
-      : timelineOwnerTooltip(ownerHit);
+      : (ownerHit ? timelineOwnerTooltip(ownerHit) : timelineTrackTooltip(trackHit));
   });
   canvas.addEventListener("mouseleave", () => {
     tooltip.style.display = "none";
@@ -3462,7 +3808,7 @@ function initTimelineUI() {
       // pointer.  Unmodified deltaY is deliberately left to the scroll
       // container so users can move through long stream lists normally.
       const rect = canvas.getBoundingClientRect();
-      const labelWidth = Math.min(190, Math.max(125, rect.width * 0.2));
+      const labelWidth = timelineLabelWidth(rect.width);
       const plotWidth = Math.max(100, rect.width - labelWidth - 14);
       const ratio = Math.max(0, Math.min(1, (event.offsetX - labelWidth) / plotWidth));
       const anchor = TIMELINE_RANGE.startUs + ratio * span;
