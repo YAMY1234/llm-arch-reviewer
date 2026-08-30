@@ -57,25 +57,25 @@ def test_every_reachable_drill_has_a_boundary_contract_and_every_leaf_has_math()
                 assert edge.get(key), (view["title"], edge, key)
 
 
-def test_pure_tp4_execution_contract_preserves_attention_and_moe_sharding() -> None:
+def test_pure_tp8_execution_contract_preserves_attention_and_moe_sharding() -> None:
     bundle = compile_catalog(MODEL_ROOT)
     variants = {
         variant["execution_path_id"]: variant
         for variant in bundle["execution_variants"].values()
     }
-    assert set(variants) == {"tp4_moe_intermediate_shard"}
-    intermediate = variants["tp4_moe_intermediate_shard"]
+    assert set(variants) == {"tp8_moe_intermediate_shard"}
+    intermediate = variants["tp8_moe_intermediate_shard"]
 
     for variant in (intermediate,):
         parameters = variant["default_parameters"]
-        assert parameters == {"tp_size": 4, "dp_size": 1, "cp_size": 1, "ep_size": 1}
+        assert parameters == {"tp_size": 8, "dp_size": 1, "cp_size": 1, "ep_size": 1}
         nodes = {
             f"{view_id}.{node['id']}": node
             for view_id, view in variant["views"].items()
             for node in view["nodes"]
         }
         assert nodes["csa_attention.q_b"]["execution"]["tensor_layout"] == (
-            "32_of_128_query_heads_per_rank"
+            "16_of_128_query_heads_per_rank"
         )
         assert nodes["csa_attention.indexer"]["execution"]["parallelism"] == (
             "replicated"
@@ -124,13 +124,13 @@ def test_both_commit_specific_bindings_cover_every_architecture_node() -> None:
         for path in sorted((MODEL_ROOT / "bindings").glob("*.yaml"))
     }
     assert set(bindings) == {
-        "sglang-71de97b-dsv4pro0813-tp4.yaml",
-        "vllm-dd10e03-dsv4pro0813-tp4.yaml",
+        "sglang-71de97b-dsv4pro0813-tp8.yaml",
+        "vllm-dd10e03-dsv4pro0813-tp8.yaml",
     }
-    assert bindings["sglang-71de97b-dsv4pro0813-tp4.yaml"]["source_commit"] == (
+    assert bindings["sglang-71de97b-dsv4pro0813-tp8.yaml"]["source_commit"] == (
         "71de97b264b04dcd514cf904003028aefe9775c8"
     )
-    assert bindings["vllm-dd10e03-dsv4pro0813-tp4.yaml"]["source_commit"] == (
+    assert bindings["vllm-dd10e03-dsv4pro0813-tp8.yaml"]["source_commit"] == (
         "dd10e03f95f94edbea1975c67ace3a35ec9a8a40"
     )
     for binding in bindings.values():

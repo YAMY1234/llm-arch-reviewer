@@ -1,6 +1,6 @@
 schema_version: ir-pipeline-manifest.v1
 model_id: deepseek_v4_pro
-target: cross_framework_pure_tp4_stage1
+target: cross_framework_pure_tp8_stage1
 evidence_root: current/deepseek-v4-pro-ir-profile
 
 source_lock:
@@ -29,12 +29,24 @@ source_lock:
       runtime_source_hash_manifest: current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
       eager_reconciliation: pending
 
+topology_basis:
+  selected: pure_tp8_two_nodes_four_gb300_per_node
+  official_framework_recipe:
+    framework: sglang
+    source_commit: 71de97b264b04dcd514cf904003028aefe9775c8
+    file: docs/src/snippets/configs/deepseek-ai/deepseek-v4.jsx
+    lines: 1413-1433
+    public_recipe_state: not_yet_run_end_to_end_on_b300
+    exact_reused_fields: [tp_8, flashinfer_mxfp4, chunked_prefill_8192, swa_full_tokens_ratio_0.1, mem_fraction_static_0.90]
+    intentionally_disabled_for_stage1: DSPARK
+  acceptance_rule: this_task_must_supply_the_missing_exact_end_to_end_evidence_for_both_frameworks
+
 execution:
   serving_mode: aggregated
   generation_mode: autoregressive
   modality: text_only
   default_topology: pure_tp
-  tp_size: 4
+  tp_size: 8
   dp_size: 1
   cp_size: 1
   ep_size: 1
@@ -45,8 +57,8 @@ execution:
   kv_offload_enabled: false
   prefix_cache_enabled: false
   framework_execution_paths:
-    sglang: tp4_moe_intermediate_shard
-    vllm: tp4_moe_intermediate_shard
+    sglang: tp8_moe_intermediate_shard
+    vllm: tp8_moe_intermediate_shard
   candidate_plan_requires_eager_reconciliation: true
 
 workload:
@@ -64,10 +76,12 @@ workload:
 
 capture_policy:
   baseline_discovery:
-    cuda_graph_enabled: false
+    cuda_graph_enabled: true
     profiler_enabled: false
     ordinary_serving_run: true
     discover_stable_scheduler_steps_before_capture: true
+    sglang_decode_log_interval: 10
+    vllm_iteration_detail_logging: true
     preserve_trajectory_fields: true
   eager_semantic:
     cuda_graph_enabled: false

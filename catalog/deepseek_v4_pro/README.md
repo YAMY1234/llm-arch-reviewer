@@ -19,10 +19,10 @@ learned-router layers.
 
 ## Portable pure-TP contracts
 
-The default stage-1 topology is pure TP4 on one four-GPU GB300 node: DP=CP=EP=1,
+The default stage-1 topology is pure TP8 across two four-GPU GB300 nodes: DP=CP=EP=1,
 with attention query heads and projection dimensions sharded across TP ranks and
 the KV/compressor/indexer state replicated where required by the implementation.
-Both source-locked runtimes use `tp4_moe_intermediate_shard`: all 384 experts
+Both source-locked runtimes use `tp8_moe_intermediate_shard`: all 384 experts
 remain logically present on every rank, their gate/up and down weights are
 tensor-sharded, and the partial outputs are materialized through TP reductions.
 vLLM's separate physical-expert placement path requires expert parallelism and

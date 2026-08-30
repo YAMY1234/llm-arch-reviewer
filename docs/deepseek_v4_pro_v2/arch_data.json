@@ -1,8 +1,8 @@
 {
   "schema_version": "2.0",
   "default_view": "top",
-  "default_execution_variant": "exec_712311444526eb45",
-  "default_implementation": "sglang_71de97b_dsv4pro0813_tp4",
+  "default_execution_variant": "exec_6178deeaa361c4f1",
+  "default_implementation": "sglang_71de97b_dsv4pro0813_tp8",
   "default_profile": "",
   "meta": {
     "model_id": "deepseek_v4_pro",
@@ -8689,20 +8689,20 @@
     }
   },
   "execution_variants": {
-    "exec_712311444526eb45": {
-      "execution_path_id": "tp4_moe_intermediate_shard",
-      "label": "Pure TP4 with per-expert intermediate sharding",
-      "fingerprint": "exec_712311444526eb45",
+    "exec_6178deeaa361c4f1": {
+      "execution_path_id": "tp8_moe_intermediate_shard",
+      "label": "Pure TP8 with per-expert intermediate sharding",
+      "fingerprint": "exec_6178deeaa361c4f1",
       "model_ir_version": 2,
       "execution_plan_version": 1,
       "parallelism_axes": {
-        "tp_size": 4,
+        "tp_size": 8,
         "dp_size": 1,
         "cp_size": 1,
         "ep_size": 1
       },
       "default_parameters": {
-        "tp_size": 4,
+        "tp_size": 8,
         "dp_size": 1,
         "cp_size": 1,
         "ep_size": 1
@@ -8792,8 +8792,8 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "vocabulary_rows_sharded_4_way",
-                "parallelism": "TP4"
+                "tensor_layout": "vocabulary_rows_sharded_8_way",
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "model.embedding",
@@ -8835,7 +8835,7 @@
                 "placement": "tp_group",
                 "group": "tp_group",
                 "collective": "all_reduce_sum",
-                "parallelism": "TP4",
+                "parallelism": "TP8",
                 "payload": "masked local vocabulary-shard embedding partials [B,T,H]",
                 "result": "replicated token embeddings [B,T,H]"
               },
@@ -8884,7 +8884,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_four_stream_state",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "model.hc_expand",
@@ -8979,7 +8979,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_four_stream_state",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "model.final_hc_read",
@@ -9072,7 +9072,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "vocabulary_rows_sharded_4_way",
+                "tensor_layout": "vocabulary_rows_sharded_8_way",
                 "parallelism": "column_parallel_vocabulary"
               },
               "semantics": {
@@ -9093,7 +9093,7 @@
                 "outputs": [
                   {
                     "name": "local_vocabulary_logits",
-                    "shape": "[B,T,V/4]",
+                    "shape": "[B,T,V/8]",
                     "layout": "batch_sequence_local_vocabulary",
                     "dtype": "logits_dtype",
                     "state": "ephemeral_output",
@@ -9115,8 +9115,8 @@
                 "placement": "tp_group",
                 "group": "tp_group",
                 "collective": "all_gather_concat",
-                "parallelism": "TP4",
-                "payload": "local vocabulary logits [B,T,V/4]",
+                "parallelism": "TP8",
+                "payload": "local vocabulary logits [B,T,V/8]",
                 "result": "full vocabulary logits [B,T,V]"
               },
               "ir_origin": "execution_plan",
@@ -9124,11 +9124,11 @@
                 "semantic_op": "execution.tp.logits_collective",
                 "kind": "compute",
                 "summary": "TP vocabulary logits",
-                "equation": "full vocabulary logits [B,T,V] = all_gather_concat(local vocabulary logits [B,T,V/4])",
+                "equation": "full vocabulary logits [B,T,V] = all_gather_concat(local vocabulary logits [B,T,V/8])",
                 "inputs": [
                   {
                     "name": "local_vocabulary_logits",
-                    "shape": "[B,T,V/4]",
+                    "shape": "[B,T,V/8]",
                     "layout": "batch_sequence_local_vocabulary",
                     "dtype": "logits_dtype",
                     "state": "ephemeral_output",
@@ -9314,7 +9314,7 @@
               "from": "lm_head",
               "to": "tp_logits_collective",
               "identity": "local_vocabulary_logits",
-              "shape": "[B,T,V/4]",
+              "shape": "[B,T,V/8]",
               "layout": "batch_sequence_local_vocabulary",
               "dtype": "logits_dtype",
               "state": "ephemeral_output"
@@ -10035,7 +10035,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_stream_hidden",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "mhc.flatten_rms",
@@ -10081,7 +10081,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_dynamic_coefficient_projection",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "mhc.affine",
@@ -10229,7 +10229,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_4_by_4_transition_matrix",
-                "parallelism": "TP4",
+                "parallelism": "TP8",
                 "state_boundary": "no_cross_rank_state"
               },
               "semantics": {
@@ -10408,7 +10408,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_four_stream_state",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "mhc.mix",
@@ -10880,7 +10880,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_query_latent",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "attention.q_a",
@@ -10974,7 +10974,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "32_of_128_query_heads_per_rank",
+                "tensor_layout": "16_of_128_query_heads_per_rank",
                 "parallelism": "column_parallel"
               },
               "semantics": {
@@ -11103,7 +11103,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_single_kv_head",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "attention.window_kv",
@@ -11246,7 +11246,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "full_ratio4_compressor_and_cache_on_every_rank",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "compressor.softmax_pool",
@@ -11404,7 +11404,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "local_32_query_heads_with_replicated_kv_and_indices",
+                "tensor_layout": "local_16_query_heads_with_replicated_kv_and_indices",
                 "parallelism": "head_parallel"
               },
               "semantics": {
@@ -11515,7 +11515,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "4_of_16_output_groups_per_rank",
+                "tensor_layout": "2_of_16_output_groups_per_rank",
                 "parallelism": "column_parallel_grouped"
               },
               "semantics": {
@@ -11561,7 +11561,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "input_groups_sharded_4_way",
+                "tensor_layout": "input_groups_sharded_8_way",
                 "parallelism": "row_parallel"
               },
               "semantics": {
@@ -11604,7 +11604,7 @@
                 "placement": "tp_group",
                 "group": "tp_group",
                 "collective": "all_reduce_sum",
-                "parallelism": "TP4",
+                "parallelism": "TP8",
                 "payload": "row-parallel CSA output partials [B,T,H]",
                 "result": "replicated CSA delta [B,T,H]"
               },
@@ -11930,7 +11930,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_query_latent",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "attention.q_a",
@@ -12016,7 +12016,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "32_of_128_query_heads_per_rank",
+                "tensor_layout": "16_of_128_query_heads_per_rank",
                 "parallelism": "column_parallel"
               },
               "semantics": {
@@ -12145,7 +12145,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "replicated_single_kv_head",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "attention.window_kv",
@@ -12288,7 +12288,7 @@
               "execution": {
                 "placement": "replicated_on_tp_ranks",
                 "tensor_layout": "full_ratio128_compressor_and_cache_on_every_rank",
-                "parallelism": "TP4"
+                "parallelism": "TP8"
               },
               "semantics": {
                 "semantic_op": "compressor.softmax_pool",
@@ -12429,7 +12429,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "local_32_query_heads_with_replicated_kv_and_indices",
+                "tensor_layout": "local_16_query_heads_with_replicated_kv_and_indices",
                 "parallelism": "head_parallel"
               },
               "semantics": {
@@ -12540,7 +12540,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "4_of_16_output_groups_per_rank",
+                "tensor_layout": "2_of_16_output_groups_per_rank",
                 "parallelism": "column_parallel_grouped"
               },
               "semantics": {
@@ -12586,7 +12586,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "input_groups_sharded_4_way",
+                "tensor_layout": "input_groups_sharded_8_way",
                 "parallelism": "row_parallel"
               },
               "semantics": {
@@ -12629,7 +12629,7 @@
                 "placement": "tp_group",
                 "group": "tp_group",
                 "collective": "all_reduce_sum",
-                "parallelism": "TP4",
+                "parallelism": "TP8",
                 "payload": "row-parallel HCA output partials [B,T,H]",
                 "result": "replicated HCA delta [B,T,H]"
               },
@@ -14657,7 +14657,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "every_expert_intermediate_sharded_4_way",
+                "tensor_layout": "every_expert_intermediate_sharded_8_way",
                 "parallelism": "tensor_parallel_expert_mlp"
               },
               "semantics": {
@@ -14744,7 +14744,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "every_expert_intermediate_input_sharded_4_way",
+                "tensor_layout": "every_expert_intermediate_input_sharded_8_way",
                 "parallelism": "row_parallel_expert_mlp"
               },
               "semantics": {
@@ -14839,7 +14839,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "shared_expert_intermediate_sharded_4_way",
+                "tensor_layout": "shared_expert_intermediate_sharded_8_way",
                 "parallelism": "tensor_parallel_shared_mlp"
               },
               "semantics": {
@@ -14926,7 +14926,7 @@
               "node_kind": "semantic",
               "execution": {
                 "placement": "all_tp_ranks",
-                "tensor_layout": "shared_expert_intermediate_input_sharded_4_way",
+                "tensor_layout": "shared_expert_intermediate_input_sharded_8_way",
                 "parallelism": "row_parallel_shared_mlp"
               },
               "semantics": {
@@ -15018,7 +15018,7 @@
                 "placement": "tp_group",
                 "group": "tp_group",
                 "collective": "all_reduce_sum",
-                "parallelism": "TP4",
+                "parallelism": "TP8",
                 "payload": "routed-plus-shared row-parallel output partials [B,T,H]",
                 "result": "replicated MoE delta [B,T,H]"
               },
@@ -17018,20 +17018,20 @@
     }
   },
   "implementations": {
-    "sglang_71de97b_dsv4pro0813_tp4": {
-      "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
-      "label": "SGLang 71de97b DeepSeek-V4-Pro-0813 pure TP4",
+    "sglang_71de97b_dsv4pro0813_tp8": {
+      "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
+      "label": "SGLang 71de97b DeepSeek-V4-Pro-0813 pure TP8",
       "model_id": "deepseek_v4_pro",
-      "execution_path_id": "tp4_moe_intermediate_shard",
+      "execution_path_id": "tp8_moe_intermediate_shard",
       "source_repo": "https://github.com/sgl-project/sglang",
       "source_commit": "71de97b264b04dcd514cf904003028aefe9775c8",
       "container": "sglang-arm64-db37df8aded8.sqsh@sha256:ddec5cc59fa15be11e0b0b06de381cc2e0588e2d6098bd86f12a83cb4b1d58e2",
-      "backend": "sglang_native_dsv4_flashmla_sparse_megamoe",
+      "backend": "sglang_native_dsv4_flashinfer_mxfp4",
       "binding_status": "draft",
       "source_lock_status": "runtime_verified",
       "execution_validation": {
         "status": "pending",
-        "execution_fingerprint": "exec_712311444526eb45",
+        "execution_fingerprint": "exec_6178deeaa361c4f1",
         "required_phases": [
           "prefill",
           "decode"
@@ -20597,13 +20597,13 @@
           ]
         }
       },
-      "execution_variant": "exec_712311444526eb45"
+      "execution_variant": "exec_6178deeaa361c4f1"
     },
-    "vllm_dd10e03_dsv4pro0813_tp4": {
-      "implementation_id": "vllm_dd10e03_dsv4pro0813_tp4",
-      "label": "vLLM dd10e03 DeepSeek-V4-Pro-0813 pure TP4",
+    "vllm_dd10e03_dsv4pro0813_tp8": {
+      "implementation_id": "vllm_dd10e03_dsv4pro0813_tp8",
+      "label": "vLLM dd10e03 DeepSeek-V4-Pro-0813 pure TP8",
       "model_id": "deepseek_v4_pro",
-      "execution_path_id": "tp4_moe_intermediate_shard",
+      "execution_path_id": "tp8_moe_intermediate_shard",
       "source_repo": "https://github.com/vllm-project/vllm",
       "source_commit": "dd10e03f95f94edbea1975c67ace3a35ec9a8a40",
       "container": "vllm-arm64-2f726db9babd.sqsh@sha256:111d0967a4054e22dbc8fccddfe7446cebe7b5cede51e555b563a77a5574d28c",
@@ -20612,7 +20612,7 @@
       "source_lock_status": "runtime_verified",
       "execution_validation": {
         "status": "pending",
-        "execution_fingerprint": "exec_712311444526eb45",
+        "execution_fingerprint": "exec_6178deeaa361c4f1",
         "required_phases": [
           "prefill",
           "decode"
@@ -24178,7 +24178,7 @@
           ]
         }
       },
-      "execution_variant": "exec_712311444526eb45"
+      "execution_variant": "exec_6178deeaa361c4f1"
     }
   },
   "profiles": {},
@@ -24227,7 +24227,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLM.forward"
             ],
@@ -24284,7 +24284,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLM.forward"
             ],
@@ -24305,8 +24305,8 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "vocabulary_rows_sharded_4_way",
-            "parallelism": "TP4"
+            "tensor_layout": "vocabulary_rows_sharded_8_way",
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "model.embedding",
@@ -24348,7 +24348,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4Model.forward"
             ],
@@ -24366,7 +24366,7 @@
             "placement": "tp_group",
             "group": "tp_group",
             "collective": "all_reduce_sum",
-            "parallelism": "TP4",
+            "parallelism": "TP8",
             "payload": "masked local vocabulary-shard embedding partials [B,T,H]",
             "result": "replicated token embeddings [B,T,H]"
           },
@@ -24415,7 +24415,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_four_stream_state",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "model.hc_expand",
@@ -24457,7 +24457,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4Model.forward"
             ],
@@ -24528,7 +24528,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4Model.forward"
             ],
@@ -24546,7 +24546,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_four_stream_state",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "model.final_hc_read",
@@ -24595,7 +24595,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4Model.hc_head"
             ],
@@ -24654,7 +24654,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLM.forward"
             ],
@@ -24675,7 +24675,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "vocabulary_rows_sharded_4_way",
+            "tensor_layout": "vocabulary_rows_sharded_8_way",
             "parallelism": "column_parallel_vocabulary"
           },
           "semantics": {
@@ -24696,7 +24696,7 @@
             "outputs": [
               {
                 "name": "local_vocabulary_logits",
-                "shape": "[B,T,V/4]",
+                "shape": "[B,T,V/8]",
                 "layout": "batch_sequence_local_vocabulary",
                 "dtype": "logits_dtype",
                 "state": "ephemeral_output",
@@ -24718,7 +24718,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLM.forward"
             ],
@@ -24736,8 +24736,8 @@
             "placement": "tp_group",
             "group": "tp_group",
             "collective": "all_gather_concat",
-            "parallelism": "TP4",
-            "payload": "local vocabulary logits [B,T,V/4]",
+            "parallelism": "TP8",
+            "payload": "local vocabulary logits [B,T,V/8]",
             "result": "full vocabulary logits [B,T,V]"
           },
           "ir_origin": "execution_plan",
@@ -24745,11 +24745,11 @@
             "semantic_op": "execution.tp.logits_collective",
             "kind": "compute",
             "summary": "TP vocabulary logits",
-            "equation": "full vocabulary logits [B,T,V] = all_gather_concat(local vocabulary logits [B,T,V/4])",
+            "equation": "full vocabulary logits [B,T,V] = all_gather_concat(local vocabulary logits [B,T,V/8])",
             "inputs": [
               {
                 "name": "local_vocabulary_logits",
-                "shape": "[B,T,V/4]",
+                "shape": "[B,T,V/8]",
                 "layout": "batch_sequence_local_vocabulary",
                 "dtype": "logits_dtype",
                 "state": "ephemeral_output",
@@ -24808,7 +24808,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLM.forward"
             ],
@@ -24866,7 +24866,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark"
             ],
@@ -24971,7 +24971,7 @@
           "from": "lm_head",
           "to": "tp_logits_collective",
           "identity": "local_vocabulary_logits",
-          "shape": "[B,T,V/4]",
+          "shape": "[B,T,V/8]",
           "layout": "batch_sequence_local_vocabulary",
           "dtype": "logits_dtype",
           "state": "ephemeral_output"
@@ -25020,7 +25020,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25074,7 +25074,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4Model.forward"
             ],
@@ -25141,7 +25141,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.hc_pre"
             ],
@@ -25200,7 +25200,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25264,7 +25264,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer._build_self_attn"
             ],
@@ -25328,7 +25328,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25392,7 +25392,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25456,7 +25456,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.hc_post"
             ],
@@ -25523,7 +25523,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.hc_pre"
             ],
@@ -25582,7 +25582,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25644,7 +25644,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25698,7 +25698,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.hc_post"
             ],
@@ -25744,7 +25744,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4DecoderLayer.forward"
             ],
@@ -25922,7 +25922,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -25944,7 +25944,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_stream_hidden",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "mhc.flatten_rms",
@@ -25986,7 +25986,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26008,7 +26008,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_dynamic_coefficient_projection",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "mhc.affine",
@@ -26066,7 +26066,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26125,7 +26125,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26184,7 +26184,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26210,7 +26210,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_4_by_4_transition_matrix",
-            "parallelism": "TP4",
+            "parallelism": "TP8",
             "state_boundary": "no_cross_rank_state"
           },
           "semantics": {
@@ -26256,7 +26256,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26316,7 +26316,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_pre"
             ],
@@ -26372,7 +26372,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_post"
             ],
@@ -26439,7 +26439,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_post"
             ],
@@ -26461,7 +26461,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_four_stream_state",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "mhc.mix",
@@ -26503,7 +26503,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_post"
             ],
@@ -26557,7 +26557,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "mhc_post"
             ],
@@ -26719,7 +26719,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "fused_hc_head"
             ],
@@ -26778,7 +26778,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "fused_hc_head"
             ],
@@ -26837,7 +26837,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "fused_hc_head"
             ],
@@ -26896,7 +26896,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "fused_hc_head"
             ],
@@ -26942,7 +26942,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "fused_hc_head"
             ],
@@ -27055,7 +27055,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -27077,7 +27077,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_query_latent",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "attention.q_a",
@@ -27127,7 +27127,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_a"
             ],
@@ -27186,7 +27186,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_a"
             ],
@@ -27207,7 +27207,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "32_of_128_query_heads_per_rank",
+            "tensor_layout": "16_of_128_query_heads_per_rank",
             "parallelism": "column_parallel"
           },
           "semantics": {
@@ -27250,7 +27250,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -27309,7 +27309,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -27368,7 +27368,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -27390,7 +27390,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_single_kv_head",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "attention.window_kv",
@@ -27432,7 +27432,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_kv_to_cache"
             ],
@@ -27510,7 +27510,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_kv_to_cache"
             ],
@@ -27569,7 +27569,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -27587,7 +27587,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "full_ratio4_compressor_and_cache_on_every_rank",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "compressor.softmax_pool",
@@ -27636,7 +27636,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -27711,7 +27711,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -27778,7 +27778,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "combine_topk_swa_indices"
             ],
@@ -27799,7 +27799,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "local_32_query_heads_with_replicated_kv_and_indices",
+            "tensor_layout": "local_16_query_heads_with_replicated_kv_and_indices",
             "parallelism": "head_parallel"
           },
           "semantics": {
@@ -27866,7 +27866,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -27925,7 +27925,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -27946,7 +27946,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "4_of_16_output_groups_per_rank",
+            "tensor_layout": "2_of_16_output_groups_per_rank",
             "parallelism": "column_parallel_grouped"
           },
           "semantics": {
@@ -27989,7 +27989,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -28010,7 +28010,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "input_groups_sharded_4_way",
+            "tensor_layout": "input_groups_sharded_8_way",
             "parallelism": "row_parallel"
           },
           "semantics": {
@@ -28053,7 +28053,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -28071,7 +28071,7 @@
             "placement": "tp_group",
             "group": "tp_group",
             "collective": "all_reduce_sum",
-            "parallelism": "TP4",
+            "parallelism": "TP8",
             "payload": "row-parallel CSA output partials [B,T,H]",
             "result": "replicated CSA delta [B,T,H]"
           },
@@ -28144,7 +28144,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -28411,7 +28411,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -28433,7 +28433,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_query_latent",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "attention.q_a",
@@ -28475,7 +28475,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_a"
             ],
@@ -28534,7 +28534,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_a"
             ],
@@ -28555,7 +28555,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "32_of_128_query_heads_per_rank",
+            "tensor_layout": "16_of_128_query_heads_per_rank",
             "parallelism": "column_parallel"
           },
           "semantics": {
@@ -28598,7 +28598,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -28657,7 +28657,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -28716,7 +28716,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_q_b"
             ],
@@ -28738,7 +28738,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "replicated_single_kv_head",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "attention.window_kv",
@@ -28780,7 +28780,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_kv_to_cache"
             ],
@@ -28858,7 +28858,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer._compute_kv_to_cache"
             ],
@@ -28917,7 +28917,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -28935,7 +28935,7 @@
           "execution": {
             "placement": "replicated_on_tp_ranks",
             "tensor_layout": "full_ratio128_compressor_and_cache_on_every_rank",
-            "parallelism": "TP4"
+            "parallelism": "TP8"
           },
           "semantics": {
             "semantic_op": "compressor.softmax_pool",
@@ -28984,7 +28984,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -29042,7 +29042,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "SparsePrefillChunkCache.ensure_c128"
             ],
@@ -29109,7 +29109,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "combine_topk_swa_indices"
             ],
@@ -29130,7 +29130,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "local_32_query_heads_with_replicated_kv_and_indices",
+            "tensor_layout": "local_16_query_heads_with_replicated_kv_and_indices",
             "parallelism": "head_parallel"
           },
           "semantics": {
@@ -29197,7 +29197,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -29256,7 +29256,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -29277,7 +29277,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "4_of_16_output_groups_per_rank",
+            "tensor_layout": "2_of_16_output_groups_per_rank",
             "parallelism": "column_parallel_grouped"
           },
           "semantics": {
@@ -29320,7 +29320,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -29341,7 +29341,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "input_groups_sharded_4_way",
+            "tensor_layout": "input_groups_sharded_8_way",
             "parallelism": "row_parallel"
           },
           "semantics": {
@@ -29384,7 +29384,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -29402,7 +29402,7 @@
             "placement": "tp_group",
             "group": "tp_group",
             "collective": "all_reduce_sum",
-            "parallelism": "TP4",
+            "parallelism": "TP8",
             "payload": "row-parallel HCA output partials [B,T,H]",
             "result": "replicated HCA delta [B,T,H]"
           },
@@ -29475,7 +29475,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "MQALayer.forward"
             ],
@@ -29708,7 +29708,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -29767,7 +29767,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -29826,7 +29826,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -29893,7 +29893,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -29952,7 +29952,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30015,7 +30015,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30085,7 +30085,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30131,7 +30131,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30247,7 +30247,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30306,7 +30306,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30365,7 +30365,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30432,7 +30432,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30491,7 +30491,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30554,7 +30554,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30624,7 +30624,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30670,7 +30670,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "Compressor.forward_native"
             ],
@@ -30802,7 +30802,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -30866,7 +30866,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4Indexer.compute_q"
             ],
@@ -30925,7 +30925,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -30989,7 +30989,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -31048,7 +31048,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4Indexer.compute_weights"
             ],
@@ -31123,7 +31123,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -31187,7 +31187,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -31246,7 +31246,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -31292,7 +31292,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "C4IndexerBackendMixin.forward_c4_indexer"
             ],
@@ -31435,7 +31435,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "SparsePrefillChunkCache.ensure_c128"
             ],
@@ -31494,7 +31494,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "SparsePrefillChunkCache.ensure_c128"
             ],
@@ -31540,7 +31540,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "SparsePrefillChunkCache.ensure_c128"
             ],
@@ -31627,7 +31627,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -31691,7 +31691,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -31768,7 +31768,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -31834,7 +31834,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -31900,7 +31900,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -31985,7 +31985,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32057,7 +32057,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32078,7 +32078,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "every_expert_intermediate_sharded_4_way",
+            "tensor_layout": "every_expert_intermediate_sharded_8_way",
             "parallelism": "tensor_parallel_expert_mlp"
           },
           "semantics": {
@@ -32121,7 +32121,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32180,7 +32180,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32201,7 +32201,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "every_expert_intermediate_input_sharded_4_way",
+            "tensor_layout": "every_expert_intermediate_input_sharded_8_way",
             "parallelism": "row_parallel_expert_mlp"
           },
           "semantics": {
@@ -32244,7 +32244,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32311,7 +32311,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32332,7 +32332,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "shared_expert_intermediate_sharded_4_way",
+            "tensor_layout": "shared_expert_intermediate_sharded_8_way",
             "parallelism": "tensor_parallel_shared_mlp"
           },
           "semantics": {
@@ -32375,7 +32375,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE._forward_shared_experts"
             ],
@@ -32434,7 +32434,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE._forward_shared_experts"
             ],
@@ -32455,7 +32455,7 @@
           "node_kind": "semantic",
           "execution": {
             "placement": "all_tp_ranks",
-            "tensor_layout": "shared_expert_intermediate_input_sharded_4_way",
+            "tensor_layout": "shared_expert_intermediate_input_sharded_8_way",
             "parallelism": "row_parallel_shared_mlp"
           },
           "semantics": {
@@ -32498,7 +32498,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE._forward_shared_experts"
             ],
@@ -32565,7 +32565,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32583,7 +32583,7 @@
             "placement": "tp_group",
             "group": "tp_group",
             "collective": "all_reduce_sum",
-            "parallelism": "TP4",
+            "parallelism": "TP8",
             "payload": "routed-plus-shared row-parallel output partials [B,T,H]",
             "result": "replicated MoE delta [B,T,H]"
           },
@@ -32656,7 +32656,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV2MoE.forward"
             ],
@@ -32922,7 +32922,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -32981,7 +32981,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33040,7 +33040,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33099,7 +33099,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33158,7 +33158,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33212,7 +33212,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33282,7 +33282,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33352,7 +33352,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33411,7 +33411,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33478,7 +33478,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4MarkovHead.forward"
             ],
@@ -33545,7 +33545,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4MarkovHead.apply_step_logits"
             ],
@@ -33604,7 +33604,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4MarkovHead.sample_block"
             ],
@@ -33671,7 +33671,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33725,7 +33725,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DeepseekV4ForCausalLMDSpark.forward"
             ],
@@ -33939,7 +33939,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34006,7 +34006,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34076,7 +34076,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34130,7 +34130,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34197,7 +34197,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34256,7 +34256,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34318,7 +34318,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34372,7 +34372,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34418,7 +34418,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkV4Stage.forward"
             ],
@@ -34560,7 +34560,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.forward"
             ],
@@ -34619,7 +34619,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.kv_proj_only"
             ],
@@ -34692,7 +34692,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention._store_block_kv"
             ],
@@ -34751,7 +34751,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention._compute_q"
             ],
@@ -34810,7 +34810,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.forward"
             ],
@@ -34885,7 +34885,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.forward"
             ],
@@ -34944,7 +34944,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.forward"
             ],
@@ -34990,7 +34990,7 @@
             }
           ],
           "implementation_binding": {
-            "implementation_id": "sglang_71de97b_dsv4pro0813_tp4",
+            "implementation_id": "sglang_71de97b_dsv4pro0813_tp8",
             "symbols": [
               "DSparkAttention.forward"
             ],
