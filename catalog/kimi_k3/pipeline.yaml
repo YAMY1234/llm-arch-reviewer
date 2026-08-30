@@ -1,0 +1,201 @@
+schema_version: ir-pipeline-manifest.v1
+model_id: kimi_k3
+target: cross_framework_pure_tp8_stage1
+evidence_root: task_evidence_only
+
+source_lock:
+  model_id: moonshotai/Kimi-K3
+  model_revision: a590ce090cb049c93a33dfe8c208ec652aa20503
+  model_config_sha256: 9710e121a58d03ac92c8d6da287a19541994319afbbe6d6202af001ffd379213
+  model_index_sha256: a1c5210650ce71d2d3ae9ec5a101ac4afd3cf4b10091be589853437eb967febd
+  weight_file_count: 96
+  checkpoint_weight_bytes: 1560936091448
+  canonical_semantics:
+    checkpoint_source_revision: a590ce090cb049c93a33dfe8c208ec652aa20503
+    technical_report_revision: 3cb39dfd32e51c3328e2e4b4af21341247d06c43
+    technical_report_sha256: 86fb82a50a414262708962a042db9801e60b5ba8eb9293bdfec9b7ab6ea20eaa
+    semantic_closure:
+      status: complete
+      audit_fingerprint: e455ed3e8dbe8d535ee9
+      source_entrypoints_verified: 20
+      source_obligations_total: 99
+      source_obligations_pending: 0
+      model_ir_leaf_count: 97
+      reverse_mapped_leaf_count: 97
+      uncovered_model_ir_leaf_count: 0
+  framework_targets:
+    - framework: sglang
+      support_state: graph_off_pure_tp8_semantic_reconciliation_passed
+      source_commit: 25035bff8d34f3fcce2c1a2a5b1fe610225e84ed
+      container: immutable_sglang_runtime@sha256:a552834207a8a12b03c7b2fabcdea0406822ec1daccdc4e57c21a4c6c68f70c8
+      exact_source_mount: source/sglang-25035bff
+      runtime_source_verification: passed
+      eager_reconciliation: passed
+    - framework: vllm
+      support_state: graph_off_pure_tp8_semantic_reconciliation_passed
+      source_commit: 680e2177e473ed8dfaa9773f7ead185b369cab46
+      container_registry_manifest: vllm/vllm-openai:kimi-k3@sha256:d61eb329832ea78aeae233c840a78b5022dca5f1200df12cb54f3f2304f63131
+      container_squashfs_sha256: adac152ac6a8862a741ddf27787471206753ffe67d19e54a19b4365c11c3bb63
+      exact_source_mount: source/vllm-680e2177
+      compiled_extension_source: exact_source_commit_release_cuda13_sm100
+      compiled_extension_sha256: 80b923d451d58a731fb950af6baba749757d7e7c177ddb86a04e5ae4ee770c8d
+      compiled_extension_manifest_sha256: c8b30f9aff46a1e3adbb5265976c37d170b407c63a98a0d73703c9d7f236e8f8
+      compiled_extension_validation_sha256: 439bc6712b42a70b57da53637d0940726cccbc02f85d1ccbf67d96c66e47e563
+      runtime_source_verification: passed
+      eager_reconciliation: passed
+      eager_matrix_validation_sha256: 24955ba2addb59ef26aabe97d471fcfdc7824e2cf48423f7f25a7adcdf614ba3
+
+hardware:
+  environment: NVIDIA_GB300_NVL72
+  gpu: NVIDIA GB300
+  driver: 580.167.08
+  memory_per_gpu_mib: 284208
+  nodes: 2
+  gpus_per_node: 4
+  nvlink_domain: single_segment_two_trays
+
+execution:
+  execution_path_id: tp8
+  execution_fingerprint: exec_0940e544ee7886d6
+  serving_mode: aggregated
+  generation_mode: autoregressive
+  modality: text_only
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  sequence_parallel: false
+  attention_dp: false
+  mtp_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+  prefix_cache_enabled: false
+  candidate_plan_requires_eager_reconciliation: false
+
+workload:
+  fixed_lengths: true
+  isl: 8192
+  osl: 1024
+  random_range_ratio: 1.0
+  random_token_ids: true
+  no_intentionally_shared_prefix: true
+  ignore_eos: true
+  request_rate: inf
+  prompt_seed: 0
+  framework_random_seed: 0
+  warmup_request_multiplier: 3
+  formal_request_multiplier: 1
+
+capture_policy:
+  eager_semantic:
+    cuda_graph_enabled: false
+    phases: [prefill, decode]
+    collect: [python_stack, operator_stack, shapes, ranks, streams, collective_order, state_transitions, invocation_scope]
+  baseline_discovery:
+    profiler_enabled: false
+    preserve_trajectory_fields: true
+    select_formal_steady_state_midpoint: true
+  production:
+    prefill:
+      cuda_graph_enabled: false
+      global_batch_sizes: [1]
+      profiler: nsight_systems_2025.4.1
+    decode:
+      cuda_graph_enabled: true
+      global_batch_sizes: [1, 16, 64, 256]
+      profiler: nsight_systems_2025.4.1
+      require_all_tp_rank_traces: true
+      invocation_segment: exact_selected_model_forward
+  post_capture_validation:
+    require_actual_window_match: true
+    require_realized_lengths: [8192, 1024]
+    require_exact_batch_composition: true
+    require_graph_state_match: true
+    reject_phase_shape_rank_source_mismatch: true
+
+acceptance:
+  expected_profile_points: 10
+  unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported
+  cross_framework_performance_policy: same_gpu_sku_and_execution_fingerprint_only
+  raw_artifact_policy: task_evidence_only_with_manifest_and_sha256
+  viewer_special_cases_allowed: false
+  deterministic_build_repetitions: 2
+
+stage1_result:
+  status: complete
+  measured_profile_count: 8
+  unsupported_profile_count: 2
+  pending_profile_count: 0
+  profile_matrix:
+    - framework: sglang
+      phase: prefill
+      global_batch_size: 1
+      status: measured
+      profile_id: kimi_k3_tp8_sglang_prefill_bs1_8k
+      profile_sha256: a70a1ce474a4db63b1a664990b3e7c22d79f29ef2bd0b40fda8f5d739140939b
+      timeline_sha256: 584229911c66c1e0a29fa492b6fb654ded9ac9417f5c059e159784409b3ff0af
+    - framework: sglang
+      phase: decode
+      global_batch_size: 1
+      status: measured
+      profile_id: kimi_k3_tp8_sglang_cg_decode_bs1_8k1k
+      profile_sha256: 0608e80a1856acf3585c31bbe09f2e02e9411b6c6f220d63e2a0e2a514949157
+      timeline_sha256: 10b816c0b0634c3e7813c069a07e957525ecdb7e737cba49d8d6f60e815c2008
+    - framework: sglang
+      phase: decode
+      global_batch_size: 16
+      status: measured
+      profile_id: kimi_k3_tp8_sglang_cg_decode_bs16_8k1k
+      profile_sha256: 06d88119caf0dbd604cb90167f570cd0a979835cf71eae0fe825c0e01bfb9688
+      timeline_sha256: eac1de6f4aba24237014129f55742e8790f7338536cd86dd58dabd6d756b7d17
+    - framework: sglang
+      phase: decode
+      global_batch_size: 64
+      status: measured
+      profile_id: kimi_k3_tp8_sglang_cg_decode_bs64_8k1k
+      profile_sha256: ccbbf85cba68e8c90de56ca11456db098817738a9974d04f1b4022e1e3a71f44
+      timeline_sha256: 52c388b31effaddd76be389694a7550fa138f2ace15fdb925f6593dbb190caa6
+    - framework: sglang
+      phase: decode
+      global_batch_size: 256
+      status: unsupported
+      reason: Exact C256 admission and the required CUDA Graph cannot coexist within rank-local memory at the locked 8K/1K contract; lowering KV capacity violates admission and disabling the graph violates the production profile contract.
+      evidence_sha256:
+        - 812f62dc0c47703c912798b79bdbd683e4efa444b5e1ac4a4eeaf6f779f179a7
+        - 12f7f35ee2fd966e6da29334bf89786b65ca011c3ffb0c2a450f0779d728552b
+    - framework: vllm
+      phase: prefill
+      global_batch_size: 1
+      status: measured
+      profile_id: kimi_k3_tp8_vllm_prefill_bs1_8k
+      profile_sha256: c32e22ce1ba8dbf6ca8f4b838b4970b1603013fc4f97c27b8956e6e66a12c5b7
+      timeline_sha256: 91de2c19cf173508f5e5982685b337e8064ee707368c1fee83c85d259e329e02
+    - framework: vllm
+      phase: decode
+      global_batch_size: 1
+      status: measured
+      profile_id: kimi_k3_tp8_vllm_cg_decode_bs1_8k1k
+      profile_sha256: bbe80462cad1f2064dd2dfa58b8b936951ea3ca8b18e6c9870e5a74b32a38137
+      timeline_sha256: 2df1f8137d5f1d632e9489cec75ead9d728d0b6e730363dcae081488c5a8bb7a
+    - framework: vllm
+      phase: decode
+      global_batch_size: 16
+      status: measured
+      profile_id: kimi_k3_tp8_vllm_cg_decode_bs16_8k1k
+      profile_sha256: 8e4f2a96e89dbf421924954fe5c59f9cca82c790247beb2d40ccb622319191d8
+      timeline_sha256: 2eb80a7f8a6e209531f4fc9d41dfef8c5f36eb7750e7c62e95977daa521429e1
+    - framework: vllm
+      phase: decode
+      global_batch_size: 64
+      status: measured
+      profile_id: kimi_k3_tp8_vllm_cg_decode_bs64_8k1k
+      profile_sha256: c2ec41fce0a75c4b459567e568eda8bfa0d94f9dac861190d3a8ecefff7361f2
+      timeline_sha256: 6c1eb87996c183bf4c04f9e389fe0e33126a86ae670c74a17a1da1096a1a5cd1
+    - framework: vllm
+      phase: decode
+      global_batch_size: 256
+      status: unsupported
+      reason: The exact runtime exposes capacity for only 215.40 simultaneous 8192+1024 requests, below the required C256 plateau; a separate post-autotune attempt also failed on the first C256 CUDA Graph capture. No timing is accepted or substituted.
+      evidence_sha256:
+        - 960b8936531fa9d37a8fdfc377150f7be34b3ac5962cb513cc3ea71c6e88694d
+        - fad72ad911eccaad6cd1f8d2756508bea93d029aab081a1dd430ab111f488405

@@ -1,0 +1,372 @@
+schema_version: execution-plan.v2
+execution_path_id: tp8
+label: Pure tensor parallel TP8 portable contract
+model_id: kimi_k3
+plan_version: 1
+
+parallelism_axes:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+default_parameters:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+
+constraints:
+  tp_size: 8
+  dp_size: 1
+  cp_size: 1
+  ep_size: 1
+  attention_dp: false
+  sequence_parallel: false
+  serving_mode: aggregated
+  modality: text_only
+  mtp_enabled: false
+  hicache_enabled: false
+  kv_offload_enabled: false
+  prefix_cache_enabled: false
+  checkpoint_revision: a590ce090cb049c93a33dfe8c208ec652aa20503
+  validation_state: sglang_and_vllm_graph_off_pass
+  portable_fingerprint:
+    - vocabulary_sharded_embedding_then_tp_all_reduce
+    - head_sharded_kda_with_rank_local_conv_and_matrix_state
+    - replicated_compressed_mla_latent_with_head_sharded_expansion
+    - row_parallel_attention_output_then_tp_all_reduce
+    - replicated_attn_res_source_bank_and_scoring
+    - ep1_tensor_parallel_routed_experts_then_latent_tp_all_reduce_before_norm
+    - tensor_parallel_shared_experts_then_hidden_tp_all_reduce
+    - row_parallel_dense_output_then_tp_all_reduce
+    - vocabulary_sharded_lm_head_then_logits_materialization
+
+transforms:
+  - op: annotate_node
+    target: top.embedding
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocabulary_rows_sharded_8_way, parallelism: TP8}
+
+  - op: insert_after
+    after: top.embedding
+    node:
+      id: tp_embedding_output_collective
+      label: "TP embedding output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.embedding_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: local vocabulary-shard embedding partials [B,T,H]
+        result: replicated token embeddings [B,T,H]
+    edge: {identity: local_embedding_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: top.vision_frontend
+    set:
+      execution:
+        selection: structurally_retained_not_executed_because_stage1_requests_are_text_only
+        evidence_requirement: a media-bearing profile must define its own execution path and timing
+
+  - op: annotate_node
+    target: top.multimodal_injection
+    set:
+      execution: {selection: identity_for_text_only_stage1, placement: replicated_on_tp_ranks}
+
+  - op: annotate_node
+    target: attn_res.bank_in
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_completed_block_bank, state_owner: each_tp_rank}
+
+  - op: annotate_node
+    target: attn_res.prefix_in
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_live_prefix, state_owner: each_tp_rank}
+
+  - op: annotate_node
+    target: attn_res.rms_normalize
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: full_source_hidden, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: attn_res.score_projection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_scalar_projection, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: attn_res.weighted_merge
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_source_weighted_hidden, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: kda.qkv_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 96_heads_sharded_8_way_12_heads_per_rank, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: kda.q_short_conv
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_12_heads_width4_history, parallelism: head_parallel, state_owner: tp_rank_for_local_heads}
+
+  - op: annotate_node
+    target: kda.k_short_conv
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_12_heads_width4_history, parallelism: head_parallel, state_owner: tp_rank_for_local_heads}
+
+  - op: annotate_node
+    target: kda.v_short_conv
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_12_heads_width4_history, parallelism: head_parallel, state_owner: tp_rank_for_local_heads}
+
+  - op: annotate_node
+    target: kda.decay_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: replicated_low_rank_input_then_local_head_expansion, parallelism: replicated_then_column_parallel}
+
+  - op: annotate_node
+    target: kda.beta_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 12_local_head_beta_values, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: kda.recurrent_update
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_state_B_by_12_by_D_by_D, parallelism: independent_head_parallel, state_owner: tp_rank_for_local_heads}
+
+  - op: annotate_node
+    target: kda.output_gate
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 96_heads_sharded_8_way, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: kda.output_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_heads_sharded_8_way, parallelism: row_parallel_deferred_reduce}
+
+  - op: insert_after
+    after: kda.output_projection
+    node:
+      id: tp_kda_output_collective
+      label: "TP KDA output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.kda_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: row-parallel KDA output partials [B,T,H]
+        result: replicated KDA delta [B,T,H]
+        legal_fusion: may fold the pending live-prefix add and the following AttnRes input preparation into one physical owner
+    edge: {identity: local_kda_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: gated_mla.q_down
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_query_latent_Cq, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: gated_mla.q_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 96_query_heads_sharded_8_way, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: gated_mla.kv_down
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_compressed_latent_Ckv_plus_Da, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: gated_mla.kv_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 96_key_value_heads_sharded_8_way, parallelism: column_parallel_or_algebraically_absorbed_equivalent}
+
+  - op: annotate_node
+    target: gated_mla.cache_update
+    set:
+      execution: {placement: replicated_per_tp_rank, tensor_layout: full_sequence_compressed_Ckv_plus_Da_cache, state_owner: each_tp_rank}
+
+  - op: annotate_node
+    target: gated_mla.attention
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_12_query_heads_with_replicated_compressed_cache, parallelism: head_parallel}
+
+  - op: annotate_node
+    target: gated_mla.output_gate
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: 96_value_heads_sharded_8_way, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: gated_mla.output_projection
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_heads_sharded_8_way, parallelism: row_parallel_deferred_reduce}
+
+  - op: insert_after
+    after: gated_mla.output_projection
+    node:
+      id: tp_mla_output_collective
+      label: "TP Gated MLA output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.mla_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: row-parallel Gated MLA output partials [B,T,H]
+        result: replicated Gated MLA delta [B,T,H]
+        legal_fusion: may fold the pending live-prefix add and following AttnRes input preparation into one physical owner
+    edge: {identity: local_mla_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: dense_mlp.gate_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: intermediate_features_sharded_8_way, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: dense_mlp.down
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_intermediate_sharded_8_way, parallelism: row_parallel}
+
+  - op: insert_after
+    after: dense_mlp.down
+    node:
+      id: tp_dense_output_collective
+      label: "TP dense SiTU output\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.dense_output_collective
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8
+        payload: row-parallel dense MLP output partials [B,T,H]
+        result: replicated dense MLP delta [B,T,H]
+    edge: {identity: local_dense_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: stable_latent_moe.router_logits
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_fp32_router_logits, parallelism: TP8_EP1}
+
+  - op: annotate_node
+    target: stable_latent_moe.corrected_selection
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_top16_ids, parallelism: TP8_EP1}
+
+  - op: annotate_node
+    target: stable_latent_moe.routed_down
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_Hr_latent, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: stable_latent_moe.dispatch
+    set:
+      execution: {placement: local_within_each_tp_rank, tensor_layout: same_tokens_to_all_896_tensor_parallel_experts, parallelism: TP8_EP1}
+
+  - op: annotate_node
+    target: stable_latent_moe.expert_gate_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: all_896_experts_with_intermediate_features_sharded_8_way, parallelism: tensor_parallel_experts_EP1}
+
+  - op: annotate_node
+    target: stable_latent_moe.expert_down
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: all_896_experts_with_input_intermediate_sharded_8_way, parallelism: tensor_parallel_experts_EP1}
+
+  - op: annotate_node
+    target: stable_latent_moe.weighted_reduce
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: local_partial_routed_latent_Hr, parallelism: tensor_parallel_partial_sum}
+
+  - op: insert_after
+    after: stable_latent_moe.weighted_reduce
+    node:
+      id: tp_routed_latent_collective
+      label: "TP routed latent\nall-reduce before RMSNorm"
+      shape: elem
+      semantic_op: execution.tp.routed_latent_collective
+      node_kind: communication
+      boundary_role: module_internal
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8_EP1
+        payload: tensor-parallel routed-expert partials [B*T,Hr]
+        result: replicated routed latent [B*T,Hr]
+        order_invariant: collective completes before latent RMSNorm because norm(sum_r x_r) is not sum_r norm(x_r)
+        legal_fusion: may share one physical collective owner with the shared-expert reduction while preserving two logical result slices
+    edge: {identity: local_routed_latent_partials, shape: "[B*T,Hr]", layout: token_latent_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: stable_latent_moe.latent_norm
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: fully_reduced_Hr_latent, parallelism: TP8_replicated}
+
+  - op: annotate_node
+    target: stable_latent_moe.routed_up
+    set:
+      execution: {placement: replicated_on_tp_ranks, tensor_layout: replicated_full_width_routed_output, parallelism: replicated_projection_or_equivalent_column_shard_all_gather}
+
+  - op: annotate_node
+    target: stable_latent_moe.shared_gate_up
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: shared_intermediate_features_sharded_8_way, parallelism: column_parallel}
+
+  - op: annotate_node
+    target: stable_latent_moe.shared_down
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: input_shared_intermediate_sharded_8_way, parallelism: row_parallel}
+
+  - op: insert_after
+    after: stable_latent_moe.shared_down
+    node:
+      id: tp_shared_expert_collective
+      label: "TP shared experts\nall-reduce"
+      shape: elem
+      semantic_op: execution.tp.shared_expert_collective
+      node_kind: communication
+      boundary_role: module_internal
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_reduce
+        parallelism: TP8_EP1
+        payload: row-parallel shared-expert output partials [B,T,H]
+        result: replicated shared-expert output [B,T,H]
+        legal_fusion: may share one physical collective owner with the routed-latent reduction while preserving two logical result slices
+    edge: {identity: local_shared_output_partials, shape: "[B,T,H]", layout: batch_sequence_hidden_partial_sum, dtype: model_activation_dtype, state: ephemeral_activation}
+
+  - op: annotate_node
+    target: top.lm_head
+    set:
+      execution: {placement: all_tp_ranks, tensor_layout: vocabulary_rows_sharded_8_way, parallelism: column_parallel}
+
+  - op: insert_after
+    after: top.lm_head
+    node:
+      id: tp_logits_materialization
+      label: "TP logits materialization\nall-gather or equivalent distributed sampling"
+      shape: elem
+      semantic_op: execution.tp.logits_materialization
+      node_kind: communication
+      boundary_role: module_boundary
+      execution:
+        placement: tp_group
+        group: tp_group
+        collective: all_gather_or_distributed_sampling_equivalent
+        parallelism: TP8
+        payload: local vocabulary logits [B,T,V/8] with padding as required
+        result: logical full-vocabulary logits [B,T,V] or identical sampled-token result
+    edge: {identity: local_vocabulary_logits, shape: "[B,T,V/8]", layout: batch_sequence_vocabulary_shard, dtype: logits_dtype, state: ephemeral_output}

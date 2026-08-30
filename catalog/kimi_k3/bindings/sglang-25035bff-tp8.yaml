@@ -1,0 +1,174 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_25035bff_kimi_k3_tp8
+label: SGLang 25035bff Kimi K3 pure TP8
+model_id: kimi_k3
+execution_path_id: tp8
+source_repo: https://github.com/sgl-project/sglang
+source_commit: 25035bff8d34f3fcce2c1a2a5b1fe610225e84ed
+container: immutable_sglang_runtime@sha256:a552834207a8a12b03c7b2fabcdea0406822ec1daccdc4e57c21a4c6c68f70c8
+backend: sglang_kimi_k3_native_mxfp4_kda_mla_attnres
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_0940e544ee7886d6
+  required_phases: [prefill, decode]
+  cuda_graph_enabled: false
+  evidence:
+    - sha256:00c589d8491ab3e8840a9c58916ad7294f26a00dea73046fb1cfce81e388e460
+  notes: The mounted runtime source is byte-for-byte locked to the pinned commit. Exact graph-off pure-TP8 prefill C1 and decode C1/C16/C64 traces cover all eight ranks with the fixed 8K/1K contract, 3xC warmup and 1xC formal requests, 100 percent mapped kernel duration, 100 percent stack duration, identical semantic counts across ranks, the exact 69 KDA plus 24 gated-MLA layer schedule, exact TP collective boundaries, explicit cache/state transitions, and reviewed 1:N or N:1 fusion ownership. Decode C256 is separately retained as an evidenced runtime-capacity limitation and is not used to validate this binding.
+
+node_bindings:
+  top.token_ids: &sg_text
+    symbols: [KimiK3ForConditionalGeneration, KimiK3LinearForCausalLM, KimiK3LinearModel]
+    links: [{file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3ForConditionalGeneration, line: 2933, display: kimi_k3.py - native multimodal wrapper and text backbone}]
+  top.embedding: *sg_text
+  top.decoder_stack: *sg_text
+  top.final_norm:
+    symbols: [KimiK3LinearModel.forward, AttnResidual.forward, RMSNorm]
+    kernel_signatures: [attn_res_fused_tma]
+    links:
+      - {file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3LinearModel.forward, line: 2515, display: kimi_k3.py - final AttnRes call passes the model RMSNorm into the measured owner}
+      - {file: python/sglang/srt/layers/attn_residual.py, symbol: AttnResidual.forward, line: 451, display: attn_residual.py - out_norm is fused into the aggregation kernel}
+  top.lm_head: *sg_text
+  top.logits: *sg_text
+  decoder_stack.stack_in: *sg_text
+  decoder_stack.stack_out: *sg_text
+
+  top.vision_inputs: &sg_vision
+    symbols: [KimiK3VisionTower, KimiK3MultiModalProjector, MoonViTEncoderLayer]
+    links: [{file: python/sglang/srt/models/kimi_k3_vl.py, symbol: KimiK3VisionTower, line: 732, display: kimi_k3_vl.py - K3 vision tower and projector}]
+  top.vision_frontend: *sg_vision
+  top.multimodal_injection: *sg_vision
+  vision_frontend.vision_in: *sg_vision
+  vision_frontend.patch_projection: *sg_vision
+  vision_frontend.position_encoding: *sg_vision
+  vision_frontend.vision_blocks: *sg_vision
+  vision_frontend.temporal_pool: *sg_vision
+  vision_frontend.spatial_group: *sg_vision
+  vision_frontend.projector_norm: *sg_vision
+  vision_frontend.projector_hidden_activation: *sg_vision
+  vision_frontend.projector_down: *sg_vision
+  vision_frontend.vision_out: *sg_vision
+  vision_block.block_in: *sg_vision
+  vision_block.norm1: *sg_vision
+  vision_block.qkv_projection: *sg_vision
+  vision_block.joint_spatiotemporal_attention: *sg_vision
+  vision_block.output_projection: *sg_vision
+  vision_block.attention_residual: *sg_vision
+  vision_block.norm2: *sg_vision
+  vision_block.mlp_up: *sg_vision
+  vision_block.gelu: *sg_vision
+  vision_block.mlp_down: *sg_vision
+  vision_block.block_out: *sg_vision
+
+  decoder_stack.schedule: &sg_layer
+    symbols: [KimiK3DecoderLayer, KimiK3LinearModel]
+    links: [{file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3DecoderLayer, line: 1876, display: kimi_k3.py - immutable KDA MLA and feed-forward layer schedule}]
+  decoder_stack.input_norm: *sg_layer
+  decoder_stack.attention_schedule: *sg_layer
+  decoder_stack.prefix_after_attention: *sg_layer
+  decoder_stack.post_attention_norm: *sg_layer
+  decoder_stack.feed_forward_schedule: *sg_layer
+  decoder_stack.prefix_after_ffn: *sg_layer
+
+  top.output_attn_res: &sg_attnres
+    symbols: [AttnResidual, aggregate_stream, KimiK3DecoderLayer._forward_attn_residual]
+    kernel_signatures: [attn_res_fused_tma, kimi_k3_attn_res]
+    links: [{file: python/sglang/srt/layers/attn_residual.py, symbol: AttnResidual, line: 422, display: attn_residual.py - snapshot bank aggregation and TP-aware implementation}]
+  decoder_stack.attn_res_read: *sg_attnres
+  decoder_stack.block_write: *sg_attnres
+  decoder_stack.ffn_attn_res_read: *sg_attnres
+  attn_res.bank_in: *sg_attnres
+  attn_res.prefix_in: *sg_attnres
+  attn_res.source_concat: *sg_attnres
+  attn_res.rms_normalize: *sg_attnres
+  attn_res.score_projection: *sg_attnres
+  attn_res.source_softmax: *sg_attnres
+  attn_res.weighted_merge: *sg_attnres
+  attn_res.attn_res_out: *sg_attnres
+
+  decoder_stack.kda: &sg_kda
+    symbols: [KimiK3DeltaAttention, KDAAttnBackend, KDAKernelDispatcher]
+    kernel_signatures: [kda_fused_decode, fused_recurrent_kda_packed_decode, chunk_kda, causal_conv1d_fwd, causal_conv1d_update]
+    links:
+      - {file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3DeltaAttention, line: 1206, display: kimi_k3.py - K3 projection gate and output path}
+      - {file: python/sglang/srt/layers/attention/linear/kda_backend.py, symbol: KDAAttnBackend, line: 338, display: kda_backend.py:338 - phase-specific state and KDA backend}
+  kda.kda_in: *sg_kda
+  kda.qkv_projection: *sg_kda
+  kda.q_short_conv: *sg_kda
+  kda.k_short_conv: *sg_kda
+  kda.v_short_conv: *sg_kda
+  kda.qk_l2_norm: *sg_kda
+  kda.decay_projection: *sg_kda
+  kda.lower_bounded_decay: *sg_kda
+  kda.beta_projection: *sg_kda
+  kda.recurrent_update: *sg_kda
+  kda.query_readout: *sg_kda
+  kda.output_gate: *sg_kda
+  kda.gated_rmsnorm: *sg_kda
+  kda.output_projection: *sg_kda
+  kda.kda_out: *sg_kda
+  kda.tp_kda_output_collective: *sg_kda
+
+  decoder_stack.gated_mla: &sg_mla
+    symbols: [KimiK3MLAAttention, DeepseekV2AttentionMLA]
+    kernel_signatures: [fused_qkv_a_proj_with_mqa, trtllm_mla_prefill, trtllm_mla_decode, cutedsl_mla_decode]
+    links: [{file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3MLAAttention, line: 1703, display: kimi_k3.py - K3 NoPE MLA gate and output projection}]
+  gated_mla.mla_in: *sg_mla
+  gated_mla.q_down: *sg_mla
+  gated_mla.q_norm: *sg_mla
+  gated_mla.q_up: *sg_mla
+  gated_mla.kv_down: *sg_mla
+  gated_mla.kv_norm: *sg_mla
+  gated_mla.kv_up: *sg_mla
+  gated_mla.key_compose: *sg_mla
+  gated_mla.cache_update: *sg_mla
+  gated_mla.attention: *sg_mla
+  gated_mla.output_gate: *sg_mla
+  gated_mla.gated_context: *sg_mla
+  gated_mla.output_projection: *sg_mla
+  gated_mla.mla_out: *sg_mla
+  gated_mla.tp_mla_output_collective: *sg_mla
+
+  decoder_stack.dense_mlp: &sg_dense
+    symbols: [KimiK3MLP, SituAndMul]
+    kernel_signatures: [fused_gate_up_situ, row_parallel_down_proj]
+    links: [{file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3MLP, line: 241, display: kimi_k3.py - dense SiTU feed-forward network}]
+  dense_mlp.dense_in: *sg_dense
+  dense_mlp.gate_up: *sg_dense
+  dense_mlp.situ: *sg_dense
+  dense_mlp.down: *sg_dense
+  dense_mlp.dense_out: *sg_dense
+  dense_mlp.tp_dense_output_collective: *sg_dense
+
+  decoder_stack.stable_latent_moe: &sg_moe
+    symbols: [KimiK3MoE, MoEGate, TopK]
+    kernel_signatures: [moe_front, flashinfer_mxfp4_moe, finalize_all_reduce_push_norm, all_reduce_norm, gemm_ag_up_proj]
+    links: [{file: python/sglang/srt/models/kimi_k3.py, symbol: KimiK3MoE, line: 354, display: kimi_k3.py - Stable LatentMoE routing expert branches and ordered tail}]
+  stable_latent_moe.moe_in: *sg_moe
+  stable_latent_moe.router_logits: *sg_moe
+  stable_latent_moe.router_sigmoid: *sg_moe
+  stable_latent_moe.corrected_selection: *sg_moe
+  stable_latent_moe.weight_normalize: *sg_moe
+  stable_latent_moe.routed_down: *sg_moe
+  stable_latent_moe.dispatch: *sg_moe
+  stable_latent_moe.expert_gate_up: *sg_moe
+  stable_latent_moe.expert_situ: *sg_moe
+  stable_latent_moe.expert_down: *sg_moe
+  stable_latent_moe.weighted_reduce: *sg_moe
+  stable_latent_moe.tp_routed_latent_collective: *sg_moe
+  stable_latent_moe.latent_norm: *sg_moe
+  stable_latent_moe.routed_up: *sg_moe
+  stable_latent_moe.shared_gate_up: *sg_moe
+  stable_latent_moe.shared_situ: *sg_moe
+  stable_latent_moe.shared_down: *sg_moe
+  stable_latent_moe.tp_shared_expert_collective: *sg_moe
+  stable_latent_moe.combine: *sg_moe
+  stable_latent_moe.moe_out: *sg_moe
+
+  top.tp_embedding_output_collective: &sg_collective
+    symbols: [CustomAllReduce, tensor_model_parallel_all_reduce]
+    kernel_signatures: [custom_all_reduce, ncclAllReduce]
+    links: [{file: python/sglang/srt/distributed/communication_op.py, line: 18, symbol: tensor_model_parallel_all_reduce, display: communication_op.py:18 - TP collective boundary}]
+  top.tp_logits_materialization: *sg_collective

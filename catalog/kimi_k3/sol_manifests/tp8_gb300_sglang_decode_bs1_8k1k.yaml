@@ -1,0 +1,430 @@
+schema_version: sol-manifest.v1
+sol_profile_id: kimi_k3_tp8_gb300_sglang_decode_bs1_8k1k_ideal_v1
+gap_report_id: kimi_k3_tp8_gb300_sglang_decode_bs1_8k1k_gap_v1
+label: Kimi K3 pure TP8 · GB300 · SGLang decode BS1 · semantic ideal SoL
+gap_label: Kimi K3 pure TP8 measured-to-ideal gap · calibration incomplete
+model_id: kimi_k3
+execution_path_id: tp8
+measured_profile_id: kimi_k3_tp8_sglang_cg_decode_bs1_8k1k
+hardware_spec_id: nvidia_gb300_nvl72_per_gpu_v1
+phase: decode
+correctness_tolerance_pct: 2.0
+
+variables:
+  H: 7168
+  V: 163840
+  L: 93
+  Lkda: 69
+  Lmla: 24
+  N: 96
+  D: 128
+  Da: 64
+  Cq: 1536
+  Ckv: 512
+  A: 9
+  E: 896
+  K: 16
+  Hr: 3584
+  Ie: 3072
+  Id: 33792
+  Es: 2
+  T: 1
+  S: isl+513
+  N_LOCAL: N/TP
+  KDA_WIDTH_LOCAL: N_LOCAL*D
+  MLA_Q_WIDTH_LOCAL: N_LOCAL*(D+Da)
+  MLA_KV_WIDTH_LOCAL: N_LOCAL*(D+D)
+  DENSE_INTERMEDIATE_LOCAL: Id/TP
+  SHARED_INTERMEDIATE_LOCAL: Es*Ie/TP
+  ATTNRES_INTERNAL_CALLS: 2*L
+  ATTNRES_INTERNAL_SOURCE_SUM: 2*(12*(1+2+3+4+5+6+7)+9*8)
+  ATTNRES_FINAL_SOURCES: A
+  MXFP4_PACKED_BYTES_PER_WEIGHT: 17/32
+
+assumptions:
+  semantic_math: The complete text-only pure-TP8 decode contract is represented at the exact BS1 baseline-relative step 513 coordinate. Every executed compute, state, and collective boundary has either an ideal lower-bound owner or an explicit structural inclusion in that owner.
+  fusion_policy: Costs follow the SGLang graph-off reconciliation and graph-on ownership contract. A fused semantic child is structural and contributes only through its single measured owner; no measured interval or ideal cost is copied across children.
+  overlap_policy: The top-level decoder, final AttnRes, and logits path is a serial semantic lower bound. No speculative cross-layer or cross-stream overlap is credited.
+  cache_policy: MLA cache traffic uses the portable compressed Ckv+Da state. KDA state traffic uses the local 12-head matrix state. The selected decode coordinate has S=8192+513 cached positions.
+  quantization_policy: Attention, dense MLP, shared experts, and LM head use the checkpoint BF16 exclusion ledger. Routed-MoE MXFP4 nodes use only their compulsory packed-weight and scale traffic as a safe physical lower bound because the shared hardware catalog has no FP4 compute peak.
+  calibration_policy: The shared GB300 catalog contains theoretical ceilings only. This report separates physical ideal coverage from unavailable attainable projections and does not attribute the uncalibrated remainder to a framework.
+
+schedule:
+  complete_step: true
+  note: Full text-only pure-TP8 BS1 decode semantic ideal coverage. Attainable projections remain unavailable until exact Kimi K3 kernel-plan calibration surfaces are added to the shared hardware catalog.
+
+nodes:
+  # Text-only top-level boundaries and conditional multimodal path.
+  top.token_ids: {model: structural, reason: input boundary}
+  top.vision_inputs: {model: structural, reason: not executed by the text-only profile}
+  top.vision_frontend: {model: structural, reason: not executed by the text-only profile}
+  top.multimodal_injection: {model: structural, reason: identity for the text-only profile}
+  top.final_norm: {model: structural, reason: fused into top.output_attn_res by the validated SGLang binding}
+  top.logits: {model: structural, reason: output boundary}
+  top.embedding:
+    model: memory
+    bytes: 4*B*T*H
+    assumptions: [one BF16 embedding-vector read and one hidden-state write]
+  top.tp_embedding_output_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*H
+    fabric: nvlink
+    depends_on: [top.embedding]
+  top.output_attn_res:
+    model: roofline
+    operator_family: attn_res
+    ops: B*T*ATTNRES_FINAL_SOURCES*(4*H+8)
+    bytes: 2*H + 4*B*T*ATTNRES_FINAL_SOURCES*H + 8*B*T*H
+    dtype: bf16
+    depends_on: [top.decoder_stack]
+    assumptions: [includes final source normalization scoring softmax weighted merge and fused final RMSNorm]
+  top.lm_head:
+    model: gemm
+    m: B*T
+    n: V/TP
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    depends_on: [top.output_attn_res]
+    assumptions: [vocabulary rows are sharded over TP8]
+  top.tp_logits_materialization:
+    model: collective
+    collective: all_gather
+    group_size: TP
+    payload_bytes: 2*B*T*(V/TP)
+    fabric: nvlink
+    depends_on: [top.lm_head]
+
+  # Vision views remain structurally complete but are not selected by this workload.
+  vision_frontend.vision_in: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.patch_projection: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.position_encoding: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.vision_blocks: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.temporal_pool: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.spatial_group: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.projector_hidden_activation: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.projector_down: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.projector_norm: {model: structural, reason: not executed by the text-only profile}
+  vision_frontend.vision_out: {model: structural, reason: not executed by the text-only profile}
+  vision_block.block_in: {model: structural, reason: not executed by the text-only profile}
+  vision_block.norm1: {model: structural, reason: not executed by the text-only profile}
+  vision_block.qkv_projection: {model: structural, reason: not executed by the text-only profile}
+  vision_block.joint_spatiotemporal_attention: {model: structural, reason: not executed by the text-only profile}
+  vision_block.output_projection: {model: structural, reason: not executed by the text-only profile}
+  vision_block.attention_residual: {model: structural, reason: not executed by the text-only profile}
+  vision_block.norm2: {model: structural, reason: not executed by the text-only profile}
+  vision_block.mlp_up: {model: structural, reason: not executed by the text-only profile}
+  vision_block.gelu: {model: structural, reason: not executed by the text-only profile}
+  vision_block.mlp_down: {model: structural, reason: not executed by the text-only profile}
+  vision_block.block_out: {model: structural, reason: not executed by the text-only profile}
+
+  # Decoder orchestration; physical work is charged once to the leaves below.
+  decoder_stack.stack_in: {model: structural, reason: tensor and state boundary}
+  decoder_stack.schedule: {model: structural, reason: immutable repeated layer schedule}
+  decoder_stack.attn_res_read: {model: structural, reason: fused into attn_res.weighted_merge}
+  decoder_stack.block_write: {model: structural, reason: completed-block bank transition charged to attn_res.weighted_merge}
+  decoder_stack.input_norm: {model: structural, reason: fused into attn_res.weighted_merge}
+  decoder_stack.attention_schedule: {model: structural, reason: immutable KDA and MLA control choice}
+  decoder_stack.kda: {model: structural, reason: cost is decomposed in the kda view}
+  decoder_stack.gated_mla: {model: structural, reason: cost is decomposed in the gated_mla view}
+  decoder_stack.prefix_after_attention: {model: structural, reason: fused into attn_res.weighted_merge}
+  decoder_stack.ffn_attn_res_read: {model: structural, reason: fused into attn_res.weighted_merge}
+  decoder_stack.post_attention_norm: {model: structural, reason: fused into attn_res.weighted_merge}
+  decoder_stack.feed_forward_schedule: {model: structural, reason: immutable dense and MoE control choice}
+  decoder_stack.dense_mlp: {model: structural, reason: cost is decomposed in the dense_mlp view}
+  decoder_stack.stable_latent_moe: {model: structural, reason: cost is decomposed in the stable_latent_moe view}
+  decoder_stack.prefix_after_ffn:
+    model: elementwise
+    bytes: 6*B*T*H
+    ops: B*T*H
+    assumptions: [the final live-prefix materialization is directly measured; intermediate additions are included in the following AttnRes owner]
+  decoder_stack.stack_out: {model: structural, reason: tensor and state boundary}
+
+  # All 186 decoder-internal AttnRes calls share one measured semantic owner.
+  attn_res.bank_in: {model: structural, reason: completed-block state boundary}
+  attn_res.prefix_in: {model: structural, reason: live-prefix state boundary}
+  attn_res.source_concat: {model: structural, reason: fused into attn_res.weighted_merge}
+  attn_res.rms_normalize: {model: structural, reason: fused into attn_res.weighted_merge}
+  attn_res.score_projection: {model: structural, reason: fused into attn_res.weighted_merge}
+  attn_res.source_softmax: {model: structural, reason: fused into attn_res.weighted_merge}
+  attn_res.weighted_merge:
+    model: roofline
+    operator_family: attn_res
+    ops: B*T*ATTNRES_INTERNAL_SOURCE_SUM*(4*H+8)
+    bytes: 2*H*ATTNRES_INTERNAL_CALLS + 4*B*T*ATTNRES_INTERNAL_SOURCE_SUM*H + 8*B*T*H*ATTNRES_INTERNAL_CALLS
+    dtype: bf16
+    assumptions: [single owner includes source stacking normalization scoring softmax merge residual preparation and next-sublayer RMSNorm]
+  attn_res.attn_res_out: {model: structural, reason: tensor boundary}
+
+  # KDA: decode fusion ownership follows the validated graph-off binding.
+  kda.kda_in: {model: structural, reason: tensor boundary}
+  kda.q_short_conv: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.k_short_conv: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.v_short_conv: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.qk_l2_norm: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.lower_bounded_decay: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.query_readout: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.output_gate: {model: structural, reason: fused into kda.qkv_projection}
+  kda.gated_rmsnorm: {model: structural, reason: fused into kda.recurrent_update for decode}
+  kda.kda_out: {model: structural, reason: tensor and state boundary}
+  kda.qkv_projection:
+    model: gemm
+    m: B*T
+    n: 4*KDA_WIDTH_LOCAL
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lkda
+    assumptions: [single projection owner includes Q K V and the full-rank output gate]
+  kda.decay_projection:
+    model: roofline
+    ops: 2*B*T*(H*D + D*KDA_WIDTH_LOCAL)
+    bytes: 2*(H*D + D*KDA_WIDTH_LOCAL) + 4*B*T*(H+D+KDA_WIDTH_LOCAL)
+    dtype: bf16
+    repetitions: Lkda
+  kda.beta_projection:
+    model: gemm
+    m: B*T
+    n: N_LOCAL
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 4
+    repetitions: Lkda
+  kda.recurrent_update:
+    model: roofline
+    operator_family: gated_delta_rule
+    ops: 6*B*T*N_LOCAL*D*D + 16*B*T*KDA_WIDTH_LOCAL
+    bytes: 8*B*N_LOCAL*D*D + 24*B*T*KDA_WIDTH_LOCAL
+    dtype: bf16
+    repetitions: Lkda
+    assumptions: [includes width-4 Q K V state updates L2 normalization bounded decay matrix update query readout and gated RMSNorm]
+  kda.output_projection:
+    model: gemm
+    m: B*T
+    n: H
+    k: KDA_WIDTH_LOCAL
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lkda
+  kda.tp_kda_output_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*H
+    fabric: nvlink
+    repetitions: Lkda
+
+  # Gated MLA keeps the compressed cache portable while charging absorbed decode weights once.
+  gated_mla.mla_in: {model: structural, reason: tensor boundary}
+  gated_mla.kv_down: {model: structural, reason: fused into gated_mla.q_down}
+  gated_mla.kv_up: {model: structural, reason: absorbed into gated_mla.attention for decode}
+  gated_mla.key_compose: {model: structural, reason: absorbed into gated_mla.attention for decode}
+  gated_mla.cache_update: {model: structural, reason: persistent compressed-cache transition charged to gated_mla.attention}
+  gated_mla.mla_out: {model: structural, reason: tensor and state boundary}
+  gated_mla.q_down:
+    model: gemm
+    m: B*T
+    n: Cq+Ckv+Da
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lmla
+    assumptions: [single fused A-projection owner includes q_down and kv_down]
+  gated_mla.q_norm: {model: elementwise, bytes: 8*B*T*Cq, ops: 8*B*T*Cq, repetitions: Lmla}
+  gated_mla.q_up:
+    model: gemm
+    m: B*T
+    n: MLA_Q_WIDTH_LOCAL
+    k: Cq
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lmla
+  gated_mla.kv_norm: {model: elementwise, bytes: 8*B*T*Ckv, ops: 8*B*T*Ckv, repetitions: Lmla}
+  gated_mla.attention:
+    model: roofline
+    operator_family: attention
+    ops: 2*B*T*N_LOCAL*S*((D+Da)+D) + 2*B*T*Ckv*MLA_KV_WIDTH_LOCAL
+    bytes: 2*B*S*(Ckv+Da) + 2*Ckv*MLA_KV_WIDTH_LOCAL + 4*B*T*(MLA_Q_WIDTH_LOCAL+KDA_WIDTH_LOCAL)
+    dtype: bf16
+    repetitions: Lmla
+    assumptions: [compressed-cache traffic plus algebraically absorbed kv_up reconstruction and NoPE attention]
+  gated_mla.output_gate:
+    model: gemm
+    m: B*T
+    n: KDA_WIDTH_LOCAL
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lmla
+  gated_mla.gated_context: {model: elementwise, bytes: 6*B*T*KDA_WIDTH_LOCAL, ops: B*T*KDA_WIDTH_LOCAL, repetitions: Lmla}
+  gated_mla.output_projection:
+    model: gemm
+    m: B*T
+    n: H
+    k: KDA_WIDTH_LOCAL
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: Lmla
+  gated_mla.tp_mla_output_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*H
+    fabric: nvlink
+    repetitions: Lmla
+
+  # Dense layer zero.
+  dense_mlp.dense_in: {model: structural, reason: tensor boundary}
+  dense_mlp.dense_out: {model: structural, reason: tensor boundary}
+  dense_mlp.gate_up:
+    model: gemm
+    m: B*T
+    n: 2*DENSE_INTERMEDIATE_LOCAL
+    k: H
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+  dense_mlp.situ: {model: elementwise, bytes: 10*B*T*DENSE_INTERMEDIATE_LOCAL, ops: 12*B*T*DENSE_INTERMEDIATE_LOCAL}
+  dense_mlp.down:
+    model: gemm
+    m: B*T
+    n: H
+    k: DENSE_INTERMEDIATE_LOCAL
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+  dense_mlp.tp_dense_output_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*H
+    fabric: nvlink
+
+  # Stable LatentMoE layers 1..92. Fused owners include every semantic child once.
+  stable_latent_moe.moe_in: {model: structural, reason: tensor boundary}
+  stable_latent_moe.router_sigmoid: {model: structural, reason: fused into stable_latent_moe.router_logits}
+  stable_latent_moe.weight_normalize: {model: structural, reason: fused into stable_latent_moe.corrected_selection}
+  stable_latent_moe.routed_down: {model: structural, reason: fused into stable_latent_moe.router_logits}
+  stable_latent_moe.expert_situ: {model: structural, reason: fused into stable_latent_moe.expert_gate_up}
+  stable_latent_moe.weighted_reduce: {model: structural, reason: fused into stable_latent_moe.tp_routed_latent_collective for decode}
+  stable_latent_moe.latent_norm: {model: structural, reason: fused into stable_latent_moe.tp_routed_latent_collective}
+  stable_latent_moe.shared_gate_up: {model: structural, reason: fused into stable_latent_moe.router_logits}
+  stable_latent_moe.moe_out: {model: structural, reason: tensor boundary}
+  stable_latent_moe.router_logits:
+    model: roofline
+    operator_family: moe_front
+    ops: 2*B*T*H*(E+Hr+2*SHARED_INTERMEDIATE_LOCAL)
+    bytes: 2*H*(E+2*SHARED_INTERMEDIATE_LOCAL) + MXFP4_PACKED_BYTES_PER_WEIGHT*H*Hr + 4*B*T*E + 4*B*T*(H+Hr+2*SHARED_INTERMEDIATE_LOCAL)
+    dtype: bf16
+    repetitions: L-1
+    assumptions: [single front owner includes BF16 shared gate-up and router plus MXFP4 routed-down compulsory packed-weight traffic]
+  stable_latent_moe.corrected_selection:
+    model: elementwise
+    bytes: B*T*(8*E+16*K)
+    ops: 2*B*T*E
+    repetitions: L-1
+    assumptions: [includes sigmoid corrected TopK and unbiased selected-weight normalization]
+  stable_latent_moe.dispatch:
+    model: elementwise
+    bytes: 8*B*T*(Hr+K)
+    ops: B*T*(E+K)
+    repetitions: L-1
+  stable_latent_moe.expert_gate_up:
+    model: memory
+    operator_family: moe_grouped_gemm
+    bytes: MXFP4_PACKED_BYTES_PER_WEIGHT*K*Hr*(2*Ie/TP) + 8*B*T*K*(Hr+Ie/TP)
+    repetitions: L-1
+    assumptions: [selected-expert compulsory MXFP4 gate-up weights plus SiTU activation traffic; compute peak intentionally unavailable]
+  stable_latent_moe.expert_down:
+    model: memory
+    operator_family: moe_grouped_gemm
+    bytes: MXFP4_PACKED_BYTES_PER_WEIGHT*K*(Ie/TP)*Hr + 4*B*T*K*(Ie/TP+Hr)
+    repetitions: L-1
+    assumptions: [selected-expert compulsory MXFP4 down weights; compute peak intentionally unavailable]
+  stable_latent_moe.tp_routed_latent_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*Hr
+    fabric: nvlink
+    repetitions: L-1
+    assumptions: [owner also includes weighted latent reduction and post-reduction RMSNorm]
+  stable_latent_moe.routed_up:
+    model: memory
+    bytes: MXFP4_PACKED_BYTES_PER_WEIGHT*Hr*H + 4*B*T*(Hr+H)
+    repetitions: L-1
+    assumptions: [compulsory MXFP4 packed routed-up weights; compute peak intentionally unavailable]
+  stable_latent_moe.shared_situ:
+    model: elementwise
+    bytes: 10*B*T*SHARED_INTERMEDIATE_LOCAL
+    ops: 12*B*T*SHARED_INTERMEDIATE_LOCAL
+    repetitions: L-1
+  stable_latent_moe.shared_down:
+    model: gemm
+    m: B*T
+    n: H
+    k: SHARED_INTERMEDIATE_LOCAL
+    dtype: bf16
+    dtype_bytes: 2
+    output_dtype_bytes: 2
+    repetitions: L-1
+  stable_latent_moe.tp_shared_expert_collective:
+    model: collective
+    collective: all_reduce
+    group_size: TP
+    payload_bytes: 2*B*T*H
+    fabric: nvlink
+    repetitions: L-1
+  stable_latent_moe.combine:
+    model: elementwise
+    bytes: 6*B*T*H
+    ops: B*T*H
+    repetitions: L-1
+
+  top.decoder_stack:
+    model: aggregate
+    members:
+      - attn_res.weighted_merge
+      - kda.qkv_projection
+      - kda.decay_projection
+      - kda.beta_projection
+      - kda.recurrent_update
+      - kda.output_projection
+      - kda.tp_kda_output_collective
+      - gated_mla.q_down
+      - gated_mla.q_norm
+      - gated_mla.q_up
+      - gated_mla.kv_norm
+      - gated_mla.attention
+      - gated_mla.output_gate
+      - gated_mla.gated_context
+      - gated_mla.output_projection
+      - gated_mla.tp_mla_output_collective
+      - dense_mlp.gate_up
+      - dense_mlp.situ
+      - dense_mlp.down
+      - dense_mlp.tp_dense_output_collective
+      - stable_latent_moe.router_logits
+      - stable_latent_moe.corrected_selection
+      - stable_latent_moe.dispatch
+      - stable_latent_moe.expert_gate_up
+      - stable_latent_moe.expert_down
+      - stable_latent_moe.tp_routed_latent_collective
+      - stable_latent_moe.routed_up
+      - stable_latent_moe.shared_situ
+      - stable_latent_moe.shared_down
+      - stable_latent_moe.tp_shared_expert_collective
+      - stable_latent_moe.combine
+      - decoder_stack.prefix_after_ffn
+    depends_on: [top.tp_embedding_output_collective]
+    assumptions: [complete 93-layer text decoder lower bound including 69 KDA layers 24 Gated MLA layers one dense layer 92 Stable LatentMoE layers and every TP collective]

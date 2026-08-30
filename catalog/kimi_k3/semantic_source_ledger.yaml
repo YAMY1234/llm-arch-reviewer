@@ -1,0 +1,321 @@
+schema_version: semantic-source-ledger.v1
+model_id: kimi_k3
+scope_id: official_multimodal_model_with_text_only_stage1_execution
+
+# This fail-closed ledger audits the immutable checkpoint construction source.
+# The technical report at MoonshotAI/Kimi-K3@3cb39df is corroborating semantic
+# evidence, but it is not substituted for executable checkpoint behavior. In
+# particular, the report describes factorized video attention while the pinned
+# checkpoint source executes one joint t*h*w attention segment per media item;
+# the Model IR records the latter exact executable contract.
+source_snapshot:
+  repository: https://huggingface.co/moonshotai/Kimi-K3
+  revision: a590ce090cb049c93a33dfe8c208ec652aa20503
+  files:
+    - {path: config.json, git_blob_oid: d7f26ead420b1d967f2759679dbebc65edfcff93, role: immutable architecture dimensions schedule precision and multimodal configuration}
+    - {path: configuration_kimi_k3.py, git_blob_oid: b38c4f8fcab1ce295aea236772ea1cba57f978c9, role: zero-based decoder-layer interpretation of the one-based KDA schedule}
+    - {path: modeling_kimi_linear.py, git_blob_oid: b8c41e8bfce768d74d8da3a37e693f5ee43876a0, role: decoder KDA Gated MLA AttnRes Stable LatentMoE SiTU cache and language-head semantics}
+    - {path: modeling_kimi_k3.py, git_blob_oid: be85612710534c2e41065b67933a9639e7817d7f, role: MoonViT-V2 projector multimodal merge and outer conditional-generation semantics}
+
+audit_views: [top, vision_frontend, vision_block, decoder_stack, attn_res, kda, gated_mla, dense_mlp, stable_latent_moe]
+
+entrypoints:
+  - id: official_configuration
+    component: immutable decoder vision MoE precision and cache configuration
+    source_file: config.json
+    symbol: text_config_and_vision_config
+    anchor: '"model_type": "kimi_k3"'
+    review_status: verified
+    expected_ir_views: [top, vision_frontend, vision_block, decoder_stack, kda, gated_mla, dense_mlp, stable_latent_moe]
+    obligations:
+      - {id: dimensions_and_precision, kind: shape_only_omitted, source_anchor: '"hidden_size": 7168', disposition: excluded, reason: immutable dimensions and checkpoint dtypes parameterize the explicitly mapped tensor contracts and are not additional runtime operators}
+
+  - id: decoder_layer_schedule
+    component: zero-based runtime selection from the immutable one-based KDA schedule
+    source_file: configuration_kimi_k3.py
+    symbol: KimiLinearConfig.is_kda_layer
+    anchor: 'and (layer_idx + 1) in self.linear_attn_config["kda_layers"]'
+    review_status: verified
+    member_dispositions: [{name: is_kda_layer, disposition: reviewed}]
+    expected_ir_views: [decoder_stack]
+    obligations:
+      - {id: attention_schedule, kind: model_ir_primitive, source_anchor: 'layer_idx + 1', disposition: mapped, ir_targets: [decoder_stack.schedule, decoder_stack.attention_schedule]}
+
+  - id: decoder_outer_flow
+    component: token embedding decoder repetition AttnRes-bank initialization final AttnRes and final norm
+    source_file: modeling_kimi_linear.py
+    symbol: KimiLinearModel.forward
+    anchor: 'for decoder_layer in self.layers:'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [top, decoder_stack]
+    obligations:
+      - {id: input_ids, kind: tensor_boundary, source_anchor: 'input_ids: torch.LongTensor', disposition: mapped, ir_targets: [top.token_ids]}
+      - {id: embedding, kind: model_ir_primitive, source_anchor: 'inputs_embeds = self.embed_tokens(input_ids)', disposition: mapped, ir_targets: [top.embedding]}
+      - {id: stack_input, kind: tensor_boundary, source_anchor: 'hidden_states = inputs_embeds', disposition: mapped, ir_targets: [decoder_stack.stack_in]}
+      - {id: attn_res_bank_initialization, kind: state_update, source_anchor: 'block_residual = hidden_states.new_zeros', disposition: mapped, ir_targets: [decoder_stack.block_write]}
+      - {id: stack_output, kind: tensor_boundary, source_anchor: 'last_hidden_state=hidden_states', disposition: mapped, ir_targets: [decoder_stack.stack_out]}
+      - {id: final_norm, kind: model_ir_primitive, source_anchor: 'hidden_states = self.norm(hidden_states)', disposition: mapped, ir_targets: [top.final_norm]}
+
+  - id: language_head
+    component: vocabulary projection and logits boundary
+    source_file: modeling_kimi_linear.py
+    symbol: KimiLinearForCausalLM.forward
+    anchor: 'logits = self.lm_head(logits)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [top]
+    obligations:
+      - {id: lm_head, kind: model_ir_primitive, source_anchor: 'logits = self.lm_head(logits)', disposition: mapped, ir_targets: [top.lm_head]}
+      - {id: logits, kind: tensor_boundary, source_anchor: 'logits=logits', disposition: mapped, ir_targets: [top.logits]}
+      - {id: training_loss, kind: training_only_excluded, source_anchor: 'loss = self.loss_function', disposition: excluded, reason: Stage 1 audits production autoregressive inference and does not encode the training loss in Model IR}
+
+  - id: decoder_attnres_layer
+    component: per-layer Attention Residual reads norms attention and feed-forward prefix transitions
+    source_file: modeling_kimi_linear.py
+    symbol: KimiDecoderLayer._forward_attn_residual
+    anchor: 'def _forward_attn_residual('
+    review_status: verified
+    member_dispositions: [{name: _forward_attn_residual, disposition: reviewed}]
+    expected_ir_views: [decoder_stack]
+    obligations:
+      - {id: attention_read, kind: model_ir_primitive, source_anchor: 'hidden_states = _apply_attn_res(', disposition: mapped, ir_targets: [decoder_stack.input_norm]}
+      - {id: attention_branch, kind: tensor_boundary, source_anchor: 'hidden_states = self.self_attn(', disposition: mapped, ir_targets: [decoder_stack.attention_schedule]}
+      - {id: prefix_after_attention, kind: model_ir_primitive, source_anchor: 'prefix_sum = prefix_sum + hidden_states', disposition: mapped, ir_targets: [decoder_stack.prefix_after_attention]}
+      - {id: ffn_read, kind: model_ir_primitive, source_anchor: 'self.mlp_res_proj', disposition: mapped, ir_targets: [decoder_stack.post_attention_norm]}
+      - {id: feed_forward_branch, kind: model_ir_primitive, source_anchor: 'hidden_states = self.block_sparse_moe(hidden_states)', disposition: mapped, ir_targets: [decoder_stack.feed_forward_schedule]}
+      - {id: prefix_after_ffn, kind: model_ir_primitive, source_anchor: 'prefix_sum = prefix_sum + hidden_states', disposition: mapped, ir_targets: [decoder_stack.prefix_after_ffn]}
+      - {id: return_state, kind: tensor_boundary, source_anchor: 'return prefix_sum, block_residual', disposition: mapped, ir_targets: [decoder_stack.stack_out]}
+
+  - id: attention_residual_equation
+    component: completed-source bank concatenation RMS normalization scoring softmax and weighted merge
+    source_file: modeling_kimi_linear.py
+    symbol: _apply_attn_res
+    anchor: 'v = torch.cat((block_residual, prefix_sum.unsqueeze(1)), dim=1)'
+    review_status: verified
+    member_dispositions: [{name: _apply_attn_res, disposition: reviewed}]
+    expected_ir_views: [attn_res]
+    obligations:
+      - {id: inputs, kind: tensor_boundary, source_anchor: 'prefix_sum, block_residual', disposition: mapped, ir_targets: [attn_res.bank_in, attn_res.prefix_in]}
+      - {id: source_concat, kind: model_ir_primitive, source_anchor: 'torch.cat((block_residual, prefix_sum.unsqueeze(1)), dim=1)', disposition: mapped, ir_targets: [attn_res.source_concat]}
+      - {id: rms_normalize, kind: model_ir_primitive, source_anchor: 'torch.rsqrt(variance + norm.variance_epsilon)', disposition: mapped, ir_targets: [attn_res.rms_normalize]}
+      - {id: score_projection, kind: model_ir_primitive, source_anchor: 'scores = (k * score_weight).sum(-1)', disposition: mapped, ir_targets: [attn_res.score_projection]}
+      - {id: source_softmax, kind: model_ir_primitive, source_anchor: 'probs = scores.softmax(-1).unsqueeze(1)', disposition: mapped, ir_targets: [attn_res.source_softmax]}
+      - {id: weighted_merge, kind: model_ir_primitive, source_anchor: 'torch.matmul(probs, v_float)', disposition: mapped, ir_targets: [attn_res.weighted_merge]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return hidden_states.to(v.dtype)', disposition: mapped, ir_targets: [attn_res.attn_res_out]}
+
+  - id: kda_forward
+    component: KDA projections short-convolution states matrix recurrence output gate norm and projection
+    source_file: modeling_kimi_linear.py
+    symbol: KimiDeltaAttention.forward
+    anchor: "mode = 'fused_recurrent' if use_cache and q_len == 1 else self.mode"
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [kda]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'hidden_states: torch.Tensor', disposition: mapped, ir_targets: [kda.kda_in]}
+      - {id: qkv_projection, kind: model_ir_primitive, source_anchor: 'q_proj_states = self.q_proj(hidden_states)', disposition: mapped, ir_targets: [kda.qkv_projection]}
+      - {id: q_conv, kind: state_update, source_anchor: 'q, conv_state_q = self.q_conv1d(', disposition: mapped, ir_targets: [kda.q_short_conv]}
+      - {id: k_conv, kind: state_update, source_anchor: 'k, conv_state_k = self.k_conv1d(', disposition: mapped, ir_targets: [kda.k_short_conv]}
+      - {id: v_conv, kind: state_update, source_anchor: 'v, conv_state_v = self.v_conv1d(', disposition: mapped, ir_targets: [kda.v_short_conv]}
+      - {id: qk_l2_norm, kind: model_ir_primitive, source_anchor: 'use_qk_l2norm_in_kernel=True', disposition: mapped, ir_targets: [kda.qk_l2_norm]}
+      - {id: decay_projection, kind: model_ir_primitive, source_anchor: 'g = self.f_b_proj(self.f_a_proj(hidden_states))', disposition: mapped, ir_targets: [kda.decay_projection]}
+      - {id: lower_bounded_decay, kind: model_ir_primitive, source_anchor: 'lower_bound=self.gate_lower_bound', disposition: mapped, ir_targets: [kda.lower_bounded_decay]}
+      - {id: beta_projection, kind: model_ir_primitive, source_anchor: 'beta = self.b_proj(hidden_states).float()', disposition: mapped, ir_targets: [kda.beta_projection]}
+      - {id: recurrence, kind: state_update, source_anchor: 'o, recurrent_state = chunk_kda(', disposition: mapped, ir_targets: [kda.recurrent_update]}
+      - {id: query_readout, kind: model_ir_primitive, source_anchor: 'o, recurrent_state = fused_recurrent_kda(', disposition: mapped, ir_targets: [kda.query_readout]}
+      - {id: output_gate, kind: model_ir_primitive, source_anchor: 'g = self.g_proj(hidden_states)', disposition: mapped, ir_targets: [kda.output_gate]}
+      - {id: gated_norm, kind: model_ir_primitive, source_anchor: 'o = self.o_norm(o, g)', disposition: mapped, ir_targets: [kda.gated_rmsnorm]}
+      - {id: output_projection, kind: model_ir_primitive, source_anchor: 'o = self.o_proj(o)', disposition: mapped, ir_targets: [kda.output_projection]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return o', disposition: mapped, ir_targets: [kda.kda_out]}
+
+  - id: gated_mla_forward
+    component: compressed query and KV paths cache update NoPE attention output gate and projection
+    source_file: modeling_kimi_linear.py
+    symbol: KimiMLAAttention.forward
+    anchor: 'compressed_kv = self.kv_a_proj_with_mqa(hidden_states)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [gated_mla]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'hidden_states: torch.Tensor', disposition: mapped, ir_targets: [gated_mla.mla_in]}
+      - {id: q_down, kind: model_ir_primitive, source_anchor: 'self.q_a_proj(hidden_states)', disposition: mapped, ir_targets: [gated_mla.q_down]}
+      - {id: q_norm, kind: model_ir_primitive, source_anchor: 'self.q_a_layernorm', disposition: mapped, ir_targets: [gated_mla.q_norm]}
+      - {id: q_up, kind: model_ir_primitive, source_anchor: 'q_states = self.q_b_proj', disposition: mapped, ir_targets: [gated_mla.q_up]}
+      - {id: kv_down, kind: model_ir_primitive, source_anchor: 'compressed_kv = self.kv_a_proj_with_mqa(hidden_states)', disposition: mapped, ir_targets: [gated_mla.kv_down]}
+      - {id: kv_norm, kind: model_ir_primitive, source_anchor: 'self.kv_a_layernorm(', disposition: mapped, ir_targets: [gated_mla.kv_norm]}
+      - {id: kv_up, kind: model_ir_primitive, source_anchor: 'k_pass = self.kv_b_proj', disposition: mapped, ir_targets: [gated_mla.kv_up]}
+      - {id: key_compose, kind: model_ir_primitive, source_anchor: 'key_states = torch.cat((k_pass, k_rot), dim=-1)', disposition: mapped, ir_targets: [gated_mla.key_compose]}
+      - {id: cache_update, kind: state_update, source_anchor: 'past_key_values.update(', disposition: mapped, ir_targets: [gated_mla.cache_update]}
+      - {id: attention, kind: model_ir_primitive, source_anchor: 'attn_output, _ = attention_interface(', disposition: mapped, ir_targets: [gated_mla.attention]}
+      - {id: output_gate, kind: model_ir_primitive, source_anchor: 'g = self.g_proj(hidden_states).sigmoid()', disposition: mapped, ir_targets: [gated_mla.output_gate]}
+      - {id: gated_context, kind: model_ir_primitive, source_anchor: 'attn_output = attn_output * g', disposition: mapped, ir_targets: [gated_mla.gated_context]}
+      - {id: output_projection, kind: model_ir_primitive, source_anchor: 'attn_output = self.o_proj(attn_output)', disposition: mapped, ir_targets: [gated_mla.output_projection]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return attn_output', disposition: mapped, ir_targets: [gated_mla.mla_out]}
+
+  - id: dense_situ_forward
+    component: layer-zero dense SiTU projections activation and output
+    source_file: modeling_kimi_linear.py
+    symbol: KimiMLP.forward
+    anchor: 'gate_up = torch.cat([self.gate_proj(x), self.up_proj(x)], dim=-1)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [dense_mlp]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'def forward(self, x)', disposition: mapped, ir_targets: [dense_mlp.dense_in]}
+      - {id: gate_up, kind: model_ir_primitive, source_anchor: 'gate_up = torch.cat([self.gate_proj(x), self.up_proj(x)], dim=-1)', disposition: mapped, ir_targets: [dense_mlp.gate_up]}
+      - {id: situ, kind: model_ir_primitive, source_anchor: 'self.act_fn(gate_up)', disposition: mapped, ir_targets: [dense_mlp.situ]}
+      - {id: down, kind: model_ir_primitive, source_anchor: 'down_proj = self.down_proj', disposition: mapped, ir_targets: [dense_mlp.down]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return down_proj', disposition: mapped, ir_targets: [dense_mlp.dense_out]}
+
+  - id: moe_router
+    component: unbiased sigmoid router corrected selection and normalized mixture weights
+    source_file: modeling_kimi_linear.py
+    symbol: KimiMoEGate.forward
+    anchor: 'scores_for_choice = scores + self.e_score_correction_bias.unsqueeze(0)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [stable_latent_moe]
+    obligations:
+      - {id: logits, kind: model_ir_primitive, source_anchor: 'logits = F.linear(', disposition: mapped, ir_targets: [stable_latent_moe.router_logits]}
+      - {id: sigmoid, kind: model_ir_primitive, source_anchor: 'scores = logits.sigmoid()', disposition: mapped, ir_targets: [stable_latent_moe.router_sigmoid]}
+      - {id: corrected_selection, kind: model_ir_primitive, source_anchor: 'scores_for_choice = scores + self.e_score_correction_bias.unsqueeze(0)', disposition: mapped, ir_targets: [stable_latent_moe.corrected_selection]}
+      - {id: normalized_weights, kind: model_ir_primitive, source_anchor: 'topk_weight = topk_weight / denominator', disposition: mapped, ir_targets: [stable_latent_moe.weight_normalize]}
+
+  - id: routed_expert_math
+    component: per-expert gate up SiTU and down projections
+    source_file: modeling_kimi_linear.py
+    symbol: KimiBlockSparseMLP.forward
+    anchor: 'gate_up = torch.cat([self.w1(hidden_states), self.w3(hidden_states)], dim=-1)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [stable_latent_moe]
+    obligations:
+      - {id: gate_up, kind: model_ir_primitive, source_anchor: 'self.w1(hidden_states), self.w3(hidden_states)', disposition: mapped, ir_targets: [stable_latent_moe.expert_gate_up]}
+      - {id: situ, kind: model_ir_primitive, source_anchor: 'current_hidden_states = self.act_fn(gate_up)', disposition: mapped, ir_targets: [stable_latent_moe.expert_situ]}
+      - {id: down, kind: model_ir_primitive, source_anchor: 'current_hidden_states = self.w2(current_hidden_states)', disposition: mapped, ir_targets: [stable_latent_moe.expert_down]}
+
+  - id: moe_dispatch_reduce
+    component: stable expert dispatch per-expert execution and weighted reduction
+    source_file: modeling_kimi_linear.py
+    symbol: KimiSparseMoeBlock.moe_infer
+    anchor: 'idxs = topk_ids.view(-1).argsort()'
+    review_status: verified
+    member_dispositions: [{name: moe_infer, disposition: reviewed}]
+    expected_ir_views: [stable_latent_moe]
+    obligations:
+      - {id: dispatch, kind: model_ir_primitive, source_anchor: 'sorted_tokens = x[idxs // topk_ids.shape[1]]', disposition: mapped, ir_targets: [stable_latent_moe.dispatch]}
+      - {id: weighted_reduce, kind: model_ir_primitive, source_anchor: '.mul_(topk_weight.unsqueeze(dim=-1))', disposition: mapped, ir_targets: [stable_latent_moe.weighted_reduce]}
+
+  - id: stable_latent_moe_forward
+    component: routed latent compression post-reduction norm expansion shared branch and merge
+    source_file: modeling_kimi_linear.py
+    symbol: KimiSparseMoeBlock.forward
+    anchor: 'hidden_states = self.routed_expert_down_proj(hidden_states)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [stable_latent_moe]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'identity = hidden_states', disposition: mapped, ir_targets: [stable_latent_moe.moe_in]}
+      - {id: routed_down, kind: model_ir_primitive, source_anchor: 'hidden_states = self.routed_expert_down_proj(hidden_states)', disposition: mapped, ir_targets: [stable_latent_moe.routed_down]}
+      - {id: latent_norm, kind: model_ir_primitive, source_anchor: 'y = self.routed_expert_norm(y)', disposition: mapped, ir_targets: [stable_latent_moe.latent_norm]}
+      - {id: routed_up, kind: model_ir_primitive, source_anchor: 'y = self.routed_expert_up_proj(y)', disposition: mapped, ir_targets: [stable_latent_moe.routed_up]}
+      - {id: shared_gate_up, kind: model_ir_primitive, source_anchor: 'self.shared_experts(identity)', disposition: mapped, ir_targets: [stable_latent_moe.shared_gate_up]}
+      - {id: shared_situ, kind: model_ir_primitive, source_anchor: 'self.shared_experts(identity)', disposition: mapped, ir_targets: [stable_latent_moe.shared_situ]}
+      - {id: shared_down, kind: model_ir_primitive, source_anchor: 'self.shared_experts(identity)', disposition: mapped, ir_targets: [stable_latent_moe.shared_down]}
+      - {id: combine, kind: model_ir_primitive, source_anchor: 'y = y + self.shared_experts(identity)', disposition: mapped, ir_targets: [stable_latent_moe.combine]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return y', disposition: mapped, ir_targets: [stable_latent_moe.moe_out]}
+
+  - id: multimodal_outer_flow
+    component: optional vision inputs image feature extraction projection and placeholder replacement
+    source_file: modeling_kimi_k3.py
+    symbol: KimiK3ForConditionalGeneration.forward
+    anchor: 'image_features = self._extract_image_features('
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [top]
+    obligations:
+      - {id: vision_inputs, kind: tensor_boundary, source_anchor: 'pixel_values: torch.FloatTensor', disposition: mapped, ir_targets: [top.vision_inputs]}
+      - {id: multimodal_injection, kind: model_ir_primitive, source_anchor: 'self._merge_input_ids_with_image_features(', disposition: mapped, ir_targets: [top.multimodal_injection]}
+
+  - id: vision_patch_projection
+    component: biasless 2D patch projection
+    source_file: modeling_kimi_k3.py
+    symbol: MoonVision3dPatchEmbed.forward
+    anchor: 'x = self.proj(x).view(x.size(0), -1)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [vision_frontend]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'grid_thws: torch.Tensor', disposition: mapped, ir_targets: [vision_frontend.vision_in]}
+      - {id: patch_projection, kind: model_ir_primitive, source_anchor: 'self.proj(x)', disposition: mapped, ir_targets: [vision_frontend.patch_projection]}
+
+  - id: vision_position_encoding
+    component: interpolated learned 2D position plus fixed temporal sinusoid
+    source_file: modeling_kimi_k3.py
+    symbol: Learnable2DInterpPosEmbDivided_fixed.forward
+    anchor: 'out = x + torch.cat(pos_embs)'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [vision_frontend]
+    obligations:
+      - {id: position_encoding, kind: model_ir_primitive, source_anchor: 'self.time_weight[0:t]', disposition: mapped, ir_targets: [vision_frontend.position_encoding]}
+
+  - id: vision_pool_and_group
+    component: full temporal mean and 2x2 spatial grouping
+    source_file: modeling_kimi_k3.py
+    symbol: tpool_patch_merger
+    anchor: 'def tpool_patch_merger('
+    review_status: verified
+    member_dispositions: [{name: tpool_patch_merger, disposition: reviewed}]
+    expected_ir_views: [vision_frontend]
+    obligations:
+      - {id: temporal_pool, kind: model_ir_primitive, source_anchor: '.mean(', disposition: mapped, ir_targets: [vision_frontend.temporal_pool]}
+      - {id: spatial_group, kind: model_ir_primitive, source_anchor: 'kernel_height * kernel_width', disposition: mapped, ir_targets: [vision_frontend.spatial_group]}
+
+  - id: vision_projector
+    component: biasless expansion GELU text-width projection and post RMSNorm
+    source_file: modeling_kimi_k3.py
+    symbol: PatchMergerMLPV2.forward
+    anchor: 'x = self.post_norm(self.proj(x))'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [vision_frontend]
+    obligations:
+      - {id: hidden_activation, kind: model_ir_primitive, source_anchor: 'self.proj(x)', disposition: mapped, ir_targets: [vision_frontend.projector_hidden_activation]}
+      - {id: down, kind: model_ir_primitive, source_anchor: 'self.proj(x)', disposition: mapped, ir_targets: [vision_frontend.projector_down]}
+      - {id: post_norm, kind: model_ir_primitive, source_anchor: 'self.post_norm(', disposition: mapped, ir_targets: [vision_frontend.projector_norm]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return x', disposition: mapped, ir_targets: [vision_frontend.vision_out]}
+
+  - id: vision_attention
+    component: packed QKV repeated-frame 2D RoPE joint media-segment attention and output projection
+    source_file: modeling_kimi_k3.py
+    symbol: MoonViTEncoderLayer.attention_qkvpacked
+    anchor: 'attn_func = VL_VISION_ATTENTION_FUNCTIONS[self.attn_implementation]'
+    review_status: verified
+    member_dispositions: [{name: attention_qkvpacked, disposition: reviewed}]
+    expected_ir_views: [vision_block]
+    obligations:
+      - {id: qkv_projection, kind: model_ir_primitive, source_anchor: 'xqkv = self.wqkv(x)', disposition: mapped, ir_targets: [vision_block.qkv_projection]}
+      - {id: joint_attention, kind: model_ir_primitive, source_anchor: 'attn_out = attn_func(', disposition: mapped, ir_targets: [vision_block.joint_spatiotemporal_attention]}
+      - {id: output_projection, kind: model_ir_primitive, source_anchor: 'attn_out = self.wo(attn_out)', disposition: mapped, ir_targets: [vision_block.output_projection]}
+
+  - id: vision_block_flow
+    component: vision pre-norm residual attention and MLP flow
+    source_file: modeling_kimi_k3.py
+    symbol: MoonViTEncoderLayer.forward
+    anchor: 'hidden_states = self.attention_qkvpacked(hidden_states, cu_seqlens,'
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [vision_block]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: 'residual = hidden_states', disposition: mapped, ir_targets: [vision_block.block_in]}
+      - {id: norm1, kind: model_ir_primitive, source_anchor: 'hidden_states = self.norm0(hidden_states)', disposition: mapped, ir_targets: [vision_block.norm1]}
+      - {id: attention_residual, kind: model_ir_primitive, source_anchor: 'hidden_states = residual + hidden_states', disposition: mapped, ir_targets: [vision_block.attention_residual]}
+      - {id: norm2, kind: model_ir_primitive, source_anchor: 'hidden_states = self.norm1(hidden_states)', disposition: mapped, ir_targets: [vision_block.norm2]}
+      - {id: mlp_up, kind: model_ir_primitive, source_anchor: 'hidden_states = self.mlp(hidden_states)', disposition: mapped, ir_targets: [vision_block.mlp_up]}
+      - {id: gelu, kind: model_ir_primitive, source_anchor: 'hidden_states = self.mlp(hidden_states)', disposition: mapped, ir_targets: [vision_block.gelu]}
+      - {id: mlp_down, kind: model_ir_primitive, source_anchor: 'hidden_states = self.mlp(hidden_states)', disposition: mapped, ir_targets: [vision_block.mlp_down]}
+      - {id: output, kind: tensor_boundary, source_anchor: 'return hidden_states', disposition: mapped, ir_targets: [vision_block.block_out]}
+
+reverse_exclusions: []

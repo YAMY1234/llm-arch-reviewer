@@ -30,6 +30,7 @@ This tool makes the mapping clickable:
 | [Qwen3.5 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2) | ✅ local | stable Model IR + pure-TP Execution IR + versioned binding/profile overlays |
 | [GLM-5.2 NVFP4 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm52_v2) | ✅ local/profiled | pure TP8 SGLang/TRT-LLM bindings on CMH GB300; 7 accepted profiles, with TRT-LLM prefill/BS1/BS16 explicitly unsupported under the fixed production capture contract |
 | [GLM-5.3-Flash IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm53_flash_v2) | ✅ local/profiled | one stable multimodal Model IR; pure TP8 SGLang/vLLM bindings; 6 accepted CMH GB300 profiles and 4 explicit unsupported matrix points |
+| [Kimi K3 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=kimi_k3_v2) | ✅ local/profiled | official checkpoint-locked multimodal Model IR; pure TP8 portable execution contract; commit-specific SGLang/vLLM bindings; 8 measured 8K/1K GB300 production profiles and 2 explicit unsupported BS256 points |
 
 ## Repo layout
 
@@ -72,6 +73,7 @@ python3 -m pip install -e '.[dev]'
 # rebuild catalog data for one model
 python3 scripts/build_v2.py --model qwen35
 python3 scripts/build_v2.py --model qwen40
+python3 scripts/build_v2.py --model kimi_k3
 
 # rebuild every audited catalog through the same compiler
 python3 scripts/build_v2.py --all
@@ -93,6 +95,7 @@ open 'http://localhost:8765/viewer.html?model=qwen35_v2' # IR-first Qwen3.5 V2
 open 'http://localhost:8765/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
 open 'http://localhost:8765/viewer.html?model=glm52_v2'  # IR-first GLM-5.2 V2
 open 'http://localhost:8765/viewer.html?model=glm53_flash_v2' # IR-first GLM-5.3-Flash V2
+open 'http://localhost:8765/viewer.html?model=kimi_k3_v2' # IR-first Kimi K3 V2
 ```
 
 For a viewer-only session, `python3 -m http.server -d docs 8765` still works.

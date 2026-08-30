@@ -19,6 +19,7 @@ from models.common.trace_mapping import (  # noqa: E402
     find_eagle_mtp_cudagraph_substages,
     find_eagle_mtp_decode_windows,
     find_eagle_mtp_prefill_windows,
+    find_step_annotation_windows,
     find_vllm_execute_context_windows,
 )
 
@@ -64,6 +65,54 @@ TOY_RULES = TraceMappingRules(
 
 
 class CommonTraceMappingTest(unittest.TestCase):
+    def test_sglang_async_model_spans_extend_outer_step_across_streams(self):
+        def annotation(cat, name, ts, dur, external, tid=19):
+            return {
+                "ph": "X",
+                "cat": cat,
+                "name": name,
+                "pid": 0 if cat == "gpu_user_annotation" else 1,
+                "tid": tid,
+                "ts": ts,
+                "dur": dur,
+                "args": {"External id": external},
+            }
+
+        events = [
+            annotation("user_annotation", "step[DECODE bs=16]", 10, 40, 7),
+            annotation(
+                "user_annotation",
+                "sglang.vlm.language_model_prefill",
+                12,
+                35,
+                11,
+            ),
+            annotation("gpu_user_annotation", "step[DECODE bs=16]", 10, 4, 7),
+            annotation(
+                "gpu_user_annotation",
+                "sglang.vlm.language_model_prefill",
+                15,
+                30,
+                11,
+                tid=23,
+            ),
+            annotation(
+                "gpu_user_annotation",
+                "sglang.vlm.language_model_prefill",
+                18,
+                32,
+                11,
+                tid=27,
+            ),
+        ]
+
+        windows = find_step_annotation_windows(events, phase="forward_decode")
+
+        self.assertEqual(
+            [(window.start_us, window.end_us) for window in windows],
+            [(10, 50)],
+        )
+
     def test_vllm_execute_context_preserves_chunked_prefill_and_decode(self):
         def annotation(name, ts, dur, tid=19):
             return {
@@ -78,8 +127,11 @@ class CommonTraceMappingTest(unittest.TestCase):
 
         events = [
             annotation("execute_context_1(8064)_generation_0(0)", 10, 40),
+            {"ph": "X", "cat": "kernel", "name": "final_norm", "ts": 51, "dur": 2},
             annotation("execute_context_1(128)_generation_0(0)", 55, 20),
+            {"ph": "X", "cat": "kernel", "name": "lm_head", "ts": 76, "dur": 2},
             annotation("execute_context_0(0)_generation_1(1)", 80, 5),
+            {"ph": "X", "cat": "kernel", "name": "sampling", "ts": 86, "dur": 3},
             annotation("execute_context_1(128)_generation_0(0)", 57, 3, tid=31),
         ]
 
@@ -88,11 +140,11 @@ class CommonTraceMappingTest(unittest.TestCase):
 
         self.assertEqual(
             [(window.start_us, window.end_us) for window in prefill],
-            [(10, 50), (55, 75)],
+            [(10, 53), (55, 78)],
         )
         self.assertEqual(
             [(window.start_us, window.end_us) for window in decode],
-            [(80, 85)],
+            [(80, 89)],
         )
 
     def test_eagle_mtp_prefill_pairs_target_and_auxiliary_extend(self):
