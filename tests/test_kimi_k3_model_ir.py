@@ -363,6 +363,35 @@ def test_kimi_k3_tp8_plan_is_pure_tp_and_fail_closed() -> None:
         assert node["execution"]["collective"]
 
 
+def test_kimi_k3_candidate_plan_requires_validated_eager_reconciliation() -> None:
+    pipeline = load_yaml(MODEL_ROOT / "pipeline.yaml")
+    assert pipeline["execution"][
+        "candidate_plan_requires_eager_reconciliation"
+    ] is True
+    expected_fingerprint = pipeline["execution"]["execution_fingerprint"]
+    framework_targets = {
+        target["framework"]: target
+        for target in pipeline["source_lock"]["framework_targets"]
+    }
+    binding_paths = {
+        "sglang": MODEL_ROOT / "bindings" / "sglang-25035bff-tp8.yaml",
+        "vllm": MODEL_ROOT / "bindings" / "vllm-680e2177-tp8.yaml",
+    }
+
+    for framework, binding_path in binding_paths.items():
+        target = framework_targets[framework]
+        binding = load_yaml(binding_path)
+        validation = binding["execution_validation"]
+        assert target["eager_reconciliation"] == "passed"
+        assert binding["source_commit"] == target["source_commit"]
+        assert binding["binding_status"] == "validated"
+        assert validation["status"] == "pass"
+        assert validation["execution_fingerprint"] == expected_fingerprint
+        assert validation["required_phases"] == ["prefill", "decode"]
+        assert validation["cuda_graph_enabled"] is False
+        assert validation["evidence"]
+
+
 def test_kimi_k3_bindings_cover_all_model_and_execution_nodes() -> None:
     bundle = compile_catalog(MODEL_ROOT)
     required_nodes = {
