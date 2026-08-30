@@ -39,7 +39,25 @@ profiler:
   representative_rank: 4
   all_tp_ranks_validated: true
   timing_gate_status: passed
-  cuda_graph_enabled: false
+  cuda_graph_enabled: true
+  cuda_graph_enabled_semantics: selected formal forward used a CUDA Graph path, proven by a nonzero raw-trace graph_id on
+    a model-bearing kernel
+  server_cuda_graph_config:
+    enabled: true
+    mode: breakable_prefill
+    evidence: production server_args cuda_graph_config and disable_*_cuda_graph=false
+    evidence_files:
+      nvl72d214-T01_agg_w0.out: 7db91b4f3e7c0784baabdde7a6e026be49a95534f698a255f8f95581a5bec462
+      nvl72d214-T02_agg_w0.out: 8d1cb27e24e1e5098cdf2ff052d588aa7e4ba24081109c10e5cca3e5fa1ed870
+  selected_forward_cuda_graph:
+    used_graph_path: true
+    replay_state: mixed_graph_and_eager
+    model_kernel_count: 2066
+    graph_kernel_count: 1426
+    non_graph_kernel_count: 640
+    graph_id_count: 61
+    evidence_basis: nonzero raw-trace graph_id on a model-bearing kernel in the selected formal forward
+    all_tp_ranks_consistent: true
   with_stack: false
   eager_semantic_capture_cuda_graph_enabled: false
   production_stack_source: separate eager capture
@@ -70,7 +88,7 @@ evidence:
   model_config_sha256: 9408a9e559cc2f05f0b357738213666353e6651160ce8ff477b1c26982bc4f63
   container: sglang-glm53-flash-arm64-73f9294b.sqsh@sha256:28e9545e312e344bbbf80c575b928be53c9aba6296ae55f292ce0f10750c6971
   validation_file: validation.json
-  validation_sha256: 777a42b541ba5d00475995b2b6e6716251adf5953b1c105ec404df61f7bc79d2
+  validation_sha256: e203b7e305d5889641285773028907a2389c8375b923f9997bde1586f2bae437
   baseline_selector:
     file: window-selection.json
     sha256: 409fc847ef473bd95014069de28dad824bf90ef0c9a0fb77b19b2cdb340104c5
@@ -120,6 +138,14 @@ evidence:
       tp_collective_bounded_sglang_full_attention_sequence: 135
       sglang_unique_fused_final_norm_kernel: 1
       sglang_bounded_lm_head_tail: 7
+    selected_forward_cuda_graph:
+      used_graph_path: true
+      replay_state: mixed_graph_and_eager
+      model_kernel_count: 2066
+      graph_kernel_count: 1426
+      non_graph_kernel_count: 640
+      graph_id_count: 61
+      evidence_basis: nonzero raw-trace graph_id on a model-bearing kernel in the selected formal forward
     mapped_kernel_envelope_ms: 93.793485
     raw_trace: node1.sqlite
     raw_trace_sha256: d99bf3d2b42120326468d392f9e2c3d2779e1dab36b4f78d7e9a76aded315593

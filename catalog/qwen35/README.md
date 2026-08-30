@@ -25,6 +25,16 @@ forward. Separate graph-off eager captures provide Python-stack semantic
 evidence; production captures provide timing. All eight TP ranks are validated
 for every point.
 
+In these profiles, `profiler.cuda_graph_enabled` means that the selected formal
+forward actually used a CUDA Graph path, proven by a nonzero raw-trace
+`graph_id` on a model-bearing kernel; it does not mean only that the server was
+configured for CUDA Graph. Server configuration and selected-forward replay
+are recorded separately. In particular, the vLLM prefill server configured and
+captured `FULL_AND_PIECEWISE`, but the selected 8K prefill forward has zero
+graph-path kernels on all eight TP ranks and is therefore recorded as
+`no_cuda_graph_replay`. SGLang prefill is recorded as
+`mixed_graph_and_eager` under its breakable-prefill configuration.
+
 | Framework | Phase | Global BS | Production job | Viewer |
 |---|---:|---:|---:|---|
 | SGLang | prefill | 1 | 3414663 | [Architecture](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=architecture) · [Timeline](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2&implementation=sglang_f609d677b_qwen35_033446bb_tp8&phase=prefill&profile=qwen35_tp8_sglang_prefill_bs1_8k1k&viewMode=timeline) |

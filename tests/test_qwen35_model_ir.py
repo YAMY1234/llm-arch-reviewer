@@ -170,7 +170,28 @@ def test_qwen35_complete_cross_framework_profile_matrix() -> None:
         assert profile["workload"]["warmup_requests"] == 3 * batch
         assert profile["workload"]["formal_requests"] == batch
         assert profile["profiler"]["formal_window_count"] == 1
-        assert profile["profiler"]["cuda_graph_enabled"] is (profile["phase"] == "decode" or profile["implementation_id"].startswith("vllm_"))
+        profiler = profile["profiler"]
+        selected_graph = profiler["selected_forward_cuda_graph"]
+        assert profiler["cuda_graph_enabled"] is selected_graph["used_graph_path"]
+        assert selected_graph["model_kernel_count"] == (
+            selected_graph["graph_kernel_count"] + selected_graph["non_graph_kernel_count"]
+        )
+        assert selected_graph["all_tp_ranks_consistent"] is True
+        assert selected_graph["used_graph_path"] is (selected_graph["graph_kernel_count"] > 0)
+        assert profiler["server_cuda_graph_config"]["enabled"] is True
+        assert profiler["server_cuda_graph_config"]["evidence_files"]
+        if profile["phase"] == "decode":
+            assert selected_graph["used_graph_path"] is True
+            assert selected_graph["replay_state"] == "mixed_graph_and_eager"
+        elif profile["implementation_id"].startswith("sglang_"):
+            assert profiler["server_cuda_graph_config"]["mode"] == "breakable_prefill"
+            assert selected_graph["used_graph_path"] is True
+            assert selected_graph["replay_state"] == "mixed_graph_and_eager"
+        else:
+            assert profiler["server_cuda_graph_config"]["mode"] == "FULL_AND_PIECEWISE"
+            assert selected_graph["used_graph_path"] is False
+            assert selected_graph["replay_state"] == "no_cuda_graph_replay"
+            assert selected_graph["graph_kernel_count"] == 0
         assert profile["profiler"]["selected_runtime_coordinate"]
         assert profile["evidence"]["unclassified_kernel_count"] == 0
         assert profile["evidence"]["semantic_stack_closure_missing_node_count"] == 0

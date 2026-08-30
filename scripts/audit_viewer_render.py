@@ -18,6 +18,9 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 
+TIMELINE_LOAD_TIMEOUT_MS = 30_000
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
@@ -54,8 +57,33 @@ def drill_routes(views: dict, root: str) -> list[tuple[list[str], list[str]]]:
     return routes
 
 
-def main() -> int:
-    args = parse_args()
+def write_exception_report(args: argparse.Namespace, error: Exception) -> int:
+    """Persist a fail-closed report when the browser audit raises unexpectedly."""
+
+    args.output.mkdir(parents=True, exist_ok=True)
+    report = {
+        "schema_version": "viewer-render-audit.v1",
+        "bundle": str(args.bundle),
+        "model": args.bundle.parent.name,
+        "checks": {},
+        "route_count_per_profile": {},
+        "interaction_performance": [],
+        "status": "fail",
+        "failures": [
+            {
+                "kind": "audit_exception",
+                "exception_type": type(error).__name__,
+                "error": str(error),
+            }
+        ],
+    }
+    (args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+    return 1
+
+
+def main(args: argparse.Namespace | None = None) -> int:
+    args = args or parse_args()
     bundle = json.loads(args.bundle.read_text())
     model = args.bundle.parent.name
     route_counts: dict[str, int] = {}
@@ -396,13 +424,15 @@ def main() -> int:
             # Verify both directions using actual viewer functions and the
             # loaded production timeline.
             cross = page.evaluate(
-                """async () => {
+                """async timeoutMs => {
                   setViewMode('split', false, true);
-                  const deadline = Date.now() + 30000;
+                  const deadline = Date.now() + timeoutMs;
                   while (!TIMELINE_DATA && Date.now() < deadline) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                   }
-                  if (!TIMELINE_DATA) return {error: 'timeline_not_loaded'};
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'cross_link_setup', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._irNode);
                   if (!event) return {error: 'no_mapped_timeline_event'};
@@ -415,7 +445,8 @@ def main() -> int:
                   const reverse = SELECTED?.view === route.view && SELECTED?.nodeId === route.nodeId &&
                     !!document.querySelector(`g.view-group[data-view="${route.view}"] g.node[data-id="${route.nodeId}"].selected`);
                   return {forward, reverse, event: event._irNode, route};
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
             checks["cross_links"] += 1
             if cross.get("error") or not cross.get("forward") or not cross.get("reverse"):
@@ -432,8 +463,15 @@ def main() -> int:
             # navigation helpers survived but the clicked-kernel selection
             # state (one solid slice, all unrelated slices faded) disappeared.
             dom_setup = page.evaluate(
-                """async () => {
+                """async timeoutMs => {
                   setViewMode('split', false, true);
+                  const deadline = Date.now() + timeoutMs;
+                  while (!TIMELINE_DATA && Date.now() < deadline) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                  }
+                  if (!TIMELINE_DATA) {
+                    return {error: 'timeline_not_loaded', stage: 'bidirectional_dom_click_setup', timeoutMs};
+                  }
                   const event = (TIMELINE_DATA.steps || []).flatMap(step => step.events || [])
                     .find(candidate => candidate._irNode && architectureRouteForEvent(candidate).nodeId);
                   if (!event) return {error: 'no_mapped_timeline_event'};
@@ -498,7 +536,8 @@ def main() -> int:
                       y: rect.top + hit.y + hit.height / 2,
                     },
                   };
-                }"""
+                }""",
+                arg=TIMELINE_LOAD_TIMEOUT_MS,
             )
             if dom_setup.get("error"):
                 fail("bidirectional_dom_setup", profile=profile_id, **dom_setup)
@@ -826,4 +865,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parsed_args = parse_args()
+    try:
+        exit_code = main(parsed_args)
+    except Exception as error:
+        exit_code = write_exception_report(parsed_args, error)
+    raise SystemExit(exit_code)

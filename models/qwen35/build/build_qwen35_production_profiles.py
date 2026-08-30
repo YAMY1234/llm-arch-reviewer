@@ -233,6 +233,92 @@ def load_rank_traces(root: Path, item: dict[str, Any]) -> tuple[dict[int, list[d
     return {rank: kernel_rows_from_torch(path, rank) for rank, path in paths.items()}, paths
 
 
+def has_active_graph_id(row: dict[str, Any]) -> bool:
+    graph_id = row.get("graph_id")
+    if graph_id is None:
+        return False
+    try:
+        return int(graph_id) != 0
+    except (TypeError, ValueError):
+        return str(graph_id).strip() not in {"", "0", "None", "null"}
+
+
+def selected_forward_cuda_graph_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe replay for the selected forward, independent of server configuration."""
+
+    model_rows = [row for row in rows if row.get("node")]
+    graph_kernel_count = sum(has_active_graph_id(row) for row in model_rows)
+    non_graph_kernel_count = len(model_rows) - graph_kernel_count
+    if not graph_kernel_count:
+        replay_state = "no_cuda_graph_replay"
+    elif non_graph_kernel_count:
+        replay_state = "mixed_graph_and_eager"
+    else:
+        replay_state = "cuda_graph_replay"
+    return {
+        "used_graph_path": graph_kernel_count > 0,
+        "replay_state": replay_state,
+        "model_kernel_count": len(model_rows),
+        "graph_kernel_count": graph_kernel_count,
+        "non_graph_kernel_count": non_graph_kernel_count,
+        "graph_id_count": len(
+            {str(row["graph_id"]) for row in model_rows if has_active_graph_id(row)}
+        ),
+        "evidence_basis": "nonzero raw-trace graph_id on a model-bearing kernel in the selected formal forward",
+    }
+
+
+def server_cuda_graph_config(root: Path, item: dict[str, Any]) -> dict[str, Any]:
+    framework = item["framework"]
+    phase = item["phase"]
+    directory = evidence_dir(root, item)
+    if framework == "sglang":
+        evidence_paths = sorted(directory.glob("*_agg_w0.out"))
+        if len(evidence_paths) != 2:
+            raise ValueError(f"{item['job']}: expected one SGLang server log per node")
+        expected_mode = (
+            "'prefill': {'backend': 'breakable'"
+            if phase == "prefill"
+            else "'decode': {'backend': 'full'"
+        )
+        required_fragments = (
+            expected_mode,
+            "'disable_prefill_cuda_graph': False",
+            "'disable_decode_cuda_graph': False",
+            "'disable_cuda_graph': False",
+        )
+        for path in evidence_paths:
+            text = path.read_text(errors="replace")
+            if any(fragment not in text for fragment in required_fragments):
+                raise ValueError(f"{item['job']}: CUDA Graph server configuration mismatch in {path.name}")
+        return {
+            "enabled": True,
+            "mode": "breakable_prefill" if phase == "prefill" else "full_decode",
+            "evidence": "production server_args cuda_graph_config and disable_*_cuda_graph=false",
+            "evidence_files": {
+                path.name: sha256_file(path) for path in evidence_paths
+            },
+        }
+    evidence_path = directory / "server.log"
+    if not evidence_path.is_file():
+        raise ValueError(f"{item['job']}: missing vLLM server.log")
+    text = evidence_path.read_text(errors="replace")
+    required_fragments = (
+        "CUDAGraphMode.FULL_AND_PIECEWISE",
+        "Profiling CUDA graph memory: PIECEWISE=51",
+        "Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%",
+        "Capturing CUDA graphs (decode, FULL): 100%",
+    )
+    if any(fragment not in text for fragment in required_fragments):
+        raise ValueError(f"{item['job']}: incomplete vLLM FULL_AND_PIECEWISE capture evidence")
+    return {
+        "enabled": True,
+        "mode": "FULL_AND_PIECEWISE",
+        "evidence": "production server.log compilation_config plus completed FULL and PIECEWISE capture",
+        "evidence_files": {evidence_path.name: sha256_file(evidence_path)},
+    }
+
+
 def build_reconciled_eager_mapping(root: Path, framework: str, phase: str) -> Path:
     source_name = (
         f"sglang-forward_{'extend' if phase == 'prefill' else 'decode'}"
@@ -524,14 +610,26 @@ def build_one(
             max(float(row["ts_us"]) + float(row["dur_us"]) for row in mapped)
             - min(float(row["ts_us"]) for row in mapped)
         )
+        graph_evidence = selected_forward_cuda_graph_evidence(rows)
         rank_diagnostics[str(rank)] = {
             **diagnostics,
+            "selected_forward_cuda_graph": graph_evidence,
             "mapped_kernel_envelope_ms": round(mapped_envelopes[rank] / 1000.0, 6),
             "raw_trace": rank_paths[rank].name,
             "raw_trace_sha256": sha256_file(rank_paths[rank]),
         }
     reference_rank = max(mapped_envelopes, key=lambda rank: (mapped_envelopes[rank], rank))
     rows = rank_rows[reference_rank]
+    graph_signatures = {
+        json.dumps(diagnostics["selected_forward_cuda_graph"], sort_keys=True)
+        for diagnostics in rank_diagnostics.values()
+    }
+    if len(graph_signatures) != 1:
+        raise ValueError(f"{job}: selected-forward CUDA Graph evidence differs across TP ranks")
+    graph_evidence = {
+        **rank_diagnostics[str(reference_rank)]["selected_forward_cuda_graph"],
+        "all_tp_ranks_consistent": True,
+    }
     mapping_path = build_reconciled_eager_mapping(task_root, framework, phase)
     rows = attach_eager_stack_evidence(rows, mapping_path=mapping_path)
     missing_stack_nodes = sorted(
@@ -660,7 +758,10 @@ def build_one(
             "representative_rank": reference_rank,
             "all_tp_ranks_validated": True,
             "timing_gate_status": "passed",
-            "cuda_graph_enabled": phase == "decode" or framework == "vllm",
+            "cuda_graph_enabled": graph_evidence["used_graph_path"],
+            "cuda_graph_enabled_semantics": "selected formal forward used a CUDA Graph path, proven by a nonzero raw-trace graph_id on a model-bearing kernel",
+            "server_cuda_graph_config": server_cuda_graph_config(task_root, item),
+            "selected_forward_cuda_graph": graph_evidence,
             "with_stack": False,
             "eager_semantic_capture_cuda_graph_enabled": False,
             "production_stack_source": "separate eager capture",
