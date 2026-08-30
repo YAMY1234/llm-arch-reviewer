@@ -173,6 +173,7 @@ def test_qwen35_complete_cross_framework_profile_matrix() -> None:
         profiler = profile["profiler"]
         selected_graph = profiler["selected_forward_cuda_graph"]
         assert profiler["cuda_graph_enabled"] is selected_graph["used_graph_path"]
+        assert profiler["cuda_graph_enabled"] is (selected_graph["graph_id_count"] > 0)
         assert selected_graph["model_kernel_count"] == (
             selected_graph["graph_kernel_count"] + selected_graph["non_graph_kernel_count"]
         )
@@ -180,6 +181,21 @@ def test_qwen35_complete_cross_framework_profile_matrix() -> None:
         assert selected_graph["used_graph_path"] is (selected_graph["graph_kernel_count"] > 0)
         assert profiler["server_cuda_graph_config"]["enabled"] is True
         assert profiler["server_cuda_graph_config"]["evidence_files"]
+        semantics = profiler["cuda_graph_enabled_semantics"]
+        evidence_basis = selected_graph["evidence_basis"]
+        if selected_graph["used_graph_path"]:
+            assert "selected formal forward used a CUDA Graph path" in semantics
+            assert "did not use CUDA Graph replay" not in semantics
+            assert f"{selected_graph['graph_id_count']} distinct nonzero raw-trace graph IDs" in evidence_basis
+            assert f"{selected_graph['graph_kernel_count']} model-bearing kernels" in evidence_basis
+        else:
+            assert "selected formal forward did not use CUDA Graph replay" in semantics
+            assert "zero nonzero raw-trace graph IDs" in semantics
+            assert "selected formal forward used a CUDA Graph path" not in semantics
+            assert evidence_basis == (
+                f"zero nonzero raw-trace graph IDs across {selected_graph['model_kernel_count']} "
+                "model-bearing kernels in the selected formal forward"
+            )
         if profile["phase"] == "decode":
             assert selected_graph["used_graph_path"] is True
             assert selected_graph["replay_state"] == "mixed_graph_and_eager"

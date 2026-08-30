@@ -255,17 +255,42 @@ def selected_forward_cuda_graph_evidence(rows: list[dict[str, Any]]) -> dict[str
         replay_state = "mixed_graph_and_eager"
     else:
         replay_state = "cuda_graph_replay"
+    graph_id_count = len(
+        {str(row["graph_id"]) for row in model_rows if has_active_graph_id(row)}
+    )
+    if graph_kernel_count:
+        evidence_basis = (
+            f"{graph_id_count} distinct nonzero raw-trace graph IDs cover "
+            f"{graph_kernel_count} model-bearing kernels in the selected formal forward"
+        )
+    else:
+        evidence_basis = (
+            f"zero nonzero raw-trace graph IDs across {len(model_rows)} model-bearing "
+            "kernels in the selected formal forward"
+        )
     return {
         "used_graph_path": graph_kernel_count > 0,
         "replay_state": replay_state,
         "model_kernel_count": len(model_rows),
         "graph_kernel_count": graph_kernel_count,
         "non_graph_kernel_count": non_graph_kernel_count,
-        "graph_id_count": len(
-            {str(row["graph_id"]) for row in model_rows if has_active_graph_id(row)}
-        ),
-        "evidence_basis": "nonzero raw-trace graph_id on a model-bearing kernel in the selected formal forward",
+        "graph_id_count": graph_id_count,
+        "evidence_basis": evidence_basis,
     }
+
+
+def cuda_graph_enabled_semantics(evidence: dict[str, Any]) -> str:
+    if evidence["used_graph_path"]:
+        return (
+            "selected formal forward used a CUDA Graph path; "
+            f"{evidence['graph_kernel_count']} model-bearing kernels have a nonzero "
+            "raw-trace graph_id"
+        )
+    return (
+        "selected formal forward did not use CUDA Graph replay; zero nonzero raw-trace "
+        f"graph IDs were observed across all {evidence['model_kernel_count']} "
+        "model-bearing kernels"
+    )
 
 
 def server_cuda_graph_config(root: Path, item: dict[str, Any]) -> dict[str, Any]:
@@ -759,7 +784,7 @@ def build_one(
             "all_tp_ranks_validated": True,
             "timing_gate_status": "passed",
             "cuda_graph_enabled": graph_evidence["used_graph_path"],
-            "cuda_graph_enabled_semantics": "selected formal forward used a CUDA Graph path, proven by a nonzero raw-trace graph_id on a model-bearing kernel",
+            "cuda_graph_enabled_semantics": cuda_graph_enabled_semantics(graph_evidence),
             "server_cuda_graph_config": server_cuda_graph_config(task_root, item),
             "selected_forward_cuda_graph": graph_evidence,
             "with_stack": False,
