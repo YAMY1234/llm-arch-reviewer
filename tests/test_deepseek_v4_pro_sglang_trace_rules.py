@@ -3,6 +3,7 @@ from __future__ import annotations
 from models.common.trace_mapping import FrameRef
 from models.deepseek_v4_pro.build.compile_deepseek_v4_pro_vllm_eager_contract import (
     CSA_LAYERS,
+    _recover_ordered_sglang_compute,
     compile_contract,
 )
 from models.deepseek_v4_pro.build.deepseek_v4_pro_sglang_trace_rules import (
@@ -35,6 +36,76 @@ def test_shape_specific_router_and_stale_async_moe_kernels_are_exact() -> None:
     assert classify_deepseek_v4_pro_sglang_node(
         "bmm_Bfloat16_MxE2m1MxE4m3_down", None, stale
     ) == ("moe.routed_down", "high")
+
+
+def test_logits_processor_projection_is_owned_by_lm_head() -> None:
+    stack = [
+        frame(
+            "python/sglang/srt/layers/logits_processor.py(702): "
+            "_compute_lm_head"
+        )
+    ]
+    assert classify_deepseek_v4_pro_sglang_node(
+        "nvjet_sm103_tst_64x8_64x16_1x1_h_bz_splitK_TNT",
+        "aten::mm",
+        stack,
+    ) == ("top.lm_head", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "copy_logits_to_output",
+        "aten::copy_",
+        [
+            frame(
+                "python/sglang/srt/layers/logits_processor.py(869): "
+                "_copy_logits_to_buffer"
+            )
+        ],
+    ) == ("top.logits", "high")
+
+
+def test_prefill_only_sparse_kernels_have_semantic_owners() -> None:
+    assert classify_deepseek_v4_pro_sglang_node(
+        "_get_k_and_s_triton_kernel", None, []
+    ) == ("csa_indexer.score", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "void deep_gemm::sm100_mqa_logits<false>", None, []
+    ) == ("csa_indexer.score", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "_combine_topk_swa_indices_kernel", None, []
+    ) == ("attention.index_union", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "_dequantize_k_cache_paged_kernel", None, []
+    ) == ("attention.sparse_mqa", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "void sglang::flash_c4_prefill<128l, float>", None, []
+    ) == ("csa_indexer.k_compress", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "void sglang::flash_c4_prefill<512l, float>", None, []
+    ) == ("csa_compressor.softmax_pool", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "void sglang::flash_c128_prefill<512l, float>", None, []
+    ) == ("hca_compressor.softmax_pool", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "nvjet_sm103_tst_64x64_64x13_1x4_h_bz_TNT", "aten::mm", []
+    ) == ("csa_indexer.weight_projection", "high")
+    assert classify_deepseek_v4_pro_sglang_node(
+        "nvjet_sm103_tss_192x128_64x6_2x2_2cta_h_bz_TNT", "aten::mm", []
+    ) == ("moe.score_projection", "high")
+
+
+def test_prefill_hca_compressor_projection_uses_exact_neighbors() -> None:
+    rows = [
+        {"selected_node": "attention.window_kv"},
+        {
+            "selected_node": "top.runtime_support",
+            "cpu_op_name": "aten::mm",
+        },
+        {"selected_node": "hca_compressor.softmax_pool"},
+    ]
+    _recover_ordered_sglang_compute(
+        rows, source_commit="71de97b264b04dcd514cf904003028aefe9775c8"
+    )
+    assert rows[1]["selected_node"] == "compressor.kv_gate_projection"
+    assert rows[1]["mapping_method"] == "ordered_hca_compressor_projection"
 
 
 def _row(event_id: int, node: str, kernel: str | None = None) -> dict:
@@ -83,7 +154,11 @@ def test_occurrence_compiler_accepts_sglang_fused_indexer_state_contract() -> No
         else:
             add("hca_compressor.softmax_pool")
         add("compressor.partial_state")
-        add("attention.tp_output_collective")
+        if layer == 0:
+            add("attention.o_b")
+            add("top.runtime_support", "ncclDevKernel_AllReduce_Sum_bf16_RING_LL")
+        else:
+            add("attention.tp_output_collective")
         add("mhc_transform.mix", "mhc_fused_post_pre_fma_tilelang_kernel")
         add("mhc_transform.affine")
         add("moe.shared_gate_up")
@@ -92,7 +167,11 @@ def test_occurrence_compiler_accepts_sglang_fused_indexer_state_contract() -> No
         add("moe.shared_gate_up")
         add("moe.shared_gate_up")
         add("moe.routed_gate_up")
-        add("moe.tp_moe_output_collective")
+        if layer == 0:
+            add("moe.combine")
+            add("top.runtime_support", "ncclDevKernel_AllReduce_Sum_bf16_RING_LL")
+        else:
+            add("moe.tp_moe_output_collective")
         add("mhc_transform.mix", "mhc_fused_post_pre_fma_tilelang_kernel")
     add("top.lm_head")
     add("top.tp_logits_collective", "ncclDevKernel_AllGather_RING_LL")
@@ -119,6 +198,14 @@ def test_occurrence_compiler_accepts_sglang_fused_indexer_state_contract() -> No
     assert report["node_counts"]["hca_compressor.partial_state"] == 31
     assert report["node_counts"]["moe.shared_gate_up"] == 122
     assert report["node_counts"]["moe.shared_down"] == 122
+    assert sum(
+        row.get("mapping_method") == "ordered_attention_output_all_reduce_boundary"
+        for row in compiled
+    ) == 1
+    assert sum(
+        row.get("mapping_method") == "ordered_moe_output_all_reduce_boundary"
+        for row in compiled
+    ) == 1
     assert all(
         row.get("fused_semantic_nodes")
         == ["moe.routed_gate_up", "moe.routed_activation"]

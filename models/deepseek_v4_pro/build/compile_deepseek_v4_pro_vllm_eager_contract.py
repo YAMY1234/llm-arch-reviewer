@@ -200,10 +200,17 @@ def _runtime_support(row: dict[str, Any]) -> None:
             "metadata_kernel.py",
             "paged_mqa_metadata",
             "topk_plan",
+            "get_paged_mqa_logits_metadata",
         )
     ):
         support_class = "attention_plan_metadata"
         reason = "shape, compressed-slot, sparse-index, or FlashMLA launch metadata; no model value is produced"
+    elif "sparse_prefill_utils.py" in text:
+        support_class = "sparse_prefill_cache_metadata"
+        reason = "one-time sparse-prefill workspace, cache-address, and union-index metadata construction"
+    elif "_get_nonpaged_indexer_plan" in text:
+        support_class = "indexer_plan_metadata"
+        reason = "one-time non-paged indexer schedule and score-buffer metadata construction"
     elif any(
         token in text
         for token in (
@@ -241,6 +248,69 @@ def _runtime_support(row: dict[str, Any]) -> None:
 
 def _indices(rows: list[dict[str, Any]], node: str) -> list[int]:
     return [index for index, row in enumerate(rows) if row.get("selected_node") == node]
+
+
+def _recover_ordered_sglang_collectives(
+    rows: list[dict[str, Any]], *, source_commit: str
+) -> None:
+    """Recover async all-reduce launches from their exact semantic neighbors."""
+
+    if source_commit != "71de97b264b04dcd514cf904003028aefe9775c8":
+        return
+    for index in range(1, len(rows) - 1):
+        row = rows[index]
+        kernel = str(row.get("kernel_name") or "").lower()
+        if (
+            row.get("selected_node") != "top.runtime_support"
+            or "allreduce" not in kernel
+            or rows[index + 1].get("selected_node") != "mhc_transform.mix"
+        ):
+            continue
+        previous = str(rows[index - 1].get("selected_node") or "")
+        if previous == "attention.o_b":
+            owner = "attention.tp_output_collective"
+            method = "ordered_attention_output_all_reduce_boundary"
+        elif previous == "moe.combine":
+            owner = "moe.tp_moe_output_collective"
+            method = "ordered_moe_output_all_reduce_boundary"
+        else:
+            continue
+        row.update(
+            {
+                "selected_node": owner,
+                "mapping_method": method,
+                "confidence": "high",
+            }
+        )
+
+
+def _recover_ordered_sglang_compute(
+    rows: list[dict[str, Any]], *, source_commit: str
+) -> None:
+    """Recover async GEMM launches only inside exact proved neighbors."""
+
+    if source_commit != "71de97b264b04dcd514cf904003028aefe9775c8":
+        return
+    for index in range(1, len(rows) - 1):
+        row = rows[index]
+        if (
+            row.get("selected_node") != "top.runtime_support"
+            or row.get("cpu_op_name") != "aten::mm"
+        ):
+            continue
+        previous = str(rows[index - 1].get("selected_node") or "")
+        following = str(rows[index + 1].get("selected_node") or "")
+        if (
+            previous == "attention.window_kv"
+            and following == "hca_compressor.softmax_pool"
+        ):
+            row.update(
+                {
+                    "selected_node": "compressor.kv_gate_projection",
+                    "mapping_method": "ordered_hca_compressor_projection",
+                    "confidence": "high",
+                }
+            )
 
 
 def _expand_branch_node(node: str, kind: str) -> str:
@@ -614,6 +684,9 @@ def compile_contract(
     rows = [dict(row) for row in mappings]
     for row in rows:
         _normalize_direct_evidence(row)
+    source_commit = str(manifest.get("source_commit") or "")
+    _recover_ordered_sglang_collectives(rows, source_commit=source_commit)
+    _recover_ordered_sglang_compute(rows, source_commit=source_commit)
     embedding_collective = next(
         (
             index
@@ -643,7 +716,7 @@ def compile_contract(
                         "confidence": "high",
                     }
                 )
-    _annotate_schedule(rows, source_commit=str(manifest.get("source_commit") or ""))
+    _annotate_schedule(rows, source_commit=source_commit)
     for row in rows:
         _runtime_support(row)
 

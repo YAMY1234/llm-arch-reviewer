@@ -633,6 +633,15 @@ def build_one(
     spec: dict[str, Any],
     matrix: dict[str, Any],
     nodes: dict[str, dict[str, Any]],
+    reconciliation_framework: str = "vllm",
+    profile_framework: str = "vllm",
+    framework_label: str = "vLLM",
+    implementation_id: str = IMPLEMENTATION_ID,
+    source_commit: str = SOURCE_COMMIT,
+    container_sha256: str = CONTAINER_SHA256,
+    matrix_report_sha256: str = MATRIX_REPORT_SHA256,
+    matrix_manifest_sha256: str = MATRIX_MANIFEST_SHA256,
+    fusion_spec_map: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[Path, str]:
     matrix_profile = matrix["profiles"][name]
     rank = int(
@@ -641,7 +650,13 @@ def build_one(
             key=lambda item: matrix_profile["rank_selected_wall_elapsed_us"][item],
         )
     )
-    reconciliation_dir = task_root / "production-reconciliation" / "vllm" / name / f"rank{rank}"
+    reconciliation_dir = (
+        task_root
+        / "production-reconciliation"
+        / reconciliation_framework
+        / name
+        / f"rank{rank}"
+    )
     event_path = reconciliation_dir / "events.jsonl"
     report_path = reconciliation_dir / "report.json"
     events = load_jsonl(event_path)
@@ -653,10 +668,11 @@ def build_one(
 
     mapping_dir = task_root / "mappings" / spec["eager_kind"] / spec["eager_job_id"] / f"rank{rank}"
     mapping_path = find_single(mapping_dir, "kernel_mapping.*.jsonl")
-    prepared = prepare_events(events, fusion_specs())
+    selected_fusion_specs = fusion_spec_map or fusion_specs()
+    prepared = prepare_events(events, selected_fusion_specs)
     prepared = attach_eager_stack_evidence(prepared, mapping_path=mapping_path)
 
-    groups, metrics, _ = fusion_groups_and_metrics(prepared, fusion_specs())
+    groups, metrics, _ = fusion_groups_and_metrics(prepared, selected_fusion_specs)
     add_direct_metrics(metrics, prepared, groups)
     add_rollup_metrics(metrics, prepared, groups)
     add_communication_contracts(metrics, nodes)
@@ -665,7 +681,7 @@ def build_one(
 
     phase = str(spec["phase"])
     batch = int(spec["batch_size"])
-    profile_id = f"deepseek_v4_pro_tp8_vllm_{spec['variant_id']}"
+    profile_id = f"deepseek_v4_pro_tp8_{profile_framework}_{spec['variant_id']}"
     trace_dir = task_root / "evidence" / spec["production_kind"] / spec["job_id"] / "traces"
     trace_path = find_single(trace_dir, f"*rank{rank}.*trace.json.gz")
     if file_sha256(trace_path) != report["trace"]["sha256"]:
@@ -711,10 +727,10 @@ def build_one(
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
-        "label": f"GB300 · vLLM · pure TP8 · {'CUDA Graph decode' if phase == 'decode' else 'graph-off stable prefill'} · GBS{batch} · 8k→1k",
+        "label": f"GB300 · {framework_label} · pure TP8 · {'CUDA Graph decode' if phase == 'decode' else 'graph-off stable prefill'} · GBS{batch} · 8k→1k",
         "model_id": "deepseek_v4_pro",
         "execution_path_id": EXECUTION_PATH,
-        "implementation_id": IMPLEMENTATION_ID,
+        "implementation_id": implementation_id,
         "variant_id": spec["variant_id"],
         "phase": phase,
         "generation_mode": "autoregressive",
@@ -756,9 +772,9 @@ def build_one(
         },
         "evidence": {
             "job_id": str(spec["job_id"]),
-            "source_commit": SOURCE_COMMIT,
+            "source_commit": source_commit,
             "model_revision": MODEL_REVISION,
-            "container_sha256": CONTAINER_SHA256,
+            "container_sha256": container_sha256,
             "validation_file": "validation.json",
             "validation_sha256": validation_sha256,
             "raw_trace_sha256": report["trace"]["sha256"],
@@ -766,8 +782,8 @@ def build_one(
             "eager_contract_sha256": report["eager_contract"]["sha256"],
             "production_events_sha256": file_sha256(event_path),
             "production_report_sha256": file_sha256(report_path),
-            "production_matrix_sha256": MATRIX_REPORT_SHA256,
-            "production_artifact_manifest_sha256": MATRIX_MANIFEST_SHA256,
+            "production_matrix_sha256": matrix_report_sha256,
+            "production_artifact_manifest_sha256": matrix_manifest_sha256,
             "mapped_kernel_count_ratio": 1.0,
             "mapped_kernel_duration_ratio": 1.0,
             "occurrence_count": report["occurrence_count"],
@@ -846,7 +862,11 @@ def main() -> int:
             matrix=matrix,
             nodes=nodes,
         )
-        outputs.append({"path": str(path.relative_to(repo_root)), "sha256": digest})
+        try:
+            reported_path = path.relative_to(repo_root)
+        except ValueError:
+            reported_path = path
+        outputs.append({"path": str(reported_path), "sha256": digest})
     print(json.dumps({"ok": True, "profiles": outputs}, indent=2, sort_keys=True))
     return 0
 

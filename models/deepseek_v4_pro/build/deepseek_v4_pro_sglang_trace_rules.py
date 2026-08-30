@@ -76,6 +76,18 @@ def classify_deepseek_v4_pro_sglang_node(
     # that can point at the scheduler preparing the following decode step.
     if "sm100_paged_mqa_logits" in kernel:
         return "csa_indexer.score", "high"
+    if "_get_k_and_s_triton_kernel" in kernel or "sm100_mqa_logits" in kernel:
+        return "csa_indexer.score", "high"
+    if "topk_transform_kernel" in kernel:
+        return "csa_indexer.causal_topk", "high"
+    if "_combine_topk_swa_indices_kernel" in kernel:
+        return "attention.index_union", "high"
+    if "_dequantize_k_cache_paged_kernel" in kernel:
+        return "attention.sparse_mqa", "high"
+    if cpu == "sgl_kernel::sparse_prefill_fwd" or (
+        cpu == "aten::mul" and "_forward_prefill_sparse" in frames
+    ):
+        return "attention.sparse_mqa", "high"
     if (
         "sm100_fp8_fp4_gemm_1d1d_impl" in kernel
         and "1024u, 4096u" in kernel
@@ -84,6 +96,10 @@ def classify_deepseek_v4_pro_sglang_node(
         return "attention.grouped_o_a", "high"
     if "_router_triton_kernel" in kernel:
         return "moe.learned_select", "high"
+    if "nvjet_sm103_tst_64x64_64x13" in kernel:
+        return "csa_indexer.weight_projection", "high"
+    if "nvjet_sm103_tss_192x128_64x6" in kernel:
+        return "moe.score_projection", "high"
     if "_pack_topk_ids" in kernel:
         return "moe.dispatch", "high"
     if "routingindices" in kernel:
@@ -125,10 +141,10 @@ def classify_deepseek_v4_pro_sglang_node(
         return "top.embedding", "high"
     if cpu == "aten::copy_" and "deepseek_v4model" in frames:
         return "top.hc_expand", "medium"
+    if in_logits and (cpu == "aten::mm" or "_compute_lm_head" in frames):
+        return "top.lm_head", "high"
     if "logits_processor" in frames:
         return "top.logits", "high"
-    if "lm_head" in frames or "parallel_lm_head" in frames:
-        return "top.lm_head", "high"
 
     # Branch-specific compressor/indexer kernels precede shared attention.
     if "fused_q_indexer_rope_hadamard_quant" in kernel:
@@ -143,10 +159,13 @@ def classify_deepseek_v4_pro_sglang_node(
         return "csa_indexer.causal_topk", "high"
     if in_main_compressor and cpu == "aten::mm" and "compute_kv_score" in frames:
         return "compressor.kv_gate_projection", "high"
-    if "flash_c128_decode" in kernel:
+    if "flash_c128_decode" in kernel or "flash_c128_prefill" in kernel:
         return "hca_compressor.softmax_pool", "high"
-    if "flash_c4_decode<512" in kernel:
+    if "flash_c4_decode<512" in kernel or "flash_c4_prefill<512" in kernel \
+            or "write_c4_prefill<512" in kernel:
         return "csa_compressor.softmax_pool", "high"
+    if "flash_c4_prefill<128" in kernel or "write_c4_prefill<128" in kernel:
+        return "csa_indexer.k_compress", "high"
     if "fused_norm_rope_flashmla" in kernel:
         return "compressor.partial_state", "high"
 
@@ -268,16 +287,19 @@ DEEPSEEK_V4_PRO_SGLANG_TRACE_RULES = TraceMappingRules(
             "csa_indexer.k_compress",
             "csa_indexer.score",
             "csa_indexer.causal_topk",
+            "csa_indexer.weight_projection",
             "csa_compressor.softmax_pool",
             "hca_compressor.softmax_pool",
             "compressor.partial_state",
             "attention.q_head_norm",
             "attention.window_kv",
+            "attention.index_union",
             "attention.sparse_mqa",
             "attention.inverse_rope",
             "attention.grouped_o_a",
             "moe.hash_select",
             "moe.learned_select",
+            "moe.score_projection",
             "moe.dispatch",
             "moe.routed_gate_up",
             "moe.routed_down",

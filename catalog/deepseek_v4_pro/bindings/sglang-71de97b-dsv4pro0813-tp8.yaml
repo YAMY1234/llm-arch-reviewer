@@ -7,10 +7,10 @@ source_repo: https://github.com/sgl-project/sglang
 source_commit: 71de97b264b04dcd514cf904003028aefe9775c8
 container: sglang-arm64-db37df8aded8.sqsh@sha256:ddec5cc59fa15be11e0b0b06de381cc2e0588e2d6098bd86f12a83cb4b1d58e2
 backend: sglang_native_dsv4_flashinfer_mxfp4
-binding_status: draft
+binding_status: validated
 source_lock_status: runtime_verified
 execution_validation:
-  status: pending
+  status: pass
   execution_fingerprint: exec_6178deeaa361c4f1
   required_phases:
   - prefill
@@ -19,7 +19,24 @@ execution_validation:
   evidence:
   - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-preflight-3414364.out
   - current/deepseek-v4-pro-ir-profile/logs/dsv4pro0813-source-hashes-3414569.out
-  notes: Every source file referenced by this binding matches source_commit exactly. Graph-off semantic validation is pending.
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager_prefill/3422245
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421642
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421643
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421644
+  - current/deepseek-v4-pro-ir-profile/evidence/sglang-eager-decode/3421645
+  - current/deepseek-v4-pro-ir-profile/contracts/sglang-eager/matrix_report.json
+  - current/deepseek-v4-pro-ir-profile/contracts/sglang-binding-validation.json
+  notes: >-
+    Exact graph-off prefill GBS1 and decode GBS1/16/64/256 passed on all eight
+    TP ranks. The eager compiler closes every rank over the official 61-layer
+    30-CSA/31-HCA schedule and all 122 attention/FFN occurrences, including
+    the prefill-only indexer, sparse-cache dequantization, index-union, and
+    sparse-attention paths. Asynchronous all-reduce and GEMM launches are
+    admitted only between their exact ordered semantic neighbors. Every GPU
+    event has a concrete model owner or typed runtime-support class, and every
+    one of the 153 execution nodes has a commit-specific link across eleven
+    runtime-verified source files. Rank-specific ordered fingerprints and all
+    N:1 fused semantic members remain explicit.
 node_bindings:
   top.token_ids:
     symbols:
