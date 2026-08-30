@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .sol import SolError, attach_sol_to_profile, build_sol_artifacts
+from .profile_acceptance import validate_executable_drill_rollups
 
 try:
     import yaml
@@ -1441,6 +1442,13 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     model_root = model_root.resolve()
     model_path = model_root / "model_ir.yaml"
     model_ir = load_yaml(model_path)
+    pipeline_path = model_root / "pipeline.yaml"
+    pipeline = load_yaml(pipeline_path) if pipeline_path.is_file() else {}
+    require_executable_drill_rollups = bool(
+        (pipeline.get("acceptance") or {}).get(
+            "require_executable_drill_rollups", False
+        )
+    )
     _validate_schema_version(model_ir, "model-ir.v2", source=model_path)
     _require(
         model_ir,
@@ -1508,6 +1516,11 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         )
         if profile["model_id"] != model_ir["model_id"]:
             raise CatalogError(f"{path}: model_id does not match {model_ir['model_id']}")
+        if require_executable_drill_rollups:
+            try:
+                validate_executable_drill_rollups(model_ir, profile)
+            except ValueError as exc:
+                raise CatalogError(f"{path}: {exc}") from exc
         raw_profiles.append((path, profile))
 
     bindings_by_id: dict[str, tuple[Path, dict[str, Any]]] = {}

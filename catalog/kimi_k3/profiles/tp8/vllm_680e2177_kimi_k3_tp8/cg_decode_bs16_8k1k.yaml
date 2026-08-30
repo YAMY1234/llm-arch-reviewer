@@ -1,6 +1,6 @@
 schema_version: profile.v2
 profile_id: kimi_k3_tp8_vllm_cg_decode_bs16_8k1k
-label: NVIDIA GB300 · vLLM · pure TP8 · CUDA Graph decode · BS16 · 8k→1k
+label: "NVIDIA GB300 \xB7 vLLM \xB7 pure TP8 \xB7 CUDA Graph decode \xB7 BS16 \xB7 8k\u21921k"
 model_id: kimi_k3
 execution_path_id: tp8
 implementation_id: vllm_680e2177_kimi_k3_tp8
@@ -97,7 +97,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: cg_decode_bs16_8k1k.timeline.json.gz
-  sha256: 2eb80a7f8a6e209531f4fc9d41dfef8c5f36eb7750e7c62e95977daa521429e1
+  sha256: d9cb203ae5d1087e392222299a134da8c62f717d18f32aec0c0875f169296cc6
   reference_rank: 0
   step_count: 1
   event_count: 2185
@@ -115,9 +115,6 @@ node_states:
   top.multimodal_injection:
     status: not_selected
     label: text-only stage-1 profile; the vision branch is outside this invocation
-  top.decoder_stack:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
   top.logits:
     status: fused
     label: fused into top.tp_logits_materialization
@@ -208,12 +205,6 @@ node_states:
   decoder_stack.attention_schedule:
     status: structural
     label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.kda:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.gated_mla:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
   decoder_stack.prefix_after_attention:
     status: fused
     label: fused into attn_res.weighted_merge
@@ -230,12 +221,6 @@ node_states:
     included_in: attn_res.weighted_merge
     fusion_group_id: vllm_attn_res_profile_aggregate
   decoder_stack.feed_forward_schedule:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.dense_mlp:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.stable_latent_moe:
     status: structural
     label: semantic tensor/control boundary without a standalone GPU interval
   decoder_stack.prefix_after_ffn:
@@ -1091,3 +1076,104 @@ node_metrics:
       avg_us: 7.104
       total_us_per_iter: 7.104
       share_in_node_residency_pct: 17.9757
+  decoder_stack.stable_latent_moe:
+    ms_per_iter: 10.738002
+    active_gpu_ms: 10.738002
+    gpu_residency_ms: 13.433277
+    gpu_residency_ms_per_iter: 13.433277
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1288
+    rollup_sources:
+    - stable_latent_moe.corrected_selection
+    - stable_latent_moe.dispatch
+    - stable_latent_moe.expert_down
+    - stable_latent_moe.expert_gate_up
+    - stable_latent_moe.routed_down
+    - stable_latent_moe.router_logits
+    - stable_latent_moe.shared_down
+    - stable_latent_moe.shared_gate_up
+    - stable_latent_moe.shared_situ
+    - stable_latent_moe.tp_routed_latent_collective
+  top.decoder_stack:
+    ms_per_iter: 16.619106
+    active_gpu_ms: 16.619106
+    gpu_residency_ms: 20.660461
+    gpu_residency_ms_per_iter: 20.660461
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 2156
+    rollup_sources:
+    - attn_res.weighted_merge
+    - dense_mlp.down
+    - dense_mlp.gate_up
+    - dense_mlp.situ
+    - gated_mla.attention
+    - gated_mla.cache_update
+    - gated_mla.gated_context
+    - gated_mla.kv_up
+    - gated_mla.output_projection
+    - gated_mla.q_down
+    - gated_mla.q_norm
+    - gated_mla.q_up
+    - kda.decay_projection
+    - kda.output_projection
+    - kda.qkv_projection
+    - kda.recurrent_update
+    - stable_latent_moe.corrected_selection
+    - stable_latent_moe.dispatch
+    - stable_latent_moe.expert_down
+    - stable_latent_moe.expert_gate_up
+    - stable_latent_moe.routed_down
+    - stable_latent_moe.router_logits
+    - stable_latent_moe.shared_down
+    - stable_latent_moe.shared_gate_up
+    - stable_latent_moe.shared_situ
+    - stable_latent_moe.tp_routed_latent_collective
+  decoder_stack.gated_mla:
+    ms_per_iter: 2.066672
+    active_gpu_ms: 2.066672
+    gpu_residency_ms: 2.483088
+    gpu_residency_ms_per_iter: 2.483088
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 264
+    rollup_sources:
+    - gated_mla.attention
+    - gated_mla.cache_update
+    - gated_mla.gated_context
+    - gated_mla.kv_up
+    - gated_mla.output_projection
+    - gated_mla.q_down
+    - gated_mla.q_norm
+    - gated_mla.q_up
+  decoder_stack.kda:
+    ms_per_iter: 3.381728
+    active_gpu_ms: 3.381728
+    gpu_residency_ms: 3.633664
+    gpu_residency_ms_per_iter: 3.633664
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 414
+    rollup_sources:
+    - kda.decay_projection
+    - kda.output_projection
+    - kda.qkv_projection
+    - kda.recurrent_update
+  decoder_stack.dense_mlp:
+    ms_per_iter: 0.051424
+    active_gpu_ms: 0.051424
+    gpu_residency_ms: 0.051424
+    gpu_residency_ms_per_iter: 0.051424
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 4
+    rollup_sources:
+    - dense_mlp.down
+    - dense_mlp.gate_up
+    - dense_mlp.situ

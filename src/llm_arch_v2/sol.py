@@ -249,6 +249,9 @@ def validate_sol_manifest(manifest: dict[str, Any], *, source: Path) -> None:
     for key in ("semantic_math", "fusion_policy", "overlap_policy"):
         if not assumptions.get(key):
             raise SolError(f"{source}: assumptions.{key} is required")
+    observed_policy = manifest.get("observed_timing_policy", "all_profile_metrics")
+    if observed_policy not in {"all_profile_metrics", "exclusive_owner_only"}:
+        raise SolError(f"{source}: unsupported observed_timing_policy")
 
 
 def _match_calibration_value(actual: Any, expected: Any) -> bool:
@@ -1256,7 +1259,15 @@ def build_sol_artifacts(
         estimate = estimates[target]
         cell = _profile_cell(measured, target)
         observed = None
-        if cell:
+        # A manifest may explicitly keep comparison coverage owner-exclusive.
+        # Inclusive drill roll-ups remain visible navigation envelopes but do
+        # not become additional observed owners under that policy.
+        owner_exclusive = (
+            manifest.get("observed_timing_policy") == "exclusive_owner_only"
+        )
+        if cell and not (
+            owner_exclusive and cell.get("metric_kind") == "inclusive_rollup"
+        ):
             observed = cell.get("active_gpu_ms", cell.get("ms_per_iter"))
             if observed is not None:
                 observed = float(observed)

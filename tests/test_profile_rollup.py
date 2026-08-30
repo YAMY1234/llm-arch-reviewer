@@ -1,3 +1,5 @@
+import pytest
+
 from models.common.profile_rollup import (
     add_execution_boundary_ancestors,
     direct_metrics_from_events,
@@ -6,6 +8,7 @@ from models.common.profile_rollup import (
     scoped_rollup_metric_from_events,
     unique_drill_ancestors,
 )
+from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
 
 
 def test_execution_module_boundary_rolls_into_outer_scope_only() -> None:
@@ -153,3 +156,84 @@ def test_scoped_parent_unions_only_matching_owner_occurrences() -> None:
     assert metric["active_gpu_ms"] == 0.015
     assert metric["gpu_residency_ms"] == 0.02
     assert metric["rollup_sources"] == ["detail.owner"]
+
+
+def test_executable_drill_with_measured_descendants_requires_union_rollup() -> None:
+    model = {
+        "semantic_contract": {
+            "operations": {
+                "model.stack": {"kind": "module"},
+                "model.control": {"kind": "control_boundary"},
+                "model.optional": {"kind": "module"},
+                "detail.compute": {"kind": "projection"},
+                "control.compute": {"kind": "projection"},
+            }
+        },
+        "views": {
+            "top": {
+                "nodes": [
+                    {
+                        "id": "stack",
+                        "drill": "detail",
+                        "semantic_op": "model.stack",
+                    },
+                    {
+                        "id": "control",
+                        "drill": "control_detail",
+                        "semantic_op": "model.control",
+                    },
+                    {
+                        "id": "optional",
+                        "drill": "optional_detail",
+                        "semantic_op": "model.optional",
+                    },
+                ]
+            },
+            "detail": {
+                "nodes": [
+                    {"id": "compute", "semantic_op": "detail.compute"}
+                ]
+            },
+            "control_detail": {
+                "nodes": [
+                    {"id": "compute", "semantic_op": "control.compute"}
+                ]
+            },
+            "optional_detail": {"nodes": [{"id": "compute"}]},
+        },
+    }
+    profile = {
+        "profile_id": "shared_acceptance_fixture",
+        "node_metrics": {
+            "detail.compute": {
+                "metric_kind": "exclusive_leaf",
+                "attribution_status": "measured_direct",
+                "active_gpu_ms": 0.01,
+                "gpu_residency_ms": 0.01,
+            },
+            "control_detail.compute": {
+                "metric_kind": "exclusive_leaf",
+                "attribution_status": "measured_direct",
+                "active_gpu_ms": 0.002,
+                "gpu_residency_ms": 0.002,
+            },
+        },
+        "node_states": {
+            "top.stack": {"status": "structural"},
+            "top.control": {"status": "structural"},
+            "top.optional": {"status": "not_selected"},
+        },
+    }
+
+    with pytest.raises(ValueError, match="top.stack.*no inclusive_rollup"):
+        validate_executable_drill_rollups(model, profile)
+
+    profile["node_states"].pop("top.stack")
+    profile["node_metrics"]["top.stack"] = {
+        "metric_kind": "inclusive_rollup",
+        "attribution_status": "inclusive_rollup",
+        "active_gpu_ms": 0.01,
+        "gpu_residency_ms": 0.01,
+        "mapped_event_count": 1,
+    }
+    validate_executable_drill_rollups(model, profile)

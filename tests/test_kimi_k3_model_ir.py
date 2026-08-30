@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ import yaml
 
 from llm_arch_v2 import compile_catalog
 from llm_arch_v2.compiler import CatalogError, apply_execution_plan
+from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
 from models.common.trace_mapping import FrameRef
 from models.kimi_k3.build.kimi_k3_trace_rules import classify_kimi_k3_node
 from models.kimi_k3.build.kimi_k3_vllm_trace_rules import (
@@ -396,6 +398,97 @@ def test_kimi_k3_canonical_catalog_compile_is_deterministic() -> None:
     assert first["meta"]["implementation_count"] == 2
     assert first["meta"]["profile_count"] == 8
     assert all(profile["meta"].get("timeline") for profile in first["profiles"].values())
+
+
+def test_kimi_k3_runtime_drills_are_exact_production_event_unions() -> None:
+    model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    bundle = compile_catalog(MODEL_ROOT)
+    expected_occurrences = {
+        "top.decoder_stack": 186,
+        "decoder_stack.kda": 69,
+        "decoder_stack.gated_mla": 24,
+        "decoder_stack.dense_mlp": 1,
+        "decoder_stack.stable_latent_moe": 92,
+    }
+    scoped_prefixes = {
+        "decoder_stack.kda": "kda.",
+        "decoder_stack.gated_mla": "gated_mla.",
+        "decoder_stack.dense_mlp": "dense_mlp.",
+        "decoder_stack.stable_latent_moe": "stable_latent_moe.",
+    }
+
+    def decode(value: object, strings: list[str]) -> object:
+        return strings[value] if isinstance(value, int) else value
+
+    def union_us(intervals: list[tuple[float, float]]) -> float:
+        merged: list[list[float]] = []
+        for start, stop in sorted(intervals):
+            if merged and start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], stop)
+            else:
+                merged.append([start, stop])
+        return sum(stop - start for start, stop in merged)
+
+    for profile_path in sorted((MODEL_ROOT / "profiles").glob("*/*/*.yaml")):
+        profile = load_yaml(profile_path)
+        validate_executable_drill_rollups(model, profile)
+        compiled = bundle["profiles"][profile["profile_id"]]
+        timeline_path = profile_path.parent / profile["timeline"]["artifact"]
+        with gzip.open(timeline_path, "rt") as source:
+            timeline = json.load(source)
+        strings = timeline["strings"]
+
+        for target, expected_count in expected_occurrences.items():
+            metric = profile["node_metrics"][target]
+            assert target not in (profile.get("node_states") or {})
+            assert metric["metric_kind"] == "inclusive_rollup"
+            assert metric["attribution_status"] == "inclusive_rollup"
+            assert compiled["data"][target][profile["variant_id"]][
+                "timing_role"
+            ] == "inclusive_rollup"
+
+            event_ids: list[str] = []
+            occurrences: set[str] = set()
+            residency_us = 0.0
+            active_us = 0.0
+            direct_nodes: set[str] = set()
+            for step in timeline["steps"]:
+                step_intervals: list[tuple[float, float]] = []
+                for event in step["events"]:
+                    targets = {
+                        str(decode(item, strings))
+                        for item in event.get("ir_targets") or []
+                    }
+                    if target not in targets:
+                        continue
+                    start = float(event["start_us"])
+                    duration = float(event["duration_us"])
+                    step_intervals.append((start, start + duration))
+                    residency_us += duration
+                    event_ids.append(str(event["event_id"]))
+                    occurrence = decode(event.get("occurrence_id"), strings)
+                    if occurrence:
+                        occurrences.add(str(occurrence))
+                    direct = decode(event.get("ir_node"), strings)
+                    if direct:
+                        direct_nodes.add(str(direct))
+                active_us += union_us(step_intervals)
+
+            assert len(event_ids) == len(set(event_ids))
+            assert metric["mapped_event_count"] == len(event_ids)
+            assert metric["active_gpu_ms"] == pytest.approx(
+                active_us / 1000.0, abs=1e-6
+            )
+            assert metric["gpu_residency_ms"] == pytest.approx(
+                residency_us / 1000.0, abs=1e-6
+            )
+            assert metric["rollup_sources"] == sorted(direct_nodes)
+            assert len(occurrences) == expected_count
+            if target in scoped_prefixes:
+                assert all(
+                    node.startswith(scoped_prefixes[target])
+                    for node in direct_nodes
+                )
 
 
 def test_kimi_k3_decode_gap_is_full_semantic_ideal_and_fail_closed() -> None:

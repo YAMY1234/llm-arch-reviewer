@@ -1,6 +1,6 @@
 schema_version: profile.v2
 profile_id: kimi_k3_tp8_sglang_cg_decode_bs1_8k1k
-label: NVIDIA GB300 · SGLang · pure TP8 · CUDA Graph decode · BS1 · 8k→1k
+label: "NVIDIA GB300 \xB7 SGLang \xB7 pure TP8 \xB7 CUDA Graph decode \xB7 BS1 \xB7 8k\u21921k"
 model_id: kimi_k3
 execution_path_id: tp8
 implementation_id: sglang_25035bff_kimi_k3_tp8
@@ -149,7 +149,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: cg_decode_bs1_8k1k.timeline.json.gz
-  sha256: 10b816c0b0634c3e7813c069a07e957525ecdb7e737cba49d8d6f60e815c2008
+  sha256: 568ebf863d6f65af91f5d7a4a18fbb3ef35bd12b61833cbce3120b67f1ab4b44
   reference_rank: 0
   step_count: 1
   event_count: 1939
@@ -167,9 +167,6 @@ node_states:
   top.multimodal_injection:
     status: not_selected
     label: text-only stage-1 profile; the vision branch is outside this invocation
-  top.decoder_stack:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
   top.final_norm:
     status: fused
     label: fused into top.output_attn_res
@@ -260,12 +257,6 @@ node_states:
   decoder_stack.attention_schedule:
     status: structural
     label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.kda:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.gated_mla:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
   decoder_stack.prefix_after_attention:
     status: fused
     label: fused into attn_res.weighted_merge
@@ -282,12 +273,6 @@ node_states:
     included_in: attn_res.weighted_merge
     fusion_group_id: sglang_attn_res_profile_aggregate
   decoder_stack.feed_forward_schedule:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.dense_mlp:
-    status: structural
-    label: semantic tensor/control boundary without a standalone GPU interval
-  decoder_stack.stable_latent_moe:
     status: structural
     label: semantic tensor/control boundary without a standalone GPU interval
   decoder_stack.stack_out:
@@ -1160,3 +1145,112 @@ node_metrics:
       avg_us: 17.536
       total_us_per_iter: 17.536
       share_in_node_residency_pct: 100.0
+  decoder_stack.stable_latent_moe:
+    ms_per_iter: 4.500925
+    active_gpu_ms: 4.500925
+    gpu_residency_ms: 7.175056
+    gpu_residency_ms_per_iter: 7.175056
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1012
+    rollup_sources:
+    - stable_latent_moe.combine
+    - stable_latent_moe.corrected_selection
+    - stable_latent_moe.dispatch
+    - stable_latent_moe.expert_down
+    - stable_latent_moe.expert_gate_up
+    - stable_latent_moe.routed_up
+    - stable_latent_moe.router_logits
+    - stable_latent_moe.shared_down
+    - stable_latent_moe.shared_situ
+    - stable_latent_moe.tp_routed_latent_collective
+    - stable_latent_moe.tp_shared_expert_collective
+  top.decoder_stack:
+    ms_per_iter: 8.175068
+    active_gpu_ms: 8.175068
+    gpu_residency_ms: 13.210767
+    gpu_residency_ms_per_iter: 13.210767
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1905
+    rollup_sources:
+    - attn_res.weighted_merge
+    - decoder_stack.prefix_after_ffn
+    - dense_mlp.down
+    - dense_mlp.gate_up
+    - dense_mlp.situ
+    - dense_mlp.tp_dense_output_collective
+    - gated_mla.attention
+    - gated_mla.cache_update
+    - gated_mla.gated_context
+    - gated_mla.kv_norm
+    - gated_mla.output_gate
+    - gated_mla.output_projection
+    - gated_mla.q_down
+    - gated_mla.q_norm
+    - gated_mla.q_up
+    - gated_mla.tp_mla_output_collective
+    - kda.beta_projection
+    - kda.output_projection
+    - kda.qkv_projection
+    - kda.recurrent_update
+    - kda.tp_kda_output_collective
+    - stable_latent_moe.combine
+    - stable_latent_moe.corrected_selection
+    - stable_latent_moe.dispatch
+    - stable_latent_moe.expert_down
+    - stable_latent_moe.expert_gate_up
+    - stable_latent_moe.routed_up
+    - stable_latent_moe.router_logits
+    - stable_latent_moe.shared_down
+    - stable_latent_moe.shared_situ
+    - stable_latent_moe.tp_routed_latent_collective
+    - stable_latent_moe.tp_shared_expert_collective
+  decoder_stack.gated_mla:
+    ms_per_iter: 1.115647
+    active_gpu_ms: 1.115647
+    gpu_residency_ms: 1.501823
+    gpu_residency_ms_per_iter: 1.501823
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 264
+    rollup_sources:
+    - gated_mla.attention
+    - gated_mla.cache_update
+    - gated_mla.gated_context
+    - gated_mla.kv_norm
+    - gated_mla.output_gate
+    - gated_mla.output_projection
+    - gated_mla.q_down
+    - gated_mla.q_norm
+    - gated_mla.q_up
+  decoder_stack.kda:
+    ms_per_iter: 1.96272
+    active_gpu_ms: 1.96272
+    gpu_residency_ms: 2.803904
+    gpu_residency_ms_per_iter: 2.803904
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 345
+    rollup_sources:
+    - kda.beta_projection
+    - kda.output_projection
+    - kda.qkv_projection
+    - kda.recurrent_update
+  decoder_stack.dense_mlp:
+    ms_per_iter: 0.0344
+    active_gpu_ms: 0.0344
+    gpu_residency_ms: 0.037792
+    gpu_residency_ms_per_iter: 0.037792
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 3
+    rollup_sources:
+    - dense_mlp.down
+    - dense_mlp.gate_up
+    - dense_mlp.situ
