@@ -38,6 +38,7 @@ def main() -> int:
         n_iters=1,
         skip_first=False,
         expected_phase_frame="execute_model",
+        close_phase_tails=True,
     )
     write_build_result(args.out_dir.resolve(), result, rank=args.rank)
     print(

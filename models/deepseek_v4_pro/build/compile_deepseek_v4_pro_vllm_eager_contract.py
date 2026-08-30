@@ -468,6 +468,26 @@ def _ordered_fingerprint(rows: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _annotate_top_collective_group(
+    rows: list[dict[str, Any]], node: str
+) -> list[int]:
+    """Preserve one semantic TP boundary across its N physical kernels."""
+
+    indices = [
+        index for index, row in enumerate(rows) if row.get("selected_node") == node
+    ]
+    for index in indices:
+        row = rows[index]
+        kernel = str(row.get("kernel_name") or "").lower()
+        row["launch_group_id"] = node
+        row["launch_group_role"] = (
+            "collective_kernel"
+            if "nccl" in kernel or "multimem_all_reduce" in kernel
+            else "result_materialization"
+        )
+    return indices
+
+
 def compile_contract(
     mappings: list[dict[str, Any]],
     manifest: dict[str, Any],
@@ -543,6 +563,40 @@ def compile_contract(
     if occurrence_ids != expected_occurrences:
         errors.append("compiled layer occurrence set is incomplete")
 
+    embedding_collective_indices = _annotate_top_collective_group(
+        rows, "top.tp_embedding_output_collective"
+    )
+    logits_collective_indices = _annotate_top_collective_group(
+        rows, "top.tp_logits_collective"
+    )
+    node_counts = Counter(str(row.get("selected_node")) for row in rows)
+    for boundary, indices in (
+        ("top.tp_embedding_output_collective", embedding_collective_indices),
+        ("top.tp_logits_collective", logits_collective_indices),
+    ):
+        if not indices:
+            errors.append(f"complete top-level runtime lacks {boundary}")
+        collective_kernels = sum(
+            rows[index].get("launch_group_role") == "collective_kernel"
+            for index in indices
+        )
+        if indices and collective_kernels != 1:
+            errors.append(
+                f"{boundary} requires exactly one physical collective owner, "
+                f"got {collective_kernels}"
+            )
+    lm_head_indices = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("selected_node") == "top.lm_head"
+    ]
+    if (
+        lm_head_indices
+        and logits_collective_indices
+        and logits_collective_indices[0] <= lm_head_indices[-1]
+    ):
+        errors.append("TP logits collective does not follow the complete LM-head launch group")
+
     report = {
         "ok": not errors,
         "errors": errors,
@@ -557,7 +611,21 @@ def compile_contract(
         "csa_layers": list(CSA_LAYERS),
         "hca_layers": list(HCA_LAYERS),
         "occurrence_count": len(occurrence_ids),
-        "node_counts": dict(Counter(str(row.get("selected_node")) for row in rows)),
+        "node_counts": dict(node_counts),
+        "top_collective_groups": {
+            boundary: {
+                "launch_group_id": boundary,
+                "physical_kernel_count": len(indices),
+                "collective_owner_count": sum(
+                    rows[index].get("launch_group_role") == "collective_kernel"
+                    for index in indices
+                ),
+            }
+            for boundary, indices in (
+                ("top.tp_embedding_output_collective", embedding_collective_indices),
+                ("top.tp_logits_collective", logits_collective_indices),
+            )
+        },
         "support_class_counts": dict(
             Counter(
                 str(row.get("support_class"))

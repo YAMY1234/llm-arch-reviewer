@@ -96,6 +96,7 @@ def _synthetic_schedule(*, fused_launch: bool) -> list[dict]:
         rows.append(_row(event_id, node, kernel))
         event_id += 1
 
+    add("top.tp_embedding_output_collective", "multimem_all_reduce_kernel")
     for layer in range(61):
         if not fused_launch or layer == 0:
             add("mhc_transform.affine")
@@ -108,6 +109,8 @@ def _synthetic_schedule(*, fused_launch: bool) -> list[dict]:
         add("mhc_transform.affine")
         add("moe.tp_moe_output_collective")
         add("mhc_transform.mix", "mhc_fused_tilelang_kernel" if fused_launch and layer < 60 else None)
+    add("top.lm_head")
+    add("top.tp_logits_collective", "ncclDevKernel_AllGather_RING_LL")
     return rows
 
 
@@ -135,16 +138,42 @@ def test_occurrence_compiler_closes_separate_mhc_schedule() -> None:
     assert report["occurrence_count"] == 122
     assert report["node_counts"]["csa_attention.tp_csa_output_collective"] == 30
     assert report["node_counts"]["hca_attention.tp_hca_output_collective"] == 31
-    assert not any(row.get("launch_group_id") for row in rows)
+    assert not any("__to__" in str(row.get("launch_group_id")) for row in rows)
 
 
 def test_occurrence_compiler_preserves_fused_post_pre_one_to_many_launches() -> None:
     rows, report = _compile(_synthetic_schedule(fused_launch=True))
     assert report["ok"] is True
-    grouped = [row for row in rows if row.get("launch_group_id")]
+    grouped = [
+        row for row in rows if "__to__" in str(row.get("launch_group_id"))
+    ]
     assert len(grouped) == 242
     assert len({row["launch_group_id"] for row in grouped}) == 121
     assert {row["launch_group_role"] for row in grouped} == {
         "post_pre_first_kernel",
         "post_pre_second_kernel",
+    }
+
+
+def test_occurrence_compiler_preserves_logits_collective_n_to_one_group() -> None:
+    schedule = _synthetic_schedule(fused_launch=False)
+    schedule.append(_row(len(schedule), "top.tp_logits_collective", "copy_kernel"))
+
+    rows, report = _compile(schedule)
+
+    group = [
+        row
+        for row in rows
+        if row.get("launch_group_id") == "top.tp_logits_collective"
+    ]
+    assert report["ok"] is True
+    assert len(group) == 2
+    assert [row["launch_group_role"] for row in group] == [
+        "collective_kernel",
+        "result_materialization",
+    ]
+    assert report["top_collective_groups"]["top.tp_logits_collective"] == {
+        "launch_group_id": "top.tp_logits_collective",
+        "physical_kernel_count": 2,
+        "collective_owner_count": 1,
     }

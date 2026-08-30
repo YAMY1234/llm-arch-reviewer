@@ -550,6 +550,78 @@ def choose_forward_window(
     )
 
 
+def close_window_phase_tails(
+    trace_events: list[dict[str, Any]],
+    window: ForwardWindow,
+    *,
+    phase_frame: str,
+) -> ForwardWindow:
+    """Extend GPU annotation bounds through the enclosing Python phase tail.
+
+    Some runtimes end a GPU step annotation after enqueuing the model body but
+    before the final asynchronous collective has completed.  The enclosing
+    Python phase is the stronger ownership boundary when stacks are available:
+    any kernel launched from that phase remains part of the same executor step
+    even if queueing makes its device interval start later.  This opt-in helper
+    only extends the end of each selected bound; it never moves a start earlier
+    or admits a kernel whose correlated launch is outside the owning phase.
+    """
+
+    phase_spans = [
+        event
+        for event in trace_events
+        if event.get("cat") == "python_function"
+        and event.get("ph") == "X"
+        and phase_frame in str(event.get("name", ""))
+    ]
+    launch_by_correlation: dict[int, float] = {}
+    for event in trace_events:
+        if event.get("cat") not in {"cuda_runtime", "cuda_driver"}:
+            continue
+        correlation = _as_int(_args(event).get("correlation"))
+        if correlation is not None:
+            launch_by_correlation[correlation] = float(event.get("ts", 0.0))
+
+    closed_bounds: list[tuple[float, float]] = []
+    for start, end in window.iter_bounds_us:
+        enclosing = [
+            event
+            for event in phase_spans
+            if float(event.get("ts", 0.0)) <= start
+            and _event_end_us(event) >= start
+        ]
+        if not enclosing:
+            raise ValueError(
+                f"no {phase_frame!r} Python phase owns selected bound start {start}"
+            )
+        owner = min(enclosing, key=lambda event: float(event.get("dur", 0.0)))
+        owner_start = float(owner.get("ts", 0.0))
+        owner_end = _event_end_us(owner)
+        owned_kernel_ends = []
+        for event in trace_events:
+            if event.get("cat") != "kernel" or event.get("ph") != "X":
+                continue
+            correlation = _as_int(_args(event).get("correlation"))
+            launch_ts = (
+                launch_by_correlation.get(correlation)
+                if correlation is not None
+                else None
+            )
+            if launch_ts is not None and owner_start <= launch_ts <= owner_end:
+                owned_kernel_ends.append(_event_end_us(event))
+        # Preserve the enclosing Python phase boundary, and extend beyond it
+        # only for asynchronous kernels whose correlated launch it owned. A
+        # longer GPU annotation (for example multi-stream prefill) remains
+        # authoritative when it already outlives both.
+        closed_bounds.append((start, max([end, owner_end, *owned_kernel_ends])))
+    return ForwardWindow(
+        start_us=closed_bounds[0][0],
+        end_us=closed_bounds[-1][1],
+        iter_bounds_us=closed_bounds,
+        anchor_kernel_count=window.anchor_kernel_count,
+    )
+
+
 _FILE_FRAME_RE = re.compile(r"(?P<file>[^()]+\.py)\((?P<line>\d+)\): (?P<func>.+)$")
 _MODULE_FRAME_RE = re.compile(r"nn\.Module: (?P<module>.+)$")
 
@@ -1003,6 +1075,7 @@ def build_trace_mapping(
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
     expected_phase_frame: str | None = None,
+    close_phase_tails: bool = False,
 ) -> BuildResult:
     trace = load_trace(trace_path)
     trace_events = trace.get("traceEvents") or []
@@ -1027,6 +1100,15 @@ def build_trace_mapping(
         n_iters=n_iters,
         skip_first=skip_first,
     )
+    if close_phase_tails:
+        if not expected_phase_frame:
+            raise ValueError("close_phase_tails requires expected_phase_frame")
+        window = close_window_phase_tails(
+            trace_events,
+            window,
+            phase_frame=expected_phase_frame,
+        )
+        window_method = f"{window_method}+python_phase_tail"
     events = normalize_kernel_events(
         trace_events,
         window=window,

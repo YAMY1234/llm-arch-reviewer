@@ -33,7 +33,12 @@ execution_validation:
     runtime-support event, and preserves rank-specific ordered fingerprints.
     GBS1/16 use the source-proved two-kernel mhc_fused_post_pre launch groups;
     GBS64/256 use the separate mHC pre/post path. All 153 execution nodes have
-    commit-specific links across nine runtime-verified source files.
+    commit-specific links across nine runtime-verified source files. The eager
+    window is closed through the owning execute_model phase and its correlated
+    asynchronous launches, so the TP logits all-gather is retained on every
+    rank. Larger decode batches preserve the NCCL kernel plus result
+    materialization as one N:1 semantic collective group rather than duplicating
+    timing ownership.
 node_bindings:
   top.token_ids:
     symbols:
