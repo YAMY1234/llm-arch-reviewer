@@ -957,6 +957,46 @@ node_bindings:
       symbol: DeepseekV2MoE.forward
       line: 876
       display: DeepSeek-V4 routed and shared MoE
+  top.tp_embedding_output_collective:
+    symbols:
+    - VocabParallelEmbedding.forward
+    links:
+    - file: python/sglang/srt/layers/vocab_parallel_embedding.py
+      symbol: VocabParallelEmbedding.forward
+      line: 566
+      display: TP8 masked vocabulary-shard embedding all-reduce
+  csa_attention.tp_csa_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1596
+      display: TP8 CSA row-parallel output all-reduce
+  hca_attention.tp_hca_output_collective:
+    symbols:
+    - RowParallelLinear.forward
+    links:
+    - file: python/sglang/srt/layers/linear.py
+      symbol: RowParallelLinear.forward
+      line: 1596
+      display: TP8 HCA row-parallel output all-reduce
+  moe.tp_moe_output_collective:
+    symbols:
+    - DeepseekV2MoE.forward
+    links:
+    - file: python/sglang/srt/models/deepseek_v2.py
+      symbol: DeepseekV2MoE.forward
+      line: 876
+      display: TP8 routed-plus-shared MoE output all-reduce
+  top.tp_logits_collective:
+    symbols:
+    - LogitsProcessor._get_logits
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: LogitsProcessor._get_logits
+      line: 648
+      display: TP8 vocabulary logits all-gather
   dspark_generation.dspark_in:
     symbols:
     - DeepseekV4ForCausalLMDSpark.forward

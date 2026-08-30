@@ -113,10 +113,11 @@ def test_semantic_source_ledger_has_no_pending_dispositions() -> None:
 
 
 def test_both_commit_specific_bindings_cover_every_architecture_node() -> None:
-    model = _load("model_ir.yaml")
+    bundle = compile_catalog(MODEL_ROOT)
+    execution = next(iter(bundle["execution_variants"].values()))
     expected_nodes = {
         f"{view_id}.{node['id']}"
-        for view_id, view in model["views"].items()
+        for view_id, view in execution["views"].items()
         for node in view["nodes"]
     }
     bindings = {
