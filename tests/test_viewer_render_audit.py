@@ -50,6 +50,23 @@ def test_zero_profile_audit_is_architecture_only_not_vacuous() -> None:
     assert 'page.wait_for_selector("g.view-group g.node"' in script
 
 
+def test_fused_owner_audit_is_navigation_aware_and_fail_closed() -> None:
+    """Every rendered ``fused into`` row must link to its real owner.
+
+    The owner may be inserted by Execution IR rather than authored in Model IR,
+    so both the detail-panel and node-card checks must use the navigation-aware
+    lookup and record a concrete issue when the link is missing.
+    """
+
+    script = (
+        Path(__file__).parents[1] / "scripts" / "audit_viewer_render.py"
+    ).read_text()
+    assert script.count("irTargetExistsForNavigation(architectureOwner)") == 2
+    assert "fusion owner detail link" in script
+    assert "fusion_owner_card_link" in script
+    assert "fusion_owner_dom_clicks" in script
+
+
 def test_viewer_audit_writes_structured_failure_on_exception(tmp_path) -> None:
     output = tmp_path / "audit"
     args = Namespace(bundle=tmp_path / "qwen35_v2" / "arch_data.json", output=output)

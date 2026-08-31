@@ -1031,7 +1031,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: prefill_bs1_8k1k.timeline.json.gz
-  sha256: 46b5387f743fe455dcf8f29a22b79637a8b11ce6f9c0fa84172e456f718c679c
+  sha256: ad48bc69ec6c6928ff589f20fabe577068cf50b1af57842662809a7c3fe228c8
   reference_rank: 7
   step_count: 1
   event_count: 2174
@@ -1107,9 +1107,6 @@ node_states:
   full_attention_moe_block.input_hidden:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
-  full_attention_moe_block.moe:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
   full_attention_moe_block.output_hidden:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
@@ -1120,9 +1117,6 @@ node_states:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
   gdn_moe_block.input_hidden:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
-  gdn_moe_block.moe:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
   gdn_moe_block.output_hidden:
@@ -1452,12 +1446,6 @@ node_states:
   mtp_moe_block.weighted_combine:
     status: not_selected
     label: outside the text-only, MTP-off pure-TP8 contract
-  stack.full_attention_layer:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
-  stack.gdn_layer:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
   stack.schedule:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
@@ -3273,3 +3261,214 @@ node_metrics:
     - moe_block.router
     - moe_block.shared_expert
     - moe_block.weighted_combine
+  gdn_moe_block.moe:
+    ms_per_iter: 28.842804
+    active_gpu_ms: 28.842804
+    gpu_residency_ms: 31.411191
+    gpu_residency_ms_per_iter: 31.411191
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 585
+    rollup_sources:
+    - moe_block.routed_experts
+    - moe_block.router
+    - moe_block.shared_expert
+    - moe_block.weighted_combine
+    timing_scope:
+      layer_kind: gdn
+      substage: moe
+    required_occurrence_count: 45
+    drill_view: moe_block
+    drill_metrics:
+      input_hidden:
+        status: structural
+        label: semantic, state, scheduler, or drill boundary without standalone production timing
+      output_hidden:
+        status: structural
+        label: semantic, state, scheduler, or drill boundary without standalone production timing
+      routed_experts:
+        ms_per_iter: 23.82898
+        active_gpu_ms: 23.82898
+        gpu_residency_ms: 24.366103
+        gpu_residency_ms_per_iter: 24.366103
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 180
+        rollup_sources:
+        - moe_block.routed_experts
+        timing_scope:
+          layer_kind: gdn
+          substage: moe
+      router:
+        ms_per_iter: 1.958472
+        active_gpu_ms: 1.958472
+        gpu_residency_ms: 1.958472
+        gpu_residency_ms_per_iter: 1.958472
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 135
+        rollup_sources:
+        - moe_block.router
+        timing_scope:
+          layer_kind: gdn
+          substage: moe
+      shared_expert:
+        ms_per_iter: 3.155242
+        active_gpu_ms: 3.155242
+        gpu_residency_ms: 3.168426
+        gpu_residency_ms_per_iter: 3.168426
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 225
+        rollup_sources:
+        - moe_block.shared_expert
+        timing_scope:
+          layer_kind: gdn
+          substage: moe
+      weighted_combine:
+        ms_per_iter: 1.91819
+        active_gpu_ms: 1.91819
+        gpu_residency_ms: 1.91819
+        gpu_residency_ms_per_iter: 1.91819
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 45
+        rollup_sources:
+        - moe_block.weighted_combine
+        timing_scope:
+          layer_kind: gdn
+          substage: moe
+  stack.gdn_layer:
+    ms_per_iter: 68.779161
+    active_gpu_ms: 68.779161
+    gpu_residency_ms: 71.894371
+    gpu_residency_ms_per_iter: 71.894371
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1665
+    rollup_sources:
+    - gdn_attention.causal_conv
+    - gdn_attention.gated_delta_recurrence
+    - gdn_attention.output_gate_norm
+    - gdn_attention.output_projection
+    - gdn_attention.qkvz_projection
+    - gdn_moe_block.input_norm
+    - gdn_moe_block.post_attention_norm
+    - gdn_moe_block.tp_attention_output_collective
+    - gdn_moe_block.tp_moe_output_collective
+    - moe_block.routed_experts
+    - moe_block.router
+    - moe_block.shared_expert
+    - moe_block.weighted_combine
+  stack.full_attention_layer:
+    ms_per_iter: 20.416086
+    active_gpu_ms: 20.416086
+    gpu_residency_ms: 21.414747
+    gpu_residency_ms_per_iter: 21.414747
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 390
+    rollup_sources:
+    - full_attention.attention_output_gate
+    - full_attention.causal_gqa
+    - full_attention.kv_state_write
+    - full_attention.output_projection
+    - full_attention.qk_norm
+    - full_attention.qkv_projection
+    - full_attention_moe_block.input_norm
+    - full_attention_moe_block.post_attention_norm
+    - full_attention_moe_block.tp_attention_output_collective
+    - full_attention_moe_block.tp_moe_output_collective
+    - moe_block.routed_experts
+    - moe_block.router
+    - moe_block.shared_expert
+    - moe_block.weighted_combine
+  full_attention_moe_block.moe:
+    ms_per_iter: 9.610921
+    active_gpu_ms: 9.610921
+    gpu_residency_ms: 10.488268
+    gpu_residency_ms_per_iter: 10.488268
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of context-filtered production-owner intervals; overlap counted once; no child scalar copied
+    mapped_event_count: 195
+    rollup_sources:
+    - moe_block.routed_experts
+    - moe_block.router
+    - moe_block.shared_expert
+    - moe_block.weighted_combine
+    timing_scope:
+      layer_kind: full
+      substage: moe
+    required_occurrence_count: 15
+    drill_view: moe_block
+    drill_metrics:
+      input_hidden:
+        status: structural
+        label: semantic, state, scheduler, or drill boundary without standalone production timing
+      output_hidden:
+        status: structural
+        label: semantic, state, scheduler, or drill boundary without standalone production timing
+      routed_experts:
+        ms_per_iter: 7.892509
+        active_gpu_ms: 7.892509
+        gpu_residency_ms: 8.060126
+        gpu_residency_ms_per_iter: 8.060126
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 60
+        rollup_sources:
+        - moe_block.routed_experts
+        timing_scope:
+          layer_kind: full
+          substage: moe
+      router:
+        ms_per_iter: 0.654691
+        active_gpu_ms: 0.654691
+        gpu_residency_ms: 0.654691
+        gpu_residency_ms_per_iter: 0.654691
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 45
+        rollup_sources:
+        - moe_block.router
+        timing_scope:
+          layer_kind: full
+          substage: moe
+      shared_expert:
+        ms_per_iter: 1.081925
+        active_gpu_ms: 1.081925
+        gpu_residency_ms: 1.085829
+        gpu_residency_ms_per_iter: 1.085829
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 75
+        rollup_sources:
+        - moe_block.shared_expert
+        timing_scope:
+          layer_kind: full
+          substage: moe
+      weighted_combine:
+        ms_per_iter: 0.687622
+        active_gpu_ms: 0.687622
+        gpu_residency_ms: 0.687622
+        gpu_residency_ms_per_iter: 0.687622
+        attribution_status: measured_scoped_direct
+        metric_kind: exclusive_leaf_scoped
+        timing_semantics: union of directly attributed production-kernel intervals; overlap counted once
+        mapped_event_count: 15
+        rollup_sources:
+        - moe_block.weighted_combine
+        timing_scope:
+          layer_kind: full
+          substage: moe

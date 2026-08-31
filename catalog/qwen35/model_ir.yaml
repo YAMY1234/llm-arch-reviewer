@@ -560,8 +560,9 @@ views:
         math:
         - A = X + GDN(RMSNorm(X)); Y = A + MoE(RMSNorm(A))
         runtime_mapping:
-          expectation: structural
-          reason: composite, boundary, state, or optional path
+          expectation: measured
+          profile_leaf: stack.gdn_layer
+          reason: inclusive union of the 45 validated GDN-plus-MoE layer intervals
         provenance:
         - kind: config
           source: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
@@ -596,8 +597,9 @@ views:
         math:
         - A = X + GatedGQA(RMSNorm(X)); Y = A + MoE(RMSNorm(A))
         runtime_mapping:
-          expectation: structural
-          reason: composite, boundary, state, or optional path
+          expectation: measured
+          profile_leaf: stack.full_attention_layer
+          reason: inclusive union of the 15 validated full-attention-plus-MoE layer intervals
         provenance:
         - kind: config
           source: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
@@ -2380,8 +2382,9 @@ views:
         math:
         - Delta_moe = RoutedSharedMoE(An; E=512, K=10, shared=1)
         runtime_mapping:
-          expectation: structural
-          reason: composite, boundary, state, or optional path
+          expectation: measured
+          profile_leaf: gdn_moe_block.moe
+          reason: context-scoped union of routed and shared MoE production-owner intervals
         provenance:
         - kind: config
           source: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
@@ -2887,8 +2890,9 @@ views:
         math:
         - Delta_moe = RoutedSharedMoE(An; E=512, K=10, shared=1)
         runtime_mapping:
-          expectation: structural
-          reason: composite, boundary, state, or optional path
+          expectation: measured
+          profile_leaf: full_attention_moe_block.moe
+          reason: context-scoped union of routed and shared MoE production-owner intervals
         provenance:
         - kind: config
           source: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
@@ -5859,6 +5863,23 @@ semantic_contract:
     vision_block.rotary:
       kind: transform
       equation: Qr,Kr = Apply2DRotary(Q,K,grid_coordinates)
+# Composite timing is reconstructed from exact production events in one
+# semantic occurrence scope.  The interval union is displayed once on the
+# non-leaf module; child leaves retain exclusive timing and are never summed
+# into copied parent values.
+timing_scope_contracts:
+- target_node: gdn_moe_block.moe
+  source_nodes: [moe_block.router, moe_block.shared_expert, moe_block.routed_experts, moe_block.weighted_combine]
+  event_filter: {layer_kind: gdn, substage: moe}
+  required_occurrence_count: 45
+  metric_kind: inclusive_event_union
+  drill_view: moe_block
+- target_node: full_attention_moe_block.moe
+  source_nodes: [moe_block.router, moe_block.shared_expert, moe_block.routed_experts, moe_block.weighted_combine]
+  event_filter: {layer_kind: full, substage: moe}
+  required_occurrence_count: 15
+  metric_kind: inclusive_event_union
+  drill_view: moe_block
 boundary_contracts:
 - parent_node: top.vision_frontend
   boundary_mode: exact_node

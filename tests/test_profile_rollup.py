@@ -9,7 +9,74 @@ from models.common.profile_rollup import (
     unique_drill_ancestors,
 )
 from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
-from scripts.materialize_profile_rollups import drop_derived_parent_targets
+from scripts.materialize_profile_rollups import (
+    drop_stale_structural_compute_states,
+    drop_derived_parent_targets,
+    merge_rollup_metrics,
+)
+
+
+def test_rollup_refresh_preserves_existing_evidence_details() -> None:
+    metrics = {
+        "stack.module": {
+            "active_gpu_ms": 1.0,
+            "kernels": [{"name": "existing-kernel"}],
+            "attribution": {"methods": {"python_stack": {"kernel_count": 1}}},
+        }
+    }
+
+    merge_rollup_metrics(
+        metrics,
+        {
+            "stack.module": {
+                "active_gpu_ms": 2.0,
+                "metric_kind": "inclusive_rollup",
+            }
+        },
+    )
+
+    assert metrics["stack.module"]["active_gpu_ms"] == 2.0
+    assert metrics["stack.module"]["metric_kind"] == "inclusive_rollup"
+    assert metrics["stack.module"]["kernels"] == [
+        {"name": "existing-kernel"}
+    ]
+    assert metrics["stack.module"]["attribution"]["methods"][
+        "python_stack"
+    ]["kernel_count"] == 1
+
+
+def test_materializer_drops_only_stale_structural_compute_overrides() -> None:
+    states = {
+        "top.module": {"status": "structural"},
+        "top.boundary": {"status": "structural"},
+        "top.optional": {"status": "not_selected"},
+    }
+    nodes = {
+        "top.module": {
+            "drill": "detail",
+            "semantic_details": {
+                "runtime_mapping": {"expectation": "measured"}
+            },
+        },
+        "top.boundary": {
+            "drill": "boundary_detail",
+            "semantic_details": {
+                "runtime_mapping": {"expectation": "structural"}
+            },
+        },
+        "top.optional": {
+            "drill": "detail",
+            "semantic_details": {
+                "runtime_mapping": {"expectation": "measured"}
+            },
+        },
+    }
+
+    drop_stale_structural_compute_states(states, model_nodes=nodes)
+
+    assert "top.module" not in states
+    assert states["top.boundary"]["status"] == "structural"
+    assert states["top.optional"]["status"] == "not_selected"
 
 
 def test_execution_module_boundary_rolls_into_outer_scope_only() -> None:
@@ -239,7 +306,10 @@ def test_executable_drill_with_measured_descendants_requires_union_rollup() -> N
         },
     }
 
-    with pytest.raises(ValueError, match="top.stack.*no inclusive_rollup"):
+    with pytest.raises(
+        ValueError,
+        match="top.stack.*presented as structural boundary",
+    ):
         validate_executable_drill_rollups(model, profile)
 
     profile["node_states"].pop("top.stack")
@@ -255,3 +325,130 @@ def test_executable_drill_with_measured_descendants_requires_union_rollup() -> N
     profile["node_metrics"]["top.stack"]["gpu_residency_ms"] = 0.009
     with pytest.raises(ValueError, match="residency .* is below active union"):
         validate_executable_drill_rollups(model, profile)
+
+
+def test_selected_nonleaf_compute_module_requires_timing_or_fusion_owner() -> None:
+    model = {
+        "semantic_contract": {
+            "operations": {
+                "model.module": {"kind": "module"},
+                "model.boundary": {"kind": "boundary"},
+                "detail.compute": {"kind": "projection"},
+            }
+        },
+        "views": {
+            "top": {
+                "nodes": [
+                    {
+                        "id": "module",
+                        "drill": "detail",
+                        "semantic_op": "model.module",
+                    },
+                    {
+                        "id": "boundary",
+                        "drill": "boundary_detail",
+                        "semantic_op": "model.boundary",
+                    },
+                ]
+            },
+            "detail": {
+                "nodes": [
+                    {"id": "compute", "semantic_op": "detail.compute"}
+                ]
+            },
+            "boundary_detail": {"nodes": [{"id": "state"}]},
+        },
+    }
+    profile = {
+        "profile_id": "nonleaf_presentation_fixture",
+        "node_metrics": {},
+        "node_states": {
+            "top.module": {"status": "structural"},
+            "top.boundary": {"status": "structural"},
+        },
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="top.module.*presented as structural boundary",
+    ):
+        validate_executable_drill_rollups(model, profile)
+
+    profile["node_states"]["top.module"] = {"status": "fused"}
+    with pytest.raises(
+        ValueError,
+        match="top.module.*has no included_in timing owner",
+    ):
+        validate_executable_drill_rollups(model, profile)
+
+    profile["node_states"]["top.module"] = {
+        "status": "fused",
+        "included_in": "detail.compute",
+    }
+    validate_executable_drill_rollups(model, profile)
+
+    profile["node_states"]["top.module"] = {"status": "not_selected"}
+    validate_executable_drill_rollups(model, profile)
+
+    profile["node_states"].pop("top.module")
+    profile["node_metrics"]["top.module"] = {
+        "metric_kind": "inclusive_rollup",
+        "attribution_status": "inclusive_rollup",
+        "active_gpu_ms": 0.01,
+        "gpu_residency_ms": 0.01,
+    }
+    validate_executable_drill_rollups(model, profile)
+
+
+def test_caller_isolated_nonleaf_compute_is_fused_not_structural() -> None:
+    model = {
+        "semantic_contract": {
+            "operations": {
+                "model.parent": {"kind": "module"},
+                "detail.child": {"kind": "module"},
+                "detail.boundary": {"kind": "state_boundary"},
+            }
+        },
+        "views": {
+            "top": {
+                "nodes": [
+                    {
+                        "id": "parent",
+                        "drill": "detail",
+                        "semantic_op": "model.parent",
+                        "semantic_details": {"runtime_scope": "caller_isolated"},
+                    }
+                ]
+            },
+            "detail": {
+                "nodes": [
+                    {
+                        "id": "child",
+                        "drill": "child_detail",
+                        "semantic_op": "detail.child",
+                    },
+                    {
+                        "id": "boundary",
+                        "drill": "boundary_detail",
+                        "semantic_op": "detail.boundary",
+                    },
+                ]
+            },
+            "child_detail": {"nodes": [{"id": "compute"}]},
+            "boundary_detail": {"nodes": [{"id": "state"}]},
+        },
+    }
+    profile = {
+        "profile_id": "caller_isolated_fixture",
+        "node_metrics": {
+            "top.parent": {
+                "metric_kind": "inclusive_rollup",
+                "attribution_status": "inclusive_rollup",
+                "active_gpu_ms": 0.01,
+                "gpu_residency_ms": 0.01,
+            }
+        },
+        "node_states": {},
+    }
+
+    validate_executable_drill_rollups(model, profile)

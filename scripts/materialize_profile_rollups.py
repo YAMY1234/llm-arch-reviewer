@@ -28,6 +28,11 @@ from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_root", type=Path)
+    parser.add_argument(
+        "--profile-id",
+        action="append",
+        help="materialize only this profile id; repeatable",
+    )
     return parser.parse_args()
 
 
@@ -47,9 +52,59 @@ def drop_derived_parent_targets(
     return [target for target in targets if target not in derived]
 
 
+def merge_rollup_metrics(
+    profile_metrics: dict[str, dict[str, Any]],
+    rollups: dict[str, dict[str, Any]],
+) -> None:
+    """Refresh derived timing without deleting richer node evidence."""
+
+    for target, metric in rollups.items():
+        existing_metric = profile_metrics.get(target)
+        if isinstance(existing_metric, dict):
+            existing_metric.update(metric)
+        else:
+            profile_metrics[target] = metric
+
+
+def drop_stale_structural_compute_states(
+    node_states: dict[str, dict[str, Any]],
+    *,
+    model_nodes: dict[str, dict[str, Any]],
+) -> None:
+    """Remove legacy structural overrides from measured drill modules."""
+
+    for target, state in list(node_states.items()):
+        node = model_nodes.get(target) or {}
+        runtime = (node.get("semantic_details") or {}).get(
+            "runtime_mapping"
+        ) or {}
+        if (
+            node.get("drill")
+            and runtime.get("expectation") == "measured"
+            and state.get("status") == "structural"
+        ):
+            node_states.pop(target)
+
+
 def main() -> int:
     args = parse_args()
     model_ir = yaml.safe_load((args.model_root / "model_ir.yaml").read_text())
+    selected_profile_ids = set(args.profile_id or [])
+    model_nodes = {
+        f"{view_id}.{node['id']}": node
+        for view_id, view in (model_ir.get("views") or {}).items()
+        for node in view.get("nodes") or []
+    }
+    measured_drill_targets = {
+        target
+        for target, node in model_nodes.items()
+        if node.get("drill")
+        and (
+            ((node.get("semantic_details") or {}).get("runtime_mapping") or {})
+            .get("expectation")
+            == "measured"
+        )
+    }
     timing_scope_contracts = model_ir.get("timing_scope_contracts") or []
     scoped_targets = {
         str(contract["target_node"]) for contract in timing_scope_contracts
@@ -63,6 +118,11 @@ def main() -> int:
     changed = []
     for profile_path in sorted((args.model_root / "profiles").glob("**/*.yaml")):
         profile = yaml.safe_load(profile_path.read_text())
+        if selected_profile_ids and profile.get("profile_id") not in selected_profile_ids:
+            continue
+        drop_stale_structural_compute_states(
+            profile.setdefault("node_states", {}), model_nodes=model_nodes
+        )
         ancestors = unique_drill_ancestors(
             model_ir, node_states=profile.get("node_states") or {}
         )
@@ -168,7 +228,12 @@ def main() -> int:
 
         timing_metrics = rollup_metrics_from_events(
             decoded_steps,
-            rollup_targets=rollup_targets | direct_targets | scoped_targets,
+            rollup_targets=(
+                rollup_targets
+                | direct_targets
+                | scoped_targets
+                | measured_drill_targets
+            ),
         )
         direct_metrics = direct_metrics_from_events(
             decoded_steps,
@@ -177,7 +242,9 @@ def main() -> int:
         rollups = {
             target: metric
             for target, metric in timing_metrics.items()
-            if target in rollup_targets or target in scoped_targets
+            if target in rollup_targets
+            or target in scoped_targets
+            or target in measured_drill_targets
         }
         contracts_by_target = {
             str(contract["target_node"]): contract
@@ -229,19 +296,59 @@ def main() -> int:
             metric["drill_view"] = str(drill_view)
             metric["drill_metrics"] = drill_metrics
         for target in direct_targets:
-            if target not in direct_metrics or target not in profile.get("node_metrics", {}):
+            if target not in direct_metrics:
                 continue
-            measured = profile["node_metrics"][target]
+            measured = (profile.get("node_metrics") or {}).get(target)
+            # This command materializes missing timing and parent roll-ups.  A
+            # previously accepted direct leaf already carries richer evidence
+            # (kernel shares, attribution methods, rank policy) and must not be
+            # rewritten from the compact timeline artifact.
+            if measured is not None:
+                continue
+            model_node = model_nodes.get(target)
+            runtime = (
+                (model_node or {}).get("semantic_details") or {}
+            ).get("runtime_mapping") or {}
+            if model_node is None or runtime.get("expectation") in {
+                "structural",
+                "fused",
+                "fused_state",
+                "not_selected",
+            }:
+                continue
+            measured = {}
+            profile.setdefault("node_metrics", {})[target] = measured
             timing = direct_metrics[target]
             measured.update(
                 {
+                    "ms_per_iter": timing["ms_per_iter"],
                     "active_gpu_ms": timing["active_gpu_ms"],
                     "gpu_residency_ms": timing["gpu_residency_ms"],
+                    "gpu_residency_ms_per_iter": timing[
+                        "gpu_residency_ms_per_iter"
+                    ],
+                    "gpu_overlap_ms": round(
+                        max(
+                            0.0,
+                            timing["gpu_residency_ms"]
+                            - timing["active_gpu_ms"],
+                        ),
+                        6,
+                    ),
                     "attribution_status": "measured_direct",
                     "metric_kind": "exclusive_leaf",
+                    "timing_semantics": timing["timing_semantics"],
+                    "mapped_event_count": timing["mapped_event_count"],
                 }
             )
-        profile.setdefault("node_metrics", {}).update(rollups)
+        # A roll-up refresh owns the derived interval-union fields, but it must
+        # not erase richer evidence already attached to the node (kernel
+        # breakdowns, attribution methods, source symbols, etc.).  Replacing
+        # the whole mapping made a targeted timing repair silently degrade the
+        # published profile.  Merge the derived fields into the existing cell
+        # instead; new scoped parents still receive a fresh complete metric.
+        profile_metrics = profile.setdefault("node_metrics", {})
+        merge_rollup_metrics(profile_metrics, rollups)
         for target in rollups:
             profile.get("node_states", {}).pop(target, None)
 

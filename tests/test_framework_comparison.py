@@ -36,6 +36,7 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert "shared Model IR with separate validated Execution IR fingerprints" in viewer
     assert "execution?.enriched?.[viewName]" in viewer
     assert "appendComparisonFusionOwnerNodeLink" in viewer
+    assert "irTargetExistsForNavigation" in viewer
     assert "showComparisonFusionOwnerInArchitecture(context.implementation_id" in viewer
     assert "profile_id.includes" not in viewer
 
@@ -74,6 +75,7 @@ def test_real_browser_comparison_audit_covers_release_contract() -> None:
         "timeline_to_architecture",
         "comparison_parent_union_timing",
         "comparison_fusion_owner_links",
+        "comparison_all_fused_rows_linked",
         "normalized_range_sync",
         "url_history_reload",
         "glm53_real_sglang_vllm",

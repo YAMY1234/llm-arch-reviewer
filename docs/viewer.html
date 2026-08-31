@@ -1119,12 +1119,26 @@ function fusionGroupForTarget(target) {
 }
 
 function irTargetExists(target) {
+  return Boolean(irNodeInViews(DATA?.views, target));
+}
+
+function irNodeInViews(views, target) {
   const value = String(target || "");
   const dot = value.indexOf(".");
-  if (dot < 1) return false;
+  if (dot < 1) return null;
   const viewName = value.slice(0, dot);
   const nodeId = value.slice(dot + 1);
-  return (DATA?.views?.[viewName]?.nodes || []).some(node => node.id === nodeId);
+  return (views?.[viewName]?.nodes || []).find(node => node.id === nodeId) || null;
+}
+
+function irTargetExistsForNavigation(target, executionVariantId = CURRENT_EXECUTION) {
+  if (irTargetExists(target)) return true;
+  if (!isV2Bundle() || CURRENT_IR_LAYER !== "model") return false;
+  if (comparisonModeActive() && !comparisonExecutionIrCompatible()) return false;
+  return Boolean(irNodeInViews(
+    RAW_DATA?.execution_variants?.[executionVariantId]?.views,
+    target,
+  ));
 }
 
 function fusionOwnerForTarget(target, cell = null) {
@@ -1145,7 +1159,11 @@ function irTargetLabel(target) {
   if (dot < 1) return value;
   const viewName = value.slice(0, dot);
   const nodeId = value.slice(dot + 1);
-  const node = (DATA?.views?.[viewName]?.nodes || []).find(item => item.id === nodeId);
+  const node = irNodeInViews(DATA?.views, value)
+    || irNodeInViews(
+      RAW_DATA?.execution_variants?.[CURRENT_EXECUTION]?.views,
+      value,
+    );
   return String(node?.label || nodeId || value).split("\n")[0];
 }
 
@@ -1167,7 +1185,7 @@ function fusionOwnerLinkHtml(ownerTarget, sourceTarget, options = {}) {
   const owner = String(ownerTarget || "");
   const architectureOwner = fusionArchitectureOwnerForTarget(sourceTarget, owner);
   const label = options.label || irTargetLabel(architectureOwner || owner);
-  if (!architectureOwner || !irTargetExists(architectureOwner)) return escapeHtml(label || owner || "unknown owner");
+  if (!architectureOwner || !irTargetExistsForNavigation(architectureOwner)) return escapeHtml(label || owner || "unknown owner");
   const suffix = options.showTarget
     ? ` <span style="color:var(--muted)">(${escapeHtml(architectureOwner)})</span>`
     : "";
@@ -2225,7 +2243,7 @@ function updateArchitectureSelection(viewName, nodeId) {
 function appendFusionOwnerNodeLink(root, textElement, ownerTarget, sourceTarget) {
   const owner = String(ownerTarget || "");
   const architectureOwner = fusionArchitectureOwnerForTarget(sourceTarget, owner);
-  if (!architectureOwner || !irTargetExists(architectureOwner)) {
+  if (!architectureOwner || !irTargetExistsForNavigation(architectureOwner)) {
     return false;
   }
   const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
@@ -2251,7 +2269,10 @@ function appendFusionOwnerNodeLink(root, textElement, ownerTarget, sourceTarget)
 function appendComparisonFusionOwnerNodeLink(root, textElement, context, ownerTarget, sourceTarget) {
   const group = comparisonFusionGroupForTarget(context, sourceTarget)?.[1] || null;
   const architectureOwner = String(group?.architecture_owner || ownerTarget || group?.owner || "");
-  if (!context?.implementation_id || !architectureOwner || !irTargetExists(architectureOwner)) {
+  if (!context?.implementation_id || !architectureOwner || !irTargetExistsForNavigation(
+    architectureOwner,
+    context.execution_variant_id,
+  )) {
     return false;
   }
   const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
@@ -4077,7 +4098,7 @@ async function showFusionOwnerInArchitecture(ownerTarget, sourceTarget = "") {
   const owner = String(ownerTarget || "");
   const source = String(sourceTarget || "");
   const architectureOwner = fusionArchitectureOwnerForTarget(source, owner);
-  if (!irTargetExists(architectureOwner)) return false;
+  if (!irTargetExistsForNavigation(architectureOwner)) return false;
   const fusionEntry = fusionGroupForTarget(source);
   const group = fusionEntry?.[1] || null;
   const scope = group?.evidence_scope || {};
@@ -4099,7 +4120,7 @@ async function showComparisonFusionOwnerInArchitecture(implementationId, sourceT
   const context = COMPARISON_CONTEXTS[implementationId];
   const group = comparisonFusionGroupForTarget(context, sourceTarget)?.[1];
   const owner = group?.architecture_owner || group?.owner || "";
-  if (!owner || !irTargetExists(owner)) return false;
+  if (!owner || !irTargetExistsForNavigation(owner, context?.execution_variant_id)) return false;
   await showTimelineEventInArchitecture({
     event: {
       _irNode: owner,
@@ -4551,17 +4572,20 @@ function nodeCell(n, viewName) {
   if (context?.callerIsolated) {
     const runtime = n?.semantic_details?.runtime_mapping || {};
     const parentTarget = `${context.parentView}.${context.parentNodeId}`;
-    if (runtime.expectation === "fused" || runtime.expectation === "fused_state") {
+    const semanticKind = String(n?.semantics?.kind || "");
+    if (["boundary", "control", "state", "control_boundary", "state_boundary"].includes(semanticKind)) {
       return {
-        status: "fused",
-        included_in: parentTarget,
-        label: "shares the caller-scoped parent interval; no independent timing",
+        status: "structural",
+        label: "semantic boundary inside the caller-scoped parent interval",
         provenance: "model_ir.runtime_scope",
       };
     }
     return {
-      status: "structural",
-      label: "semantic detail inside the caller-scoped parent interval",
+      status: "fused",
+      included_in: parentTarget,
+      label: runtime.expectation === "fused" || runtime.expectation === "fused_state"
+        ? "shares the caller-scoped parent interval; no independent timing"
+        : "caller-isolated compute detail; timing owned by the selected parent interval",
       provenance: "model_ir.runtime_scope",
     };
   }

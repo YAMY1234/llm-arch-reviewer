@@ -184,6 +184,69 @@ def main(args: argparse.Namespace | None = None) -> int:
             )
         checks["comparison_fusion_owner_links"] = fusion_links.count()
 
+        # Audit every fused row in a representative composite module.  This
+        # includes owners inserted only by Execution IR (the TP collectives),
+        # which used to render as plain text because they are absent from raw
+        # Model IR.  Every rendered ``fused into`` row must remain navigable.
+        page.evaluate(
+            """async () => {
+              VIEW_STACK = ['top', 'stack', 'gdn_moe_block'];
+              DRILL_FROM = [null, 'decoder_stack', 'gdn_layer'];
+              SELECTED = {view: 'gdn_moe_block', nodeId: 'attention_residual'};
+              await renderView();
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            }"""
+        )
+        exhaustive_fusion = page.evaluate(
+            """() => {
+              const view = 'gdn_moe_block';
+              const rows = [];
+              for (const node of DATA.views[view].nodes || []) {
+                const target = `${view}.${node.id}`;
+                for (const context of comparisonContextList()) {
+                  const cell = comparisonCellForTarget(context, target);
+                  if (cell?.status !== 'fused') continue;
+                  const selector = `g.view-group[data-view="${view}"] g.node[data-id="${node.id}"] a.fusion-owner-link[data-comparison-owner="${context.implementation_id}"]`;
+                  rows.push({
+                    target,
+                    implementation: context.implementation_id,
+                    owner: cell.included_in || '',
+                    linked: Boolean(document.querySelector(selector)),
+                  });
+                }
+              }
+              return rows;
+            }"""
+        )
+        require(
+            bool(exhaustive_fusion)
+            and all(row["owner"] and row["linked"] for row in exhaustive_fusion),
+            "comparison_all_fused_rows_linked",
+            actual=exhaustive_fusion,
+        )
+        execution_owner_link = page.locator(
+            'g.view-group[data-view="gdn_moe_block"] '
+            'g.node[data-id="attention_residual"] '
+            f'a.fusion-owner-link[data-comparison-owner="{QWEN_SGLANG}"]'
+        )
+        require(
+            execution_owner_link.count() == 1,
+            "comparison_execution_owner_link_missing",
+        )
+        if execution_owner_link.count():
+            page.evaluate("fitToSvg()")
+            page.evaluate(
+                "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+            )
+            execution_owner_link.click()
+            page.wait_for_function(
+                "CURRENT_IR_LAYER === 'execution' && "
+                "SELECTED?.view === 'gdn_moe_block' && "
+                "SELECTED?.nodeId === 'tp_attention_output_collective'",
+                timeout=60_000,
+            )
+        checks["comparison_all_fused_rows_linked"] = len(exhaustive_fusion)
+
         # An actual rendered SVG click selects the node and broadcasts a module
         # highlight into each isolated physical timeline.
         node = page.locator("#svg-host g.view-group g.node.selected").first

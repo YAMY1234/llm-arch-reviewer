@@ -327,7 +327,7 @@ def main(args: argparse.Namespace | None = None) -> int:
                         const link = [...detail.querySelectorAll('[data-fusion-owner]')]
                           .find(candidate => candidate.dataset.fusionOwner === architectureOwner &&
                             candidate.dataset.fusionSource === target);
-                        if (!owner || !irTargetExists(architectureOwner) || !link) {
+                        if (!owner || !irTargetExistsForNavigation(architectureOwner) || !link) {
                           issues.push({view: viewName, node: node.id, missing: 'fusion owner detail link', owner, architectureOwner});
                         } else {
                           fusionLinks += 1;
@@ -384,7 +384,7 @@ def main(args: argparse.Namespace | None = None) -> int:
                             const owner = fusionOwnerForTarget(target, cell);
                             const architectureOwner = fusionArchitectureOwnerForTarget(target, owner);
                             const link = node.querySelector('a.fusion-owner-link');
-                            if (!owner || !irTargetExists(architectureOwner) || !link ||
+                            if (!owner || !irTargetExistsForNavigation(architectureOwner) || !link ||
                                 link.dataset.fusionOwner !== architectureOwner || link.dataset.fusionSource !== target) {
                               issues.push({type: 'fusion_owner_card_link', view, node: node.dataset.id, owner, architectureOwner});
                             } else {

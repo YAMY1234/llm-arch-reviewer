@@ -840,6 +840,11 @@ link to that framework's architecture owner in both the graph and detail pane.
 
 - All documents pass their JSON schema and cross-document reference checks.
 - Model IR IDs are stable and every drill target resolves.
+- A selected drillable compute/module node is never presented as a
+  `structural` boundary.  It must carry positive measured/inclusive-union
+  timing or be an explicit fused member with exactly one timing owner.  Only
+  authored boundary/control/state nodes and explicitly inactive branches
+  (`not_selected`, `disabled`, or `out_of_scope`) may be timing-free.
 - Every edge has identity, shape, layout, dtype, and state lifetime; every
   semantic node has an authored equation. Missing operations, empty equations,
   and fallback artifacts such as `None = None(None)` fail compilation.
@@ -883,6 +888,10 @@ link to that framework's architecture owner in both the graph and detail pane.
   An absent owner or an architecture owner unreachable from the profile's
   `entry_view` is a compile/release-gate failure, not plain text that silently
   leads nowhere.
+- Release browser acceptance enumerates every rendered fused row, verifies an
+  owner hyperlink for every selected implementation, clicks owners that exist
+  only in Execution IR, and proves that navigation opens and selects the exact
+  owner.  A single plain-text `fused into` row fails the release.
 - The complete candidate Execution IR has been reconciled against eager stacks,
   shapes, invocation multiplicity, state transitions, and collective order.
 - Every measured event is mapped, explicitly fused/shared, or typed
