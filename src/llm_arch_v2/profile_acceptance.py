@@ -62,19 +62,41 @@ def _has_positive_timing(cell: dict[str, Any]) -> bool:
     )
 
 
-def _validate_reachable_drill_presentations(
+def _runtime_expectation(node: dict[str, Any]) -> str:
+    return str(
+        ((node.get("semantic_details") or {}).get("runtime_mapping") or {}).get(
+            "expectation"
+        )
+        or ""
+    )
+
+
+def _has_occurrence_fusion_owners(cell: dict[str, Any]) -> bool:
+    partitions = cell.get("fusion_partitions") or []
+    if not isinstance(partitions, list) or not partitions:
+        return False
+    return all(
+        isinstance(partition, dict)
+        and bool(partition.get("included_in"))
+        and bool(partition.get("production_event_ids"))
+        for partition in partitions
+    )
+
+
+def _validate_reachable_runtime_presentations(
     model_ir: dict[str, Any], profile: dict[str, Any]
 ) -> list[str]:
-    """Validate every selected drillable compute module in its caller context.
+    """Validate every selected runtime-bearing node in its caller context.
 
     A shared child view can be reached from multiple parents.  Therefore this
     validator follows the rendered route and honors each parent's
     ``drill_metrics`` instead of trying to infer one global ancestor chain.
     This is the profile-side contract behind the Viewer rule:
 
-    * compute modules with children are never presented as structural;
-    * a selected compute module owns positive timing or is an explicit fused
-      member with one timing owner;
+    * modules with children and runtime-bearing primitive leaves are never
+      presented as structural;
+    * a selected compute node owns positive timing, is an explicit fused member
+      with one timing owner, or has occurrence-partitioned physical owners;
     * only explicit boundary/control/state nodes and inactive branches are
       timing-free.
     """
@@ -109,8 +131,6 @@ def _validate_reachable_drill_presentations(
         view = views.get(view_id) or {}
         for node in view.get("nodes") or []:
             child_view = node.get("drill")
-            if not child_view:
-                continue
             target = f"{view_id}.{node['id']}"
             if scoped_cells is not None and node["id"] in scoped_cells:
                 cell = dict(scoped_cells[node["id"]] or {})
@@ -140,10 +160,16 @@ def _validate_reachable_drill_presentations(
 
             semantic_kind = _node_semantic_kind(node, operations=operations)
             explicit_boundary = semantic_kind in _EXPLICIT_BOUNDARY_KINDS
-            if not explicit_boundary:
+            runtime_expectation = _runtime_expectation(node)
+            runtime_bearing = bool(child_view) or runtime_expectation in {
+                "measured",
+                "fused",
+                "fused_state",
+            }
+            if runtime_bearing and not explicit_boundary:
                 if status == "structural":
                     errors.append(
-                        f"{target} is a selected drillable compute module but "
+                        f"{target} is a selected runtime-bearing compute node but "
                         "is presented as structural boundary"
                     )
                 elif status == "fused":
@@ -158,12 +184,20 @@ def _validate_reachable_drill_presentations(
                     # performs the authoritative existence/reachability check
                     # after topology projection; this stage only rejects an
                     # unowned fused presentation.
+                elif status == "fused_by_occurrence":
+                    if not _has_occurrence_fusion_owners(cell):
+                        errors.append(
+                            f"{target} is fused_by_occurrence but has no complete "
+                            "fusion_partitions with physical events and owners"
+                        )
                 elif not _has_positive_timing(cell):
                     errors.append(
-                        f"{target} is a selected drillable compute module but "
-                        "has neither positive timing nor fused ownership"
+                        f"{target} is a selected runtime-bearing compute node but "
+                        "has neither positive timing nor typed fused ownership"
                     )
 
+            if not child_view:
+                continue
             next_scoped = cell.get("drill_metrics")
             if not isinstance(next_scoped, dict):
                 next_scoped = None
@@ -325,7 +359,7 @@ def validate_executable_drill_rollups(
                     f"is below active union {active_ms} ms"
                 )
 
-    errors.extend(_validate_reachable_drill_presentations(model_ir, profile))
+    errors.extend(_validate_reachable_runtime_presentations(model_ir, profile))
 
     if errors:
         profile_id = profile.get("profile_id") or "<unknown profile>"

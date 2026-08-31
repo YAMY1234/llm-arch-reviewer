@@ -71,7 +71,12 @@ def drop_stale_structural_compute_states(
     *,
     model_nodes: dict[str, dict[str, Any]],
 ) -> None:
-    """Remove legacy structural overrides from measured drill modules."""
+    """Remove legacy structural overrides from runtime-bearing compute nodes.
+
+    ``structural`` describes a semantic/control/state boundary.  It must never
+    be used as a fallback for a measured primitive leaf or a measured module
+    whose timing/fusion evidence has not yet been materialized.
+    """
 
     for target, state in list(node_states.items()):
         node = model_nodes.get(target) or {}
@@ -79,11 +84,222 @@ def drop_stale_structural_compute_states(
             "runtime_mapping"
         ) or {}
         if (
-            node.get("drill")
-            and runtime.get("expectation") == "measured"
+            runtime.get("expectation") == "measured"
             and state.get("status") == "structural"
         ):
             node_states.pop(target)
+
+
+def materialize_typed_fusion_states(
+    profile: dict[str, Any],
+    *,
+    decoded_steps: list[dict[str, Any]],
+    model_nodes: dict[str, dict[str, Any]],
+) -> None:
+    """Replace compute-as-structural fallbacks with physical fusion relations.
+
+    Production events retain one primary timing owner (``ir_node``) and all
+    semantic contracts covered by that event (``ir_targets``).  A secondary
+    semantic target may cover all or only part of its owner's event set.  Both
+    are legitimate fusion, but neither is a structural boundary.
+    """
+
+    events = [
+        event
+        for step in decoded_steps
+        for event in step.get("events") or []
+    ]
+    owner_events: dict[str, list[dict[str, Any]]] = {}
+    target_events: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        owner = str(event.get("ir_node") or "")
+        if owner:
+            owner_events.setdefault(owner, []).append(event)
+        for target in event.get("ir_targets") or []:
+            target_events.setdefault(str(target), []).append(event)
+
+    def event_id(event: dict[str, Any]) -> str:
+        return str(event.get("event_id") or event.get("raw_event_id") or "")
+
+    node_states = profile.setdefault("node_states", {})
+    fusion_groups = profile.setdefault("fusion_groups", {})
+    candidates = []
+    for target, state in list(node_states.items()):
+        node = model_nodes.get(target) or {}
+        runtime = (node.get("semantic_details") or {}).get(
+            "runtime_mapping"
+        ) or {}
+        if state.get("status") != "structural":
+            continue
+        if not (
+            state.get("occurrence_fusion_evidence")
+            or runtime.get("expectation") == "measured"
+        ):
+            continue
+        physical = target_events.get(target) or []
+        if not physical:
+            # Leave the state untouched here. The acceptance gate will reject
+            # this runtime-bearing compute node until its mapping is fixed or
+            # the profile explicitly proves it was not selected.
+            continue
+        if any(event.get("reconciliation_status") != "closed" for event in physical):
+            raise RuntimeError(
+                f"{profile.get('profile_id')}: {target} fusion evidence contains "
+                "non-closed production events"
+            )
+        owners: dict[str, list[dict[str, Any]]] = {}
+        for event in physical:
+            owner = str(event.get("ir_node") or "")
+            if owner and owner != target:
+                owners.setdefault(owner, []).append(event)
+        if owners:
+            candidates.append((target, state, owners))
+
+    # Multi-owner semantic reuse is represented directly on the node. The
+    # partitions are disjoint physical event sets and carry no copied metric.
+    for target, state, owners in candidates:
+        if len(owners) <= 1:
+            continue
+        partitions = []
+        for owner, physical in sorted(owners.items()):
+            partitions.append(
+                {
+                    "included_in": owner,
+                    "production_event_ids": sorted(
+                        event_id(event) for event in physical if event_id(event)
+                    ),
+                    "occurrence_ids": sorted(
+                        {
+                            str(event.get("occurrence_id"))
+                            for event in physical
+                            if event.get("occurrence_id")
+                        }
+                    ),
+                    "layer_ids": sorted(
+                        {
+                            int(event["layer_id"])
+                            for event in physical
+                            if event.get("layer_id") is not None
+                        }
+                    ),
+                }
+            )
+        state.clear()
+        state.update(
+            {
+                "status": "fused_by_occurrence",
+                "label": (
+                    "semantic node is fused into different timing owners in "
+                    "disjoint validated occurrences"
+                ),
+                "fusion_partitions": partitions,
+                "provenance": "production_event_graph",
+            }
+        )
+
+    # Single-owner subset/equality relations are grouped by owner so every
+    # member has an explicit event set under one additive timing owner.
+    candidates_by_owner: dict[str, list[str]] = {}
+    for target, _state, owners in candidates:
+        if len(owners) == 1:
+            candidates_by_owner.setdefault(next(iter(owners)), []).append(target)
+
+    for owner, new_members in sorted(candidates_by_owner.items()):
+        matching = [
+            (group_id, group)
+            for group_id, group in fusion_groups.items()
+            if str(group.get("owner") or "") == owner
+        ]
+        if len(matching) > 1:
+            raise RuntimeError(
+                f"{profile.get('profile_id')}: owner {owner} has multiple fusion groups"
+            )
+        group_id, group = matching[0] if matching else (
+            f"fusion:{owner}",
+            {
+                "owner": owner,
+                "ir_nodes": [owner],
+                "provenance": "production_event_graph",
+                "mapping_method": "eager_semantic_to_production_event_closure",
+                "confidence": "exact",
+            },
+        )
+        members = list(
+            dict.fromkeys(
+                [
+                    *(target for target in group.get("ir_nodes") or [] if target != owner),
+                    *sorted(new_members),
+                ]
+            )
+        )
+        owner_ids = sorted(
+            event_id(event)
+            for event in owner_events.get(owner, [])
+            if event_id(event)
+        )
+        if not owner_ids:
+            raise RuntimeError(
+                f"{profile.get('profile_id')}: fusion owner {owner} has no physical events"
+            )
+        member_ids = {
+            member: sorted(
+                event_id(event)
+                for event in target_events.get(member, [])
+                if event_id(event)
+            )
+            for member in members
+        }
+        owner_set = set(owner_ids)
+        for member, ids in member_ids.items():
+            if not ids or not set(ids).issubset(owner_set):
+                raise RuntimeError(
+                    f"{profile.get('profile_id')}: fusion member {member} does "
+                    f"not close under owner {owner}"
+                )
+        scoped_events = [event for member in members for event in target_events[member]]
+        group.update(
+            {
+                "owner": owner,
+                "ir_nodes": [owner, *members],
+                "timing_semantics": "shared_event_coverage",
+                "evidence_scope": {
+                    "resolution": "profile_aggregate",
+                    "owner_event_ids": owner_ids,
+                    "member_event_ids": member_ids,
+                    "layer_ids": sorted(
+                        {
+                            int(event["layer_id"])
+                            for event in scoped_events
+                            if event.get("layer_id") is not None
+                        }
+                    ),
+                    "occurrence_ids": sorted(
+                        {
+                            str(event.get("occurrence_id"))
+                            for event in scoped_events
+                            if event.get("occurrence_id")
+                        }
+                    ),
+                    "all_owner_events_same_rank_closed": True,
+                },
+            }
+        )
+        fusion_groups[group_id] = group
+        for member in members:
+            state = node_states.setdefault(member, {})
+            state.clear()
+            state.update(
+                {
+                    "status": "fused",
+                    "included_in": owner,
+                    "fusion_group_id": group_id,
+                    "label": (
+                        f"fused into {owner}; {len(member_ids[member])}/"
+                        f"{len(owner_ids)} owner events"
+                    ),
+                    "provenance": "production_event_graph",
+                }
+            )
 
 
 def main() -> int:
@@ -120,9 +336,6 @@ def main() -> int:
         profile = yaml.safe_load(profile_path.read_text())
         if selected_profile_ids and profile.get("profile_id") not in selected_profile_ids:
             continue
-        drop_stale_structural_compute_states(
-            profile.setdefault("node_states", {}), model_nodes=model_nodes
-        )
         ancestors = unique_drill_ancestors(
             model_ir, node_states=profile.get("node_states") or {}
         )
@@ -176,6 +389,8 @@ def main() -> int:
                     scoped_targets=scoped_targets,
                 )
                 decoded_event = {
+                    "event_id": _decoded(event.get("event_id"), strings),
+                    "raw_event_id": _decoded(event.get("raw_event_id"), strings),
                     "start_us": event["start_us"],
                     "duration_us": event["duration_us"],
                     "ir_node": node,
@@ -184,12 +399,16 @@ def main() -> int:
                     "substage": _decoded(event.get("substage"), strings),
                     "segment_id": event.get("segment_id"),
                     "occurrence_id": _decoded(event.get("occurrence_id"), strings),
+                    "reconciliation_status": _decoded(
+                        event.get("reconciliation_status"), strings
+                    ),
                 }
                 targets = expand_rollup_targets(
                     node,
                     existing_targets=existing,
                     ancestors=ancestors,
                     fusion_groups=profile.get("fusion_groups") or {},
+                    event_id=str(decoded_event.get("event_id") or "") or None,
                 )
                 for contract in timing_scope_contracts:
                     if node not in set(contract["source_nodes"]):
@@ -203,6 +422,15 @@ def main() -> int:
                 event["ir_targets"] = [intern(target) for target in targets]
                 decoded_events.append({**decoded_event, "ir_targets": targets})
             decoded_steps.append({"events": decoded_events})
+
+        materialize_typed_fusion_states(
+            profile,
+            decoded_steps=decoded_steps,
+            model_nodes=model_nodes,
+        )
+        drop_stale_structural_compute_states(
+            profile.setdefault("node_states", {}), model_nodes=model_nodes
+        )
 
         # A scoped parent is deliverable only when every expected semantic
         # occurrence exists in the production trace.  This rejects a partial

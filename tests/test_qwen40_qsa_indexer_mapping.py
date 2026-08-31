@@ -4,6 +4,7 @@ from models.common.timeline_artifact import timeline_targets
 from models.qwen40.build.qwen40_decode_attribution import (
     attach_qsa_indexer_drill_metrics,
     attach_qsa_indexer_drill_targets,
+    reconcile_qsa_indexer_projection_ownership,
 )
 
 
@@ -77,3 +78,45 @@ def test_qsa_indexer_without_qprep_keeps_ambiguous_support_on_parent() -> None:
 
     assert "qsa_indexer_drill_target" not in events[0]
     assert events[1]["qsa_indexer_drill_target"] == "qsa_indexer.block_topk"
+
+
+def test_qsa_indexer_projection_owner_is_reconciled_from_same_stream_qprep() -> None:
+    events = [
+        {
+            **_event("main_qkv_gemm", 0.0),
+            "node": "qsa_attention.qkv_gate_projection",
+            "stream": "main",
+        },
+        {
+            **_event("index_copy", 0.5),
+            "node": "qsa_attention.qkv_gate_projection",
+            "stream": "indexer",
+        },
+        {
+            **_event("index_projection_gemm", 1.0),
+            "node": "qsa_attention.qkv_gate_projection",
+            "stream": "indexer",
+        },
+        {
+            **_event("qsa_index_q_prep_kernel", 2.0, "QSA index query preparation"),
+            "stream": "indexer",
+        },
+    ]
+
+    reconcile_qsa_indexer_projection_ownership(events)
+    attach_qsa_indexer_drill_targets(events)
+
+    assert events[0]["node"] == "qsa_attention.qkv_gate_projection"
+    assert [event["node"] for event in events[1:]] == [
+        "qsa_attention.indexer",
+        "qsa_attention.indexer",
+        "qsa_attention.indexer",
+    ]
+    assert [event["qsa_indexer_drill_target"] for event in events[1:]] == [
+        "qsa_indexer.qk_projection",
+        "qsa_indexer.qk_projection",
+        "qsa_indexer.q_norm_rope",
+    ]
+    assert events[1]["attribution_method"] == (
+        "validated_stream_anchor_reconciliation"
+    )

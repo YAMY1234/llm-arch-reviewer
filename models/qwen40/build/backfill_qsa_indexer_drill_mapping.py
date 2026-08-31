@@ -30,6 +30,7 @@ from models.qwen40.build.qwen40_decode_attribution import (  # noqa: E402
     _QSA_INDEXER_PARENT_NODES,
     attach_qsa_indexer_drill_metrics,
     attach_qsa_indexer_drill_targets,
+    reconcile_qsa_indexer_projection_ownership,
 )
 
 
@@ -101,6 +102,7 @@ def backfill(profile_path: Path, *, check: bool) -> tuple[bool, str]:
     with gzip.open(artifact_path, "rt") as stream:
         artifact = json.load(stream)
     events, encoded_pairs = _decode_events(artifact)
+    reconcile_qsa_indexer_projection_ownership(events)
     attach_qsa_indexer_drill_targets(events)
 
     scoped_metrics = {parent: copy.deepcopy(metrics[parent]) for parent in parents}
@@ -125,6 +127,27 @@ def backfill(profile_path: Path, *, check: bool) -> tuple[bool, str]:
         coverages.append(float(cell["drill_mapping_coverage_pct"]))
 
     for event, encoded in encoded_pairs:
+        if event.get("qsa_indexer_ownership_repaired"):
+            old_owner = _string(artifact["strings"], encoded.get("ir_node"))
+            new_owner = str(event["node"])
+            encoded["ir_node"] = _add_string(artifact, new_owner)
+            encoded["kernel_label"] = _add_string(
+                artifact, str(event["kernel_label"])
+            )
+            encoded["attribution_method"] = _add_string(
+                artifact, str(event["attribution_method"])
+            )
+            encoded["confidence"] = _add_string(
+                artifact, str(event["confidence"])
+            )
+            encoded["ir_targets"] = [
+                target
+                for target in encoded.get("ir_targets") or []
+                if _string(artifact["strings"], target) != old_owner
+            ]
+            new_owner_index = _add_string(artifact, new_owner)
+            if new_owner_index not in encoded["ir_targets"]:
+                encoded["ir_targets"].insert(0, new_owner_index)
         target = event.get("qsa_indexer_drill_target")
         if not target:
             continue

@@ -117,8 +117,15 @@ def expand_rollup_targets(
     existing_targets: Iterable[str] = (),
     ancestors: dict[str, list[str]],
     fusion_groups: dict[str, dict[str, Any]] | None = None,
+    event_id: str | None = None,
 ) -> list[str]:
-    """Expand one direct event to fused semantic members and drill parents."""
+    """Expand one direct event to fused semantic members and drill parents.
+
+    ``shared_event_coverage`` is intentionally event-aware: a semantic member
+    is attached only to the owner events listed for that member. Expanding it
+    to every owner event would silently turn a subset relation back into copied
+    timing and navigation evidence.
+    """
 
     targets = [str(target) for target in existing_targets if target]
     if node:
@@ -129,7 +136,35 @@ def expand_rollup_targets(
     # timing: interval union below still counts the event once per roll-up.
     for group in (fusion_groups or {}).values():
         if group.get("owner") == node:
-            targets.extend(str(target) for target in group.get("ir_nodes") or [])
+            members = [str(target) for target in group.get("ir_nodes") or []]
+            if group.get("timing_semantics") == "shared_event_coverage":
+                member_event_ids = (
+                    (group.get("evidence_scope") or {}).get("member_event_ids")
+                    or {}
+                )
+                allowed_members = {
+                    member
+                    for member in members
+                    if member == str(node)
+                    or (
+                        event_id is not None
+                        and str(event_id)
+                        in {str(value) for value in member_event_ids.get(member, [])}
+                    )
+                }
+                # Old artifacts may already carry the broader shared-event-set
+                # target list.  Re-materialization must narrow those targets to
+                # the authored coverage relation instead of preserving them.
+                targets = [
+                    target
+                    for target in targets
+                    if target not in members or target in allowed_members
+                ]
+                targets.extend(
+                    member for member in members if member in allowed_members
+                )
+            else:
+                targets.extend(members)
 
     expanded: list[str] = []
     queue = list(dict.fromkeys(targets))

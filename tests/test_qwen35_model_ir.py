@@ -208,9 +208,25 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
             for state in profile["node_states"].values()
         )
         for group in profile["fusion_groups"].values():
-            assert group["evidence_scope"]["member_event_sets_equal_owner"] is True
-            assert group["evidence_scope"]["all_owner_events_same_rank_closed"] is True
-            assert group["timing_semantics"] == "shared_event_set"
+            evidence_scope = group["evidence_scope"]
+            timing_semantics = group["timing_semantics"]
+            assert timing_semantics in {
+                "shared_interval",
+                "shared_event_set",
+                "shared_event_coverage",
+            }
+            if timing_semantics == "shared_event_set":
+                assert evidence_scope["member_event_sets_equal_owner"] is True
+                assert evidence_scope["all_owner_events_same_rank_closed"] is True
+            elif timing_semantics == "shared_event_coverage":
+                owner_events = set(evidence_scope["owner_event_ids"])
+                assert owner_events
+                for member, member_events in evidence_scope[
+                    "member_event_ids"
+                ].items():
+                    assert member in group["ir_nodes"]
+                    assert member_events
+                    assert set(member_events) <= owner_events
             owner = group["owner"]
             for member in group["ir_nodes"]:
                 if member == owner:
@@ -240,6 +256,7 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
             for event in events
         )
         for group in profile["fusion_groups"].values():
+            timing_semantics = group["timing_semantics"]
             owner_events = {
                 decode(event["raw_event_id"])
                 for event in events
@@ -255,7 +272,11 @@ def test_qwen35_cross_framework_matrix_is_complete_and_fail_closed() -> None:
                     if member
                     in [decode(target) for target in event.get("ir_targets") or []]
                 }
-                assert member_events == owner_events
+                if timing_semantics == "shared_event_coverage":
+                    assert member_events
+                    assert member_events <= owner_events
+                else:
+                    assert member_events == owner_events
         qk_kernels = profile["node_metrics"].get("full_attention.qk_norm", {}).get(
             "kernels", []
         )
@@ -825,14 +846,19 @@ def test_qwen35_vllm_tail_has_independent_final_norm_and_lm_head_anchors() -> No
                 evidence = timeline["stacks"][event["stack_id"]]["evidence"]
                 anchored = str(text(evidence["independent_eager_semantic_owner_evidence"]))
                 assert "full_attention_moe_block.tp_moe_output_collective" in anchored
-                final_norm_evidence = str(
-                    text(evidence["semantic_fused_target_evidence"])
+                final_norm_state = profile["node_states"]["top.final_norm"]
+                assert final_norm_state["status"] == "fused"
+                assert final_norm_state["included_in"] == node
+                fusion_group = profile["fusion_groups"][
+                    final_norm_state["fusion_group_id"]
+                ]
+                assert fusion_group["timing_semantics"] == (
+                    "shared_event_coverage"
                 )
-                assert (
-                    "qwen35-vllm-decode-final-norm-fused-last-tp-moe-ar-v1"
-                    in final_norm_evidence
-                )
-                assert "'copied_timing': False" in final_norm_evidence
+                event_id = str(text(event["event_id"]))
+                assert event_id in fusion_group["evidence_scope"][
+                    "member_event_ids"
+                ]["top.final_norm"]
                 saw_decode_fused_final_norm = True
 
         if profile["profile_id"] == "qwen35_tp8_vllm_cg_decode_bs1_8k1k":
@@ -847,3 +873,24 @@ def test_qwen35_vllm_tail_has_independent_final_norm_and_lm_head_anchors() -> No
     assert saw_prefill_final_norm
     assert saw_decode_fused_final_norm
     assert saw_lm_head
+
+
+def test_qwen35_vllm_prefill_input_norm_has_typed_fusion_owner() -> None:
+    profile = load_yaml(
+        MODEL_ROOT
+        / "profiles"
+        / "tp8"
+        / "vllm_487ecf187_qwen35_native_tp8"
+        / "prefill_bs1_8k1k.yaml"
+    )
+    state = profile["node_states"]["full_attention_moe_block.input_norm"]
+    assert state["status"] == "fused"
+    assert state["included_in"] == "full_attention.qkv_projection"
+    group = profile["fusion_groups"][state["fusion_group_id"]]
+    assert group["timing_semantics"] == "shared_event_coverage"
+    member_events = group["evidence_scope"]["member_event_ids"][
+        "full_attention_moe_block.input_norm"
+    ]
+    owner_events = group["evidence_scope"]["owner_event_ids"]
+    assert member_events
+    assert set(member_events) < set(owner_events)

@@ -648,6 +648,130 @@ def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
     assert group_id in profile["fusion_groups"]
 
 
+def test_shared_event_coverage_requires_explicit_member_subsets() -> None:
+    model = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    plan_path = QWEN40_ROOT / "execution_paths" / "tp_only.yaml"
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    node_index = {
+        f"{view_id}.{node['id']}": node
+        for view_id, view in views.items()
+        for node in view["nodes"]
+    }
+    profile = load_yaml(
+        QWEN40_ROOT
+        / "profiles"
+        / "tp_only"
+        / "sglang_f90a941aa"
+        / "cg_decode_bs001_8k1k.yaml"
+    )
+    group_id = "coverage:linear_attention.qkvz_projection"
+    profile["node_states"]["linear_attention.ba_projection"][
+        "fusion_group_id"
+    ] = group_id
+    profile["fusion_groups"] = {
+        group_id: {
+            "owner": "linear_attention.qkvz_projection",
+            "ir_nodes": [
+                "linear_attention.qkvz_projection",
+                "linear_attention.ba_projection",
+            ],
+            "timing_semantics": "shared_event_coverage",
+            "evidence_scope": {
+                "resolution": "profile_aggregate",
+                "owner_event_ids": ["rank0:event0", "rank0:event1"],
+                "member_event_ids": {
+                    "linear_attention.ba_projection": ["rank0:event1"]
+                },
+            },
+        }
+    }
+
+    compiled = compile_profile(
+        profile,
+        plan=plan,
+        fingerprint=execution_fingerprint(model, plan, views),
+        node_targets=set(node_index),
+        node_index=node_index,
+        views=views,
+        source=Path("coverage-profile.yaml"),
+    )
+    member = compiled["data"]["linear_attention.ba_projection"][
+        profile["variant_id"]
+    ]
+    assert member["timing_role"] == "fused_member"
+    assert member["fusion_timing_semantics"] == "shared_event_coverage"
+    assert "active_gpu_ms" not in member
+
+    profile["fusion_groups"][group_id]["evidence_scope"][
+        "member_event_ids"
+    ]["linear_attention.ba_projection"] = ["rank0:not-owned"]
+    with pytest.raises(CatalogError, match="outside the owner's physical event set"):
+        compile_profile(
+            profile,
+            plan=plan,
+            fingerprint=execution_fingerprint(model, plan, views),
+            node_targets=set(node_index),
+            node_index=node_index,
+            views=views,
+            source=Path("coverage-profile.yaml"),
+        )
+
+
+def test_occurrence_partitioned_fusion_compiles_without_copied_timing() -> None:
+    profile = {
+        "profile_id": "occurrence-fusion",
+        "model_id": "fixture-model",
+        "variant_id": "tp1",
+        "execution_path_id": "tp_only",
+        "implementation_id": "fixture",
+        "phase": "decode",
+        "execution_parameters": {
+            "tp_size": 1,
+            "dp_size": 1,
+            "cp_size": 1,
+            "ep_size": 1,
+        },
+        "node_metrics": {
+            "top.owner_a": {"ms_per_iter": 1.0},
+            "top.owner_b": {"ms_per_iter": 2.0},
+        },
+        "node_states": {
+            "top.member": {
+                "status": "fused_by_occurrence",
+                "fusion_partitions": [
+                    {
+                        "included_in": "top.owner_a",
+                        "production_event_ids": ["rank0:event1"],
+                    },
+                    {
+                        "included_in": "top.owner_b",
+                        "production_event_ids": ["rank0:event2"],
+                    },
+                ],
+            }
+        },
+    }
+    compiled = compile_profile(
+        profile,
+        plan={
+            "parallelism_axes": {
+                "tp_size": 1,
+                "dp_size": 1,
+                "cp_size": 1,
+                "ep_size": 1,
+            }
+        },
+        fingerprint="fixture-fingerprint",
+        node_targets={"top.owner_a", "top.owner_b", "top.member"},
+        source=Path("occurrence-profile.yaml"),
+    )
+    member = compiled["data"]["top.member"]["tp1"]
+    assert member["timing_role"] == "occurrence_fused_member"
+    assert member["shared_timing_owners"] == ["top.owner_a", "top.owner_b"]
+    assert "ms_per_iter" not in member
+
+
 def test_qwen35_collective_adapters_live_on_layer_boundaries() -> None:
     bundle = compile_catalog(QWEN35_ROOT)
 

@@ -1274,6 +1274,45 @@ def compile_profile(
                 raise CatalogError(
                     f"{source}: fused state {target!r} cannot include itself"
                 )
+        if state.get("status") == "fused_by_occurrence":
+            if target in (profile.get("node_metrics") or {}):
+                raise CatalogError(
+                    f"{source}: fused_by_occurrence state {target!r} cannot "
+                    "carry independent node_metrics"
+                )
+            partitions = state.get("fusion_partitions") or []
+            if not isinstance(partitions, list) or not partitions:
+                raise CatalogError(
+                    f"{source}: fused_by_occurrence state {target!r} requires "
+                    "non-empty fusion_partitions"
+                )
+            covered_events: set[str] = set()
+            for index, partition in enumerate(partitions):
+                if not isinstance(partition, dict):
+                    raise CatalogError(
+                        f"{source}: fusion partition {index} for {target!r} "
+                        "must be a mapping"
+                    )
+                owner = str(partition.get("included_in") or "")
+                if not owner or owner not in node_targets or owner == target:
+                    raise CatalogError(
+                        f"{source}: fusion partition {index} for {target!r} "
+                        f"has invalid owner {owner!r}"
+                    )
+                raw_event_ids = partition.get("production_event_ids") or []
+                if not isinstance(raw_event_ids, list) or not raw_event_ids:
+                    raise CatalogError(
+                        f"{source}: fusion partition {index} for {target!r} "
+                        "requires production_event_ids"
+                    )
+                event_ids = {str(event_id) for event_id in raw_event_ids}
+                duplicate_events = covered_events.intersection(event_ids)
+                if duplicate_events:
+                    raise CatalogError(
+                        f"{source}: fusion partitions for {target!r} overlap at "
+                        f"events {sorted(duplicate_events)}"
+                    )
+                covered_events.update(event_ids)
 
     # Fusion is an implementation/profile property, not architecture.  Promote
     # the existing fused/included_in states into explicit many-to-many groups
@@ -1317,10 +1356,12 @@ def compile_profile(
         if raw_group.get("timing_semantics") not in {
             "shared_interval",
             "shared_event_set",
+            "shared_event_coverage",
         }:
             raise CatalogError(
                 f"{source}: fusion group {group_id!r} requires "
-                "timing_semantics='shared_interval' or 'shared_event_set'"
+                "timing_semantics='shared_interval', 'shared_event_set', or "
+                "'shared_event_coverage'"
             )
         evidence_scope = raw_group.get("evidence_scope") or {}
         resolution = evidence_scope.get("resolution")
@@ -1332,6 +1373,37 @@ def compile_profile(
                 f"{source}: shared_event_set fusion group {group_id!r} requires "
                 "an evidence_scope resolution"
             )
+        if raw_group.get("timing_semantics") == "shared_event_coverage":
+            if resolution not in {"exact_occurrence", "profile_aggregate"}:
+                raise CatalogError(
+                    f"{source}: shared_event_coverage fusion group {group_id!r} "
+                    "requires an evidence_scope resolution"
+                )
+            owner_event_ids = {
+                str(event_id)
+                for event_id in (evidence_scope.get("owner_event_ids") or [])
+            }
+            member_event_ids = evidence_scope.get("member_event_ids") or {}
+            if not owner_event_ids or not isinstance(member_event_ids, dict):
+                raise CatalogError(
+                    f"{source}: shared_event_coverage fusion group {group_id!r} "
+                    "requires owner_event_ids and member_event_ids"
+                )
+            for member in (target for target in ir_nodes if target != owner):
+                events = {
+                    str(event_id)
+                    for event_id in (member_event_ids.get(member) or [])
+                }
+                if not events:
+                    raise CatalogError(
+                        f"{source}: shared_event_coverage fusion group "
+                        f"{group_id!r} has no events for member {member!r}"
+                    )
+                if not events.issubset(owner_event_ids):
+                    raise CatalogError(
+                        f"{source}: shared_event_coverage member {member!r} "
+                        "contains events outside the owner's physical event set"
+                    )
         if (
             raw_group.get("timing_semantics") == "shared_interval"
             and resolution == "profile_aggregate"
@@ -1488,6 +1560,14 @@ def compile_profile(
                 # independently timed semantic operations.
                 cell["timing_role"] = "fused_member"
                 cell["shared_timing_owner"] = group["owner"]
+        elif cell.get("status") == "fused_by_occurrence":
+            cell["timing_role"] = "occurrence_fused_member"
+            cell["shared_timing_owners"] = list(
+                dict.fromkeys(
+                    str(partition["included_in"])
+                    for partition in cell.get("fusion_partitions") or []
+                )
+            )
         elif cell.get("attribution_status") == "inclusive_rollup":
             cell["timing_role"] = "inclusive_rollup"
         elif any(field in cell for field in ("ms_per_iter", "active_gpu_ms")):

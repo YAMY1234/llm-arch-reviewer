@@ -936,25 +936,17 @@ timeline:
   raw_trace_file: dp0_pp0_tp5_dcp0_ep5_rank5.1788052188828124304.pt.trace.json.gz
 node_states:
   full_attention.partial_rope:
-    status: structural
-    label: implemented by exact occurrence-scoped shared events; no profile-aggregate fused timing is claimed
-    occurrence_fusion_evidence:
-      shared_timing_owners:
-      - full_attention.qk_norm
-      target_event_count: 15
-      all_target_events_same_rank_closed: true
-      physical_target_proof: true
-      profile_aggregate_event_set_equal: false
+    status: fused
+    included_in: full_attention.qk_norm
+    fusion_group_id: fusion:full_attention.qk_norm
+    label: fused into full_attention.qk_norm; 15/45 owner events
+    provenance: production_event_graph
   full_attention_moe_block.input_norm:
-    status: structural
-    label: implemented by exact occurrence-scoped shared events; no profile-aggregate fused timing is claimed
-    occurrence_fusion_evidence:
-      shared_timing_owners:
-      - gdn_moe_block.tp_moe_output_collective
-      target_event_count: 30
-      all_target_events_same_rank_closed: true
-      physical_target_proof: true
-      profile_aggregate_event_set_equal: false
+    status: fused
+    included_in: gdn_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_moe_output_collective; 30/90 owner events
+    provenance: production_event_graph
   full_attention.kv_state_read:
     status: fused
     label: fused into full_attention.causal_gqa
@@ -972,9 +964,10 @@ node_states:
     fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_attention_output_collective
   full_attention_moe_block.layer_residual:
     status: fused
-    label: fused into full_attention_moe_block.tp_moe_output_collective
     included_in: full_attention_moe_block.tp_moe_output_collective
     fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective
+    label: fused into full_attention_moe_block.tp_moe_output_collective; 30/30 owner events
+    provenance: production_event_graph
   gdn_attention.conv_state_read:
     status: fused
     label: fused into gdn_attention.causal_conv
@@ -1007,9 +1000,10 @@ node_states:
     fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
   gdn_moe_block.layer_residual:
     status: fused
-    label: fused into gdn_moe_block.tp_moe_output_collective
     included_in: gdn_moe_block.tp_moe_output_collective
     fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_moe_output_collective; 90/90 owner events
+    provenance: production_event_graph
   full_attention.module_input:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
@@ -1395,11 +1389,14 @@ node_states:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
   top.embedding:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
+    status: not_selected
+    label: outside the selected production model-forward window; hidden states are graph inputs
   top.final_norm:
-    status: structural
-    label: semantic, state, scheduler, or drill boundary without standalone production timing
+    status: fused
+    included_in: full_attention_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_full_attention_moe_block_tp_moe_output_collective
+    label: fused into full_attention_moe_block.tp_moe_output_collective; 2/30 owner events
+    provenance: production_event_graph
   top.generation_controller:
     status: not_selected
     label: outside the text-only, MTP-off pure-TP8 contract
@@ -1570,44 +1567,111 @@ fusion_groups:
     ir_nodes:
     - full_attention_moe_block.tp_moe_output_collective
     - full_attention_moe_block.layer_residual
-    timing_semantics: shared_event_set
+    - top.final_norm
+    timing_semantics: shared_event_coverage
     provenance: eager stack plus production signature/sequence reconciliation
     mapping_method: explicit ir_targets on every production event
     confidence: high
     evidence_scope:
       resolution: profile_aggregate
-      production_event_ids:
-      - r5-k1034
-      - r5-k1036
-      - r5-k1300
-      - r5-k1302
-      - r5-k1566
-      - r5-k1568
-      - r5-k1832
-      - r5-k1834
-      - r5-k2098
-      - r5-k2100
-      - r5-k2364
-      - r5-k2366
-      - r5-k2630
-      - r5-k2632
-      - r5-k2896
-      - r5-k2898
-      - r5-k3162
-      - r5-k3164
-      - r5-k3428
-      - r5-k3430
-      - r5-k3694
-      - r5-k3696
-      - r5-k3960
-      - r5-k3962
-      - r5-k4226
-      - r5-k4228
-      - r5-k502
-      - r5-k504
-      - r5-k768
-      - r5-k770
-      member_event_sets_equal_owner: true
+      owner_event_ids:
+      - r5-s1-k1074
+      - r5-s1-k1075
+      - r5-s1-k1207
+      - r5-s1-k1208
+      - r5-s1-k1340
+      - r5-s1-k1341
+      - r5-s1-k143
+      - r5-s1-k144
+      - r5-s1-k1473
+      - r5-s1-k1474
+      - r5-s1-k1606
+      - r5-s1-k1607
+      - r5-s1-k1739
+      - r5-s1-k1740
+      - r5-s1-k1872
+      - r5-s1-k1873
+      - r5-s1-k2005
+      - r5-s1-k2006
+      - r5-s1-k276
+      - r5-s1-k277
+      - r5-s1-k409
+      - r5-s1-k410
+      - r5-s1-k542
+      - r5-s1-k543
+      - r5-s1-k675
+      - r5-s1-k676
+      - r5-s1-k808
+      - r5-s1-k809
+      - r5-s1-k941
+      - r5-s1-k942
+      member_event_ids:
+        full_attention_moe_block.layer_residual:
+        - r5-s1-k1074
+        - r5-s1-k1075
+        - r5-s1-k1207
+        - r5-s1-k1208
+        - r5-s1-k1340
+        - r5-s1-k1341
+        - r5-s1-k143
+        - r5-s1-k144
+        - r5-s1-k1473
+        - r5-s1-k1474
+        - r5-s1-k1606
+        - r5-s1-k1607
+        - r5-s1-k1739
+        - r5-s1-k1740
+        - r5-s1-k1872
+        - r5-s1-k1873
+        - r5-s1-k2005
+        - r5-s1-k2006
+        - r5-s1-k276
+        - r5-s1-k277
+        - r5-s1-k409
+        - r5-s1-k410
+        - r5-s1-k542
+        - r5-s1-k543
+        - r5-s1-k675
+        - r5-s1-k676
+        - r5-s1-k808
+        - r5-s1-k809
+        - r5-s1-k941
+        - r5-s1-k942
+        top.final_norm:
+        - r5-s1-k2005
+        - r5-s1-k2006
+      layer_ids:
+      - 3
+      - 7
+      - 11
+      - 15
+      - 19
+      - 23
+      - 27
+      - 31
+      - 35
+      - 39
+      - 43
+      - 47
+      - 51
+      - 55
+      - 59
+      occurrence_ids:
+      - layer_03.moe
+      - layer_07.moe
+      - layer_11.moe
+      - layer_15.moe
+      - layer_19.moe
+      - layer_23.moe
+      - layer_27.moe
+      - layer_31.moe
+      - layer_35.moe
+      - layer_39.moe
+      - layer_43.moe
+      - layer_47.moe
+      - layer_51.moe
+      - layer_55.moe
+      - layer_59.moe
       all_owner_events_same_rank_closed: true
   qwen35_profile_aggregate_gdn_attention_causal_conv:
     owner: gdn_attention.causal_conv
@@ -2091,104 +2155,426 @@ fusion_groups:
     ir_nodes:
     - gdn_moe_block.tp_moe_output_collective
     - gdn_moe_block.layer_residual
-    timing_semantics: shared_event_set
+    - full_attention_moe_block.input_norm
+    timing_semantics: shared_event_coverage
     provenance: eager stack plus production signature/sequence reconciliation
     mapping_method: explicit ir_targets on every production event
     confidence: high
     evidence_scope:
       resolution: profile_aggregate
-      production_event_ids:
-      - r5-k1100
-      - r5-k1102
-      - r5-k1166
-      - r5-k1168
-      - r5-k1234
-      - r5-k1236
-      - r5-k1366
-      - r5-k1368
-      - r5-k1432
-      - r5-k1434
-      - r5-k1500
-      - r5-k1502
-      - r5-k1632
-      - r5-k1634
-      - r5-k1698
-      - r5-k1700
-      - r5-k1766
-      - r5-k1768
-      - r5-k1898
-      - r5-k1900
-      - r5-k1964
-      - r5-k1966
-      - r5-k2032
-      - r5-k2034
-      - r5-k2164
-      - r5-k2166
-      - r5-k2230
-      - r5-k2232
-      - r5-k2298
-      - r5-k2300
-      - r5-k2430
-      - r5-k2432
-      - r5-k2496
-      - r5-k2498
-      - r5-k2564
-      - r5-k2566
-      - r5-k2696
-      - r5-k2698
-      - r5-k2762
-      - r5-k2764
-      - r5-k2830
-      - r5-k2832
-      - r5-k2962
-      - r5-k2964
-      - r5-k302
-      - r5-k3028
-      - r5-k3030
-      - r5-k304
-      - r5-k3096
-      - r5-k3098
-      - r5-k3228
-      - r5-k3230
-      - r5-k3294
-      - r5-k3296
-      - r5-k3362
-      - r5-k3364
-      - r5-k3494
-      - r5-k3496
-      - r5-k3560
-      - r5-k3562
-      - r5-k3628
-      - r5-k3630
-      - r5-k368
-      - r5-k372
-      - r5-k3760
-      - r5-k3762
-      - r5-k3826
-      - r5-k3828
-      - r5-k3894
-      - r5-k3896
-      - r5-k4026
-      - r5-k4028
-      - r5-k4092
-      - r5-k4094
-      - r5-k4160
-      - r5-k4162
-      - r5-k436
-      - r5-k438
-      - r5-k568
-      - r5-k570
-      - r5-k634
-      - r5-k636
-      - r5-k702
-      - r5-k704
-      - r5-k834
-      - r5-k836
-      - r5-k900
-      - r5-k902
-      - r5-k968
-      - r5-k970
-      member_event_sets_equal_owner: true
+      owner_event_ids:
+      - r5-s1-k1007
+      - r5-s1-k1008
+      - r5-s1-k1041
+      - r5-s1-k1042
+      - r5-s1-k110
+      - r5-s1-k1107
+      - r5-s1-k1108
+      - r5-s1-k111
+      - r5-s1-k1140
+      - r5-s1-k1141
+      - r5-s1-k1174
+      - r5-s1-k1175
+      - r5-s1-k1240
+      - r5-s1-k1241
+      - r5-s1-k1273
+      - r5-s1-k1274
+      - r5-s1-k1307
+      - r5-s1-k1308
+      - r5-s1-k1373
+      - r5-s1-k1374
+      - r5-s1-k1406
+      - r5-s1-k1407
+      - r5-s1-k1440
+      - r5-s1-k1441
+      - r5-s1-k1506
+      - r5-s1-k1507
+      - r5-s1-k1539
+      - r5-s1-k1540
+      - r5-s1-k1573
+      - r5-s1-k1574
+      - r5-s1-k1639
+      - r5-s1-k1640
+      - r5-s1-k1672
+      - r5-s1-k1673
+      - r5-s1-k1706
+      - r5-s1-k1707
+      - r5-s1-k176
+      - r5-s1-k177
+      - r5-s1-k1772
+      - r5-s1-k1773
+      - r5-s1-k1805
+      - r5-s1-k1806
+      - r5-s1-k1839
+      - r5-s1-k1840
+      - r5-s1-k1905
+      - r5-s1-k1906
+      - r5-s1-k1938
+      - r5-s1-k1939
+      - r5-s1-k1972
+      - r5-s1-k1973
+      - r5-s1-k209
+      - r5-s1-k210
+      - r5-s1-k243
+      - r5-s1-k244
+      - r5-s1-k309
+      - r5-s1-k310
+      - r5-s1-k342
+      - r5-s1-k343
+      - r5-s1-k376
+      - r5-s1-k377
+      - r5-s1-k43
+      - r5-s1-k44
+      - r5-s1-k442
+      - r5-s1-k443
+      - r5-s1-k475
+      - r5-s1-k476
+      - r5-s1-k509
+      - r5-s1-k510
+      - r5-s1-k575
+      - r5-s1-k576
+      - r5-s1-k608
+      - r5-s1-k609
+      - r5-s1-k642
+      - r5-s1-k643
+      - r5-s1-k708
+      - r5-s1-k709
+      - r5-s1-k741
+      - r5-s1-k742
+      - r5-s1-k76
+      - r5-s1-k77
+      - r5-s1-k775
+      - r5-s1-k776
+      - r5-s1-k841
+      - r5-s1-k842
+      - r5-s1-k874
+      - r5-s1-k875
+      - r5-s1-k908
+      - r5-s1-k909
+      - r5-s1-k974
+      - r5-s1-k975
+      member_event_ids:
+        gdn_moe_block.layer_residual:
+        - r5-s1-k1007
+        - r5-s1-k1008
+        - r5-s1-k1041
+        - r5-s1-k1042
+        - r5-s1-k110
+        - r5-s1-k1107
+        - r5-s1-k1108
+        - r5-s1-k111
+        - r5-s1-k1140
+        - r5-s1-k1141
+        - r5-s1-k1174
+        - r5-s1-k1175
+        - r5-s1-k1240
+        - r5-s1-k1241
+        - r5-s1-k1273
+        - r5-s1-k1274
+        - r5-s1-k1307
+        - r5-s1-k1308
+        - r5-s1-k1373
+        - r5-s1-k1374
+        - r5-s1-k1406
+        - r5-s1-k1407
+        - r5-s1-k1440
+        - r5-s1-k1441
+        - r5-s1-k1506
+        - r5-s1-k1507
+        - r5-s1-k1539
+        - r5-s1-k1540
+        - r5-s1-k1573
+        - r5-s1-k1574
+        - r5-s1-k1639
+        - r5-s1-k1640
+        - r5-s1-k1672
+        - r5-s1-k1673
+        - r5-s1-k1706
+        - r5-s1-k1707
+        - r5-s1-k176
+        - r5-s1-k177
+        - r5-s1-k1772
+        - r5-s1-k1773
+        - r5-s1-k1805
+        - r5-s1-k1806
+        - r5-s1-k1839
+        - r5-s1-k1840
+        - r5-s1-k1905
+        - r5-s1-k1906
+        - r5-s1-k1938
+        - r5-s1-k1939
+        - r5-s1-k1972
+        - r5-s1-k1973
+        - r5-s1-k209
+        - r5-s1-k210
+        - r5-s1-k243
+        - r5-s1-k244
+        - r5-s1-k309
+        - r5-s1-k310
+        - r5-s1-k342
+        - r5-s1-k343
+        - r5-s1-k376
+        - r5-s1-k377
+        - r5-s1-k43
+        - r5-s1-k44
+        - r5-s1-k442
+        - r5-s1-k443
+        - r5-s1-k475
+        - r5-s1-k476
+        - r5-s1-k509
+        - r5-s1-k510
+        - r5-s1-k575
+        - r5-s1-k576
+        - r5-s1-k608
+        - r5-s1-k609
+        - r5-s1-k642
+        - r5-s1-k643
+        - r5-s1-k708
+        - r5-s1-k709
+        - r5-s1-k741
+        - r5-s1-k742
+        - r5-s1-k76
+        - r5-s1-k77
+        - r5-s1-k775
+        - r5-s1-k776
+        - r5-s1-k841
+        - r5-s1-k842
+        - r5-s1-k874
+        - r5-s1-k875
+        - r5-s1-k908
+        - r5-s1-k909
+        - r5-s1-k974
+        - r5-s1-k975
+        full_attention_moe_block.input_norm:
+        - r5-s1-k1041
+        - r5-s1-k1042
+        - r5-s1-k110
+        - r5-s1-k111
+        - r5-s1-k1174
+        - r5-s1-k1175
+        - r5-s1-k1307
+        - r5-s1-k1308
+        - r5-s1-k1440
+        - r5-s1-k1441
+        - r5-s1-k1573
+        - r5-s1-k1574
+        - r5-s1-k1706
+        - r5-s1-k1707
+        - r5-s1-k1839
+        - r5-s1-k1840
+        - r5-s1-k1972
+        - r5-s1-k1973
+        - r5-s1-k243
+        - r5-s1-k244
+        - r5-s1-k376
+        - r5-s1-k377
+        - r5-s1-k509
+        - r5-s1-k510
+        - r5-s1-k642
+        - r5-s1-k643
+        - r5-s1-k775
+        - r5-s1-k776
+        - r5-s1-k908
+        - r5-s1-k909
+      layer_ids:
+      - 0
+      - 1
+      - 2
+      - 4
+      - 5
+      - 6
+      - 8
+      - 9
+      - 10
+      - 12
+      - 13
+      - 14
+      - 16
+      - 17
+      - 18
+      - 20
+      - 21
+      - 22
+      - 24
+      - 25
+      - 26
+      - 28
+      - 29
+      - 30
+      - 32
+      - 33
+      - 34
+      - 36
+      - 37
+      - 38
+      - 40
+      - 41
+      - 42
+      - 44
+      - 45
+      - 46
+      - 48
+      - 49
+      - 50
+      - 52
+      - 53
+      - 54
+      - 56
+      - 57
+      - 58
+      occurrence_ids:
+      - layer_00.moe
+      - layer_01.moe
+      - layer_02.moe
+      - layer_04.moe
+      - layer_05.moe
+      - layer_06.moe
+      - layer_08.moe
+      - layer_09.moe
+      - layer_10.moe
+      - layer_12.moe
+      - layer_13.moe
+      - layer_14.moe
+      - layer_16.moe
+      - layer_17.moe
+      - layer_18.moe
+      - layer_20.moe
+      - layer_21.moe
+      - layer_22.moe
+      - layer_24.moe
+      - layer_25.moe
+      - layer_26.moe
+      - layer_28.moe
+      - layer_29.moe
+      - layer_30.moe
+      - layer_32.moe
+      - layer_33.moe
+      - layer_34.moe
+      - layer_36.moe
+      - layer_37.moe
+      - layer_38.moe
+      - layer_40.moe
+      - layer_41.moe
+      - layer_42.moe
+      - layer_44.moe
+      - layer_45.moe
+      - layer_46.moe
+      - layer_48.moe
+      - layer_49.moe
+      - layer_50.moe
+      - layer_52.moe
+      - layer_53.moe
+      - layer_54.moe
+      - layer_56.moe
+      - layer_57.moe
+      - layer_58.moe
+      all_owner_events_same_rank_closed: true
+  fusion:full_attention.qk_norm:
+    owner: full_attention.qk_norm
+    ir_nodes:
+    - full_attention.qk_norm
+    - full_attention.partial_rope
+    provenance: production_event_graph
+    mapping_method: eager_semantic_to_production_event_closure
+    confidence: exact
+    timing_semantics: shared_event_coverage
+    evidence_scope:
+      resolution: profile_aggregate
+      owner_event_ids:
+      - r5-s1-k1045
+      - r5-s1-k1046
+      - r5-s1-k1047
+      - r5-s1-k114
+      - r5-s1-k115
+      - r5-s1-k116
+      - r5-s1-k1178
+      - r5-s1-k1179
+      - r5-s1-k1180
+      - r5-s1-k1311
+      - r5-s1-k1312
+      - r5-s1-k1313
+      - r5-s1-k1444
+      - r5-s1-k1445
+      - r5-s1-k1446
+      - r5-s1-k1577
+      - r5-s1-k1578
+      - r5-s1-k1579
+      - r5-s1-k1710
+      - r5-s1-k1711
+      - r5-s1-k1712
+      - r5-s1-k1843
+      - r5-s1-k1844
+      - r5-s1-k1845
+      - r5-s1-k1976
+      - r5-s1-k1977
+      - r5-s1-k1978
+      - r5-s1-k247
+      - r5-s1-k248
+      - r5-s1-k249
+      - r5-s1-k380
+      - r5-s1-k381
+      - r5-s1-k382
+      - r5-s1-k513
+      - r5-s1-k514
+      - r5-s1-k515
+      - r5-s1-k646
+      - r5-s1-k647
+      - r5-s1-k648
+      - r5-s1-k779
+      - r5-s1-k780
+      - r5-s1-k781
+      - r5-s1-k912
+      - r5-s1-k913
+      - r5-s1-k914
+      member_event_ids:
+        full_attention.partial_rope:
+        - r5-s1-k1047
+        - r5-s1-k116
+        - r5-s1-k1180
+        - r5-s1-k1313
+        - r5-s1-k1446
+        - r5-s1-k1579
+        - r5-s1-k1712
+        - r5-s1-k1845
+        - r5-s1-k1978
+        - r5-s1-k249
+        - r5-s1-k382
+        - r5-s1-k515
+        - r5-s1-k648
+        - r5-s1-k781
+        - r5-s1-k914
+      layer_ids:
+      - 3
+      - 7
+      - 11
+      - 15
+      - 19
+      - 23
+      - 27
+      - 31
+      - 35
+      - 39
+      - 43
+      - 47
+      - 51
+      - 55
+      - 59
+      occurrence_ids:
+      - layer_03.attention
+      - layer_07.attention
+      - layer_11.attention
+      - layer_15.attention
+      - layer_19.attention
+      - layer_23.attention
+      - layer_27.attention
+      - layer_31.attention
+      - layer_35.attention
+      - layer_39.attention
+      - layer_43.attention
+      - layer_47.attention
+      - layer_51.attention
+      - layer_55.attention
+      - layer_59.attention
       all_owner_events_same_rank_closed: true
 node_metrics:
   top.tp_embedding_output_collective:

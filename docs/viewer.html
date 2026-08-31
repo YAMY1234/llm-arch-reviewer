@@ -901,6 +901,10 @@ function comparisonEvidenceText(context, target) {
     const owner = group?.architecture_owner || group?.owner || cell.included_in || "unknown owner";
     return `${prefix}: fused into ${irTargetLabel(owner)}`;
   }
+  if (cell.status === "fused_by_occurrence") {
+    const owners = occurrenceFusionOwners(cell).map(irTargetLabel);
+    return `${prefix}: fused by occurrence into ${owners.join(" + ")}`;
+  }
   const value = cellMetricValue(cell, CURRENT_METRIC, target);
   if (value != null) {
     const provenance = cell.attribution_status === "inclusive_rollup" ? "∪ " : "";
@@ -1174,11 +1178,35 @@ function profileCellForTarget(target) {
 
 function fusionTimingDescription(group) {
   if (!group) return "";
+  if (group.timing_semantics === "shared_event_coverage") {
+    return "validated member-to-owner event coverage; each member maps to an explicit subset and the owner is the only additive timing value";
+  }
   const aggregate = group.timing_semantics === "shared_event_set"
     || group.evidence_scope?.resolution === "profile_aggregate";
   return aggregate
     ? "validated shared production-event set; the owner is the only additive timing value"
     : "one validated shared production interval; never sum once per covered IR node";
+}
+
+function occurrenceFusionOwners(cell) {
+  return [...new Set((cell?.fusion_partitions || [])
+    .map(partition => String(partition?.included_in || ""))
+    .filter(Boolean))];
+}
+
+function occurrenceFusionOwnerLinksHtml(cell, sourceTarget) {
+  return occurrenceFusionOwners(cell).map(owner =>
+    fusionOwnerLinkHtml(owner, sourceTarget, {showTarget: true})
+  ).join("<br>");
+}
+
+function fusionCoverageDescription(group, target) {
+  if (group?.timing_semantics !== "shared_event_coverage") return "";
+  const scope = group.evidence_scope || {};
+  const ownerCount = (scope.owner_event_ids || []).length;
+  const memberCount = (scope.member_event_ids?.[target] || []).length;
+  if (!ownerCount || !memberCount) return "explicit event subset recorded";
+  return `${memberCount}/${ownerCount} owner events cover this semantic node`;
 }
 
 function fusionOwnerLinkHtml(ownerTarget, sourceTarget, options = {}) {
@@ -2418,7 +2446,11 @@ function drawNode(root, n, c, viewName) {
     t.setAttribute("y", c.height - 6);
     t.setAttribute("text-anchor", "middle");
     t.textContent = nodeStateSummary(cell, target);
-    const owner = cell.status === "fused" ? fusionOwnerForTarget(target, cell) : "";
+    const owner = cell.status === "fused"
+      ? fusionOwnerForTarget(target, cell)
+      : (cell.status === "fused_by_occurrence"
+        ? occurrenceFusionOwners(cell)[0] || ""
+        : "");
     if (!appendFusionOwnerNodeLink(g, t, owner, target)) g.appendChild(t);
   } else if (n.note) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -4618,6 +4650,10 @@ function nodeStateSummary(cell, target = "") {
     const owner = fusionOwnerForTarget(target, cell) || "unknown owner";
     return `fused into ${shorten(irTargetLabel(owner), 32)}`;
   }
+  if (cell.status === "fused_by_occurrence") {
+    const owners = occurrenceFusionOwners(cell);
+    return `fused by occurrence into ${owners.length} owner${owners.length === 1 ? "" : "s"}`;
+  }
   return `${cell.status.replaceAll("_", " ")}: ${shorten(cell.label || "no standalone timing", 24)}`;
 }
 
@@ -4831,11 +4867,16 @@ function showDetail(n, viewName) {
     const comparisonValue = comparisonCell
       ? cellMetricValue(comparisonCell, CURRENT_METRIC, target)
       : null;
+    const occurrenceOwners = comparisonCell?.status === "fused_by_occurrence"
+      ? occurrenceFusionOwners(comparisonCell)
+      : [];
     const evidence = comparisonOwner
       ? `fused into <a href="#" data-comparison-owner="${escapeHtml(comparisonContext.implementation_id)}" data-comparison-source="${escapeHtml(target)}">${escapeHtml(irTargetLabel(comparisonOwner))}</a>`
+      : (occurrenceOwners.length
+        ? `fused by occurrence into ${occurrenceOwners.map(escapeHtml).join(" + ")}`
       : (comparisonValue != null
         ? `${escapeHtml(metricLabel(CURRENT_METRIC))} ${formatMetricValue(comparisonValue, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`
-        : escapeHtml(nodeStateSummary(comparisonCell, target) || "not selected"));
+        : escapeHtml(nodeStateSummary(comparisonCell, target) || "not selected")));
     const binding = RAW_DATA?.implementations?.[comparisonContext.implementation_id]?.node_bindings?.[target] || {};
     const proof = [
       ...(binding.symbols || []),
@@ -4865,9 +4906,14 @@ function showDetail(n, viewName) {
         ? `${formatMs(value.gpu_elapsed_ms)} ms elapsed · ${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · ${formatMs(value.device_idle_ms)} ms idle`
         : `${formatMs(value.active_gpu_ms ?? value.ms_per_iter)} ms active · elapsed unavailable`)
       : `${value.status || "not timed"}: ${value.label || "no standalone kernel"}`;
+    const occurrenceLinks = value.status === "fused_by_occurrence"
+      ? occurrenceFusionOwnerLinksHtml(value, target)
+      : "";
     const valueHtml = variantOwner
       ? `fused into ${fusionOwnerLinkHtml(variantOwner, target)}`
-      : escapeHtml(display);
+      : (occurrenceLinks
+        ? `fused by occurrence into ${occurrenceLinks}`
+        : escapeHtml(display));
     return `<span class="badge ${k.toLowerCase()}">${escapeHtml(k)}: ${valueHtml}</span>`;
   }).join(" ");
 
@@ -4932,10 +4978,12 @@ function showDetail(n, viewName) {
         ${cell.scope_target ? `<div class="k">drill scope</div><div>${escapeHtml(cell.scope_target)}</div>` : ""}
         ${cell.label && cell.ms_per_iter == null ? `<div class="k">meaning</div><div>${escapeHtml(cell.label)}</div>` : ""}
       ${fusionOwner ? `<div class="k">timing owner</div><div>${fusionOwnerLinkHtml(fusionOwner, target, {showTarget: true})}</div>` : ""}
+        ${cell?.status === "fused_by_occurrence" ? `<div class="k">occurrence owners</div><div>${occurrenceFusionOwnerLinksHtml(cell, target)}</div>` : ""}
         ${fusionGroup ? `<div class="k">fusion group</div><div>${escapeHtml(fusionGroupId)}</div>
         <div class="k">owner timing</div><div>${fusionOwnerTiming == null ? "unavailable" : `${formatMs(fusionOwnerTiming)} ms`} · counted once</div>
         <div class="k">evidence scope</div><div>${escapeHtml(fusionScopeDescription(fusionGroup))}</div>
         <div class="k">fusion timing</div><div>${escapeHtml(fusionTimingDescription(fusionGroup))}</div>
+        ${fusionCoverageDescription(fusionGroup, target) ? `<div class="k">event coverage</div><div>${escapeHtml(fusionCoverageDescription(fusionGroup, target))}</div>` : ""}
         ${fusionGroup.mapping_method ? `<div class="k">mapping proof</div><div>${escapeHtml(fusionGroup.mapping_method)}${fusionGroup.confidence ? ` · ${escapeHtml(fusionGroup.confidence)}` : ""}</div>` : ""}
         ${fusionGroup.provenance ? `<div class="k">provenance</div><div>${escapeHtml(fusionGroup.provenance)}</div>` : ""}
         <div class="k">covered IR</div><div><details><summary>${fusionMembers.length} semantic contracts</summary><div style="margin-top:5px; color:var(--muted); overflow-wrap:anywhere">${fusionMembers.map(escapeHtml).join("<br>")}</div></details></div>` : ""}

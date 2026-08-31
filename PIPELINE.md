@@ -347,8 +347,10 @@ boundaries. It is reconciled against the complete candidate Execution IR:
    the plan;
 3. layer multiplicity, optional paths, state updates, and phase/generation
    scopes must agree with the candidate graph;
-4. planned nodes that should execute but have no eager evidence are failures,
-   unless they are explicitly structural or not selected for that run;
+4. planned nodes that should execute but have no eager evidence are failures.
+   `structural` is an authored semantic/control/state boundary, never a fallback
+   for missing compute attribution; only a genuinely inactive node may be
+   explicitly `not_selected`, `disabled`, or `out_of_scope`;
 5. unexpected eager scopes may propose a missing or misplaced Execution IR
    contract, but cannot mutate the graph automatically.
 
@@ -536,13 +538,21 @@ it to align events. This occurrence scope distinguishes, for example, the
 attention mHC boundary in layer 12 from a model-wide aggregate with the same
 kernel signature.
 
-A fusion group is valid only when all covered IR leaves resolve to the same
-validated production interval or event set in the same occurrence scope:
+A fusion relation is valid only when every covered IR leaf has explicit
+production-event evidence inside a validated occurrence scope:
 
 - `shared_interval`: one exact production interval with exact-occurrence scope;
 - `shared_event_set`: an aggregate of multiple validated production intervals;
   it is labeled `profile_aggregate` and is never presented as one monolithic
   kernel.
+- `shared_event_coverage`: a semantic member is implemented by a non-empty,
+  explicit subset of one owner's production-event set. Both the complete owner
+  set and every member-to-event map are required. Timeline navigation and
+  roll-ups attach that member only to the listed events; they must not broaden
+  the subset back to every event owned by the fusion owner.
+- `fused_by_occurrence`: one semantic node is fused into different physical
+  owners in disjoint layer/substage occurrences. Every partition records its
+  owner and production event IDs.
 
 The group has exactly one timing owner. Covered leaves remain explicit Model
 IR contracts, but point to that owner and never receive additive copies of its
@@ -580,6 +590,9 @@ from framework names. Every executable drill node with measured descendants
 must materialize an `inclusive_rollup`: `active_gpu` is the union of the
 underlying production events, while residency is their duration sum. Pure
 control nodes such as repeat/conditional-selection may remain `structural`.
+Every selected runtime-bearing primitive leaf follows the same rule as a
+module: it must own positive direct timing or carry typed fusion ownership.
+`structural` is never a substitute for missing leaf attribution.
 An Execution IR node marked as a `module_boundary` (for example, a TP output
 collective) is excluded from the immediate Model IR module roll-up but included
 in the enclosing decoder/scheduler roll-up.
@@ -840,10 +853,11 @@ link to that framework's architecture owner in both the graph and detail pane.
 
 - All documents pass their JSON schema and cross-document reference checks.
 - Model IR IDs are stable and every drill target resolves.
-- A selected drillable compute/module node is never presented as a
-  `structural` boundary.  It must carry positive measured/inclusive-union
-  timing or be an explicit fused member with exactly one timing owner.  Only
-  authored boundary/control/state nodes and explicitly inactive branches
+- A selected drillable compute/module node or runtime-bearing primitive leaf is
+  never presented as a `structural` boundary. It must carry positive
+  measured/inclusive-union timing, be an explicit fused member with one timing
+  owner, or have disjoint `fused_by_occurrence` partitions. Only authored
+  boundary/control/state nodes and explicitly inactive branches
   (`not_selected`, `disabled`, or `out_of_scope`) may be timing-free.
 - Every edge has identity, shape, layout, dtype, and state lifetime; every
   semantic node has an authored equation. Missing operations, empty equations,
@@ -870,9 +884,11 @@ link to that framework's architecture owner in both the graph and detail pane.
   either an IR/fusion binding or `support_class` plus `support_reason`, and it
   reports zero semantic-looking GEMM, attention, MoE, normalization,
   convolution, or collective kernels outside IR.
-- Every `fused` node belongs to exactly one fusion group whose owner matches
-  `included_in`; every group declares exact-interval versus aggregate-event-set
-  semantics and a reviewable evidence scope.
+- Every single-owner `fused` node belongs to exactly one fusion group whose
+  owner matches `included_in`; every group declares exact interval, equal
+  aggregate event set, or explicit member-event coverage semantics and a
+  reviewable evidence scope. A multi-owner `fused_by_occurrence` node instead
+  has disjoint physical-event partitions, each with one valid owner.
 - A `fused` node carries no standalone scalar timing fields. Exactly one group
   owner carries the measured production timing; a contradictory fused state
   plus independent `node_metrics` fails compilation.

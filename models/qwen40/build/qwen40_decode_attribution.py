@@ -304,6 +304,51 @@ _QSA_INDEXER_PARENT_NODES = {
 }
 
 
+def reconcile_qsa_indexer_projection_ownership(
+    events: list[dict[str, Any]],
+) -> None:
+    """Repair index-projection ownership from a direct Q-prep stream anchor.
+
+    Older small-batch CUDA-Graph artifacts were attributed before the QSA
+    alternate-stream split was made explicit.  In those artifacts the
+    copy/index/add/GEMM sequence immediately preceding ``qsa_index_q_prep``
+    can still carry the main QKV projection owner even though it executes on
+    the indexer stream.  The direct Q-prep kernel gives us a deterministic
+    physical boundary: walk backwards on that same stream and transfer only
+    the contiguous stale QKV-owned prefix.  No kernel-name-only or global
+    timestamp guess is used.
+
+    Fresh attribution already assigns these events to the indexer, so this is
+    idempotent and also serves as the migration rule for checked-in traces.
+    """
+
+    ordered = sorted(events, key=lambda row: float(row.get("ts_us", 0.0)))
+    by_stream: dict[tuple[Any, Any], list[dict[str, Any]]] = defaultdict(list)
+    for event in ordered:
+        by_stream[(event.get("step_index"), event.get("stream"))].append(event)
+
+    stale_owner_by_parent = {
+        "qsa_attention.indexer": "qsa_attention.qkv_gate_projection",
+        "mtp_qsa_attention.indexer": "mtp_qsa_attention.qkv_gate_projection",
+    }
+    for parent, stale_owner in stale_owner_by_parent.items():
+        for stream_rows in by_stream.values():
+            for q_prep_index, event in enumerate(stream_rows):
+                if str(event.get("node") or "") != parent:
+                    continue
+                if _direct_qsa_indexer_drill_target(event) != "qsa_indexer.q_norm_rope":
+                    continue
+                index = q_prep_index - 1
+                while index >= 0 and str(stream_rows[index].get("node") or "") == stale_owner:
+                    stale = stream_rows[index]
+                    stale["node"] = parent
+                    stale["kernel_label"] = "QSA index projection/support"
+                    stale["attribution_method"] = "validated_stream_anchor_reconciliation"
+                    stale["confidence"] = "high"
+                    stale["qsa_indexer_ownership_repaired"] = True
+                    index -= 1
+
+
 def _direct_qsa_indexer_drill_target(event: dict[str, Any]) -> str | None:
     """Return only semantically unique QSA-indexer drill mappings."""
 
@@ -332,6 +377,7 @@ def attach_qsa_indexer_drill_targets(events: list[dict[str, Any]]) -> None:
     residency.
     """
 
+    reconcile_qsa_indexer_projection_ownership(events)
     groups: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         if str(event.get("node") or "") not in _QSA_INDEXER_PARENT_NODES:

@@ -1,6 +1,6 @@
 schema_version: profile.v2
 profile_id: qwen40_dp_attention_cg_decode_gbs256_8k1k
-label: GB300 · Attention DP4 · TP MoE · CUDA Graph decode · global BS256 · 8k→1k
+label: "GB300 \xB7 Attention DP4 \xB7 TP MoE \xB7 CUDA Graph decode \xB7 global BS256 \xB7 8k\u21921k"
 model_id: qwen40
 execution_path_id: dp_attention
 implementation_id: sglang_f90a941aa_dp_attention
@@ -51,8 +51,7 @@ profiler:
     mode: prefill-first-until-local-target
     local_target: 64
     active_during_profile: false
-  gpu_metric_semantics: overlap-aware active GPU interval union on one coherent critical
-    reference rank; residency is retained separately
+  gpu_metric_semantics: overlap-aware active GPU interval union on one coherent critical reference rank; residency is retained separately
 evidence:
   job_id: 3177206
   source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
@@ -76,8 +75,7 @@ evidence:
     sha256: 8eb94c8433ea1c7069044fb876a0b732ce99f716e2353e85f03bc9d5eb2105d9
   eager_mapping_file: kernel_mapping.tp3.jsonl
   eager_mapping_sha256: 53346c010e576d32359cc117c5ca6321b2661c9e9609d43c719b9de73b12a0f7
-  mapping_policy: eager Python-stack/source binding transferred by direct signatures,
-    eager-validated collective order, and validated 48-layer execution sequence
+  mapping_policy: eager Python-stack/source binding transferred by direct signatures, eager-validated collective order, and validated 48-layer execution sequence
   mapped_kernel_duration_ratio: 1.0
   reference_rank: 2
   accounting:
@@ -145,13 +143,11 @@ profile_summary:
     - 19.691753
     - 19.672328
     - 19.891906
-  gap_note: device gap is same-rank decode-step elapsed minus the union of all GPU
-    kernel intervals; its CPU/synchronization cause is not inferred without direct
-    evidence
+  gap_note: device gap is same-rank decode-step elapsed minus the union of all GPU kernel intervals; its CPU/synchronization cause is not inferred without direct evidence
 node_states:
   top.token_ids:
     status: structural
-    label: input tensor · no GPU kernel
+    label: "input tensor \xB7 no GPU kernel"
   top.logits:
     status: structural
     label: output tensor/materialization
@@ -160,7 +156,7 @@ node_states:
     label: tensor boundary
   stack.schedule:
     status: structural
-    label: control schedule · no kernel
+    label: "control schedule \xB7 no kernel"
   stack.stack_out:
     status: structural
     label: tensor boundary
@@ -181,13 +177,13 @@ node_states:
     label: state access; timed support shown when present
   ple.conv_state:
     status: state
-    label: persistent state · no standalone kernel
+    label: "persistent state \xB7 no standalone kernel"
   linear_attention.attn_in:
     status: structural
     label: tensor boundary
   linear_attention.recurrent_state:
     status: state
-    label: persistent state · updated by recurrence
+    label: "persistent state \xB7 updated by recurrence"
   linear_attention.attn_out:
     status: structural
     label: tensor boundary
@@ -269,8 +265,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_combine
     drill_scope: full_layer.attn_hc_combine
     drill_metrics:
@@ -320,8 +315,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.attn_hc_combine
         display_label: 'update four branches
 
@@ -373,8 +367,7 @@ node_metrics:
     module_active_pct: 95.78
     device_busy_pct: 95.78
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_mix
     drill_scope: full_layer.attn_hc_mix
     drill_metrics:
@@ -415,8 +408,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.attn_hc_mix
         source_rank: 2
         rank_policy: one coherent critical reference rank
@@ -455,12 +447,9 @@ node_metrics:
         module_active_pct: 95.28
         device_busy_pct: 95.28
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.attn_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → attention input'
+        display_label: "weighted branch mix\n4 branches \u2192 attention input"
         source_rank: 2
         rank_policy: one coherent critical reference rank
       module_input:
@@ -502,14 +491,13 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_gather
         kernel_count: 60
         kernel_count_per_iter: 12.0
-      payload: bf16 DP-local hidden tokens → global TP MoE batch
+      payload: "bf16 DP-local hidden tokens \u2192 global TP MoE batch"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
@@ -541,14 +529,13 @@ node_metrics:
     module_active_pct: 90.46
     device_busy_pct: 90.46
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: local_scatter
         kernel_count: 120
         kernel_count_per_iter: 24.0
-      payload: bf16 TP MoE output → local DP token slice
+      payload: "bf16 TP MoE output \u2192 local DP token slice"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
@@ -580,8 +567,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_combine
     drill_scope: full_layer.mlp_hc_combine
     drill_metrics:
@@ -631,8 +617,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.mlp_hc_combine
         display_label: 'update four branches
 
@@ -684,8 +669,7 @@ node_metrics:
     module_active_pct: 95.73
     device_busy_pct: 95.73
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_mix
     drill_scope: full_layer.mlp_hc_mix
     drill_metrics:
@@ -726,8 +710,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.mlp_hc_mix
         source_rank: 2
         rank_policy: one coherent critical reference rank
@@ -766,12 +749,9 @@ node_metrics:
         module_active_pct: 95.24
         device_busy_pct: 95.24
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: full_layer.mlp_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → MoE input'
+        display_label: "weighted branch mix\n4 branches \u2192 MoE input"
         source_rank: 2
         rank_policy: one coherent critical reference rank
       module_input:
@@ -858,14 +838,13 @@ node_metrics:
     module_active_pct: 99.78
     device_busy_pct: 99.78
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   full_layer.qsa_attention:
-    ms_per_iter: 2.397678
-    active_gpu_ms: 2.397678
-    gpu_residency_ms: 2.62337
+    ms_per_iter: 12.845739
+    active_gpu_ms: 12.845739
+    gpu_residency_ms: 13.974198
     gpu_overlap_ms: 0.225693
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -959,10 +938,21 @@ node_metrics:
     module_active_pct: 98.23
     device_busy_pct: 98.23
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 13.974198
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1325
+    rollup_sources:
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
   full_layer.tp_moe_output_collective:
     ms_per_iter: 0.32527
     active_gpu_ms: 0.32527
@@ -991,8 +981,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_reduce
@@ -1036,8 +1025,7 @@ node_metrics:
     module_active_pct: 2.8
     device_busy_pct: 98.62
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   hyperconnection.combine:
@@ -1068,8 +1056,7 @@ node_metrics:
     module_active_pct: 7.24
     device_busy_pct: 96.81
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   hyperconnection.mix:
@@ -1106,18 +1093,17 @@ node_metrics:
     module_active_pct: 17.73
     device_busy_pct: 98.29
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_attention.causal_conv:
-    ms_per_iter: 0.228782
-    active_gpu_ms: 0.228782
-    gpu_residency_ms: 0.228782
+    ms_per_iter: 1.14391
+    active_gpu_ms: 1.14391
+    gpu_residency_ms: 1.14391
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -1138,10 +1124,14 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 1.14391
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 180
+    rollup_sources:
+    - linear_attention.causal_conv
   linear_attention.delta_rule:
     ms_per_iter: 2.279674
     active_gpu_ms: 2.279674
@@ -1170,18 +1160,17 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_attention.gated_norm:
-    ms_per_iter: 0.113851
-    active_gpu_ms: 0.113851
-    gpu_residency_ms: 0.113851
+    ms_per_iter: 0.569253
+    active_gpu_ms: 0.569253
+    gpu_residency_ms: 0.569253
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -1202,10 +1191,14 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 0.569253
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 180
+    rollup_sources:
+    - linear_attention.gated_norm
   linear_attention.output_projection:
     ms_per_iter: 0.423713
     active_gpu_ms: 0.423713
@@ -1234,8 +1227,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_attention.qkvz_projection:
@@ -1266,8 +1258,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_attention.split_pack:
@@ -1298,8 +1289,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_layer.attn_hc_combine:
@@ -1330,8 +1320,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_combine
     drill_scope: linear_layer.attn_hc_combine
     drill_metrics:
@@ -1381,8 +1370,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.attn_hc_combine
         display_label: 'update four branches
 
@@ -1434,8 +1422,7 @@ node_metrics:
     module_active_pct: 95.7
     device_busy_pct: 95.7
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_mix
     drill_scope: linear_layer.attn_hc_mix
     drill_metrics:
@@ -1476,8 +1463,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.attn_hc_mix
         source_rank: 2
         rank_policy: one coherent critical reference rank
@@ -1516,12 +1502,9 @@ node_metrics:
         module_active_pct: 95.15
         device_busy_pct: 95.15
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.attn_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → attention input'
+        display_label: "weighted branch mix\n4 branches \u2192 attention input"
         source_rank: 2
         rank_policy: one coherent critical reference rank
       module_input:
@@ -1563,14 +1546,13 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_gather
         kernel_count: 180
         kernel_count_per_iter: 36.0
-      payload: bf16 DP-local hidden tokens → global TP MoE batch
+      payload: "bf16 DP-local hidden tokens \u2192 global TP MoE batch"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
@@ -1602,21 +1584,20 @@ node_metrics:
     module_active_pct: 90.17
     device_busy_pct: 90.17
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: local_scatter
         kernel_count: 375
         kernel_count_per_iter: 75.0
-      payload: bf16 TP MoE output → local DP token slice
+      payload: "bf16 TP MoE output \u2192 local DP token slice"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_layer.linear_attention:
-    ms_per_iter: 3.796
-    active_gpu_ms: 3.796
-    gpu_residency_ms: 3.810623
+    ms_per_iter: 18.979997
+    active_gpu_ms: 18.979997
+    gpu_residency_ms: 19.053117
     gpu_overlap_ms: 0.014624
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -1674,10 +1655,19 @@ node_metrics:
     module_active_pct: 99.39
     device_busy_pct: 99.39
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 19.053117
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1080
+    rollup_sources:
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.split_pack
   linear_layer.mlp_hc_combine:
     ms_per_iter: 0.308482
     active_gpu_ms: 0.308482
@@ -1706,8 +1696,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_combine
     drill_scope: linear_layer.mlp_hc_combine
     drill_metrics:
@@ -1757,8 +1746,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.mlp_hc_combine
         display_label: 'update four branches
 
@@ -1810,8 +1798,7 @@ node_metrics:
     module_active_pct: 95.84
     device_busy_pct: 95.84
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     drill_view: hyperconnection_mix
     drill_scope: linear_layer.mlp_hc_mix
     drill_metrics:
@@ -1852,8 +1839,7 @@ node_metrics:
         module_active_pct: 100.0
         device_busy_pct: 100.0
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.mlp_hc_mix
         source_rank: 2
         rank_policy: one coherent critical reference rank
@@ -1892,12 +1878,9 @@ node_metrics:
         module_active_pct: 95.36
         device_busy_pct: 95.36
         elapsed_scope: union of validated invocation envelopes
-        gap_semantics: module gap = other GPU work + device idle inside the invocation
-          envelope; device-idle cause is unclassified
+        gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
         scope_target: linear_layer.mlp_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → MoE input'
+        display_label: "weighted branch mix\n4 branches \u2192 MoE input"
         source_rank: 2
         rank_policy: one coherent critical reference rank
       module_input:
@@ -1984,8 +1967,7 @@ node_metrics:
     module_active_pct: 99.68
     device_busy_pct: 99.79
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   linear_layer.tp_moe_output_collective:
@@ -2016,8 +1998,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_reduce
@@ -2061,8 +2042,7 @@ node_metrics:
     module_active_pct: 99.86
     device_busy_pct: 99.86
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   moe.routed_experts:
@@ -2093,8 +2073,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   moe.router:
@@ -2125,8 +2104,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   moe.shared_expert:
@@ -2172,8 +2150,7 @@ node_metrics:
     module_active_pct: 79.42
     device_busy_pct: 97.98
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   moe.topk:
@@ -2204,8 +2181,7 @@ node_metrics:
     module_active_pct: 92.64
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   ple.context_commit:
@@ -2259,8 +2235,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_gather
@@ -2298,25 +2273,24 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: local_scatter
         kernel_count: 5
         kernel_count_per_iter: 1.0
-      payload: bf16 N-gram embeddings → local DP token slice
+      payload: "bf16 N-gram embeddings \u2192 local DP token slice"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
   ple.grouped_norm_gate:
-    ms_per_iter: 0.059143
-    active_gpu_ms: 0.059143
-    gpu_residency_ms: 0.059539
+    ms_per_iter: 0.295713
+    active_gpu_ms: 0.295713
+    gpu_residency_ms: 0.297697
     gpu_overlap_ms: 0.000397
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_aligned
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 0.0
       methods:
@@ -2337,18 +2311,22 @@ node_metrics:
     module_active_pct: 92.09
     device_busy_pct: 92.09
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 0.297697
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 85
+    rollup_sources:
+    - ple.grouped_norm_gate
   ple.injection:
-    ms_per_iter: 0.010528
-    active_gpu_ms: 0.010528
-    gpu_residency_ms: 0.010528
+    ms_per_iter: 0.05264
+    active_gpu_ms: 0.05264
+    gpu_residency_ms: 0.05264
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_aligned
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 0.0
       methods:
@@ -2369,18 +2347,22 @@ node_metrics:
     module_active_pct: 16.92
     device_busy_pct: 95.51
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 0.05264
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 25
+    rollup_sources:
+    - ple.injection
   ple.key_value_projection:
-    ms_per_iter: 0.01808
-    active_gpu_ms: 0.01808
-    gpu_residency_ms: 0.019514
+    ms_per_iter: 0.090401
+    active_gpu_ms: 0.090401
+    gpu_residency_ms: 0.097568
     gpu_overlap_ms: 0.001433
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_aligned
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 0.0
       methods:
@@ -2401,10 +2383,14 @@ node_metrics:
     module_active_pct: 89.12
     device_busy_pct: 97.85
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 0.097568
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 15
+    rollup_sources:
+    - ple.key_value_projection
   ple.ngram_embedding:
     ms_per_iter: 0.004819
     active_gpu_ms: 0.004819
@@ -2433,8 +2419,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   ple.ngram_hash:
@@ -2465,18 +2450,17 @@ node_metrics:
     module_active_pct: 81.61
     device_busy_pct: 81.61
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   ple.short_conv:
-    ms_per_iter: 0.058311
-    active_gpu_ms: 0.058311
-    gpu_residency_ms: 0.058311
+    ms_per_iter: 0.291555
+    active_gpu_ms: 0.291555
+    gpu_residency_ms: 0.291555
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on one reference rank
-    attribution_status: measured_aligned
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 0.0
       methods:
@@ -2503,10 +2487,14 @@ node_metrics:
     module_active_pct: 87.28
     device_busy_pct: 95.77
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 0.291555
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 30
+    rollup_sources:
+    - ple.short_conv
   ple.token_history:
     ms_per_iter: 0.023117
     active_gpu_ms: 0.023117
@@ -2558,8 +2546,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     communication:
       observed_collectives:
       - kind: all_reduce
@@ -2618,8 +2605,7 @@ node_metrics:
     module_active_pct: 99.54
     device_busy_pct: 99.54
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   qsa_attention.indexer:
@@ -2677,8 +2663,7 @@ node_metrics:
     module_active_pct: 94.27
     device_busy_pct: 94.46
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
     drill_view: qsa_indexer
@@ -2687,7 +2672,7 @@ node_metrics:
     drill_metrics:
       index_in:
         status: structural
-        label: hidden-state input boundary · no standalone kernel
+        label: "hidden-state input boundary \xB7 no standalone kernel"
         scope_target: qsa_attention.indexer
       qk_projection:
         ms_per_iter: 0.039763
@@ -2851,7 +2836,7 @@ node_metrics:
         rank_policy: one coherent critical reference rank
       selected_indices:
         status: structural
-        label: selected-token output boundary · materialized by expansion
+        label: "selected-token output boundary \xB7 materialized by expansion"
         scope_target: qsa_attention.indexer
   qsa_attention.kv_cache:
     ms_per_iter: 0.022016
@@ -2881,8 +2866,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   qsa_attention.metadata:
@@ -2936,8 +2920,7 @@ node_metrics:
     module_active_pct: 91.77
     device_busy_pct: 91.77
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   qsa_attention.output_projection:
@@ -2968,8 +2951,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   qsa_attention.qk_norm_rope:
@@ -3000,8 +2982,7 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   qsa_attention.qkv_gate_projection:
@@ -3032,14 +3013,13 @@ node_metrics:
     module_active_pct: 100.0
     device_busy_pct: 100.0
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   stack.full_layer:
-    ms_per_iter: 5.429214
-    active_gpu_ms: 5.429214
-    gpu_residency_ms: 5.907515
+    ms_per_iter: 28.003418
+    active_gpu_ms: 28.003418
+    gpu_residency_ms: 30.394922
     gpu_overlap_ms: 0.478301
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -3136,10 +3116,32 @@ node_metrics:
     module_active_pct: 97.41
     device_busy_pct: 97.41
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 30.394922
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 3065
+    rollup_sources:
+    - full_layer.dp_moe_input_gather
+    - full_layer.dp_moe_output_scatter
+    - full_layer.tp_moe_output_collective
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
   stack.hc_expand:
     ms_per_iter: 0.003501
     active_gpu_ms: 0.003501
@@ -3164,9 +3166,9 @@ node_metrics:
     source_rank: 2
     rank_policy: one coherent critical reference rank
   stack.linear_layer:
-    ms_per_iter: 13.578667
-    active_gpu_ms: 13.578667
-    gpu_residency_ms: 14.415961
+    ms_per_iter: 66.628688
+    active_gpu_ms: 66.628688
+    gpu_residency_ms: 70.799733
     gpu_overlap_ms: 0.837294
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -3263,14 +3265,34 @@ node_metrics:
     module_active_pct: 97.19
     device_busy_pct: 97.19
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 70.799733
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 6355
+    rollup_sources:
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.split_pack
+    - linear_layer.dp_moe_input_gather
+    - linear_layer.dp_moe_output_scatter
+    - linear_layer.tp_moe_output_collective
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
   stack.ple_injection:
-    ms_per_iter: 0.252922
-    active_gpu_ms: 0.252922
-    gpu_residency_ms: 0.256014
+    ms_per_iter: 1.420038
+    active_gpu_ms: 1.420038
+    gpu_residency_ms: 1.435494
     gpu_overlap_ms: 0.003092
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -3352,14 +3374,28 @@ node_metrics:
     module_active_pct: 85.78
     device_busy_pct: 85.78
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 1.435494
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 520
+    rollup_sources:
+    - ple.context_commit
+    - ple.dp_ngram_input_gather
+    - ple.dp_ngram_output_scatter
+    - ple.grouped_norm_gate
+    - ple.injection
+    - ple.key_value_projection
+    - ple.ngram_embedding
+    - ple.ngram_hash
+    - ple.short_conv
+    - ple.token_history
+    - ple.tp_embedding_collective
   top.decoder_stack:
-    ms_per_iter: 19.025808
-    active_gpu_ms: 19.025808
-    gpu_residency_ms: 20.350093
+    ms_per_iter: 96.026192
+    active_gpu_ms: 96.026192
+    gpu_residency_ms: 102.647653
     gpu_overlap_ms: 1.324286
     metric_kind: inclusive_rollup
     aggregation: interval union on one reference rank
@@ -3456,10 +3492,53 @@ node_metrics:
     module_active_pct: 97.22
     device_busy_pct: 97.22
     elapsed_scope: selected module envelope within each profiled step
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
+    gpu_residency_ms_per_iter: 102.647653
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 9950
+    rollup_sources:
+    - full_layer.dp_moe_input_gather
+    - full_layer.dp_moe_output_scatter
+    - full_layer.tp_moe_output_collective
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.split_pack
+    - linear_layer.dp_moe_input_gather
+    - linear_layer.dp_moe_output_scatter
+    - linear_layer.tp_moe_output_collective
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
+    - ple.context_commit
+    - ple.dp_ngram_input_gather
+    - ple.dp_ngram_output_scatter
+    - ple.grouped_norm_gate
+    - ple.injection
+    - ple.key_value_projection
+    - ple.ngram_embedding
+    - ple.ngram_hash
+    - ple.short_conv
+    - ple.token_history
+    - ple.tp_embedding_collective
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
+    - stack.hc_expand
   top.dp_logits_input_gather:
     ms_per_iter: 0.021907
     active_gpu_ms: 0.021907
@@ -3495,7 +3574,7 @@ node_metrics:
       - kind: all_reduce
         kernel_count: 5
         kernel_count_per_iter: 1.0
-      payload: bf16 DP-local final hidden states → TP LM-head input
+      payload: "bf16 DP-local final hidden states \u2192 TP LM-head input"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
@@ -3525,7 +3604,7 @@ node_metrics:
       - kind: local_scatter
         kernel_count: 15
         kernel_count_per_iter: 3.0
-      payload: fp32 logits → owning DP request ranks
+      payload: "fp32 logits \u2192 owning DP request ranks"
       scope: captured profile phase and selected reference rank
     source_rank: 2
     rank_policy: one coherent critical reference rank
@@ -3685,8 +3764,7 @@ node_metrics:
     module_active_pct: 2.8
     device_busy_pct: 98.62
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   hyperconnection_mix.mix:
@@ -3723,8 +3801,7 @@ node_metrics:
     module_active_pct: 17.73
     device_busy_pct: 98.29
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
   hyperconnection_combine.combine:
@@ -3755,8 +3832,7 @@ node_metrics:
     module_active_pct: 7.24
     device_busy_pct: 96.81
     elapsed_scope: union of validated invocation envelopes
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: one coherent critical reference rank
 timeline:
@@ -3766,4 +3842,5 @@ timeline:
   step_count: 5
   event_count: 10070
   raw_trace_file: qwen40-dp_attention-cudagraph-gbs256-qwen40-dp_attention-cudagraph-gbs256-TP-2-DP-2.trace.json.gz
-  sha256: 9728818b409cd72118f6002f4f312d037b83fda07413c8c7482eeeebf971d537
+  sha256: b6cc77c3fde48b934b67778677377d597b9370da5c890052e71b40914975e10d
+fusion_groups: {}

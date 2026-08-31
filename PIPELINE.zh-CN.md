@@ -220,7 +220,7 @@ Semantic trace 记录 stack、可获得的 tensor shape、operator order、colle
 1. 每个 runtime scope 必须对应已有 contract node、允许的 framework-helper category，或者明确记录为无法解释的 discrepancy。
 2. 实际观察到的 placement/layout transition 和 collective result 必须与 plan 一致。
 3. Layer multiplicity、optional path、state update 以及 phase/generation scope 必须与 candidate graph 一致。
-4. 按计划应该执行、却没有任何 eager evidence 的节点属于失败；显式 structural 或本次 run 未选择的节点除外。
+4. 按计划应该执行、却没有任何 eager evidence 的节点属于失败。`structural` 只表示作者明确声明的语义／控制／状态边界，绝不能作为计算映射缺失时的 fallback；只有确实未激活的节点才能显式标为 `not_selected`、`disabled` 或 `out_of_scope`。
 5. 未预期的 eager scope 可以提示 Execution IR contract 缺失或位置错误，但不能自动修改 graph。
 
 Eager artifact 必须保留 event-level evidence graph，而不能只保存聚合后的 node label：
@@ -327,10 +327,12 @@ production event ID <-> eager event ID(s) <-> Execution IR node(s)
 
 每条边同时携带 `phase`、`layer_id`、`substage` 和稳定的 `occurrence_id`。Mapper 不能在使用 segment/layer identity 完成对齐后又把它丢弃；正是这个作用域，区分了“第 12 层 attention 的 mHC boundary”和仅仅具有同名 kernel signature 的全模型聚合。
 
-只有当所有 covered IR leaf 在同一个 occurrence scope 中解析到相同的 production interval 或 event set 时，fusion group 才成立：
+只有当每个 covered IR leaf 在已经验证的 occurrence scope 中都拥有明确的 production-event evidence 时，fusion relation 才成立：
 
 - `shared_interval`：一个精确 production interval，必须具有 exact-occurrence scope；
 - `shared_event_set`：多个已验证 production interval 的聚合，必须标记为 `profile_aggregate`，不能在界面上伪装成一个大 kernel。
+- `shared_event_coverage`：某个 semantic member 由唯一 owner 的 production-event set 中一个非空、显式的子集实现。必须同时记录完整 owner event set 和每个 member-to-event 映射。Timeline 跳转和 roll-up 只能把该 member 附着到列表中明确记录的 events 上，不能再把这个子集扩大为 owner 的全部 events。
+- `fused_by_occurrence`：同一个 semantic node 在不同 layer／substage occurrence 中分别 fused 到不同 physical owner。每个不相交 partition 都必须记录 owner 和 production event IDs。
 
 每个 fusion group 只有一个 timing owner。Covered leaf 继续作为显式 Model IR contract 存在，但卡片必须指向这个 owner，并且不能复制 owner 时间参与求和。Composite parent 使用 child production event 的并集；不能因为部分 descendant 被 fusion，就把整个 parent 标记成 fused。
 
@@ -356,7 +358,7 @@ Multi-rank profile 保留每个 rank 的独立 measurement，绝不能把不同 
 
 Parent/child rollup 必须显式携带 `exclusive` 或 `inclusive` semantics；当 interval 存在重叠时，绝不能机械相加。
 
-Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 只显示 `fused into <timing owner>` 及其 fusion/evidence 链接，不能复制 owner 的标量时间；只有 timing owner 显示 measured value。Composite parent 可以单独显示明确标记的 `inclusive_rollup`，其含义是 descendant production event 的并集，不能与 descendant 相加。
+Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。每个已选中的 runtime-bearing primitive leaf 同样必须拥有正数 direct timing 或 typed fusion ownership；绝不能把映射缺失的计算 leaf 降级成 `structural`。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 只显示 `fused into <timing owner>` 及其 fusion/evidence 链接，不能复制 owner 的标量时间；只有 timing owner 显示 measured value。Composite parent 可以单独显示明确标记的 `inclusive_rollup`，其含义是 descendant production event 的并集，不能与 descendant 相加。
 
 凡是被 repeat 或多个上下文复用的模块边界，都必须声明
 `timing_scope_contract`。Contract 必须写明 composite target、真实 production
@@ -565,7 +567,7 @@ framework 的 architecture owner。
 
 - 所有 document 通过 JSON Schema 和 cross-document reference check。
 - Model IR ID 稳定，所有 drill target 都能解析。
-- 已选中的可展开 compute/module 节点绝不能显示为 `structural` boundary；它必须拥有正数的 measured／inclusive-union timing，或者是明确指向唯一 timing owner 的 fused member。只有显式定义的 boundary/control/state 节点，以及 `not_selected`、`disabled`、`out_of_scope` 等明确未激活分支可以没有 timing。
+- 已选中的可展开 compute/module 节点以及 runtime-bearing primitive leaf 绝不能显示为 `structural` boundary；它必须拥有正数的 measured／inclusive-union timing、是明确指向唯一 timing owner 的 fused member，或者具有不相交的 `fused_by_occurrence` partitions。只有显式定义的 boundary/control/state 节点，以及 `not_selected`、`disabled`、`out_of_scope` 等明确未激活分支可以没有 timing。
 - 每条 edge 都有 identity、shape、layout、dtype 和 state lifetime；每个语义节点都有 authored equation。缺少 operation、equation 为空，或出现 `None = None(None)` 一类 fallback artifact 时，编译必须直接失败。
 - 编译后节点的 Inputs/Outputs 与 incident edge contract 完全一致；每个 drill boundary 都通过 parent/child 或 scoped-lifecycle closure。
 - Viewer 从编译后的 contract 展示 Inputs、Transition / Equation 和 Outputs，而不是解析 label。
@@ -582,7 +584,7 @@ framework 的 architecture owner。
 - 每个 production code path 和 phase 都有 eager semantic evidence。
 - 每个 mapped production event 都保留 eager event ID、transfer rule、confidence 和 occurrence scope，并且 event-to-IR 双向索引完全闭合。
 - Raw timeline attribution audit 必须覆盖每个 production event：每项要么有 IR/fusion binding，要么同时具有 `support_class` 和 `support_reason`；疑似 GEMM、attention、MoE、normalization、convolution 或 collective 的语义 kernel 在 IR 外必须为零。
-- 每个 `fused` node 必须且只能属于一个 fusion group，group owner 与 `included_in` 一致；每个 group 都明确 exact interval 或 aggregate event set 语义以及可 review 的 evidence scope。
+- 每个 single-owner `fused` node 必须且只能属于一个 fusion group，group owner 与 `included_in` 一致；每个 group 都明确 exact interval、equal aggregate event set 或 member-event coverage 语义以及可 review 的 evidence scope。Multi-owner `fused_by_occurrence` node 则必须有不相交的 physical-event partitions，并且每个 partition 只有一个合法 owner。
 - `fused` node 不得携带 standalone scalar timing field。每个 group 只有 owner 承载 measured production timing；如果同一节点同时声明 fused state 和独立 `node_metrics`，编译必须失败。
 - Viewer 的 node card 与详情必须显示 timing owner、covered semantic contract、mapping proof 和 occurrence/aggregate scope；泛化的 `fused implementation` 文字不能作为可交付结果。
 - 每一处 `fused into <timing owner>` 都必须是由编译后 metadata 驱动的 architecture 链接：默认跳到 timing owner 自身；若 timing owner 是不可见的聚合节点，则必须在 Model IR 中显式声明 `architecture_target`，Compiler 将它物化为 `architecture_owner`。点击后必须沿该目标的 canonical drill path 打开、居中并选中。Viewer 不得从显示文字猜测目标，也不得加入 model-specific 跳转逻辑；目标缺失或从 profile `entry_view` 不可达必须在编译／发布阶段失败，不能退化为无法点击的普通文字。

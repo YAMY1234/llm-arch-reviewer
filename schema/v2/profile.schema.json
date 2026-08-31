@@ -78,7 +78,23 @@
           "status": {"type": "string"},
           "label": {"type": "string"},
           "included_in": {"type": "string"},
-          "fusion_group_id": {"type": "string"}
+          "fusion_group_id": {"type": "string"},
+          "fusion_partitions": {
+            "description": "Disjoint occurrence-level physical ownership when one semantic node is fused into different owners in different layer/substage occurrences.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["included_in", "production_event_ids"],
+              "properties": {
+                "included_in": {"type": "string"},
+                "production_event_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+                "occurrence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+                "layer_ids": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0}}
+              },
+              "additionalProperties": true
+            }
+          }
         },
         "additionalProperties": true
       }
@@ -93,8 +109,8 @@
           "owner": {"type": "string"},
           "ir_nodes": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string"}},
           "timing_semantics": {
-            "enum": ["shared_interval", "shared_event_set"],
-            "description": "shared_interval is one production interval; shared_event_set is a validated aggregate of multiple production intervals. Covered IR nodes never receive additive copies of either value."
+            "enum": ["shared_interval", "shared_event_set", "shared_event_coverage"],
+            "description": "shared_interval is one production interval; shared_event_set is an equal validated aggregate; shared_event_coverage maps each member to an explicit non-empty subset of the owner's production events. Covered IR nodes never receive additive copies of the owner's value."
           },
           "provenance": {"type": "string"},
           "mapping_method": {"type": "string"},
@@ -109,7 +125,12 @@
               "substages": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
               "occurrence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
               "production_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-              "eager_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+              "eager_event_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+              "owner_event_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+              "member_event_ids": {
+                "type": "object",
+                "additionalProperties": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
+              }
             },
             "additionalProperties": true
           }

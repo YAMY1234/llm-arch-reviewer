@@ -1085,15 +1085,11 @@ timeline:
   raw_trace_file: 1788086993.793197-TP-1.trace.json.gz
 node_states:
   full_attention_moe_block.input_norm:
-    status: structural
-    label: implemented by exact occurrence-scoped shared events; no profile-aggregate fused timing is claimed
-    occurrence_fusion_evidence:
-      shared_timing_owners:
-      - gdn_moe_block.tp_moe_output_collective
-      target_event_count: 15
-      all_target_events_same_rank_closed: true
-      physical_target_proof: true
-      profile_aggregate_event_set_equal: false
+    status: fused
+    included_in: gdn_moe_block.tp_moe_output_collective
+    fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_moe_output_collective; 15/45 owner events
+    provenance: production_event_graph
   full_attention.kv_state_read:
     status: fused
     label: fused into full_attention.causal_gqa
@@ -1151,9 +1147,10 @@ node_states:
     fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_attention_output_collective
   gdn_moe_block.layer_residual:
     status: fused
-    label: fused into gdn_moe_block.tp_moe_output_collective
     included_in: gdn_moe_block.tp_moe_output_collective
     fusion_group_id: qwen35_profile_aggregate_gdn_moe_block_tp_moe_output_collective
+    label: fused into gdn_moe_block.tp_moe_output_collective; 45/45 owner events
+    provenance: production_event_graph
   full_attention.module_input:
     status: structural
     label: semantic, state, scheduler, or drill boundary without standalone production timing
@@ -2214,59 +2211,214 @@ fusion_groups:
     ir_nodes:
     - gdn_moe_block.tp_moe_output_collective
     - gdn_moe_block.layer_residual
-    timing_semantics: shared_event_set
+    - full_attention_moe_block.input_norm
+    timing_semantics: shared_event_coverage
     provenance: eager stack plus production signature/sequence reconciliation
     mapping_method: explicit ir_targets on every production event
     confidence: high
     evidence_scope:
       resolution: profile_aggregate
-      production_event_ids:
-      - r1-k1084
-      - r1-k1140
-      - r1-k1196
-      - r1-k1304
-      - r1-k1360
-      - r1-k1416
-      - r1-k1524
-      - r1-k1580
-      - r1-k1636
-      - r1-k1744
-      - r1-k1800
-      - r1-k1856
-      - r1-k1964
-      - r1-k2020
-      - r1-k204
-      - r1-k2076
-      - r1-k2184
-      - r1-k2240
-      - r1-k2296
-      - r1-k2404
-      - r1-k2460
-      - r1-k2516
-      - r1-k260
-      - r1-k2624
-      - r1-k2680
-      - r1-k2736
-      - r1-k2844
-      - r1-k2900
-      - r1-k2956
-      - r1-k3064
-      - r1-k3120
-      - r1-k316
-      - r1-k3176
-      - r1-k3284
-      - r1-k3340
-      - r1-k3396
-      - r1-k424
-      - r1-k480
-      - r1-k536
-      - r1-k644
-      - r1-k700
-      - r1-k756
-      - r1-k864
-      - r1-k920
-      - r1-k976
-      member_event_sets_equal_owner: true
+      owner_event_ids:
+      - r1-s1-k1041
+      - r1-s1-k1069
+      - r1-s1-k1097
+      - r1-s1-k1151
+      - r1-s1-k1179
+      - r1-s1-k1207
+      - r1-s1-k1261
+      - r1-s1-k1289
+      - r1-s1-k1317
+      - r1-s1-k1371
+      - r1-s1-k1399
+      - r1-s1-k1427
+      - r1-s1-k1481
+      - r1-s1-k1509
+      - r1-s1-k152
+      - r1-s1-k1537
+      - r1-s1-k1591
+      - r1-s1-k1619
+      - r1-s1-k1647
+      - r1-s1-k180
+      - r1-s1-k208
+      - r1-s1-k262
+      - r1-s1-k290
+      - r1-s1-k318
+      - r1-s1-k372
+      - r1-s1-k400
+      - r1-s1-k42
+      - r1-s1-k428
+      - r1-s1-k482
+      - r1-s1-k510
+      - r1-s1-k539
+      - r1-s1-k596
+      - r1-s1-k624
+      - r1-s1-k653
+      - r1-s1-k70
+      - r1-s1-k709
+      - r1-s1-k739
+      - r1-s1-k767
+      - r1-s1-k821
+      - r1-s1-k849
+      - r1-s1-k877
+      - r1-s1-k931
+      - r1-s1-k959
+      - r1-s1-k98
+      - r1-s1-k987
+      member_event_ids:
+        gdn_moe_block.layer_residual:
+        - r1-s1-k1041
+        - r1-s1-k1069
+        - r1-s1-k1097
+        - r1-s1-k1151
+        - r1-s1-k1179
+        - r1-s1-k1207
+        - r1-s1-k1261
+        - r1-s1-k1289
+        - r1-s1-k1317
+        - r1-s1-k1371
+        - r1-s1-k1399
+        - r1-s1-k1427
+        - r1-s1-k1481
+        - r1-s1-k1509
+        - r1-s1-k152
+        - r1-s1-k1537
+        - r1-s1-k1591
+        - r1-s1-k1619
+        - r1-s1-k1647
+        - r1-s1-k180
+        - r1-s1-k208
+        - r1-s1-k262
+        - r1-s1-k290
+        - r1-s1-k318
+        - r1-s1-k372
+        - r1-s1-k400
+        - r1-s1-k42
+        - r1-s1-k428
+        - r1-s1-k482
+        - r1-s1-k510
+        - r1-s1-k539
+        - r1-s1-k596
+        - r1-s1-k624
+        - r1-s1-k653
+        - r1-s1-k70
+        - r1-s1-k709
+        - r1-s1-k739
+        - r1-s1-k767
+        - r1-s1-k821
+        - r1-s1-k849
+        - r1-s1-k877
+        - r1-s1-k931
+        - r1-s1-k959
+        - r1-s1-k98
+        - r1-s1-k987
+        full_attention_moe_block.input_norm:
+        - r1-s1-k1097
+        - r1-s1-k1207
+        - r1-s1-k1317
+        - r1-s1-k1427
+        - r1-s1-k1537
+        - r1-s1-k1647
+        - r1-s1-k208
+        - r1-s1-k318
+        - r1-s1-k428
+        - r1-s1-k539
+        - r1-s1-k653
+        - r1-s1-k767
+        - r1-s1-k877
+        - r1-s1-k98
+        - r1-s1-k987
+      layer_ids:
+      - 0
+      - 1
+      - 2
+      - 4
+      - 5
+      - 6
+      - 8
+      - 9
+      - 10
+      - 12
+      - 13
+      - 14
+      - 16
+      - 17
+      - 18
+      - 20
+      - 21
+      - 22
+      - 24
+      - 25
+      - 26
+      - 28
+      - 29
+      - 30
+      - 32
+      - 33
+      - 34
+      - 36
+      - 37
+      - 38
+      - 40
+      - 41
+      - 42
+      - 44
+      - 45
+      - 46
+      - 48
+      - 49
+      - 50
+      - 52
+      - 53
+      - 54
+      - 56
+      - 57
+      - 58
+      occurrence_ids:
+      - layer_00.moe
+      - layer_01.moe
+      - layer_02.moe
+      - layer_04.moe
+      - layer_05.moe
+      - layer_06.moe
+      - layer_08.moe
+      - layer_09.moe
+      - layer_10.moe
+      - layer_12.moe
+      - layer_13.moe
+      - layer_14.moe
+      - layer_16.moe
+      - layer_17.moe
+      - layer_18.moe
+      - layer_20.moe
+      - layer_21.moe
+      - layer_22.moe
+      - layer_24.moe
+      - layer_25.moe
+      - layer_26.moe
+      - layer_28.moe
+      - layer_29.moe
+      - layer_30.moe
+      - layer_32.moe
+      - layer_33.moe
+      - layer_34.moe
+      - layer_36.moe
+      - layer_37.moe
+      - layer_38.moe
+      - layer_40.moe
+      - layer_41.moe
+      - layer_42.moe
+      - layer_44.moe
+      - layer_45.moe
+      - layer_46.moe
+      - layer_48.moe
+      - layer_49.moe
+      - layer_50.moe
+      - layer_52.moe
+      - layer_53.moe
+      - layer_54.moe
+      - layer_56.moe
+      - layer_57.moe
+      - layer_58.moe
       all_owner_events_same_rank_closed: true
 node_metrics:
   top.embedding:

@@ -1,6 +1,6 @@
 schema_version: profile.v2
 profile_id: qwen40_tp4_flashinfer_gdn_eager_prefill_gbs1_8k
-label: GB300 · pure TP4 · FlashInfer GDN · eager prefill · global BS1 · 8k
+label: "GB300 \xB7 pure TP4 \xB7 FlashInfer GDN \xB7 eager prefill \xB7 global BS1 \xB7 8k"
 model_id: qwen40
 execution_path_id: tp_only
 implementation_id: sglang_f90a941aa_flashinfer_gdn
@@ -38,10 +38,7 @@ profiler:
   prefill_chunk_count: 1
   with_stack: false
   record_shapes: false
-  gpu_metric_semantics: GPU active interval union across every sequential chunk of
-    one full eager 8k prefill request; Python-stack attribution is transferred by
-    exact per-chunk kernel-name sequence alignment when a stack-disabled timing trace
-    is supplied
+  gpu_metric_semantics: GPU active interval union across every sequential chunk of one full eager 8k prefill request; Python-stack attribution is transferred by exact per-chunk kernel-name sequence alignment when a stack-disabled timing trace is supplied
 evidence:
   job_id: 3182154
   source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
@@ -74,10 +71,7 @@ evidence:
     - - 4250213198227.889
       - 4250213671502.896
     anchor_kernel_count: 36
-  timing_transfer: exact per-chunk kernel-name sequence alignment partitioned at stable
-    HC combine delimiters; stack-only support kernels deleted; timing-only kernels
-    require a direct signature or identical left/right IR semantics; no fuzzy-name
-    or duration matching
+  timing_transfer: exact per-chunk kernel-name sequence alignment partitioned at stable HC combine delimiters; stack-only support kernels deleted; timing-only kernels require a direct signature or identical left/right IR semantics; no fuzzy-name or duration matching
   timing_alignment_chunks:
   - exact_kernel_count: 2798
     direct_timing_insert_count: 0
@@ -100,15 +94,13 @@ evidence:
     gpu_overlap_ms: 1.148638
 profile_summary:
   timing_phase: prefill
-  timing_coverage: 100% of kernels across the full 8k eager prefill request (1×8192-token
-    runtime chunks)
+  timing_coverage: "100% of kernels across the full 8k eager prefill request (1\xD78192-token runtime chunks)"
   reference_rank: 2
   node_time: active GPU time; overlap counted once
   kernel_detail: GPU residency from the stack-disabled timing trace
-  provenance: Python-stack IR attribution transferred by exact per-chunk, HC-delimiter-partitioned
-    kernel-name sequence alignment onto the stack-disabled timing trace
+  provenance: Python-stack IR attribution transferred by exact per-chunk, HC-delimiter-partitioned kernel-name sequence alignment onto the stack-disabled timing trace
   scope_note: BS1 prefill only; decode has separate CUDA Graph BS sweeps
-  request_shape: one global BS1 / 8k-token request, executed as 1×8192-token chunks
+  request_shape: "one global BS1 / 8k-token request, executed as 1\xD78192-token chunks"
   timing:
     scope: full prefill request on the selected reference rank
     elapsed_ms: 307.207393
@@ -121,16 +113,12 @@ profile_summary:
     device_gap_reason: unclassified
     reference_rank: 2
     sample_count: 1
-  gap_note: device gap is request elapsed minus the union of all GPU kernel intervals
-    on the reference rank; its CPU/synchronization cause is not inferred without direct
-    evidence
-  node_elapsed_coverage: decoder-stack envelope only; per-node eager-prefill elapsed/gap
-    requires explicit invocation markers because concurrent streams interleave logical
-    layers
+  gap_note: device gap is request elapsed minus the union of all GPU kernel intervals on the reference rank; its CPU/synchronization cause is not inferred without direct evidence
+  node_elapsed_coverage: decoder-stack envelope only; per-node eager-prefill elapsed/gap requires explicit invocation markers because concurrent streams interleave logical layers
 node_states:
   top.token_ids:
     status: structural
-    label: input tensor · no GPU kernel
+    label: "input tensor \xB7 no GPU kernel"
   top.logits:
     status: structural
     label: output tensor/materialization
@@ -139,7 +127,7 @@ node_states:
     label: tensor boundary
   stack.schedule:
     status: structural
-    label: control schedule · no kernel
+    label: "control schedule \xB7 no kernel"
   stack.stack_out:
     status: structural
     label: tensor boundary
@@ -160,13 +148,13 @@ node_states:
     label: state access; timed support shown when present
   ple.conv_state:
     status: state
-    label: persistent state · no standalone kernel
+    label: "persistent state \xB7 no standalone kernel"
   linear_attention.attn_in:
     status: structural
     label: tensor boundary
   linear_attention.recurrent_state:
     status: state
-    label: persistent state · updated by recurrence
+    label: "persistent state \xB7 updated by recurrence"
   linear_attention.attn_out:
     status: structural
     label: tensor boundary
@@ -403,9 +391,7 @@ node_metrics:
           total_us_per_iter: 164.448
           share_in_node_pct: 5.92
         scope_target: full_layer.attn_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → attention input'
+        display_label: "weighted branch mix\n4 branches \u2192 attention input"
         source_rank: 2
         rank_policy: critical stack-disabled timing rank
       module_input:
@@ -594,9 +580,7 @@ node_metrics:
           total_us_per_iter: 1785.258
           share_in_node_pct: 100.0
         scope_target: full_layer.mlp_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → MoE input'
+        display_label: "weighted branch mix\n4 branches \u2192 MoE input"
         source_rank: 2
         rank_policy: critical stack-disabled timing rank
       module_input:
@@ -676,9 +660,9 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   full_layer.qsa_attention:
-    ms_per_iter: 28.733494
-    active_gpu_ms: 28.733494
-    gpu_residency_ms: 28.759862
+    ms_per_iter: 28.65759
+    active_gpu_ms: 28.65759
+    gpu_residency_ms: 28.683958
     gpu_overlap_ms: 0.026368
     metric_kind: inclusive_rollup
     aggregation: interval union on the stack-profiled active rank
@@ -770,6 +754,18 @@ node_metrics:
       share_in_node_pct: 1.05
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 28.683958
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 919
+    rollup_sources:
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
   full_layer.tp_attention_collective:
     ms_per_iter: 12.96375
     active_gpu_ms: 12.96375
@@ -921,13 +917,13 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   linear_attention.causal_conv:
-    ms_per_iter: 1.17994
-    active_gpu_ms: 1.17994
+    ms_per_iter: 1.179942
+    active_gpu_ms: 1.179942
     gpu_residency_ms: 1.179942
     gpu_overlap_ms: 2.0e-06
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -967,6 +963,11 @@ node_metrics:
       share_in_node_pct: 2.77
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 1.179942
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 36
+    rollup_sources:
+    - linear_attention.causal_conv
   linear_attention.delta_rule:
     ms_per_iter: 9.182772
     active_gpu_ms: 9.182772
@@ -1036,13 +1037,13 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   linear_attention.gated_norm:
-    ms_per_iter: 1.039398
-    active_gpu_ms: 1.039398
+    ms_per_iter: 1.039396
+    active_gpu_ms: 1.039396
     gpu_residency_ms: 1.039396
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -1067,14 +1068,19 @@ node_metrics:
       share_in_node_pct: 5.42
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 1.039396
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 42
+    rollup_sources:
+    - linear_attention.gated_norm
   linear_attention.gating:
     ms_per_iter: 0.364482
     active_gpu_ms: 0.364482
     gpu_residency_ms: 0.364482
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -1090,6 +1096,11 @@ node_metrics:
       share_in_node_pct: 100.0
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 0.364482
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 36
+    rollup_sources:
+    - linear_attention.gating
   linear_attention.output_projection:
     ms_per_iter: 1.471428
     active_gpu_ms: 1.471428
@@ -1381,9 +1392,7 @@ node_metrics:
           total_us_per_iter: 1175.59
           share_in_node_pct: 7.76
         scope_target: linear_layer.attn_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → attention input'
+        display_label: "weighted branch mix\n4 branches \u2192 attention input"
         source_rank: 2
         rank_policy: critical stack-disabled timing rank
       module_input:
@@ -1398,9 +1407,9 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   linear_layer.linear_attention:
-    ms_per_iter: 17.683648
-    active_gpu_ms: 17.683648
-    gpu_residency_ms: 17.760377
+    ms_per_iter: 17.759545
+    active_gpu_ms: 17.759545
+    gpu_residency_ms: 17.836281
     gpu_overlap_ms: 0.076729
     metric_kind: inclusive_rollup
     aggregation: interval union on the stack-profiled active rank
@@ -1492,6 +1501,18 @@ node_metrics:
       share_in_node_pct: 0.02
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 17.836281
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 611
+    rollup_sources:
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.gating
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.recurrent_state
+    - linear_attention.split_pack
   linear_layer.mlp_hc_combine:
     ms_per_iter: 4.692499
     active_gpu_ms: 4.692499
@@ -1685,9 +1706,7 @@ node_metrics:
           total_us_per_iter: 5353.121
           share_in_node_pct: 100.0
         scope_target: linear_layer.mlp_hc_mix
-        display_label: 'weighted branch mix
-
-          4 branches → MoE input'
+        display_label: "weighted branch mix\n4 branches \u2192 MoE input"
         source_rank: 2
         rank_policy: critical stack-disabled timing rank
       module_input:
@@ -2017,9 +2036,9 @@ node_metrics:
     active_gpu_ms: 0.157409
     gpu_residency_ms: 0.157409
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -2035,14 +2054,19 @@ node_metrics:
       share_in_node_pct: 100.0
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 0.157409
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 3
+    rollup_sources:
+    - ple.grouped_norm_gate
   ple.injection:
     ms_per_iter: 0.627939
     active_gpu_ms: 0.627939
     gpu_residency_ms: 0.627939
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -2058,14 +2082,19 @@ node_metrics:
       share_in_node_pct: 100.0
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 0.627939
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 14
+    rollup_sources:
+    - ple.injection
   ple.key_value_projection:
     ms_per_iter: 0.273762
     active_gpu_ms: 0.273762
     gpu_residency_ms: 0.276194
     gpu_overlap_ms: 0.002432
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -2081,6 +2110,11 @@ node_metrics:
       share_in_node_pct: 100.0
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 0.276194
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 2
+    rollup_sources:
+    - ple.key_value_projection
   ple.ngram_embedding:
     ms_per_iter: 0.087361
     active_gpu_ms: 0.087361
@@ -2138,9 +2172,9 @@ node_metrics:
     active_gpu_ms: 1.746792
     gpu_residency_ms: 1.746792
     gpu_overlap_ms: 0.0
-    metric_kind: exclusive_leaf
+    metric_kind: inclusive_rollup
     aggregation: kernel interval union on the stack-profiled active rank
-    attribution_status: measured_direct
+    attribution_status: inclusive_rollup
     attribution:
       direct_duration_pct: 100.0
       methods:
@@ -2162,6 +2196,11 @@ node_metrics:
       share_in_node_pct: 0.59
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 1.746792
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 10
+    rollup_sources:
+    - ple.short_conv
   ple.token_history:
     ms_per_iter: 0.056193
     active_gpu_ms: 0.056193
@@ -2342,7 +2381,7 @@ node_metrics:
     drill_metrics:
       index_in:
         status: structural
-        label: hidden-state input boundary · no standalone kernel
+        label: "hidden-state input boundary \xB7 no standalone kernel"
         scope_target: qsa_attention.indexer
       qk_projection:
         ms_per_iter: 0.994085
@@ -2557,7 +2596,7 @@ node_metrics:
         rank_policy: critical stack-disabled timing rank
       selected_indices:
         status: structural
-        label: selected-token output boundary · materialized by expansion
+        label: "selected-token output boundary \xB7 materialized by expansion"
         scope_target: qsa_attention.indexer
   qsa_attention.kv_cache:
     ms_per_iter: 0.061632
@@ -2707,9 +2746,9 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   stack.full_layer:
-    ms_per_iter: 55.470051
-    active_gpu_ms: 55.470051
-    gpu_residency_ms: 55.760484
+    ms_per_iter: 55.394146
+    active_gpu_ms: 55.394146
+    gpu_residency_ms: 55.68458
     gpu_overlap_ms: 0.290433
     metric_kind: inclusive_rollup
     aggregation: interval union on the stack-profiled active rank
@@ -2801,6 +2840,28 @@ node_metrics:
       share_in_node_pct: 1.34
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 55.68458
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1188
+    rollup_sources:
+    - full_layer.tp_attention_collective
+    - full_layer.tp_moe_output_collective
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
   stack.hc_expand:
     ms_per_iter: 0.591395
     active_gpu_ms: 0.591395
@@ -2825,9 +2886,9 @@ node_metrics:
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
   stack.linear_layer:
-    ms_per_iter: 149.652603
-    active_gpu_ms: 149.652603
-    gpu_residency_ms: 150.491029
+    ms_per_iter: 145.423261
+    active_gpu_ms: 145.423261
+    gpu_residency_ms: 146.257406
     gpu_overlap_ms: 0.838426
     metric_kind: inclusive_rollup
     aggregation: interval union on the stack-profiled active rank
@@ -2919,9 +2980,31 @@ node_metrics:
       share_in_node_pct: 0.78
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 146.257406
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 1469
+    rollup_sources:
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.gating
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.recurrent_state
+    - linear_attention.split_pack
+    - linear_layer.tp_attention_collective
+    - linear_layer.tp_moe_output_collective
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
   stack.ple_injection:
-    ms_per_iter: 3.338865
-    active_gpu_ms: 3.338865
+    ms_per_iter: 3.338867
+    active_gpu_ms: 3.338867
     gpu_residency_ms: 3.341299
     gpu_overlap_ms: 0.002434
     metric_kind: inclusive_rollup
@@ -2993,10 +3076,23 @@ node_metrics:
       share_in_node_pct: 0.3
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 3.341299
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 103
+    rollup_sources:
+    - ple.context_commit
+    - ple.grouped_norm_gate
+    - ple.injection
+    - ple.key_value_projection
+    - ple.ngram_embedding
+    - ple.ngram_hash
+    - ple.short_conv
+    - ple.token_history
+    - ple.tp_embedding_collective
   top.decoder_stack:
-    ms_per_iter: 205.172349
-    active_gpu_ms: 205.172349
-    gpu_residency_ms: 206.317594
+    ms_per_iter: 204.731283
+    active_gpu_ms: 204.731283
+    gpu_residency_ms: 205.87468
     gpu_overlap_ms: 1.145245
     metric_kind: inclusive_rollup
     aggregation: interval union on the stack-profiled active rank
@@ -3093,10 +3189,51 @@ node_metrics:
     module_active_pct: 67.0
     device_busy_pct: 67.26
     elapsed_scope: selected module envelope within each profiled step
-    gap_semantics: module gap = other GPU work + device idle inside the invocation
-      envelope; device-idle cause is unclassified
+    gap_semantics: module gap = other GPU work + device idle inside the invocation envelope; device-idle cause is unclassified
     source_rank: 2
     rank_policy: critical stack-disabled timing rank
+    gpu_residency_ms_per_iter: 205.87468
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 2765
+    rollup_sources:
+    - full_layer.tp_attention_collective
+    - full_layer.tp_moe_output_collective
+    - hyperconnection.branch_norm
+    - hyperconnection.combine
+    - hyperconnection.mix
+    - linear_attention.causal_conv
+    - linear_attention.delta_rule
+    - linear_attention.gated_norm
+    - linear_attention.gating
+    - linear_attention.output_projection
+    - linear_attention.qkvz_projection
+    - linear_attention.recurrent_state
+    - linear_attention.split_pack
+    - linear_layer.tp_attention_collective
+    - linear_layer.tp_moe_output_collective
+    - moe.combine
+    - moe.routed_experts
+    - moe.router
+    - moe.shared_expert
+    - moe.topk
+    - ple.context_commit
+    - ple.grouped_norm_gate
+    - ple.injection
+    - ple.key_value_projection
+    - ple.ngram_embedding
+    - ple.ngram_hash
+    - ple.short_conv
+    - ple.token_history
+    - ple.tp_embedding_collective
+    - qsa_attention.attention_core
+    - qsa_attention.indexer
+    - qsa_attention.kv_cache
+    - qsa_attention.metadata
+    - qsa_attention.output_gate
+    - qsa_attention.output_projection
+    - qsa_attention.qk_norm_rope
+    - qsa_attention.qkv_gate_projection
+    - stack.hc_expand
   top.embedding:
     ms_per_iter: 0.01536
     active_gpu_ms: 0.01536
@@ -3373,4 +3510,5 @@ timeline:
   step_count: 1
   event_count: 2798
   raw_trace_file: qwen40-tp4_flashinfer_gdn-eager-gbs1-qwen40-tp4_flashinfer_gdn-eager-gbs1-TP-2.trace.json.gz
-  sha256: 61b48d1d40c4c6f142cdb3ab3d7c7978f64567a6e7cf2419793b107328bc2efa
+  sha256: 0c34068dda2a2648f4e34ae08eedce9a56b79ab9e8482cd29e9aaef640fe28c1
+fusion_groups: {}

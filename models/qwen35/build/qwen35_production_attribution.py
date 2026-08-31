@@ -638,7 +638,17 @@ def _map_vllm_attention(
                 method=f"vllm_{phase}_inductor_source_nodes_kv_prepare_write",
             )
         elif index < min(qk_landmarks):
-            node, fused = "full_attention.qkv_projection", ()
+            # In the compiled prefill graph the first Q/K/V source kernel also
+            # performs the decoder-block input RMSNorm.  Q/K/V projection is
+            # the additive timing owner for the whole source interval; input
+            # norm is a secondary semantic target on only the fused source
+            # event, not a copied profile-aggregate duration.
+            input_norm_targets = (
+                ("full_attention_moe_block.input_norm",)
+                if phase == "prefill" and _is_norm_kernel(row)
+                else ()
+            )
+            node, fused = "full_attention.qkv_projection", input_norm_targets
         elif index == attention:
             node, fused = "full_attention.causal_gqa", ("full_attention.kv_state_read",)
         elif index == gate:
