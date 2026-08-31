@@ -30,7 +30,7 @@ This tool makes the mapping clickable:
 | [Qwen 4.0 Air Example IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen40_v2) | ✅ local/profiled | stable 48-layer Model IR + pure TP4, Attention DP4, and DP4/EP4 DeepEP execution paths + pinned SGLang bindings + GB300 CUDA Graph BS1/16/64/256 overlays |
 | [Qwen3.5 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2) | ✅ local/profiled | framework-independent 60-layer hybrid Model IR + validated pure TP8 SGLang/vLLM bindings + 10 CMH GB300 production profiles (prefill BS1 and CUDA Graph decode BS1/16/64/256) |
 | [GLM-5.2 NVFP4 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm52_v2) | ✅ local/profiled | pure TP8 SGLang/TRT-LLM bindings on CMH GB300; 7 accepted profiles, with TRT-LLM prefill/BS1/BS16 explicitly unsupported under the fixed production capture contract |
-| [GLM-5.3-Flash IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm53_flash_v2) | ✅ local/profiled | one stable multimodal Model IR; pure TP8 SGLang/vLLM bindings; 6 accepted CMH GB300 profiles and 4 explicit unsupported matrix points |
+| [GLM-5.3-Flash IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm53_flash_v2) | ✅ local/profiled | one stable multimodal Model IR; pure TP8 SGLang/vLLM bindings; 10 accepted CMH GB300 profiles covering prefill BS1 and CUDA Graph decode BS1/16/64/256 |
 | [Kimi K3 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=kimi_k3_v2) | ✅ local/profiled | official checkpoint-locked multimodal Model IR; pure TP8 portable execution contract; commit-specific SGLang/vLLM bindings; 8 measured 8K/1K GB300 production profiles and 2 explicit unsupported BS256 points |
 | [DeepSeek V4 Pro 0813 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2) | ✅ local/profiled | exact public 0813 Model IR; pure TP8 SGLang/vLLM bindings; 10 accepted two-node GB300 profiles covering stable 8K prefill and CUDA Graph 8K/1K decode GBS 1/16/64/256 |
 
@@ -189,6 +189,16 @@ The viewer exposes execution, implementation, profile, profile-variant, and
 Architecture/Timeline/Split selectors. Architecture-node selection filters every corresponding
 kernel occurrence on the timeline; a timeline kernel restores its precise
 architecture drill path and source/stack evidence.
+
+The implementation selector supports one, two, or three exact-contract
+profiles. Architecture comparison shares Model IR geometry and shows one
+mapping/timing row per framework; Timeline comparison stacks the untouched
+production traces in SGLang, vLLM, TensorRT-LLM order with synchronized ranges
+and bidirectional selection. If validated Execution IR fingerprints differ,
+only Model IR is shared and each framework keeps a separate execution overlay.
+The full comparison selection is URL-persistent (`comparison`,
+`implementations`, and `profiles`) while existing single-profile links remain
+backward compatible.
 
 To add a profile, place an immutable `profile.v2` YAML under the matching
 `catalog/<model>/profiles/<execution_path>/<implementation>/` directory and

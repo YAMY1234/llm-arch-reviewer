@@ -512,6 +512,39 @@ python3 scripts/run_pipeline_v2.py \
 
 每条不同 code path 都必须独立 profile。即使不同路径中的 Model IR node 名称相同，也不能复制测量结果。
 
+### 7.1 跨 Framework 的精确 Comparison Contract
+
+哪些 profile 可以比较，必须由 Compiler 决定，不能由 Viewer 猜测。Compiler
+对规范化、framework-neutral 的 `comparison-contract.v1` 做 hash，内容包括：
+
+- Model IR identity、generation mode、phase、formal-step semantics，以及显式
+  authored 的 `comparison_variant`；
+- dtype、quantization，以及显式 authored 的 backend-significant model config；
+- TP/DP/CP/EP 参数、规范化 workload/realized shape、scheduler contract、CUDA
+  Graph 状态，以及相关 hardware/interconnect identity。
+
+Warmup/formal request 数、native step counter、文件名、selected rank、source
+commit 和 timing value 属于 profiling procedure/provenance，不进入 workload
+identity。凡是会改变实际执行问题的字段都必须先规范化进入 contract；绝不能从
+profile id、label 或 framework name 推断。一个 comparison contract 下，每个
+implementation 最多只能有一个 profile；出现歧义时 Compiler 必须 fail closed。
+没有 exact profile 的 implementation 仍可见，但必须禁用并显示缺失维度/原因。
+
+Execution fingerprint 存放在 comparison contract 的**旁边**，而不是 hash
+进 workload identity。若选中的 framework 共享同一个 validated fingerprint，
+Viewer 可以同时在 Model IR 和 Execution IR 上比较；若 fingerprint 不同，Viewer
+只能共享 Model IR，并为每个 framework 保留独立 Execution IR overlay，必须禁用
+任何会把这些 plan 合并成虚假“共享 Execution IR”的呈现。
+
+每个 Binding 都必须编译出 canonical `framework_id`（`sglang`、`vllm` 或
+`tensorrt_llm`）。Viewer 只能读取 Compiler 生成的 contract/profile index 和该
+ID，禁止在浏览器里按 label/name 匹配。Architecture comparison 只画一次 Model
+IR geometry，并为每个 framework 显示一行 compact evidence；Timeline comparison
+按固定 SGLang/vLLM/TensorRT-LLM 顺序堆叠每个 framework 自己的 production
+artifact。可同步 normalized visible range 和 IR selection，但每个 profile 内的
+physical stream ID、event、fusion ownership 和 timing 必须原样保留。Fused member
+仍然只能链接到该 framework 唯一的 timing owner，不能复制 owner 的标量时间。
+
 ## 8. Acceptance Gate
 
 ### Structural
@@ -525,6 +558,9 @@ python3 scripts/run_pipeline_v2.py \
 - Binding 中包含针对该 structural fingerprint、source revision、phase 和 execution path 的 passing eager-validation attestation。
 - 每个 communication node 都声明 collective、group、payload 和 result。
 - Viewer code 不依赖任何 framework/model-specific identifier。
+- 每个 Compiler 生成的 comparison contract 都必须无歧义，选中的 profile 必须
+  精确复现该 contract；不同 Execution IR fingerprint 只能共享 canonical Model
+  IR，不能被合并。
 
 ### Attribution
 
@@ -559,6 +595,9 @@ python3 scripts/run_pipeline_v2.py \
 - 任何拥有 measured descendants 的可执行 drill node 都必须有数值化的 `inclusive_rollup`；只有纯控制或 state boundary 可以没有 timing。
 - Rollup 测试必须证明重叠 descendant event 使用区间并集而不是求和；复用 detail view 时，在 profile scope 选定唯一 parent 或提供显式 many-to-many event-set binding 之前必须 fail closed。
 - 选择 Architecture node 时高亮所有匹配的 Timeline event；选择 Timeline event 时自动展开、居中并选中精确的 Architecture leaf。
+- Multi-framework 验收必须覆盖 1/2/3 个选择、固定顺序、缺失 exact match、相同
+  与不同 Execution IR、URL reload/back/forward、framework-specific fusion link、
+  range 同步，并通过真实 SVG/Canvas click 验证双向跳转。
 - 发布验收必须真实点击渲染后的 SVG node 和 Canvas kernel/owner lane，分别验证两个方向；只调用内部导航函数不算通过。测试还必须证明被点击的 kernel 是唯一保持实色的 kernel slice，其他无关 slice 均被淡化。
 - Stream、overlap、idle、module wall envelope、active GPU 和 residency 可以分别查看。
 - 默认显示 compact activity lanes，同时允许切换到精确 physical streams。

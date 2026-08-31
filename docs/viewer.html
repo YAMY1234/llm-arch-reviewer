@@ -74,6 +74,22 @@
   }
   #execution-select { max-width: 220px; }
   #implementation-select { max-width: 250px; }
+  .implementation-multi { position: relative; display: inline-block; color: var(--text); }
+  .implementation-multi > summary {
+    list-style: none; min-width: 150px; max-width: 250px; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 4px; padding: 4px 22px 4px 8px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis; position: relative;
+  }
+  .implementation-multi > summary::-webkit-details-marker { display: none; }
+  .implementation-multi > summary::after { content: "▾"; position: absolute; right: 7px; }
+  .implementation-options {
+    position: fixed; z-index: 80; min-width: 330px; max-width: 520px; padding: 8px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+    box-shadow: 0 8px 28px rgba(31,35,40,.18);
+  }
+  .implementation-option { display: grid; grid-template-columns: 20px 1fr; gap: 3px 6px; padding: 6px; }
+  .implementation-option + .implementation-option { border-top: 1px solid var(--border); }
+  .implementation-option .reason { grid-column: 2; color: var(--muted); font-size: 10px; }
   #profile-select { max-width: 330px; }
   #sol-select { max-width: 300px; }
   #variant-select { max-width: 190px; }
@@ -146,6 +162,24 @@
   }
 
   #timeline-pane { display: flex; flex-direction: column; background: var(--panel); }
+  #timeline-comparison { display: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--panel2); padding: 8px; gap: 8px; }
+  #timeline-pane.comparison-mode > .timeline-toolbar,
+  #timeline-pane.comparison-mode > #timeline-summary,
+  #timeline-pane.comparison-mode > #timeline-viewport { display: none; }
+  #timeline-pane.comparison-mode > #timeline-comparison { display: flex; flex-direction: column; }
+  .timeline-comparison-card { flex: 0 0 min(460px, 48vh); min-height: 300px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); overflow: hidden; }
+  .timeline-comparison-header { flex: 0 0 auto; padding: 6px 9px; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .timeline-comparison-header strong { margin-right: 8px; }
+  .timeline-comparison-header code { color: var(--muted); font-size: 10px; }
+  .timeline-comparison-card iframe { flex: 1 1 auto; width: 100%; border: 0; background: white; }
+  .comparison-evidence-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  .comparison-evidence-table th, .comparison-evidence-table td { padding: 4px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  .comparison-evidence-table th { color: var(--muted); font-weight: 500; }
+  body.embedded-timeline { display: block; height: 100vh; overflow: hidden; }
+  body.embedded-timeline > header,
+  body.embedded-timeline > nav.crumbs,
+  body.embedded-timeline > aside.right { display: none !important; }
+  body.embedded-timeline > main { position: absolute; inset: 0; }
   .timeline-toolbar {
     flex: 0 0 auto; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
     padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel2);
@@ -384,7 +418,11 @@
       <select id="execution-select"></select>
     </label>
     <label id="implementation-control" style="display:none">implementation:
-      <select id="implementation-select"></select>
+      <select id="implementation-select" hidden aria-hidden="true"></select>
+      <details id="implementation-multi" class="implementation-multi">
+        <summary id="implementation-summary">—</summary>
+        <div id="implementation-options" class="implementation-options"></div>
+      </details>
     </label>
     <label id="generation-control" style="display:none" title="Generation/control flow is orthogonal to the model and TP/DP/EP execution topology.">generation:
       <select id="generation-select"></select>
@@ -473,6 +511,7 @@
   <div id="split-resizer" role="separator" aria-label="Resize architecture and timeline panes"
        aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" tabindex="0"></div>
   <section id="timeline-pane" aria-label="GPU kernel timeline">
+    <div id="timeline-comparison" aria-label="Compared framework timelines"></div>
     <div class="timeline-toolbar">
       <label>step <select id="timeline-step"></select></label>
       <label>layer <select id="timeline-layer"><option value="">all layers</option></select></label>
@@ -521,6 +560,9 @@ let CURRENT_PROFILE = "sglang_v4_pro_prefill";
 let CURRENT_VARIANT = "";
 let CURRENT_EXECUTION = "";
 let CURRENT_IMPLEMENTATION = "";
+let SELECTED_IMPLEMENTATIONS = [];
+let COMPARISON_CONTEXTS = {};
+let CURRENT_COMPARISON_CONTRACT = "";
 let CURRENT_GENERATION = "";
 let CURRENT_PHASE = "";
 let CURRENT_SOL_PROFILE = "";
@@ -568,6 +610,10 @@ const TIMELINE_MAX_BACKING_PIXELS = 24_000_000;
 let TIMELINE_LAST_RENDER_STATS = null;
 let PERFETTO_TRACE_BUFFER = null;
 let PERFETTO_TRACE_FILE = "";
+const EMBEDDED_TIMELINE = new URLSearchParams(location.search).get("embeddedTimeline") === "1";
+let EMBEDDED_RANGE_SYNC_SUPPRESS = false;
+let EMBEDDED_LAST_RANGE_KEY = "";
+if (EMBEDDED_TIMELINE) document.body.classList.add("embedded-timeline");
 
 // VIEW_STACK 现在是"打开的多张图", 从左到右水平排列.
 // drill_from[i] = 第 i 张图是从第 i-1 张图哪个 node 钻进来的 (用于画跨图虚线)
@@ -680,6 +726,176 @@ function implementationIdsForExecution(executionId) {
       && (!profiled.size || profiled.has(implementationId))
     )
     .map(([implementationId]) => implementationId);
+}
+
+function implementationFramework(implementationId) {
+  const implementation = RAW_DATA?.implementations?.[implementationId] || {};
+  const frameworkId = implementation.framework_id || "";
+  if (frameworkId === "sglang") return "SGLang";
+  if (frameworkId === "vllm") return "vLLM";
+  if (frameworkId === "tensorrt_llm") return "TensorRT-LLM";
+  return implementation.label || implementationId;
+}
+
+function implementationSortKey(implementationId) {
+  const rank = {SGLang: 0, vLLM: 1, "TensorRT-LLM": 2};
+  const framework = implementationFramework(implementationId);
+  return [rank[framework] ?? 100, framework, implementationId];
+}
+
+function compareImplementations(left, right) {
+  const a = implementationSortKey(left);
+  const b = implementationSortKey(right);
+  return a[0] - b[0] || a[1].localeCompare(b[1]) || a[2].localeCompare(b[2]);
+}
+
+function comparisonContractForProfile(profileId) {
+  return DATA?.profiles?.[profileId]?.meta?.comparison_contract_id || "";
+}
+
+function profilesForComparisonContract(contractId) {
+  const compiled = RAW_DATA?.comparison_contracts?.[contractId];
+  if (!compiled || compiled.comparison_contract_id !== contractId) return {};
+  return {...(compiled.profiles_by_implementation || {})};
+}
+
+const MAX_COMPARISON_IMPLEMENTATIONS = 3;
+
+function flattenComparisonContract(value, prefix = "", output = {}) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    output[prefix] = JSON.stringify(value);
+    return output;
+  }
+  for (const key of Object.keys(value).sort()) {
+    flattenComparisonContract(value[key], prefix ? `${prefix}.${key}` : key, output);
+  }
+  return output;
+}
+
+function comparisonContractDifference(left, right) {
+  const a = flattenComparisonContract(left || {});
+  const b = flattenComparisonContract(right || {});
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter(key => a[key] !== b[key])
+    .sort();
+}
+
+function unavailableComparisonReason(implementationId, anchor) {
+  const candidates = Object.entries(DATA?.profiles || {})
+    .filter(([, profile]) => profile.implementation_id === implementationId)
+    .map(([profileId, profile]) => ({
+      profileId,
+      differences: comparisonContractDifference(
+        anchor?.meta?.comparison_contract,
+        profile?.meta?.comparison_contract,
+      ),
+    }))
+    .sort((left, right) =>
+      left.differences.length - right.differences.length
+      || left.profileId.localeCompare(right.profileId)
+    );
+  if (!candidates.length) {
+    return "No validated production profile is available for this implementation";
+  }
+  const closest = candidates[0];
+  const dimensions = closest.differences.slice(0, 4).join(", ");
+  const extra = closest.differences.length > 4 ? ` +${closest.differences.length - 4} more` : "";
+  return dimensions
+    ? `No exact comparison contract; closest profile differs in ${dimensions}${extra}`
+    : "No unique production profile with the exact comparison contract";
+}
+
+function comparisonExecutionIrCompatible(contexts = comparisonContextList()) {
+  return new Set(contexts.map(context => context.execution_variant_id)).size <= 1;
+}
+
+function enforceComparisonIrLayer() {
+  const select = document.getElementById("ir-layer-select");
+  const executionOption = select?.querySelector('option[value="execution"]');
+  const incompatible = comparisonModeActive() && !comparisonExecutionIrCompatible();
+  if (executionOption) executionOption.disabled = incompatible;
+  if (select) {
+    select.title = incompatible
+      ? "Selected implementations have distinct validated Execution IR fingerprints; comparison is shown on shared Model IR."
+      : "";
+  }
+  if (incompatible && CURRENT_IR_LAYER !== "model") {
+    CURRENT_IR_LAYER = "model";
+    if (select) select.value = "model";
+    activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+    if (DATA?.profiles?.[CURRENT_PROFILE]) updateProfileSummary();
+  }
+}
+
+function rebuildComparisonContexts(requested = SELECTED_IMPLEMENTATIONS) {
+  const anchor = DATA?.profiles?.[CURRENT_PROFILE];
+  const contractId = anchor?.meta?.comparison_contract_id || "";
+  const matches = profilesForComparisonContract(contractId);
+  const available = Object.keys(matches).filter(id => matches[id]).sort(compareImplementations);
+  let selected = [...new Set(requested || [])].filter(id => available.includes(id));
+  if (!selected.length && CURRENT_IMPLEMENTATION && available.includes(CURRENT_IMPLEMENTATION)) {
+    selected = [CURRENT_IMPLEMENTATION];
+  }
+  if (!selected.length && available.length) selected = [available[0]];
+  selected.sort(compareImplementations);
+  selected = selected.slice(0, MAX_COMPARISON_IMPLEMENTATIONS);
+  if (selected.length) {
+    const primaryImplementation = selected[0];
+    const primaryProfile = matches[primaryImplementation];
+    const primaryExecution = DATA.profiles[primaryProfile]?.execution_variant || "";
+    if (CURRENT_IMPLEMENTATION !== primaryImplementation || CURRENT_EXECUTION !== primaryExecution) {
+      CURRENT_IMPLEMENTATION = primaryImplementation;
+      CURRENT_PROFILE = primaryProfile;
+      activateV2Selection(primaryExecution, primaryImplementation);
+    }
+  }
+  SELECTED_IMPLEMENTATIONS = selected;
+  CURRENT_COMPARISON_CONTRACT = contractId;
+  COMPARISON_CONTEXTS = Object.fromEntries(selected.map(implementationId => [
+    implementationId,
+    {
+      implementation_id: implementationId,
+      framework: implementationFramework(implementationId),
+      profile_id: matches[implementationId],
+      execution_variant_id: DATA.profiles[matches[implementationId]]?.execution_variant || "",
+      comparison_contract_id: contractId,
+    },
+  ]));
+  enforceComparisonIrLayer();
+  return {matches, available};
+}
+
+function comparisonContextList() {
+  return SELECTED_IMPLEMENTATIONS.map(id => COMPARISON_CONTEXTS[id]).filter(Boolean);
+}
+
+function comparisonModeActive() {
+  return comparisonContextList().length > 1;
+}
+
+function comparisonCellForTarget(context, target) {
+  const variants = DATA?.profiles?.[context?.profile_id]?.data?.[target];
+  if (!variants) return null;
+  return variants[CURRENT_VARIANT] || variants.ALL || Object.values(variants)[0] || null;
+}
+
+function comparisonFusionGroupForTarget(context, target) {
+  const groups = DATA?.profiles?.[context?.profile_id]?.fusion_groups || {};
+  return Object.entries(groups).find(([, group]) => (group.ir_nodes || []).includes(target)) || null;
+}
+
+function comparisonEvidenceText(context, target) {
+  const cell = comparisonCellForTarget(context, target);
+  const prefix = context.framework;
+  if (!cell) return `${prefix}: not selected`;
+  if (cell.status === "fused") {
+    const group = comparisonFusionGroupForTarget(context, target)?.[1];
+    const owner = group?.architecture_owner || group?.owner || cell.included_in || "unknown owner";
+    return `${prefix}: fused into ${irTargetLabel(owner)}`;
+  }
+  const value = cellMetricValue(cell, CURRENT_METRIC, target);
+  if (value != null) return `${prefix}: ${metricLabel(CURRENT_METRIC)} ${formatMetricValue(value, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`;
+  return `${prefix}: ${nodeStateSummary(cell, target) || "unmapped"}`;
 }
 
 function applyImplementationBinding(views, implementation) {
@@ -1101,6 +1317,11 @@ function updateProfileSummary() {
   ] : [];
   const bits = [
     isV2Bundle() ? (CURRENT_IR_LAYER === "model" ? "Model IR" : "Execution IR") : "",
+    comparisonModeActive()
+      ? (comparisonExecutionIrCompatible()
+        ? `comparison ${CURRENT_COMPARISON_CONTRACT} · shared Execution IR`
+        : `comparison ${CURRENT_COMPARISON_CONTRACT} · shared Model IR · separate Execution IR fingerprints`)
+      : "",
     profileGenerationMode(profile),
     meta.phase,
     summary.scheduler_path,
@@ -1172,7 +1393,123 @@ function refreshImplementationOptions(preferred = "") {
   select.disabled = !implementationIds.length;
 }
 
-function syncV2SelectionQuery() {
+function updateImplementationSummary() {
+  const summary = document.getElementById("implementation-summary");
+  const contexts = comparisonContextList();
+  summary.textContent = contexts.length
+    ? contexts.map(context => context.framework).join(" + ")
+    : "—";
+  summary.title = contexts.map(context =>
+    `${context.framework}: ${context.implementation_id} / ${context.profile_id}`
+  ).join("\n");
+}
+
+function comparisonAvailability() {
+  const anchor = DATA?.profiles?.[CURRENT_PROFILE];
+  const contractId = anchor?.meta?.comparison_contract_id || "";
+  const matches = profilesForComparisonContract(contractId);
+  const rows = [];
+  for (const implementationId of Object.keys(RAW_DATA?.implementations || {}).sort(compareImplementations)) {
+    let unavailableReason = "";
+    if (!matches[implementationId]) {
+      unavailableReason = unavailableComparisonReason(implementationId, anchor);
+    }
+    rows.push({implementationId, profileId: matches[implementationId] || "", unavailableReason});
+  }
+  return {contractId, matches, rows};
+}
+
+function refreshComparisonImplementationOptions() {
+  if (!isV2Bundle() || EMBEDDED_TIMELINE) return;
+  const {matches, rows} = comparisonAvailability();
+  const options = document.getElementById("implementation-options");
+  options.innerHTML = "";
+  for (const row of rows) {
+    const label = document.createElement("label");
+    label.className = "implementation-option";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = row.implementationId;
+    checkbox.checked = SELECTED_IMPLEMENTATIONS.includes(row.implementationId);
+    checkbox.disabled = !!row.unavailableReason;
+    checkbox.addEventListener("change", () => {
+      const selected = Array.from(options.querySelectorAll('input[type="checkbox"]:checked'))
+        .map(input => input.value);
+      if (!selected.length) {
+        checkbox.checked = true;
+        return;
+      }
+      if (selected.length > MAX_COMPARISON_IMPLEMENTATIONS) {
+        checkbox.checked = false;
+        return;
+      }
+      rebuildComparisonContexts(selected);
+      const primaryProfile = CURRENT_PROFILE;
+      const primary = DATA.profiles[primaryProfile];
+      refreshImplementationOptions(CURRENT_IMPLEMENTATION);
+      refreshGenerationOptions(profileGenerationMode(primary));
+      refreshPhaseOptions(primary?.meta?.phase || "decode");
+      refreshProfileOptions(primaryProfile);
+      rebuildComparisonContexts(selected);
+      updateImplementationSummary();
+      refreshComparisonImplementationOptions();
+      syncV2SelectionQuery(true);
+      renderView();
+      loadTimelineForCurrentProfile();
+      if (SELECTED) {
+        const node = (DATA.views?.[SELECTED.view]?.nodes || []).find(
+          candidate => candidate.id === SELECTED.nodeId
+        );
+        if (node) showDetail(node, SELECTED.view);
+      }
+    });
+    const name = document.createElement("span");
+    name.textContent = implementationFramework(row.implementationId);
+    const detail = document.createElement("small");
+    detail.textContent = row.unavailableReason || RAW_DATA.implementations[row.implementationId]?.label || row.implementationId;
+    if (row.unavailableReason) label.title = row.unavailableReason;
+    label.append(checkbox, name, detail);
+    options.appendChild(label);
+  }
+  updateImplementationSummary();
+}
+
+function initializeComparisonSelection() {
+  if (!isV2Bundle()) return;
+  const query = new URLSearchParams(location.search);
+  const requestedContract = query.get("comparison") || "";
+  const requested = EMBEDDED_TIMELINE
+    ? [CURRENT_IMPLEMENTATION]
+    : (query.get("implementations") || CURRENT_IMPLEMENTATION).split(",").filter(Boolean);
+  const anchorContract = comparisonContractForProfile(CURRENT_PROFILE);
+  rebuildComparisonContexts(
+    requestedContract && requestedContract !== anchorContract ? [CURRENT_IMPLEMENTATION] : requested
+  );
+  refreshComparisonImplementationOptions();
+  // Do not canonicalize the URL yet. initUI still has to restore viewMode,
+  // metric, compareMetric, IR layer, and SoL from the query. Writing the
+  // default state here would silently erase those requested values on reload.
+}
+
+function comparisonQueryMatchesState() {
+  if (!isV2Bundle()) return true;
+  const query = new URLSearchParams(location.search);
+  const requested = (query.get("implementations") || query.get("implementation") || "")
+    .split(",").filter(Boolean).sort(compareImplementations);
+  const selected = [...SELECTED_IMPLEMENTATIONS].sort(compareImplementations);
+  return query.get("execution") === CURRENT_EXECUTION
+    && query.get("profile") === CURRENT_PROFILE
+    && requested.join(",") === selected.join(",")
+    && (query.get("generation") || "autoregressive") === CURRENT_GENERATION
+    && (query.get("phase") || "decode") === CURRENT_PHASE
+    && (query.get("metric") || "active") === CURRENT_METRIC
+    && (query.get("compareMetric") || "") === CURRENT_COMPARE_METRIC
+    && (query.get("viewMode") || "architecture") === CURRENT_VIEW_MODE
+    && (query.get("irLayer") || "execution") === CURRENT_IR_LAYER
+    && (query.get("sol") || "") === CURRENT_SOL_PROFILE;
+}
+
+function syncV2SelectionQuery(push = false) {
   if (!isV2Bundle()) return;
   const url = new URL(location.href);
   if (CURRENT_EXECUTION) url.searchParams.set("execution", CURRENT_EXECUTION);
@@ -1187,7 +1524,18 @@ function syncV2SelectionQuery() {
   else url.searchParams.delete("compareMetric");
   if (CURRENT_VIEW_MODE) url.searchParams.set("viewMode", CURRENT_VIEW_MODE);
   if (CURRENT_IR_LAYER) url.searchParams.set("irLayer", CURRENT_IR_LAYER);
-  history.replaceState(null, "", url);
+  if (!EMBEDDED_TIMELINE && SELECTED_IMPLEMENTATIONS.length > 1) {
+    url.searchParams.set("comparison", CURRENT_COMPARISON_CONTRACT);
+    url.searchParams.set("implementations", SELECTED_IMPLEMENTATIONS.join(","));
+    url.searchParams.set("profiles", comparisonContextList().map(context =>
+      `${context.implementation_id}:${context.profile_id}`
+    ).join(","));
+  } else {
+    url.searchParams.delete("comparison");
+    url.searchParams.delete("implementations");
+    url.searchParams.delete("profiles");
+  }
+  history[push ? "pushState" : "replaceState"](null, "", url);
 }
 
 function resetNavigationForExecution() {
@@ -1204,6 +1552,10 @@ function initUI() {
     irLayerControl.style.display = "";
     irLayerSelect.value = CURRENT_IR_LAYER;
     irLayerSelect.onchange = () => {
+      if (irLayerSelect.value === "execution" && !comparisonExecutionIrCompatible()) {
+        irLayerSelect.value = "model";
+        return;
+      }
       CURRENT_IR_LAYER = irLayerSelect.value;
       activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
       updateProfileSummary();
@@ -1232,6 +1584,9 @@ function initUI() {
       refreshGenerationOptions("autoregressive");
       refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
+      SELECTED_IMPLEMENTATIONS = [CURRENT_IMPLEMENTATION];
+      rebuildComparisonContexts();
+      refreshComparisonImplementationOptions();
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -1244,6 +1599,9 @@ function initUI() {
       refreshGenerationOptions(CURRENT_GENERATION);
       refreshPhaseOptions("decode");
       refreshProfileOptions(DATA.default_profile || "");
+      SELECTED_IMPLEMENTATIONS = [CURRENT_IMPLEMENTATION];
+      rebuildComparisonContexts();
+      refreshComparisonImplementationOptions();
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -1258,6 +1616,8 @@ function initUI() {
       CURRENT_GENERATION = generationSelect.value;
       refreshPhaseOptions("decode");
       refreshProfileOptions("");
+      rebuildComparisonContexts();
+      refreshComparisonImplementationOptions();
       syncV2SelectionQuery();
       resetNavigationForExecution();
       renderView();
@@ -1269,6 +1629,8 @@ function initUI() {
     phaseSelect.onchange = () => {
       CURRENT_PHASE = phaseSelect.value;
       refreshProfileOptions("");
+      rebuildComparisonContexts();
+      refreshComparisonImplementationOptions();
       syncV2SelectionQuery();
       renderView();
       loadTimelineForCurrentProfile();
@@ -1279,12 +1641,15 @@ function initUI() {
     ? (new URLSearchParams(location.search).get("profile") || DATA.default_profile || "")
     : (DATA.default_profile || "");
   refreshProfileOptions(initialProfile);
+  initializeComparisonSelection();
   const psel = document.getElementById("profile-select");
   psel.onchange = () => {
     CURRENT_PROFILE = psel.value;
     refreshSolOptions("");
     refreshVariantOptions(true);
     updateProfileSummary();
+    rebuildComparisonContexts();
+    refreshComparisonImplementationOptions();
     syncV2SelectionQuery();
     renderView();
     loadTimelineForCurrentProfile();
@@ -1333,14 +1698,24 @@ function initUI() {
   document.getElementById("btn-fit").onclick = () => fitToSvg();
   document.getElementById("btn-up").onclick = () => goUp();
   window.addEventListener("hashchange", parseHash);
-  window.addEventListener("popstate", parseHash);
+  window.addEventListener("popstate", () => {
+    // Query state owns the exact framework/profile comparison. Reloading is
+    // deliberate: it reconstructs all per-framework contexts and iframes from
+    // the compiler contract, while hash-only drill navigation stays instant.
+    if (!comparisonQueryMatchesState()) location.reload();
+    else parseHash();
+  });
 
   initTimelineUI();
+  initComparisonMessaging();
   initSplitResizer();
   const requestedViewMode = new URLSearchParams(location.search).get("viewMode");
   setViewMode(["architecture", "timeline", "split"].includes(requestedViewMode)
     ? requestedViewMode : "architecture", false);
   loadTimelineForCurrentProfile();
+  // All query-owned controls have now been restored; only at this point is it
+  // safe to write the deterministic canonical comparison URL.
+  syncV2SelectionQuery();
 
   // 滚轮缩放 + 拖拽
   enablePanZoom();
@@ -1385,6 +1760,16 @@ function parseHash() {
   });
   VIEW_STACK = stack;
   DRILL_FROM = from;
+  SELECTED = null;
+  const selectedMatch = h.match(/(?:^|[&#])selected=([\w-]+)\.([\w-]+)/);
+  if (selectedMatch) {
+    const [, selectedView, selectedNodeId] = selectedMatch;
+    if (VIEW_STACK.includes(selectedView) && (DATA.views[selectedView]?.nodes || []).some(
+      node => node.id === selectedNodeId
+    )) {
+      SELECTED = {view: selectedView, nodeId: selectedNodeId};
+    }
+  }
   if (DATA) renderView();
 }
 
@@ -1400,7 +1785,8 @@ function findDrillNodeId(parentView, childView) {
 
 function syncHash(replace = false) {
   const from = DRILL_FROM.map(nodeId => nodeId || "").join(",");
-  const hash = "views=" + VIEW_STACK.join(",") + "&from=" + from;
+  const selected = SELECTED ? `&selected=${SELECTED.view}.${SELECTED.nodeId}` : "";
+  const hash = "views=" + VIEW_STACK.join(",") + "&from=" + from + selected;
   if (replace) {
     history.replaceState(null, "", `${location.pathname}${location.search}#${hash}`);
   } else {
@@ -1565,7 +1951,11 @@ function nodeWidth(n, viewName) {
   const cell = nodeCell(n, viewName);
   const visibleRows = [...lines];
   const currentValue = cellMetricValue(cell, CURRENT_METRIC, target);
-  if (CURRENT_COMPARE_METRIC) {
+  if (comparisonModeActive()) {
+    visibleRows.push(...comparisonContextList().map(context =>
+      comparisonEvidenceText(context, target)
+    ));
+  } else if (CURRENT_COMPARE_METRIC) {
     visibleRows.push(...[CURRENT_METRIC, CURRENT_COMPARE_METRIC]
       .map(metric => metricDisplayText(cellMetricValue(cell, metric, target), metric, target, cell)));
   } else if (cell?.gpu_elapsed_ms != null && ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC)) {
@@ -1604,9 +1994,11 @@ function nodeHeight(n, viewName) {
   if (n.stage_keys && n.stage_keys.length) h += 10;
   const cell = nodeCell(n, viewName);
   const measuredMetric = ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC);
-  const timingLineCount = CURRENT_COMPARE_METRIC
-    ? 2
-    : (cell?.gpu_elapsed_ms != null && measuredMetric ? 2 : 1);
+  const timingLineCount = comparisonModeActive()
+    ? comparisonContextList().length
+    : (CURRENT_COMPARE_METRIC
+      ? 2
+      : (cell?.gpu_elapsed_ms != null && measuredMetric ? 2 : 1));
   h += timingLineCount * 12;
   if (n.shape === "io") h = Math.max(h, 18 + lineCount * 12 + timingLineCount * 12);
   return h;
@@ -1890,7 +2282,40 @@ function drawNode(root, n, c, viewName) {
   // split into other GPU work and true device idle instead of calling all of
   // it idle.
   const measuredTimingMetric = ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC);
-  if (CURRENT_COMPARE_METRIC) {
+  if (comparisonModeActive()) {
+    const target = `${viewName}.${n.id}`;
+    const contexts = comparisonContextList();
+    contexts.forEach((context, index) => {
+      const cellForContext = comparisonCellForTarget(context, target);
+      const fusion = cellForContext?.status === "fused"
+        ? comparisonFusionGroupForTarget(context, target)?.[1]
+        : null;
+      const owner = fusion?.architecture_owner || fusion?.owner || cellForContext?.included_in || "";
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("class", cellForContext ? "node-ms" : "node-note");
+      t.setAttribute("x", c.width / 2);
+      t.setAttribute("y", c.height - 6 - (contexts.length - 1 - index) * 11);
+      t.setAttribute("text-anchor", "middle");
+      t.textContent = comparisonEvidenceText(context, target);
+      if (owner && irTargetExists(owner)) {
+        t.classList.add("fusion-owner-link");
+        t.style.cursor = "pointer";
+        t.addEventListener("click", event => {
+          event.preventDefault();
+          event.stopPropagation();
+          const ownerTarget = fusion?.architecture_owner || owner;
+          showTimelineEventInArchitecture({
+            event: {
+              _irNode: ownerTarget,
+              _irTargets: [...new Set([target, ...(fusion?.ir_nodes || [])])],
+            },
+            preserveViewMode: true,
+          });
+        });
+      }
+      g.appendChild(t);
+    });
+  } else if (CURRENT_COMPARE_METRIC) {
     const target = `${viewName}.${n.id}`;
     const metrics = [CURRENT_METRIC, CURRENT_COMPARE_METRIC];
     metrics.forEach((metric, index) => {
@@ -1981,6 +2406,7 @@ function drawNode(root, n, c, viewName) {
   g.addEventListener("click", (ev) => {
     ev.stopPropagation();
     SELECTED = {view: viewName, nodeId: n.id};
+    syncHash(true);
     updateArchitectureSelection(viewName, n.id);
     highlightNodeOnTimeline(viewName, n.id);
     // 总是先显示 detail (block aggregate 也需要看), drill 通过 detail 里
@@ -2043,6 +2469,67 @@ function drawShape(g, kind, w, h) {
 // ============================================================
 function currentTimelineMeta() {
   return DATA?.profiles?.[CURRENT_PROFILE]?.meta?.timeline || null;
+}
+
+function timelineMetaForContext(context) {
+  return DATA?.profiles?.[context?.profile_id]?.meta?.timeline || null;
+}
+
+function comparisonTimelineUrl(context) {
+  const url = new URL(location.href);
+  url.searchParams.set("execution", context.execution_variant_id);
+  url.searchParams.set("implementation", context.implementation_id);
+  url.searchParams.set("profile", context.profile_id);
+  url.searchParams.set("embeddedTimeline", "1");
+  url.searchParams.set("viewMode", "timeline");
+  url.searchParams.delete("comparison");
+  url.searchParams.delete("implementations");
+  url.searchParams.delete("profiles");
+  url.hash = "";
+  return url.href;
+}
+
+function renderComparisonTimelines() {
+  const pane = document.getElementById("timeline-pane");
+  const container = document.getElementById("timeline-comparison");
+  pane.classList.add("comparison-mode");
+  container.innerHTML = "";
+  for (const context of comparisonContextList()) {
+    const meta = timelineMetaForContext(context);
+    const card = document.createElement("section");
+    card.className = "timeline-comparison-card";
+    card.dataset.implementation = context.implementation_id;
+    const header = document.createElement("div");
+    header.className = "timeline-comparison-header";
+    header.innerHTML = `<strong>${escapeHtml(context.framework)}</strong><code>${escapeHtml(context.profile_id)}</code>`;
+    card.appendChild(header);
+    if (meta) {
+      const iframe = document.createElement("iframe");
+      iframe.title = `${context.framework} production timeline`;
+      iframe.loading = "eager";
+      iframe.src = comparisonTimelineUrl(context);
+      card.appendChild(iframe);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No production timeline in this exact comparison contract.";
+      card.appendChild(empty);
+    }
+    container.appendChild(card);
+  }
+}
+
+function leaveComparisonTimelineMode() {
+  document.getElementById("timeline-pane").classList.remove("comparison-mode");
+  document.getElementById("timeline-comparison").innerHTML = "";
+}
+
+function broadcastComparisonTimeline(message, exceptWindow = null) {
+  for (const iframe of document.querySelectorAll("#timeline-comparison iframe")) {
+    if (iframe.contentWindow && iframe.contentWindow !== exceptWindow) {
+      iframe.contentWindow.postMessage(message, location.origin);
+    }
+  }
 }
 
 function setViewMode(mode, sync = true, shouldRender = true) {
@@ -2273,6 +2760,16 @@ async function fetchTimelineArtifact(url) {
 
 async function loadTimelineForCurrentProfile() {
   const token = ++TIMELINE_LOAD_TOKEN;
+  if (comparisonModeActive() && !EMBEDDED_TIMELINE) {
+    TIMELINE_DATA = null;
+    TIMELINE_PROFILE_ID = "";
+    renderComparisonTimelines();
+    const hasTimeline = comparisonContextList().some(context => !!timelineMetaForContext(context));
+    document.getElementById("view-switch").style.display = hasTimeline ? "inline-flex" : "none";
+    setViewMode(hasTimeline ? CURRENT_VIEW_MODE : "architecture", false, false);
+    return;
+  }
+  leaveComparisonTimelineMode();
   const meta = currentTimelineMeta();
   const switcher = document.getElementById("view-switch");
   switcher.style.display = meta ? "inline-flex" : "none";
@@ -3024,7 +3521,24 @@ function scheduleTimelineRender() {
   TIMELINE_RENDER_FRAME = requestAnimationFrame(() => {
     TIMELINE_RENDER_FRAME = 0;
     renderTimeline();
+    publishEmbeddedTimelineRange();
   });
+}
+
+function publishEmbeddedTimelineRange() {
+  if (!EMBEDDED_TIMELINE || EMBEDDED_RANGE_SYNC_SUPPRESS || !TIMELINE_DATA) return;
+  const duration = Number(currentTimelineStep()?.duration_us || 0);
+  if (!(duration > 0)) return;
+  const start = Math.max(0, Math.min(1, TIMELINE_RANGE.startUs / duration));
+  const end = Math.max(start, Math.min(1, TIMELINE_RANGE.endUs / duration));
+  const key = `${start.toFixed(7)}:${end.toFixed(7)}`;
+  if (key === EMBEDDED_LAST_RANGE_KEY) return;
+  EMBEDDED_LAST_RANGE_KEY = key;
+  window.parent.postMessage({
+    type: "llm-arch-reviewer:timeline-range",
+    start,
+    end,
+  }, location.origin);
 }
 
 function renderTimeline() {
@@ -3477,6 +3991,19 @@ function focusArchitectureSelection(viewName, nodeId) {
 async function showTimelineEventInArchitecture(options = {}) {
   const event = options.event || TIMELINE_SELECTED_EVENT;
   if (!event) return;
+  if (EMBEDDED_TIMELINE && window.parent !== window && !options.fromParent) {
+    window.parent.postMessage({
+      type: "llm-arch-reviewer:timeline-select",
+      event: {
+        _irNode: event._irNode || "",
+        _irTargets: [...(event._irTargets || [])],
+        _layerKind: event._layerKind || "",
+        _substage: event._substage || "",
+        _occurrenceId: event._occurrenceId || "",
+      },
+    }, location.origin);
+    return;
+  }
   const navigationToken = ++ARCHITECTURE_NAVIGATION_TOKEN;
   const snapshot = captureArchitectureSnapshot();
   try {
@@ -3486,7 +4013,8 @@ async function showTimelineEventInArchitecture(options = {}) {
     );
     // A topology-only communication node does not exist in canonical Model IR.
     // Switch layers explicitly instead of routing the user to a missing leaf.
-    if (!directVisible && CURRENT_IR_LAYER === "model" && isV2Bundle()) {
+    if (!directVisible && CURRENT_IR_LAYER === "model" && isV2Bundle()
+        && (!comparisonModeActive() || comparisonExecutionIrCompatible())) {
       CURRENT_IR_LAYER = "execution";
       document.getElementById("ir-layer-select").value = CURRENT_IR_LAYER;
       activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
@@ -3544,8 +4072,31 @@ async function showFusionOwnerInArchitecture(ownerTarget, sourceTarget = "") {
   return SELECTED?.view && `${SELECTED.view}.${SELECTED.nodeId}` === architectureOwner;
 }
 
+async function showComparisonFusionOwnerInArchitecture(implementationId, sourceTarget) {
+  const context = COMPARISON_CONTEXTS[implementationId];
+  const group = comparisonFusionGroupForTarget(context, sourceTarget)?.[1];
+  const owner = group?.architecture_owner || group?.owner || "";
+  if (!owner || !irTargetExists(owner)) return false;
+  await showTimelineEventInArchitecture({
+    event: {
+      _irNode: owner,
+      _irTargets: [...new Set([sourceTarget, ...(group.ir_nodes || [])])],
+    },
+    preserveViewMode: true,
+  });
+  return true;
+}
+
 function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
   const target = `${viewName}.${nodeId}`;
+  if (comparisonModeActive() && !EMBEDDED_TIMELINE) {
+    broadcastComparisonTimeline({
+      type: "llm-arch-reviewer:highlight",
+      target,
+      center: false,
+    });
+    return;
+  }
   // A fused semantic leaf has no independent production interval. Highlight
   // the group's single timing owner instead of making the timeline appear
   // empty or copying the owner's events onto every covered leaf.
@@ -3560,6 +4111,16 @@ function highlightNodeOnTimeline(viewName, nodeId, shouldRender = true) {
 }
 
 function centerNodeOnTimeline(viewName, nodeId) {
+  if (comparisonModeActive() && !EMBEDDED_TIMELINE) {
+    const target = `${viewName}.${nodeId}`;
+    setViewMode(CURRENT_VIEW_MODE === "architecture" ? "split" : CURRENT_VIEW_MODE, true, false);
+    broadcastComparisonTimeline({
+      type: "llm-arch-reviewer:highlight",
+      target,
+      center: true,
+    });
+    return;
+  }
   highlightNodeOnTimeline(viewName, nodeId, false);
   if (!TIMELINE_DATA) return;
   const nearest = focusNearestTimelineEvent();
@@ -3831,6 +4392,59 @@ function initTimelineUI() {
   }, {passive: false});
   window.addEventListener("resize", () => {
     if (CURRENT_VIEW_MODE !== "architecture") renderTimeline();
+  });
+}
+
+function initComparisonMessaging() {
+  window.addEventListener("message", message => {
+    if (message.origin !== location.origin || !message.data?.type) return;
+    if (!EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-select") {
+      const event = message.data.event || {};
+      showTimelineEventInArchitecture({event, preserveViewMode: true}).then(() => {
+        // The canonical Architecture destination can differ from the clicked
+        // implementation-specific Execution IR target. Broadcast the resolved
+        // shared Model IR selection so peers never receive a foreign
+        // framework's execution-only node id.
+        const resolvedTarget = SELECTED?.view && SELECTED?.nodeId
+          ? `${SELECTED.view}.${SELECTED.nodeId}`
+          : String(event._irNode || "");
+        const [viewName, nodeId] = resolvedTarget.split(".", 2);
+        if (viewName && nodeId) {
+          // The source iframe already has one explicitly selected (opaque)
+          // kernel. Highlight the shared module only in peer frameworks so the
+          // clicked kernel does not get downgraded to a translucent module
+          // filter when the parent completes Architecture navigation.
+          broadcastComparisonTimeline({
+            type: "llm-arch-reviewer:highlight",
+            target: `${viewName}.${nodeId}`,
+            center: false,
+          }, message.source);
+        }
+      });
+      return;
+    }
+    if (!EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-range") {
+      broadcastComparisonTimeline(message.data, message.source);
+      return;
+    }
+    if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:highlight") {
+      const [viewName, nodeId] = String(message.data.target || "").split(".", 2);
+      if (!viewName || !nodeId) return;
+      if (message.data.center) centerNodeOnTimeline(viewName, nodeId);
+      else highlightNodeOnTimeline(viewName, nodeId);
+      return;
+    }
+    if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-range") {
+      const duration = Number(currentTimelineStep()?.duration_us || 0);
+      if (!(duration > 0)) return;
+      EMBEDDED_RANGE_SYNC_SUPPRESS = true;
+      TIMELINE_RANGE = {
+        startUs: Math.max(0, Math.min(duration, Number(message.data.start) * duration)),
+        endUs: Math.max(0, Math.min(duration, Number(message.data.end) * duration)),
+      };
+      renderTimeline();
+      requestAnimationFrame(() => { EMBEDDED_RANGE_SYNC_SUPPRESS = false; });
+    }
   });
 }
 
@@ -4158,6 +4772,41 @@ function showDetail(n, viewName) {
     <h3>Outputs</h3>
     ${tensorContractTable(semantics.outputs || [], "target")}` : "";
 
+  const comparisonRows = comparisonModeActive() ? comparisonContextList().map(comparisonContext => {
+    const comparisonCell = comparisonCellForTarget(comparisonContext, target);
+    const comparisonGroup = comparisonCell?.status === "fused"
+      ? comparisonFusionGroupForTarget(comparisonContext, target)?.[1]
+      : null;
+    const comparisonOwner = comparisonGroup?.architecture_owner
+      || comparisonGroup?.owner
+      || comparisonCell?.included_in
+      || "";
+    const comparisonValue = comparisonCell
+      ? cellMetricValue(comparisonCell, CURRENT_METRIC, target)
+      : null;
+    const evidence = comparisonOwner
+      ? `fused into <a href="#" data-comparison-owner="${escapeHtml(comparisonContext.implementation_id)}" data-comparison-source="${escapeHtml(target)}">${escapeHtml(irTargetLabel(comparisonOwner))}</a>`
+      : (comparisonValue != null
+        ? `${escapeHtml(metricLabel(CURRENT_METRIC))} ${formatMetricValue(comparisonValue, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`
+        : escapeHtml(nodeStateSummary(comparisonCell, target) || "not selected"));
+    const binding = RAW_DATA?.implementations?.[comparisonContext.implementation_id]?.node_bindings?.[target] || {};
+    const proof = [
+      ...(binding.symbols || []),
+      comparisonGroup?.mapping_method,
+      comparisonGroup?.confidence,
+    ].filter(Boolean).join(" · ");
+    return `<tr>
+      <td class="name">${escapeHtml(comparisonContext.framework)}</td>
+      <td class="name" title="${escapeHtml(comparisonContext.profile_id)}">${escapeHtml(shorten(comparisonContext.profile_id, 32))}</td>
+      <td class="name" title="${escapeHtml(comparisonContext.execution_variant_id)}">${escapeHtml(shorten(comparisonContext.execution_variant_id, 22))}</td>
+      <td>${evidence}</td>
+      <td class="name" title="${escapeHtml(proof)}">${escapeHtml(shorten(proof || "no binding evidence", 36))}</td>
+    </tr>`;
+  }).join("") : "";
+  const comparisonHtml = comparisonRows ? `<h3>Framework comparison</h3>
+    <div style="color:var(--muted); font-size:11px; margin-bottom:6px">Exact compiler-generated contract: <code>${escapeHtml(CURRENT_COMPARISON_CONTRACT)}</code> · ${comparisonExecutionIrCompatible() ? "shared validated Execution IR" : "shared Model IR with separate validated Execution IR fingerprints"}</div>
+    <table class="kernels comparison-evidence-table"><thead><tr><th class="name">framework</th><th class="name">production profile</th><th class="name">Execution IR</th><th>mapping / timing</th><th class="name">binding proof</th></tr></thead><tbody>${comparisonRows}</tbody></table>` : "";
+
   const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;
   const variants = Object.keys(visibleVariants).map(k => {
     const value = visibleVariants[k] || {};
@@ -4421,6 +5070,7 @@ function showDetail(n, viewName) {
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
     ${semanticsHtml}
+    ${comparisonHtml}
     ${provenanceHtml}
     ${solHtml}
     ${drillBtn}
@@ -4443,11 +5093,21 @@ function showDetail(n, viewName) {
       );
     });
   }
+  for (const link of detail.querySelectorAll("[data-comparison-owner]")) {
+    link.addEventListener("click", event => {
+      event.preventDefault();
+      showComparisonFusionOwnerInArchitecture(
+        link.dataset.comparisonOwner || "",
+        link.dataset.comparisonSource || target,
+      );
+    });
+  }
 }
 
 window.drillTo = drillTo;
 window.drillFrom = drillFrom;
 window.showFusionOwnerInArchitecture = showFusionOwnerInArchitecture;
+window.showComparisonFusionOwnerInArchitecture = showComparisonFusionOwnerInArchitecture;
 
 // ============================================================
 // pan / zoom (CSS transform on svg-root)

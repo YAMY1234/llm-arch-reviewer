@@ -945,6 +945,103 @@ def execution_fingerprint(
     return "exec_" + hashlib.sha256(payload).hexdigest()[:16]
 
 
+# Fields that describe how evidence was collected rather than what was
+# executed.  They must remain in the profile for provenance, but including
+# them in a comparison identity would make equivalent SGLang/vLLM/TRT-LLM
+# workloads impossible to match merely because their profilers use different
+# step counters or warm-up mechanics.
+_COMPARISON_WORKLOAD_PROCEDURE_FIELDS = {
+    "warmup_requests",
+    "formal_requests",
+    "request_trajectory",
+}
+
+
+def comparison_contract(
+    profile: dict[str, Any], *, fingerprint: str
+) -> tuple[str, dict[str, Any]]:
+    """Return a fail-closed cross-framework profile comparison identity.
+
+    This deliberately contains only normalized, observable workload and
+    execution contracts.  Implementation ids, labels, source commits,
+    profiler type, selected rank, trace filenames, and timing values are
+    excluded.  CUDA Graph state is included because graph-on production timing
+    is not silently interchangeable with eager timing.
+    """
+
+    profiler = profile.get("profiler") or {}
+    workload = profile.get("workload") or {}
+    hardware = profile.get("hardware") or {}
+    # ``fingerprint`` is deliberately indexed next to (rather than hashed
+    # into) this workload identity.  Exact workloads can therefore be
+    # compared even when two frameworks implement different Execution IRs.
+    del fingerprint
+    payload = {
+        "schema_version": "comparison-contract.v1",
+        "model_id": profile["model_id"],
+        "generation_mode": profile.get("generation_mode", "autoregressive"),
+        # Explicit semantic/config discriminator for intentionally different
+        # model paths measured at the same hardware/workload shape (for
+        # example a PLE baseline). It is authored, framework-neutral, and must
+        # never be inferred from a profile id or label.
+        "comparison_variant": profile.get("comparison_variant", "production_default"),
+        # Model IR already fixes the architecture.  These optional authored
+        # fields close variant dimensions that can change the executed
+        # problem without changing model_id.  Never infer them from an
+        # implementation/profile label.
+        "model_contract": {
+            "dtype": profile.get("dtype")
+            or workload.get("dtype")
+            or "model_ir_default",
+            "quantization": profile.get("quantization")
+            or workload.get("quantization")
+            or "model_ir_default",
+            "backend_significant_config": copy.deepcopy(
+                profile.get("comparison_config") or {}
+            ),
+        },
+        "phase": profile["phase"],
+        "formal_step_semantics": profile.get("formal_step_semantics")
+        or profiler.get("formal_step_semantics")
+        or "one_validated_formal_forward",
+        # Execution IR identity is intentionally *not* part of the workload
+        # match. Equivalent production workloads may use different validated
+        # execution contracts. The bundle indexes those fingerprints
+        # separately so the viewer can share Model IR without collapsing them.
+        "execution_parameters": copy.deepcopy(
+            profile.get("execution_parameters") or {}
+        ),
+        "hardware_target": {
+            key: copy.deepcopy(hardware[key])
+            for key in (
+                "gpu",
+                "gpu_architecture",
+                "sm",
+                "gpus_per_node",
+                "nodes",
+                "interconnect",
+                "network",
+            )
+            if key in hardware
+        },
+        "scheduler_contract": copy.deepcopy(
+            profile.get("scheduler_contract")
+            or workload.get("scheduler_contract")
+            or "serving_default"
+        ),
+        "workload": {
+            key: copy.deepcopy(value)
+            for key, value in sorted(workload.items())
+            if key not in _COMPARISON_WORKLOAD_PROCEDURE_FIELDS
+        },
+        "production_mode": {
+            "cuda_graph_enabled": bool(profiler.get("cuda_graph_enabled", False)),
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return "cmp_" + hashlib.sha256(encoded).hexdigest()[:16], payload
+
+
 def derive_parent_map(views: dict[str, Any]) -> dict[str, str]:
     parents: dict[str, str] = {}
     for view_id, view in views.items():
@@ -979,6 +1076,31 @@ def _code_link(
     }
 
 
+def _framework_id(binding: dict[str, Any], *, source: Path) -> str:
+    """Return the canonical framework identity used by comparison UI/order.
+
+    Framework identity is compiled from the pinned implementation binding, not
+    guessed in the browser from a label or profile name.  ``framework_id`` is
+    accepted as an explicit override for future frameworks; known repositories
+    remain deterministic for existing catalogs.
+    """
+
+    authored = str(binding.get("framework_id") or "").strip().lower()
+    if authored:
+        return authored
+    repo = str(binding.get("source_repo") or "").rstrip("/").lower()
+    if repo.endswith("/vllm-project/vllm"):
+        return "vllm"
+    if repo.endswith("/nvidia/tensorrt-llm"):
+        return "tensorrt_llm"
+    if repo.endswith("/sgl-project/sglang") or "sglang" in repo.rsplit("/", 1)[-1]:
+        return "sglang"
+    raise CatalogError(
+        f"{source}: implementation binding requires an explicit framework_id "
+        f"for unrecognized source_repo {binding.get('source_repo')!r}"
+    )
+
+
 def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
     compiled = {
         key: copy.deepcopy(binding[key])
@@ -1000,6 +1122,7 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
         )
         if key in binding
     }
+    compiled["framework_id"] = _framework_id(binding, source=source)
     compiled["node_bindings"] = {}
     for target, node_binding in (binding.get("node_bindings") or {}).items():
         if not isinstance(node_binding, dict):
@@ -1390,6 +1513,11 @@ def compile_profile(
         }
     meta.setdefault("generation_mode", "autoregressive")
     meta.setdefault("entry_view", "top")
+    comparison_contract_id, comparison_contract_payload = comparison_contract(
+        profile, fingerprint=fingerprint
+    )
+    meta["comparison_contract_id"] = comparison_contract_id
+    meta["comparison_contract"] = comparison_contract_payload
     if profile.get("timeline") is not None:
         timeline = copy.deepcopy(profile["timeline"])
         if not isinstance(timeline, dict):
@@ -1768,6 +1896,46 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         }
         variant["enriched"] = build_enriched(variant["views"], compatible_profiles)
 
+    comparison_contracts: dict[str, dict[str, Any]] = {}
+    for profile_id, profile in sorted(profiles.items()):
+        meta = profile.get("meta") or {}
+        contract_id = str(meta.get("comparison_contract_id") or "")
+        implementation_id = str(profile.get("implementation_id") or "")
+        if not contract_id:
+            raise CatalogError(
+                f"profile {profile_id!r} is missing compiler-generated "
+                "comparison_contract_id"
+            )
+        entry = comparison_contracts.setdefault(
+            contract_id,
+            {
+                "comparison_contract_id": contract_id,
+                "contract": copy.deepcopy(meta.get("comparison_contract") or {}),
+                "profiles_by_implementation": {},
+                "execution_variants_by_implementation": {},
+            },
+        )
+        if entry["contract"] != (meta.get("comparison_contract") or {}):
+            raise CatalogError(
+                f"comparison contract hash collision or payload mismatch for {contract_id!r}"
+            )
+        previous = entry["profiles_by_implementation"].get(implementation_id)
+        if previous:
+            raise CatalogError(
+                f"comparison contract {contract_id!r} has ambiguous profiles for "
+                f"implementation {implementation_id!r}: {previous!r}, {profile_id!r}"
+            )
+        entry["profiles_by_implementation"][implementation_id] = profile_id
+        entry["execution_variants_by_implementation"][implementation_id] = profile[
+            "execution_variant"
+        ]
+
+    for entry in comparison_contracts.values():
+        fingerprints = set(
+            entry["execution_variants_by_implementation"].values()
+        )
+        entry["execution_ir_compatible"] = len(fingerprints) <= 1
+
     default_path_id = model_ir.get("default_execution_path") or next(iter(plans_by_id))
     if default_path_id not in plans_by_id:
         raise CatalogError(
@@ -1850,6 +2018,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         "execution_variants": execution_variants,
         "implementations": implementations,
         "profiles": profiles,
+        "comparison_contracts": comparison_contracts,
         "sol_profiles": sol_profiles,
         "gap_reports": gap_reports,
         "sol_diagnostics": sol_diagnostics,

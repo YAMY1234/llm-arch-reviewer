@@ -104,6 +104,15 @@ Profiles and bindings may never create or mutate semantic model nodes. A new
 execution graph is created only when an execution plan changes the structural
 fingerprint (operator flow, sharding, placement, or collectives).
 
+The compiler additionally derives `comparison-contract.v1` from each profile's
+normalized model/workload/hardware/production-mode fields. This identity omits
+framework and profiling procedure details, while indexing each implementation's
+validated Execution IR fingerprint separately. Consequently, an exact workload
+may be compared across different Execution IRs on shared Model IR without ever
+collapsing those execution plans. Bindings expose a canonical `framework_id`;
+custom repositories must author it explicitly rather than relying on Viewer
+name matching.
+
 ## Trace-to-IR attribution contract
 
 Profile generation uses two evidence layers without promoting trace accidents

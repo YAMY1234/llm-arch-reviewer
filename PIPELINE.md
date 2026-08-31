@@ -783,6 +783,44 @@ Recommended progression:
 Every distinct code path is profiled independently. Results from one path are
 never copied into another merely because their Model IR nodes share names.
 
+### 7.1 Exact cross-framework comparison contract
+
+The compiler, not the Viewer, decides which profiles are comparable. It hashes
+a normalized, framework-neutral `comparison-contract.v1` containing:
+
+- Model IR identity, generation mode, phase, formal-step semantics, and an
+  explicitly authored `comparison_variant`;
+- dtype, quantization, and authored backend-significant model configuration;
+- TP/DP/CP/EP parameters, normalized workload/realized shape, scheduler
+  contract, CUDA Graph state, and relevant hardware/interconnect identity.
+
+Profiler procedure fields such as warmup request count, formal request count,
+native step counters, filenames, selected rank, source commit, and timing
+values are evidence provenance and do not enter this workload identity. A
+field that changes the executed problem must be normalized into the contract;
+it may never be inferred from a profile id, label, or framework name. The
+compiler allows at most one profile per implementation for one contract and
+fails closed on ambiguity. An implementation without an exact profile remains
+visible but disabled with the missing dimension/reason.
+
+Execution fingerprints are indexed **beside** the comparison contract, not
+inside it. If all selected implementations share one validated fingerprint,
+the Viewer may compare them on both Model and Execution IR. If fingerprints
+differ, the Viewer must show shared Model IR plus one separate Execution IR
+overlay per framework; it must disable any presentation that would collapse
+those plans into a fictitious shared Execution IR.
+
+Every binding compiles an explicit canonical `framework_id` (`sglang`, `vllm`,
+or `tensorrt_llm`). The Viewer uses only compiler-produced contract/profile
+indexes and this id; browser label/name matching is forbidden. Architecture
+comparison renders Model IR geometry once with one compact evidence row per
+framework. Timeline comparison stacks one isolated production artifact per
+framework in deterministic SGLang/vLLM/TensorRT-LLM order. Normalized visible
+ranges and IR selections may synchronize, but physical stream IDs, events,
+fusion ownership, and timing remain unchanged inside each profile. A fused
+member still links to its framework-specific single timing owner and never
+copies the owner's scalar time.
+
 ## 8. Acceptance gates
 
 ### Structural
@@ -801,6 +839,9 @@ never copied into another merely because their Model IR nodes share names.
   structural fingerprint, source revision, phase, and execution path.
 - Every communication node names collective, group, payload, and result.
 - No framework/model-specific identifier is required by viewer code.
+- Every compiler-produced comparison contract is unambiguous, and selected
+  profiles reproduce that exact contract. Distinct Execution IR fingerprints
+  remain separate while sharing only canonical Model IR.
 
 ### Attribution
 
@@ -874,6 +915,10 @@ never copied into another merely because their Model IR nodes share names.
   selects one parent or an explicit many-to-many event-set binding is present.
 - Architecture selection highlights all matching timeline events; timeline
   selection expands, centers, and selects the exact architecture leaf.
+- Multi-framework acceptance exercises 1/2/3 selections, deterministic order,
+  unavailable exact matches, same- and different-Execution-IR cases, URL
+  reload/back/forward state, framework-specific fusion links, synchronized
+  ranges, and both navigation directions through real SVG/Canvas clicks.
 - Release acceptance exercises both directions through real browser clicks on
   the rendered SVG node and Canvas kernel/owner lane. Calling navigation helper
   functions directly is insufficient: the test must also prove that a clicked

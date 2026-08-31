@@ -19,6 +19,7 @@ from llm_arch_v2.compiler import (  # noqa: E402
     _validate_leaf_equation_coverage,
     _validate_notation_contract,
     apply_execution_plan,
+    comparison_contract,
     compile_catalog,
     compile_profile,
     execution_fingerprint,
@@ -100,6 +101,76 @@ def test_all_audited_catalogs_compile_without_placeholder_equations(
             )
 
 
+def test_comparison_contract_matches_equivalent_framework_profiles() -> None:
+    bundle = compile_catalog(QWEN35_ROOT)
+    assert bundle["implementations"][
+        "sglang_f609d677b_qwen35_033446bb_tp8"
+    ]["framework_id"] == "sglang"
+    assert bundle["implementations"][
+        "vllm_487ecf187_qwen35_native_tp8"
+    ]["framework_id"] == "vllm"
+    sglang = bundle["profiles"]["qwen35_tp8_sglang_cg_decode_bs64_8k1k"]
+    vllm = bundle["profiles"]["qwen35_tp8_vllm_cg_decode_bs64_8k1k"]
+    assert sglang["meta"]["comparison_contract_id"] == vllm["meta"][
+        "comparison_contract_id"
+    ]
+    assert sglang["meta"]["comparison_contract"] == vllm["meta"][
+        "comparison_contract"
+    ]
+    contract_id = sglang["meta"]["comparison_contract_id"]
+    assert bundle["comparison_contracts"][contract_id][
+        "profiles_by_implementation"
+    ] == {
+        "sglang_f609d677b_qwen35_033446bb_tp8": "qwen35_tp8_sglang_cg_decode_bs64_8k1k",
+        "vllm_487ecf187_qwen35_native_tp8": "qwen35_tp8_vllm_cg_decode_bs64_8k1k",
+    }
+    assert bundle["comparison_contracts"][contract_id]["execution_ir_compatible"]
+
+
+def test_comparison_contract_rejects_non_equivalent_production_modes() -> None:
+    profile = {
+        "model_id": "toy",
+        "phase": "decode",
+        "generation_mode": "autoregressive",
+        "execution_parameters": {
+            "tp_size": 8,
+            "dp_size": 1,
+            "cp_size": 1,
+            "ep_size": 1,
+        },
+        "hardware": {"gpu": "GB300", "nodes": 2, "gpus_per_node": 4},
+        "workload": {"isl": 8192, "osl": 1024, "batch_size": 64},
+        "profiler": {"cuda_graph_enabled": True},
+    }
+    graph_id, _ = comparison_contract(profile, fingerprint="exec_contract")
+    profile["profiler"]["cuda_graph_enabled"] = False
+    eager_id, _ = comparison_contract(profile, fingerprint="exec_contract")
+    assert graph_id != eager_id
+    profile["profiler"]["cuda_graph_enabled"] = True
+    profile["workload"]["batch_size"] = 16
+    other_batch_id, _ = comparison_contract(profile, fingerprint="exec_contract")
+    assert graph_id != other_batch_id
+    profile["workload"]["batch_size"] = 64
+    profile["comparison_config"] = {"attention_backend": "different_contract"}
+    other_config_id, _ = comparison_contract(profile, fingerprint="exec_contract")
+    assert graph_id != other_config_id
+
+
+def test_glm52_comparison_matches_distinct_execution_ir_without_collapsing() -> None:
+    bundle = compile_catalog(REPO_ROOT / "catalog" / "glm52")
+    sglang = bundle["profiles"]["glm52_tp8_sglang_cg_decode_bs64_8k1k"]
+    trtllm = bundle["profiles"]["glm52_tp8_trtllm_cg_decode_bs64_8k1k"]
+    contract_id = sglang["meta"]["comparison_contract_id"]
+    assert contract_id == trtllm["meta"]["comparison_contract_id"]
+    contract = bundle["comparison_contracts"][contract_id]
+    assert contract["profiles_by_implementation"] == {
+        "sglang_fdebc938_dsa": "glm52_tp8_sglang_cg_decode_bs64_8k1k",
+        "trtllm_4358fb5d_dsa": "glm52_tp8_trtllm_cg_decode_bs64_8k1k",
+    }
+    assert not contract["execution_ir_compatible"]
+    assert len(set(contract["execution_variants_by_implementation"].values())) == 2
+
+
 def test_compile_qwen40_catalog() -> None:
     bundle = compile_catalog(MODEL_ROOT)
 
@@ -120,7 +191,6 @@ def test_compile_qwen40_catalog() -> None:
     ]["tp4_cg_decode_bs1_8k1k"]
     assert disabled_mtp["status"] == "disabled"
     assert disabled_mtp["label"] == "MTP is disabled in this profile"
-
     assert "tp_attention_collective" in _node_ids(bundle, "linear_layer")
     assert "tp_attention_collective" in _node_ids(bundle, "full_layer")
     assert "tp_moe_output_collective" in _node_ids(bundle, "linear_layer")
