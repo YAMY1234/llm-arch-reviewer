@@ -113,9 +113,80 @@ def main(args: argparse.Namespace | None = None) -> int:
         require(state["mode"] == "split", "view_mode_restore", actual=state)
         require(state["cards"] == 2, "two_timeline_cards", actual=state)
 
+        # A drillable GDN parent must expose each framework's descendant-event
+        # union. Reading the raw structural authoring state here would hide
+        # real measured work even though the child view is fully attributed.
+        rollup = page.evaluate(
+            """async () => {
+              VIEW_STACK = ['top', 'stack', 'gdn_moe_block'];
+              DRILL_FROM = [null, 'decoder_stack', 'gdn_layer'];
+              SELECTED = {view: 'gdn_moe_block', nodeId: 'attention'};
+              await renderView();
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              const rows = comparisonContextList().map(context => {
+                const cell = comparisonCellForTarget(context, 'gdn_moe_block.attention');
+                return {
+                  framework: context.framework,
+                  status: cell?.status || '',
+                  attribution: cell?.attribution_status || '',
+                  active: Number(cell?.active_gpu_ms || 0),
+                  sources: cell?.rollup_sources || [],
+                };
+              });
+              const text = document.querySelector(
+                'g.view-group[data-view="gdn_moe_block"] g.node[data-id="attention"]'
+              )?.textContent || '';
+              return {rows, text};
+            }"""
+        )
+        expected_gdn_sources = {
+            "gdn_attention.causal_conv",
+            "gdn_attention.gated_delta_recurrence",
+            "gdn_attention.output_gate_norm",
+            "gdn_attention.output_projection",
+            "gdn_attention.qkvz_projection",
+        }
+        require(
+            len(rollup["rows"]) == 2
+            and all(
+                row["attribution"] == "inclusive_rollup"
+                and row["active"] > 0
+                and set(row["sources"]) == expected_gdn_sources
+                for row in rollup["rows"]
+            )
+            and rollup["text"].count("∪ active") == 2,
+            "comparison_parent_union_timing",
+            actual=rollup,
+        )
+        checks["comparison_parent_union_timing"] = 2
+
+        # Framework comparison must retain the canonical fusion navigation
+        # affordance in the SVG, not downgrade "fused into" to plain text.
+        page.evaluate(
+            """async () => {
+              VIEW_STACK = ['top', 'stack', 'gdn_moe_block', 'gdn_attention'];
+              DRILL_FROM = [null, 'decoder_stack', 'gdn_layer', 'attention'];
+              SELECTED = {view: 'gdn_attention', nodeId: 'ba_projection'};
+              await renderView();
+              await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            }"""
+        )
+        fusion_links = page.locator(
+            'g.view-group[data-view="gdn_attention"] '
+            'g.node[data-id="ba_projection"] a.fusion-owner-link'
+        )
+        require(fusion_links.count() == 2, "comparison_fusion_owner_link_count")
+        if fusion_links.count():
+            fusion_links.first.click()
+            page.wait_for_function(
+                "SELECTED?.view === 'gdn_attention' && SELECTED?.nodeId === 'qkvz_projection'",
+                timeout=60_000,
+            )
+        checks["comparison_fusion_owner_links"] = fusion_links.count()
+
         # An actual rendered SVG click selects the node and broadcasts a module
         # highlight into each isolated physical timeline.
-        node = page.locator("#svg-host g.view-group g.node").first
+        node = page.locator("#svg-host g.view-group g.node.selected").first
         node.click()
         page.wait_for_function("SELECTED && document.querySelectorAll('.comparison-evidence-table tbody tr').length === 2")
         for frame in frames:

@@ -606,6 +606,14 @@ accepted parent has exactly the required occurrence set; changing a context
 coordinate changes membership; active time equals the matching interval union;
 residency equals the matching duration sum; the parent is not a member of a
 leaf fusion group; and the drill view exposes the same scoped owner evidence.
+Re-materialization first removes every previously derived drill/scoped parent
+target from timeline events and then rebuilds ancestry from the current Model
+IR. Stale parent tags may never survive an IR-boundary change.
+
+The catalog compiler enforces executable drill-parent roll-up closure by
+default. A future model cannot publish a structural drill parent over measured
+descendants unless the semantic operation is explicitly a control/state
+boundary; disabling this gate requires an authored pipeline exception.
 
 ### Stage 8 — Build the Timeline hierarchy
 
@@ -820,6 +828,11 @@ ranges and IR selections may synchronize, but physical stream IDs, events,
 fusion ownership, and timing remain unchanged inside each profile. A fused
 member still links to its framework-specific single timing owner and never
 copies the owner's scalar time.
+Each comparison row resolves the selected profile's enriched cell, not its raw
+pre-rollup state: an executable drill parent therefore shows that framework's
+numeric `inclusive_rollup`, never `structural`, whenever its selected
+descendants carry timing. Every `fused into` row remains an actual navigable
+link to that framework's architecture owner in both the graph and detail pane.
 
 ## 8. Acceptance gates
 

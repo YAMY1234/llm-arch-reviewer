@@ -1574,7 +1574,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     pipeline = load_yaml(pipeline_path) if pipeline_path.is_file() else {}
     require_executable_drill_rollups = bool(
         (pipeline.get("acceptance") or {}).get(
-            "require_executable_drill_rollups", False
+            "require_executable_drill_rollups", True
         )
     )
     _validate_schema_version(model_ir, "model-ir.v2", source=model_path)

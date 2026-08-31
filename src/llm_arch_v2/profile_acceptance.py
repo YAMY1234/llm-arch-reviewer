@@ -140,7 +140,12 @@ def validate_executable_drill_rollups(
             residency_ms = float(metric.get("gpu_residency_ms") or 0.0)
             if active_ms <= 0.0:
                 errors.append(f"{target} inclusive_rollup has no active timing")
-            if residency_ms + 1e-12 < active_ms:
+            # Both values are reconstructed from serialized microsecond
+            # intervals and can differ by a few nanoseconds after repeated
+            # float addition/rounding.  Ten nanoseconds is well below the
+            # source trace resolution, while still rejecting any material
+            # active-union/residency inconsistency.
+            if residency_ms + 1e-5 < active_ms:
                 errors.append(
                     f"{target} inclusive_rollup residency {residency_ms} ms "
                     f"is below active union {active_ms} ms"

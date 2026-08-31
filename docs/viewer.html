@@ -874,9 +874,17 @@ function comparisonModeActive() {
 }
 
 function comparisonCellForTarget(context, target) {
+  const value = String(target || "");
+  const dot = value.indexOf(".");
+  const viewName = dot > 0 ? value.slice(0, dot) : "";
+  const nodeId = dot > 0 ? value.slice(dot + 1) : "";
+  const execution = RAW_DATA?.execution_variants?.[context?.execution_variant_id];
+  const enrichedVariants = execution?.enriched?.[viewName]
+    ?.nodes_profile?.[nodeId]?.[context?.profile_id];
+  if (enrichedVariants) return currentVariantCell(enrichedVariants);
   const variants = DATA?.profiles?.[context?.profile_id]?.data?.[target];
   if (!variants) return null;
-  return variants[CURRENT_VARIANT] || variants.ALL || Object.values(variants)[0] || null;
+  return currentVariantCell(variants);
 }
 
 function comparisonFusionGroupForTarget(context, target) {
@@ -894,7 +902,10 @@ function comparisonEvidenceText(context, target) {
     return `${prefix}: fused into ${irTargetLabel(owner)}`;
   }
   const value = cellMetricValue(cell, CURRENT_METRIC, target);
-  if (value != null) return `${prefix}: ${metricLabel(CURRENT_METRIC)} ${formatMetricValue(value, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`;
+  if (value != null) {
+    const provenance = cell.attribution_status === "inclusive_rollup" ? "∪ " : "";
+    return `${prefix}: ${provenance}${metricLabel(CURRENT_METRIC)} ${formatMetricValue(value, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`;
+  }
   return `${prefix}: ${nodeStateSummary(cell, target) || "unmapped"}`;
 }
 
@@ -2237,6 +2248,34 @@ function appendFusionOwnerNodeLink(root, textElement, ownerTarget, sourceTarget)
   return true;
 }
 
+function appendComparisonFusionOwnerNodeLink(root, textElement, context, ownerTarget, sourceTarget) {
+  const group = comparisonFusionGroupForTarget(context, sourceTarget)?.[1] || null;
+  const architectureOwner = String(group?.architecture_owner || ownerTarget || group?.owner || "");
+  if (!context?.implementation_id || !architectureOwner || !irTargetExists(architectureOwner)) {
+    return false;
+  }
+  const link = document.createElementNS("http://www.w3.org/2000/svg", "a");
+  link.setAttribute("class", "fusion-owner-link");
+  link.setAttribute("href", "#");
+  link.setAttribute(
+    "aria-label",
+    `Open ${context.framework} timing owner ${irTargetLabel(architectureOwner)} in architecture`,
+  );
+  link.dataset.comparisonOwner = context.implementation_id;
+  link.dataset.comparisonSource = sourceTarget;
+  const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+  title.textContent = `Open ${context.framework} timing owner: ${irTargetLabel(architectureOwner)} (${architectureOwner})`;
+  link.appendChild(title);
+  link.appendChild(textElement);
+  link.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    showComparisonFusionOwnerInArchitecture(context.implementation_id, sourceTarget);
+  });
+  root.appendChild(link);
+  return true;
+}
+
 function drawNode(root, n, c, viewName) {
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   const kind = n.shape || "block";
@@ -2297,23 +2336,7 @@ function drawNode(root, n, c, viewName) {
       t.setAttribute("y", c.height - 6 - (contexts.length - 1 - index) * 11);
       t.setAttribute("text-anchor", "middle");
       t.textContent = comparisonEvidenceText(context, target);
-      if (owner && irTargetExists(owner)) {
-        t.classList.add("fusion-owner-link");
-        t.style.cursor = "pointer";
-        t.addEventListener("click", event => {
-          event.preventDefault();
-          event.stopPropagation();
-          const ownerTarget = fusion?.architecture_owner || owner;
-          showTimelineEventInArchitecture({
-            event: {
-              _irNode: ownerTarget,
-              _irTargets: [...new Set([target, ...(fusion?.ir_nodes || [])])],
-            },
-            preserveViewMode: true,
-          });
-        });
-      }
-      g.appendChild(t);
+      if (!appendComparisonFusionOwnerNodeLink(g, t, context, owner, target)) g.appendChild(t);
     });
   } else if (CURRENT_COMPARE_METRIC) {
     const target = `${viewName}.${n.id}`;

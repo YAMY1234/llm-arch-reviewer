@@ -35,6 +35,18 @@ def _decoded(value: Any, strings: list[str]) -> Any:
     return strings[value] if isinstance(value, int) else value
 
 
+def drop_derived_parent_targets(
+    targets: list[str],
+    *,
+    rollup_targets: set[str],
+    scoped_targets: set[str],
+) -> list[str]:
+    """Keep direct/fusion evidence while discarding stale derived parents."""
+
+    derived = rollup_targets | scoped_targets
+    return [target for target in targets if target not in derived]
+
+
 def main() -> int:
     args = parse_args()
     model_ir = yaml.safe_load((args.model_root / "model_ir.yaml").read_text())
@@ -92,13 +104,17 @@ def main() -> int:
                     _decoded(target, strings)
                     for target in event.get("ir_targets") or []
                 ]
-                # Re-materialization must not preserve stale profile-wide
-                # parent targets from an older attribution policy.  Scoped
-                # parents are reattached below only when the event carries
-                # the required semantic execution coordinate.
-                existing = [
-                    target for target in existing if target not in scoped_targets
-                ]
+                # Re-materialization must not preserve stale derived parent
+                # targets from an older attribution policy.  Every drill or
+                # scoped parent is reattached below from the current Model IR
+                # ancestry/scope contract.  Keeping an old parent target here
+                # can make an adjacent norm or collective look like part of a
+                # drilled module even after its boundary has been corrected.
+                existing = drop_derived_parent_targets(
+                    existing,
+                    rollup_targets=rollup_targets,
+                    scoped_targets=scoped_targets,
+                )
                 decoded_event = {
                     "start_us": event["start_us"],
                     "duration_us": event["duration_us"],

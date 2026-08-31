@@ -9,6 +9,7 @@ from models.common.profile_rollup import (
     unique_drill_ancestors,
 )
 from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
+from scripts.materialize_profile_rollups import drop_derived_parent_targets
 
 
 def test_execution_module_boundary_rolls_into_outer_scope_only() -> None:
@@ -103,6 +104,19 @@ def test_direct_metric_ignores_shared_targets_from_another_owner() -> None:
     assert metrics["top.expand"]["active_gpu_ms"] == 0.006
     assert metrics["top.expand"]["gpu_residency_ms"] == 0.006
     assert metrics["detail.fused_owner"]["active_gpu_ms"] == 0.1
+
+
+def test_rematerialization_discards_stale_drill_and_scoped_parents() -> None:
+    assert drop_derived_parent_targets(
+        [
+            "detail.owner",
+            "detail.fused_member",
+            "stack.old_parent",
+            "stack.scoped_parent",
+        ],
+        rollup_targets={"stack.old_parent"},
+        scoped_targets={"stack.scoped_parent"},
+    ) == ["detail.owner", "detail.fused_member"]
 
 
 def test_scoped_parent_unions_only_matching_owner_occurrences() -> None:
@@ -233,7 +247,11 @@ def test_executable_drill_with_measured_descendants_requires_union_rollup() -> N
         "metric_kind": "inclusive_rollup",
         "attribution_status": "inclusive_rollup",
         "active_gpu_ms": 0.01,
-        "gpu_residency_ms": 0.01,
+        "gpu_residency_ms": 0.009994,
         "mapped_event_count": 1,
     }
     validate_executable_drill_rollups(model, profile)
+
+    profile["node_metrics"]["top.stack"]["gpu_residency_ms"] = 0.009
+    with pytest.raises(ValueError, match="residency .* is below active union"):
+        validate_executable_drill_rollups(model, profile)

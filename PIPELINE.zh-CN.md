@@ -367,6 +367,15 @@ owner、精确上下文过滤条件（例如 `substage=attention`）、期望 oc
 多个 parent。Occurrence 缺失、重复或作用域不一致时，profile 必须 fail
 closed，不能静默生成数字。
 
+重新 materialize 时，必须先从 timeline event 中移除所有旧的 drill/scoped
+派生父目标，再依据当前 Model IR 重新建立 ancestry；IR boundary 已变更时，旧
+parent tag 绝不能残留。
+
+Catalog compiler 默认强制校验可执行 drill 父节点的 rollup 闭包。未来模型若
+在 measured descendants 上仍把父节点发布为 structural，将直接拒绝构建；
+只有显式声明为 control/state boundary 的语义操作，或经过书面 pipeline
+exception，才能无 timing。
+
 这套 contract 与测试必须是模型无关的。测试至少证明：每个已接受 parent
 具有准确的 occurrence 集合；改变任一上下文坐标会改变归属；active 等于匹配
 区间并集，residency 等于匹配 duration 总和；parent 不属于 leaf fusion
@@ -544,6 +553,11 @@ IR geometry，并为每个 framework 显示一行 compact evidence；Timeline co
 artifact。可同步 normalized visible range 和 IR selection，但每个 profile 内的
 physical stream ID、event、fusion ownership 和 timing 必须原样保留。Fused member
 仍然只能链接到该 framework 唯一的 timing owner，不能复制 owner 的标量时间。
+每个 framework evidence row 必须读取该 profile 的 enriched cell，而不是 roll-up
+之前的 raw state：只要已选 descendant 存在 timing，可执行 drill parent 就必须
+显示该 framework 的数值化 `inclusive_rollup`，不得显示 `structural`。Graph 和
+detail pane 中每一条 `fused into` 都必须是真正可导航的超链接，跳转到该
+framework 的 architecture owner。
 
 ## 8. Acceptance Gate
 
