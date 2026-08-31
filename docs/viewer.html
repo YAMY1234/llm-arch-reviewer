@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-31-comparison-details-symbols-v1" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-31-comparison-relative-range-v2" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -635,6 +635,14 @@ const EMBEDDED_TIMELINE = new URLSearchParams(location.search).get("embeddedTime
 const EMBEDDED_DETAIL = new URLSearchParams(location.search).get("embeddedDetail") === "1";
 let EMBEDDED_RANGE_SYNC_SUPPRESS = false;
 let EMBEDDED_LAST_RANGE_KEY = "";
+// Comparison timelines have different formal-step durations and their matching
+// IR modules occur at different absolute/normalized timestamps. Keep the
+// locally centered module as each iframe's anchor, then synchronize subsequent
+// pan/zoom gestures as affine transforms relative to the current window.
+let EMBEDDED_RANGE_SYNC_BASE = null;
+let EMBEDDED_SCROLL_SYNC_SUPPRESS = false;
+let EMBEDDED_SCROLL_SYNC_BASE = null;
+let EMBEDDED_SCROLL_SYNC_FRAME = 0;
 if (EMBEDDED_TIMELINE) document.body.classList.add("embedded-timeline");
 if (EMBEDDED_DETAIL) document.body.classList.add("embedded-detail");
 
@@ -3045,6 +3053,7 @@ function resetTimelineRange() {
   if (!step) return;
   TIMELINE_CURSOR_US = null;
   TIMELINE_RANGE = {startUs: 0, endUs: Number(step.duration_us)};
+  if (EMBEDDED_TIMELINE) EMBEDDED_RANGE_SYNC_BASE = {...TIMELINE_RANGE};
   renderTimeline();
 }
 
@@ -3717,16 +3726,76 @@ function publishEmbeddedTimelineRange() {
   if (!EMBEDDED_TIMELINE || EMBEDDED_RANGE_SYNC_SUPPRESS || !TIMELINE_DATA) return;
   const duration = Number(currentTimelineStep()?.duration_us || 0);
   if (!(duration > 0)) return;
+  const current = {...TIMELINE_RANGE};
   const start = Math.max(0, Math.min(1, TIMELINE_RANGE.startUs / duration));
   const end = Math.max(start, Math.min(1, TIMELINE_RANGE.endUs / duration));
   const key = `${start.toFixed(7)}:${end.toFixed(7)}`;
   if (key === EMBEDDED_LAST_RANGE_KEY) return;
   EMBEDDED_LAST_RANGE_KEY = key;
+  const base = EMBEDDED_RANGE_SYNC_BASE;
+  const baseSpan = base ? Number(base.endUs) - Number(base.startUs) : 0;
+  const currentSpan = Number(current.endUs) - Number(current.startUs);
+  if (base && baseSpan > 0 && currentSpan > 0) {
+    const baseCenter = (Number(base.startUs) + Number(base.endUs)) / 2;
+    const currentCenter = (Number(current.startUs) + Number(current.endUs)) / 2;
+    window.parent.postMessage({
+      type: "llm-arch-reviewer:timeline-transform",
+      spanScale: currentSpan / baseSpan,
+      centerShift: (currentCenter - baseCenter) / baseSpan,
+    }, location.origin);
+  } else {
+    // First-load/reset compatibility. Once each comparison iframe has
+    // independently centered its matching IR module, transforms are used.
+    window.parent.postMessage({
+      type: "llm-arch-reviewer:timeline-range",
+      start,
+      end,
+    }, location.origin);
+  }
+  EMBEDDED_RANGE_SYNC_BASE = current;
+}
+
+function applyEmbeddedTimelineTransform(spanScale, centerShift) {
+  const duration = Number(currentTimelineStep()?.duration_us || 0);
+  const oldSpan = Number(TIMELINE_RANGE.endUs) - Number(TIMELINE_RANGE.startUs);
+  const scale = Number(spanScale);
+  const shift = Number(centerShift);
+  if (!(duration > 0) || !(oldSpan > 0) || !(scale > 0)
+      || !Number.isFinite(scale) || !Number.isFinite(shift)) return false;
+  const nextSpan = Math.max(2, Math.min(duration, oldSpan * scale));
+  const oldCenter = (Number(TIMELINE_RANGE.startUs) + Number(TIMELINE_RANGE.endUs)) / 2;
+  const requestedCenter = oldCenter + shift * oldSpan;
+  const start = Math.max(0, Math.min(duration - nextSpan, requestedCenter - nextSpan / 2));
+  TIMELINE_RANGE = {startUs: start, endUs: start + nextSpan};
+  EMBEDDED_RANGE_SYNC_BASE = {...TIMELINE_RANGE};
+  return true;
+}
+
+function publishEmbeddedTimelineScroll() {
+  if (!EMBEDDED_TIMELINE || EMBEDDED_SCROLL_SYNC_SUPPRESS || !TIMELINE_DATA) return;
+  const viewport = document.getElementById("timeline-viewport");
+  const current = Number(viewport?.scrollTop || 0);
+  const base = EMBEDDED_SCROLL_SYNC_BASE;
+  const height = Number(viewport?.clientHeight || 0);
+  EMBEDDED_SCROLL_SYNC_BASE = current;
+  if (base == null || !(height > 0) || Math.abs(current - base) < 0.5) return;
   window.parent.postMessage({
-    type: "llm-arch-reviewer:timeline-range",
-    start,
-    end,
+    type: "llm-arch-reviewer:timeline-vertical-transform",
+    viewportShift: (current - base) / height,
   }, location.origin);
+}
+
+function applyEmbeddedTimelineScrollTransform(viewportShift) {
+  const viewport = document.getElementById("timeline-viewport");
+  const shift = Number(viewportShift);
+  if (!viewport || !Number.isFinite(shift)) return false;
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  viewport.scrollTop = Math.max(
+    0,
+    Math.min(maxScrollTop, viewport.scrollTop + shift * viewport.clientHeight),
+  );
+  EMBEDDED_SCROLL_SYNC_BASE = Number(viewport.scrollTop || 0);
+  return true;
 }
 
 function renderTimeline() {
@@ -4471,7 +4540,15 @@ function initTimelineUI() {
   document.getElementById("timeline-perfetto").onclick = openSelectedRangeInPerfetto;
 
   const canvas = document.getElementById("timeline-canvas");
+  const viewport = document.getElementById("timeline-viewport");
   const tooltip = document.getElementById("timeline-tooltip");
+  viewport.addEventListener("scroll", () => {
+    if (!EMBEDDED_TIMELINE || EMBEDDED_SCROLL_SYNC_SUPPRESS || EMBEDDED_SCROLL_SYNC_FRAME) return;
+    EMBEDDED_SCROLL_SYNC_FRAME = requestAnimationFrame(() => {
+      EMBEDDED_SCROLL_SYNC_FRAME = 0;
+      publishEmbeddedTimelineScroll();
+    });
+  });
   let drag = null;
   canvas.addEventListener("mousedown", event => {
     drag = {x: event.offsetX, range: {...TIMELINE_RANGE}, moved: false};
@@ -4637,7 +4714,11 @@ function initComparisonMessaging() {
       });
       return;
     }
-    if (!EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-range") {
+    if (!EMBEDDED_TIMELINE && [
+      "llm-arch-reviewer:timeline-range",
+      "llm-arch-reviewer:timeline-transform",
+      "llm-arch-reviewer:timeline-vertical-transform",
+    ].includes(message.data.type)) {
       broadcastComparisonTimeline(message.data, message.source);
       return;
     }
@@ -4645,11 +4726,17 @@ function initComparisonMessaging() {
       const [viewName, nodeId] = String(message.data.target || "").split(".", 2);
       if (!viewName || !nodeId) return;
       if (message.data.center) {
-        if (message.data.independentCenter) EMBEDDED_RANGE_SYNC_SUPPRESS = true;
+        if (message.data.independentCenter) {
+          EMBEDDED_RANGE_SYNC_SUPPRESS = true;
+          EMBEDDED_SCROLL_SYNC_SUPPRESS = true;
+        }
         centerNodeOnTimeline(viewName, nodeId);
         if (message.data.independentCenter) {
           requestAnimationFrame(() => requestAnimationFrame(() => {
             EMBEDDED_RANGE_SYNC_SUPPRESS = false;
+            EMBEDDED_SCROLL_SYNC_SUPPRESS = false;
+            EMBEDDED_RANGE_SYNC_BASE = {...TIMELINE_RANGE};
+            EMBEDDED_SCROLL_SYNC_BASE = Number(document.getElementById("timeline-viewport")?.scrollTop || 0);
             EMBEDDED_LAST_RANGE_KEY = `${(TIMELINE_RANGE.startUs / Number(currentTimelineStep()?.duration_us || 1)).toFixed(7)}:${(TIMELINE_RANGE.endUs / Number(currentTimelineStep()?.duration_us || 1)).toFixed(7)}`;
           }));
         }
@@ -4694,8 +4781,23 @@ function initComparisonMessaging() {
         startUs: Math.max(0, Math.min(duration, Number(message.data.start) * duration)),
         endUs: Math.max(0, Math.min(duration, Number(message.data.end) * duration)),
       };
+      EMBEDDED_RANGE_SYNC_BASE = {...TIMELINE_RANGE};
       renderTimeline();
       requestAnimationFrame(() => { EMBEDDED_RANGE_SYNC_SUPPRESS = false; });
+      return;
+    }
+    if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-transform") {
+      EMBEDDED_RANGE_SYNC_SUPPRESS = true;
+      if (applyEmbeddedTimelineTransform(message.data.spanScale, message.data.centerShift)) {
+        renderTimeline();
+      }
+      requestAnimationFrame(() => { EMBEDDED_RANGE_SYNC_SUPPRESS = false; });
+      return;
+    }
+    if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-vertical-transform") {
+      EMBEDDED_SCROLL_SYNC_SUPPRESS = true;
+      applyEmbeddedTimelineScrollTransform(message.data.viewportShift);
+      requestAnimationFrame(() => { EMBEDDED_SCROLL_SYNC_SUPPRESS = false; });
     }
   });
 }

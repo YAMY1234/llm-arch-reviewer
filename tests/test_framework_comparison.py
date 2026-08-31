@@ -41,6 +41,11 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert "renderComparisonDetails" in viewer
     assert "comparison-detail-frame" in viewer
     assert "independentCenter: true" in viewer
+    assert 'type: "llm-arch-reviewer:timeline-transform"' in viewer
+    assert 'type: "llm-arch-reviewer:timeline-vertical-transform"' in viewer
+    assert "function applyEmbeddedTimelineTransform" in viewer
+    assert "function applyEmbeddedTimelineScrollTransform" in viewer
+    assert "EMBEDDED_RANGE_SYNC_BASE = {...TIMELINE_RANGE}" in viewer
     assert "dimensionResolutionScope" in viewer
     assert "Tensor symbols and profile-resolved dimensions" in viewer
     assert "symbolic shape" in viewer
@@ -124,7 +129,7 @@ def test_real_browser_comparison_audit_covers_release_contract() -> None:
         "tensor_symbol_resolution",
         "profile_symbol_refresh",
         "mtp_stage_scoped_dimension",
-        "normalized_range_sync",
+        "relative_range_transform_sync",
         "url_history_reload",
         "glm53_real_sglang_vllm",
         "distinct_execution_ir",

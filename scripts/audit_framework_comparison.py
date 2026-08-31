@@ -421,25 +421,189 @@ def main(args: argparse.Namespace | None = None) -> int:
             checks["comparison_kernel_peer_details"] = 2
         checks["timeline_to_architecture"] = 1 if hit else 0
 
-        # Ranges synchronize by normalized formal-step coordinates; physical
-        # event identities and stream ids remain local to each iframe.
+        # The two frameworks have different formal-step durations and matching
+        # modules at different timestamps.  After independent centering, zoom
+        # and pan must therefore synchronize as relative transforms, not as one
+        # absolute normalized range that would make one anchor jump away.
+        source_before = source.evaluate(
+            """() => ({
+              start: TIMELINE_RANGE.startUs,
+              end: TIMELINE_RANGE.endUs,
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
+        peer_before = peer.evaluate(
+            """() => ({
+              start: TIMELINE_RANGE.startUs,
+              end: TIMELINE_RANGE.endUs,
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
         source.evaluate(
             """() => {
-              const duration = Number(currentTimelineStep().duration_us);
-              TIMELINE_RANGE = {startUs: duration * 0.2, endUs: duration * 0.55};
+              const base = {...TIMELINE_RANGE};
+              const center = (base.startUs + base.endUs) / 2;
+              const nextSpan = (base.endUs - base.startUs) * 0.65;
+              EMBEDDED_RANGE_SYNC_BASE = base;
+              TIMELINE_RANGE = {
+                startUs: center - nextSpan / 2,
+                endUs: center + nextSpan / 2,
+              };
               EMBEDDED_LAST_RANGE_KEY = '';
               publishEmbeddedTimelineRange();
             }"""
         )
         peer.wait_for_function(
-            """() => {
-              const duration = Number(currentTimelineStep().duration_us);
-              return Math.abs(TIMELINE_RANGE.startUs / duration - 0.2) < 0.002
-                && Math.abs(TIMELINE_RANGE.endUs / duration - 0.55) < 0.002;
+            """before => {
+              const span = TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs;
+              return Math.abs(span / before.span - 0.65) < 0.002;
             }""",
+            arg=peer_before,
             timeout=60_000,
         )
-        checks["normalized_range_sync"] = 1
+        source_after = source.evaluate(
+            """() => ({
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
+        peer_after = peer.evaluate(
+            """() => ({
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
+        source.evaluate(
+            """() => {
+              const base = {...TIMELINE_RANGE};
+              const shift = (base.endUs - base.startUs) * 0.10;
+              EMBEDDED_RANGE_SYNC_BASE = base;
+              TIMELINE_RANGE = {
+                startUs: base.startUs + shift,
+                endUs: base.endUs + shift,
+              };
+              EMBEDDED_LAST_RANGE_KEY = '';
+              publishEmbeddedTimelineRange();
+            }"""
+        )
+        peer.wait_for_function(
+            """before => {
+              const center = (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2;
+              return Math.abs((center - before.center) / before.span - 0.10) < 0.002;
+            }""",
+            arg=peer_after,
+            timeout=60_000,
+        )
+        source_after_pan = source.evaluate(
+            """() => ({
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
+        peer_after_pan = peer.evaluate(
+            """() => ({
+              center: (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2,
+              span: TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs,
+            })"""
+        )
+        source_scroll_before = source.evaluate(
+            """() => {
+              const viewport = document.querySelector('#timeline-viewport');
+              return {
+                top: viewport.scrollTop,
+                height: viewport.clientHeight,
+                max: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+              };
+            }"""
+        )
+        peer_scroll_before = peer.evaluate(
+            """() => {
+              const viewport = document.querySelector('#timeline-viewport');
+              return {
+                top: viewport.scrollTop,
+                height: viewport.clientHeight,
+                max: Math.max(0, viewport.scrollHeight - viewport.clientHeight),
+              };
+            }"""
+        )
+        vertical_shift = source.evaluate(
+            """() => {
+              const viewport = document.querySelector('#timeline-viewport');
+              const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+              const requested = max - viewport.scrollTop >= viewport.clientHeight * 0.08
+                ? 0.08 : -0.08;
+              EMBEDDED_SCROLL_SYNC_BASE = viewport.scrollTop;
+              viewport.scrollTop += requested * viewport.clientHeight;
+              return (viewport.scrollTop - EMBEDDED_SCROLL_SYNC_BASE) / viewport.clientHeight;
+            }"""
+        )
+        peer.wait_for_function(
+            """args => {
+              const viewport = document.querySelector('#timeline-viewport');
+              const expected = Math.max(
+                0,
+                Math.min(args.before.max, args.before.top + args.shift * args.before.height),
+              );
+              return Math.abs(viewport.scrollTop - expected) < 1;
+            }""",
+            arg={"before": peer_scroll_before, "shift": vertical_shift},
+            timeout=60_000,
+        )
+        source_scroll_after = source.evaluate(
+            """() => document.querySelector('#timeline-viewport').scrollTop"""
+        )
+        peer_scroll_after = peer.evaluate(
+            """() => document.querySelector('#timeline-viewport').scrollTop"""
+        )
+        require(
+            abs(source_after["span"] / source_before["span"] - 0.65) < 0.002
+            and abs(peer_after["span"] / peer_before["span"] - 0.65) < 0.002
+            and abs(source_after["center"] - source_before["center"]) < 0.01
+            and abs(peer_after["center"] - peer_before["center"]) < 0.01
+            and abs(
+                (source_after_pan["center"] - source_after["center"])
+                / source_after["span"]
+                - 0.10
+            ) < 0.002
+            and abs(
+                (peer_after_pan["center"] - peer_after["center"])
+                / peer_after["span"]
+                - 0.10
+            ) < 0.002
+            and abs(
+                (source_scroll_after - source_scroll_before["top"])
+                / source_scroll_before["height"]
+                - vertical_shift
+            ) < 0.01
+            and abs(
+                peer_scroll_after
+                - max(
+                    0,
+                    min(
+                        peer_scroll_before["max"],
+                        peer_scroll_before["top"]
+                        + vertical_shift * peer_scroll_before["height"],
+                    ),
+                )
+            ) < 1,
+            "comparison_relative_transform_sync",
+            actual={
+                "source_before": source_before,
+                "source_after": source_after,
+                "source_after_pan": source_after_pan,
+                "peer_before": peer_before,
+                "peer_after": peer_after,
+                "peer_after_pan": peer_after_pan,
+                "vertical_shift": vertical_shift,
+                "source_scroll_before": source_scroll_before,
+                "source_scroll_after": source_scroll_after,
+                "peer_scroll_before": peer_scroll_before,
+                "peer_scroll_after": peer_scroll_after,
+            },
+        )
+        checks["relative_range_transform_sync"] = 1
 
         # Unselect one implementation (pushState), then exercise browser back
         # and reload to prove query and hash state are durable.
