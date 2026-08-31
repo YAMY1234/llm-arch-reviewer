@@ -52,6 +52,12 @@ provenance 时，Compiler 必须 fail closed。特别是 speculative draft width
 当前 drill path 下引用的每个动态 symbol 都有效时，Viewer 才能附加 resolved shape，
 否则必须显示 unresolved symbol 和原因。
 
+已经命名的 axis 必须在 architecture edge 上保留其名字。即使 checkpoint constant
+已知，Catalog 也不能把 `[N,GDN_value_heads,GDN_value_head_dim]` 退化成没有语义的
+`[N,64,128]`。主图先显示 symbolic shape；只有 profile/stage 中所有 symbol 都完成
+验证后，才允许另起一行显示 `resolved ...`。Semantic closure test 必须拒绝把
+Catalog 已声明的 model-specific symbol 重新写成旧数字常量。
+
 每个 drill-down 都必须声明 boundary direction 和可验证的 boundary contract。子 view 的输入输出必须与 parent edge contract 一致。对于 mHC pre-collapse 与 post-sublayer recombination 这种跨多次调用的完整语义生命周期，必须显式声明 scoped parent nodes 和中间 handoff，不能伪装成单个节点等价。由 runtime 提供输入的 optional entry 也必须明确标记，不能绕过校验。
 
 #### Repeated layer 与展开规则

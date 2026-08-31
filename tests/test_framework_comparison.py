@@ -45,6 +45,9 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert "Tensor symbols and profile-resolved dimensions" in viewer
     assert "symbolic shape" in viewer
     assert "resolved shape" in viewer
+    assert 'drawEdge(inner, e, layoutedEdge, viewName)' in viewer
+    assert 'parts.push({text: shape.symbolic, cls: "shape-symbolic"})' in viewer
+    assert 'parts.push({text: `resolved ${shape.resolved}`, cls: "shape-resolved"})' in viewer
     assert "irTargetExistsForNavigation" in viewer
     assert "showComparisonFusionOwnerInArchitecture(context.implementation_id" in viewer
     assert "profile_id.includes" not in viewer

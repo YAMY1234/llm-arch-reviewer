@@ -1,7 +1,7 @@
 schema_version: model-ir.v2
 model_id: qwen35
 model_label: Qwen3.5-397B-A17B-NVFP4-V2 multimodal hybrid MoE
-ir_version: 3
+ir_version: 4
 default_view: top
 default_execution_path: tp8
 dimensions:
@@ -365,9 +365,9 @@ views:
       identity: top.embedding_to_multimodal_injection
     - from: vision_frontend
       to: multimodal_injection
-      shape: '[M,4096]'
+      shape: '[M,H]'
       dtype: bf16
-      layout: logical contiguous [M,4096]
+      layout: logical contiguous [M,H]
       state: ephemeral_forward_value
       identity: top.vision_frontend_to_multimodal_injection
     - from: multimodal_injection
@@ -381,9 +381,9 @@ views:
       to: decoder_stack
       kind: state_read
       label: committed KV/GDN state
-      shape: KV[15,B,2,S,256] + conv[45,B,12288,3] + recurrent[45,B,64,128,128]
+      shape: KV[15,B,KV_heads,S,attention_head_dim] + conv[45,B,12288,3] + recurrent[45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       dtype: fp8_e4m3 + bf16 + float32
-      layout: logical contiguous KV[15,B,2,S,256] + conv[45,B,12288,3] + recurrent[45,B,64,128,128]
+      layout: logical contiguous KV[15,B,KV_heads,S,attention_head_dim] + conv[45,B,12288,3] + recurrent[45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       state: persistent_request_state
       identity: committed KV/GDN state
     - from: decoder_stack
@@ -2638,13 +2638,13 @@ views:
       label: Read GDN recurrent state
       shape: cache
       semantic_op: qwen3_5.gdn.recurrent_state.read
-      tensor: '[B,64,128,128]'
+      tensor: '[B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]'
       dtype: float32
       semantic_details:
         operators:
         - qwen3_5.gdn.recurrent_state.read
         math:
-        - S_prev := recurrent matrices [B,64,128,128] in float32
+        - S_prev := recurrent matrices [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] in float32
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -2776,55 +2776,55 @@ views:
     - from: causal_conv
       to: gated_delta_recurrence
       label: convolved Q/K/V
-      shape: Q,K,V [N,16x128;16x128;64x128]
+      shape: Q,K [N,GDN_key_heads,GDN_key_head_dim] + V [N,GDN_value_heads,GDN_value_head_dim]
       dtype: bf16
-      layout: logical contiguous Q,K,V [N,16x128;16x128;64x128]
+      layout: logical contiguous Q,K [N,GDN_key_heads,GDN_key_head_dim] + V [N,GDN_value_heads,GDN_value_head_dim]
       state: ephemeral_forward_value
       identity: convolved Q/K/V
     - from: ba_projection
       to: gated_delta_recurrence
       label: decay/update gates
-      shape: B,A [N,64] each
+      shape: B,A [N,GDN_value_heads] each
       dtype: bf16
-      layout: logical contiguous B,A [N,64] each
+      layout: logical contiguous B,A [N,GDN_value_heads] each
       state: ephemeral_forward_value
       identity: decay/update gates
     - from: recurrent_state_read
       to: gated_delta_recurrence
       kind: state_read
-      shape: '[B,64,128,128]'
+      shape: '[B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]'
       dtype: float32
-      layout: logical contiguous [B,64,128,128]
+      layout: logical contiguous [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       state: persistent_request_state
       identity: gdn_attention.recurrent_state_read_to_gated_delta_recurrence
     - from: gated_delta_recurrence
       to: state_write
       kind: state_write
-      shape: conv_next [B,12288,3] + recurrent_next [B,64,128,128]
+      shape: conv_next [B,12288,3] + recurrent_next [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       dtype: bf16 + float32
-      layout: logical contiguous conv_next [B,12288,3] + recurrent_next [B,64,128,128]
+      layout: logical contiguous conv_next [B,12288,3] + recurrent_next [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       state: persistent_request_state
       identity: gdn_attention.gated_delta_recurrence_to_state_write
     - from: gated_delta_recurrence
       to: output_gate_norm
-      shape: '[N,64,128]'
+      shape: '[N,GDN_value_heads,GDN_value_head_dim]'
       dtype: bf16
-      layout: logical contiguous [N,64,128]
+      layout: logical contiguous [N,GDN_value_heads,GDN_value_head_dim]
       state: ephemeral_forward_value
       identity: gdn_attention.gated_delta_recurrence_to_output_gate_norm
     - from: qkvz_projection
       to: output_gate_norm
       label: Z gate
-      shape: Z [N,64,128]
+      shape: Z [N,GDN_value_heads,GDN_value_head_dim]
       dtype: bf16
-      layout: logical contiguous Z [N,64,128]
+      layout: logical contiguous Z [N,GDN_value_heads,GDN_value_head_dim]
       state: ephemeral_forward_value
       identity: Z gate
     - from: output_gate_norm
       to: output_projection
       dtype: bf16
-      shape: '[N,8192]'
-      layout: logical contiguous [N,8192]
+      shape: '[N,GDN_value_heads×GDN_value_head_dim]'
+      layout: logical contiguous [N,GDN_value_heads×GDN_value_head_dim]
       state: ephemeral_forward_value
       identity: gdn_attention.output_gate_norm_to_output_projection
     - from: output_projection
@@ -3076,7 +3076,7 @@ views:
         operators:
         - qwen3_5.attention.project_qkv
         math:
-        - '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,32,256] and K,V:[N,2,256]'
+        - '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,Q_heads,attention_head_dim] and K,V:[N,KV_heads,attention_head_dim]'
         runtime_mapping:
           expectation: measured
           profile_leaf: full_attention.qkv_projection
@@ -3131,7 +3131,7 @@ views:
         operators:
         - qwen3_5.attention.kv_cache.read
         math:
-        - K_cache,V_cache := committed per-layer full-attention cache [B,2,S,256]
+        - K_cache,V_cache := committed per-layer full-attention cache [B,KV_heads,S,attention_head_dim]
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -3240,80 +3240,80 @@ views:
     - from: qkv_projection
       to: qk_norm
       label: Q/K
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: Q/K
     - from: qk_norm
       to: partial_rope
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: full_attention.qk_norm_to_partial_rope
     - from: partial_rope
       to: causal_gqa
       label: Q/K
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: Q/K
     - from: qkv_projection
       to: causal_gqa
       label: V + gate
-      shape: V [N,2,256] + G [N,32,256]
+      shape: V [N,KV_heads,attention_head_dim] + G [N,Q_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous V [N,2,256] + G [N,32,256]
+      layout: logical contiguous V [N,KV_heads,attention_head_dim] + G [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: V + gate
     - from: kv_state_read
       to: causal_gqa
       kind: state_read
-      shape: K,V [B,2,S,256]
+      shape: K,V [B,KV_heads,S,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous K,V [B,2,S,256]
+      layout: logical contiguous K,V [B,KV_heads,S,attention_head_dim]
       state: persistent_request_state
       identity: full_attention.kv_state_read_to_causal_gqa
     - from: partial_rope
       to: kv_state_write
       kind: state_write
       label: K
-      shape: K [N,2,256]
+      shape: K [N,KV_heads,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous K [N,2,256]
+      layout: logical contiguous K [N,KV_heads,attention_head_dim]
       state: persistent_request_state
       identity: K
     - from: qkv_projection
       to: kv_state_write
       kind: state_write
       label: V
-      shape: V [N,2,256]
+      shape: V [N,KV_heads,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous V [N,2,256]
+      layout: logical contiguous V [N,KV_heads,attention_head_dim]
       state: persistent_request_state
       identity: V
     - from: causal_gqa
       to: attention_output_gate
-      shape: '[N,32,256]'
+      shape: '[N,Q_heads,attention_head_dim]'
       dtype: bf16
-      layout: logical contiguous [N,32,256]
+      layout: logical contiguous [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: full_attention.causal_gqa_to_attention_output_gate
     - from: qkv_projection
       to: attention_output_gate
       label: gate
-      shape: G [N,32,256]
+      shape: G [N,Q_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous G [N,32,256]
+      layout: logical contiguous G [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: gate
     - from: attention_output_gate
       to: output_projection
       dtype: bf16
-      shape: '[N,8192]'
-      layout: logical contiguous [N,8192]
+      shape: '[N,Q_heads×attention_head_dim]'
+      layout: logical contiguous [N,Q_heads×attention_head_dim]
       state: ephemeral_forward_value
       identity: full_attention.attention_output_gate_to_output_projection
     - from: output_projection
@@ -3719,7 +3719,7 @@ views:
         operators:
         - generation.mtp.attention.project_qkv
         math:
-        - '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,32,256] and K,V:[N,2,256]'
+        - '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,Q_heads,attention_head_dim] and K,V:[N,KV_heads,attention_head_dim]'
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -3771,7 +3771,7 @@ views:
         operators:
         - generation.mtp.attention.kv_cache.read
         math:
-        - K_cache,V_cache := committed per-layer full-attention cache [B,2,S,256]
+        - K_cache,V_cache := committed per-layer full-attention cache [B,KV_heads,S,attention_head_dim]
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -3877,80 +3877,80 @@ views:
     - from: qkv_projection
       to: qk_norm
       label: Q/K
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: Q/K
     - from: qk_norm
       to: partial_rope
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: mtp_full_attention.qk_norm_to_partial_rope
     - from: partial_rope
       to: causal_gqa
       label: Q/K
-      shape: Q [N,32,256] + K [N,2,256]
+      shape: Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous Q [N,32,256] + K [N,2,256]
+      layout: logical contiguous Q [N,Q_heads,attention_head_dim] + K [N,KV_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: Q/K
     - from: qkv_projection
       to: causal_gqa
       label: V + gate
-      shape: V [N,2,256] + G [N,32,256]
+      shape: V [N,KV_heads,attention_head_dim] + G [N,Q_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous V [N,2,256] + G [N,32,256]
+      layout: logical contiguous V [N,KV_heads,attention_head_dim] + G [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: V + gate
     - from: kv_state_read
       to: causal_gqa
       kind: state_read
-      shape: K,V [B,2,S,256]
+      shape: K,V [B,KV_heads,S,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous K,V [B,2,S,256]
+      layout: logical contiguous K,V [B,KV_heads,S,attention_head_dim]
       state: persistent_request_state
       identity: mtp_full_attention.kv_state_read_to_causal_gqa
     - from: partial_rope
       to: kv_state_write
       kind: state_write
       label: K
-      shape: K [N,2,256]
+      shape: K [N,KV_heads,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous K [N,2,256]
+      layout: logical contiguous K [N,KV_heads,attention_head_dim]
       state: persistent_request_state
       identity: K
     - from: qkv_projection
       to: kv_state_write
       kind: state_write
       label: V
-      shape: V [N,2,256]
+      shape: V [N,KV_heads,attention_head_dim]
       dtype: fp8_e4m3
-      layout: logical contiguous V [N,2,256]
+      layout: logical contiguous V [N,KV_heads,attention_head_dim]
       state: persistent_request_state
       identity: V
     - from: causal_gqa
       to: attention_output_gate
-      shape: '[N,32,256]'
+      shape: '[N,Q_heads,attention_head_dim]'
       dtype: bf16
-      layout: logical contiguous [N,32,256]
+      layout: logical contiguous [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: mtp_full_attention.causal_gqa_to_attention_output_gate
     - from: qkv_projection
       to: attention_output_gate
       label: gate
-      shape: G [N,32,256]
+      shape: G [N,Q_heads,attention_head_dim]
       dtype: bf16
-      layout: logical contiguous G [N,32,256]
+      layout: logical contiguous G [N,Q_heads,attention_head_dim]
       state: ephemeral_forward_value
       identity: gate
     - from: attention_output_gate
       to: output_projection
       dtype: bf16
-      shape: '[N,8192]'
-      layout: logical contiguous [N,8192]
+      shape: '[N,Q_heads×attention_head_dim]'
+      layout: logical contiguous [N,Q_heads×attention_head_dim]
       state: ephemeral_forward_value
       identity: mtp_full_attention.attention_output_gate_to_output_projection
     - from: output_projection
@@ -4129,7 +4129,7 @@ views:
         operators:
         - qwen3_5.state.attention_keys
         math:
-        - K_l := committed full-attention keys [B,2,S,256] for each of 15 layers
+        - K_l := committed full-attention keys [B,KV_heads,S,attention_head_dim] for each of 15 layers
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -4150,7 +4150,7 @@ views:
         operators:
         - qwen3_5.state.attention_values
         math:
-        - V_l := committed full-attention values [B,2,S,256] for each of 15 layers
+        - V_l := committed full-attention values [B,KV_heads,S,attention_head_dim] for each of 15 layers
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -4229,7 +4229,7 @@ views:
         operators:
         - qwen3_5.state.gdn_recurrent
         math:
-        - S_l := committed recurrent matrices [B,64,128,128] float32 for each of 45 GDN layers
+        - S_l := committed recurrent matrices [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] float32 for each of 45 GDN layers
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -4280,33 +4280,33 @@ views:
     - from: attention_keys
       to: verify_journal
       kind: snapshot
-      shape: '[15,B,2,S,256]'
+      shape: '[15,B,KV_heads,S,attention_head_dim]'
       dtype: fp8_e4m3
-      layout: logical contiguous [15,B,2,S,256]
+      layout: logical contiguous [15,B,KV_heads,S,attention_head_dim]
       state: persistent_request_state
       identity: state_tensors.attention_keys_to_verify_journal
     - from: attention_values
       to: verify_journal
       kind: snapshot
-      shape: '[15,B,2,S,256]'
+      shape: '[15,B,KV_heads,S,attention_head_dim]'
       dtype: fp8_e4m3
-      layout: logical contiguous [15,B,2,S,256]
+      layout: logical contiguous [15,B,KV_heads,S,attention_head_dim]
       state: persistent_request_state
       identity: state_tensors.attention_values_to_verify_journal
     - from: mtp_draft_keys
       to: verify_journal
       kind: draft_boundary
-      shape: '[1,B,2,S_draft,256]'
+      shape: '[1,B,KV_heads,S_draft,attention_head_dim]'
       dtype: fp8_e4m3
-      layout: logical contiguous [1,B,2,S_draft,256]
+      layout: logical contiguous [1,B,KV_heads,S_draft,attention_head_dim]
       state: persistent_request_state
       identity: state_tensors.mtp_draft_keys_to_verify_journal
     - from: mtp_draft_values
       to: verify_journal
       kind: draft_boundary
-      shape: '[1,B,2,S_draft,256]'
+      shape: '[1,B,KV_heads,S_draft,attention_head_dim]'
       dtype: fp8_e4m3
-      layout: logical contiguous [1,B,2,S_draft,256]
+      layout: logical contiguous [1,B,KV_heads,S_draft,attention_head_dim]
       state: persistent_request_state
       identity: state_tensors.mtp_draft_values_to_verify_journal
     - from: gdn_conv_windows
@@ -4320,9 +4320,9 @@ views:
     - from: gdn_recurrent_states
       to: verify_journal
       kind: snapshot
-      shape: '[45,B,64,128,128]'
+      shape: '[45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]'
       dtype: float32
-      layout: logical contiguous [45,B,64,128,128]
+      layout: logical contiguous [45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]
       state: persistent_request_state
       identity: state_tensors.gdn_recurrent_states_to_verify_journal
     - from: committed_lengths
@@ -5109,7 +5109,7 @@ views:
         operators:
         - vision.output
         math:
-        - media_features := merged vision features [M,4096]
+        - media_features := merged vision features [M,H]
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -5129,37 +5129,37 @@ views:
       identity: vision_frontend.vision_input_to_patch_projection
     - from: patch_projection
       to: position_embedding
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.patch_projection_to_position_embedding
     - from: position_embedding
       to: rotary_coordinates
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.position_embedding_to_rotary_coordinates
     - from: rotary_coordinates
       to: vision_blocks
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.rotary_coordinates_to_vision_blocks
     - from: vision_blocks
       to: spatial_group
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.vision_blocks_to_spatial_group
     - from: spatial_group
       to: merger_norm
-      shape: '[M,4,1152]'
+      shape: '[M,4,Hv]'
       dtype: bf16
-      layout: logical contiguous [M,4,1152]
+      layout: logical contiguous [M,4,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.spatial_group_to_merger_norm
     - from: merger_norm
@@ -5171,23 +5171,23 @@ views:
       identity: vision_frontend.merger_norm_to_merger_fc1
     - from: merger_fc1
       to: merger_gelu
-      shape: '[M,1152]'
+      shape: '[M,Hv]'
       dtype: bf16
-      layout: logical contiguous [M,1152]
+      layout: logical contiguous [M,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.merger_fc1_to_merger_gelu
     - from: merger_gelu
       to: merger_fc2
-      shape: '[M,1152]'
+      shape: '[M,Hv]'
       dtype: bf16
-      layout: logical contiguous [M,1152]
+      layout: logical contiguous [M,Hv]
       state: ephemeral_forward_value
       identity: vision_frontend.merger_gelu_to_merger_fc2
     - from: merger_fc2
       to: vision_output
-      shape: '[M,4096]'
+      shape: '[M,H]'
       dtype: bf16
-      layout: logical contiguous [M,4096]
+      layout: logical contiguous [M,H]
       state: ephemeral_forward_value
       identity: vision_frontend.merger_fc2_to_vision_output
   vision_block:
@@ -5201,7 +5201,7 @@ views:
         operators:
         - vision_block.input
         math:
-        - X := vision-block input [P,1152]
+        - X := vision-block input [P,Hv]
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -5402,16 +5402,16 @@ views:
     edges:
     - from: block_input
       to: norm1
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.block_input_to_norm1
     - from: norm1
       to: qkv_projection
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.norm1_to_qkv_projection
     - from: qkv_projection
@@ -5437,31 +5437,31 @@ views:
       identity: vision_block.attention_to_attention_output
     - from: attention_output
       to: attention_residual
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.attention_output_to_attention_residual
     - from: block_input
       to: attention_residual
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       kind: residual
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.block_input_to_attention_residual
     - from: attention_residual
       to: norm2
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.attention_residual_to_norm2
     - from: norm2
       to: fc1
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.norm2_to_fc1
     - from: fc1
@@ -5480,17 +5480,17 @@ views:
       identity: vision_block.gelu_to_fc2
     - from: fc2
       to: block_output
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.fc2_to_block_output
     - from: attention_residual
       to: block_output
-      shape: '[P,1152]'
+      shape: '[P,Hv]'
       kind: residual
       dtype: bf16
-      layout: logical contiguous [P,1152]
+      layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.attention_residual_to_block_output
 semantic_revision: 6
@@ -5541,7 +5541,7 @@ semantic_contract:
       equation: X := normalized full-attention input [N,H]
     generation.mtp.attention.kv_cache.read:
       kind: state
-      equation: K_cache,V_cache := committed per-layer full-attention cache [B,2,S,256]
+      equation: K_cache,V_cache := committed per-layer full-attention cache [B,KV_heads,S,attention_head_dim]
     generation.mtp.attention.kv_cache.write:
       kind: state
       equation: KV_next = Append(KV_cache,Kr,V) at current token positions
@@ -5559,7 +5559,7 @@ semantic_contract:
       equation: Qr,Kr = RoPE(Qn,Kn) on the configured 25 percent rotary subspace; remaining channels pass through
     generation.mtp.attention.project_qkv:
       kind: projection
-      equation: '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,32,256] and K,V:[N,2,256]'
+      equation: '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,Q_heads,attention_head_dim] and K,V:[N,KV_heads,attention_head_dim]'
     generation.mtp.attention.qk_norm:
       kind: normalization
       equation: Qn = RMSNorm_per_head(Q); Kn = RMSNorm_per_head(K)
@@ -5694,7 +5694,7 @@ semantic_contract:
       equation: X := normalized full-attention input [N,H]
     qwen3_5.attention.kv_cache.read:
       kind: state
-      equation: K_cache,V_cache := committed per-layer full-attention cache [B,2,S,256]
+      equation: K_cache,V_cache := committed per-layer full-attention cache [B,KV_heads,S,attention_head_dim]
     qwen3_5.attention.kv_cache.write:
       kind: state
       equation: KV_next = Append(KV_cache,Kr,V) at current token positions
@@ -5712,7 +5712,7 @@ semantic_contract:
       equation: Qr,Kr = RoPE(Qn,Kn) on the configured 25 percent rotary subspace; remaining channels pass through
     qwen3_5.attention.project_qkv:
       kind: projection
-      equation: '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,32,256] and K,V:[N,2,256]'
+      equation: '[Q,K,V,G] = X W_qkvg^T with Q,G:[N,Q_heads,attention_head_dim] and K,V:[N,KV_heads,attention_head_dim]'
     qwen3_5.attention.qk_norm:
       kind: normalization
       equation: Qn = RMSNorm_per_head(Q); Kn = RMSNorm_per_head(K)
@@ -5761,7 +5761,7 @@ semantic_contract:
         q_t
     qwen3_5.gdn.recurrent_state.read:
       kind: state
-      equation: S_prev := recurrent matrices [B,64,128,128] in float32
+      equation: S_prev := recurrent matrices [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] in float32
     qwen3_5.gdn.state.write:
       kind: state
       equation: conv_next = ShiftAppend(conv_prev,Q_raw,K_raw,V_raw); recurrent_next := S_t
@@ -5821,16 +5821,16 @@ semantic_contract:
       equation: 'for l=0..59: attention_l = GDN if l mod 4 != 3 else causal GQA'
     qwen3_5.state.attention_keys:
       kind: state
-      equation: K_l := committed full-attention keys [B,2,S,256] for each of 15 layers
+      equation: K_l := committed full-attention keys [B,KV_heads,S,attention_head_dim] for each of 15 layers
     qwen3_5.state.attention_values:
       kind: state
-      equation: V_l := committed full-attention values [B,2,S,256] for each of 15 layers
+      equation: V_l := committed full-attention values [B,KV_heads,S,attention_head_dim] for each of 15 layers
     qwen3_5.state.gdn_conv:
       kind: state
       equation: conv_l := committed three-sample Q/K/V windows [B,12288,3] for each of 45 GDN layers
     qwen3_5.state.gdn_recurrent:
       kind: state
-      equation: S_l := committed recurrent matrices [B,64,128,128] float32 for each of 45 GDN layers
+      equation: S_l := committed recurrent matrices [B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] float32 for each of 45 GDN layers
     qwen3_5.target_logits:
       kind: boundary
       equation: target_logits := logits with shape [B,T,248320]
@@ -5860,7 +5860,7 @@ semantic_contract:
       equation: Xn = LayerNorm(X_group) in R^(M x 4608)
     vision.output:
       kind: boundary
-      equation: media_features := merged vision features [M,4096]
+      equation: media_features := merged vision features [M,H]
     vision.patch_projection:
       kind: projection
       equation: X_patch = Conv3D(pixel_patches; kernel=stride=(2,16,16)) in R^(P x 1152)
@@ -5893,7 +5893,7 @@ semantic_contract:
       equation: M = GELU_tanh(U)
     vision_block.input:
       kind: boundary
-      equation: X := vision-block input [P,1152]
+      equation: X := vision-block input [P,Hv]
     vision_block.norm1:
       kind: normalization
       equation: Xn = LayerNorm(X)
@@ -5931,17 +5931,17 @@ boundary_contracts:
   boundary_mode: exact_node
   child_view: vision_frontend
   input_shape: '[P,3,2,16,16] + grid'
-  output_shape: '[M,4096]'
+  output_shape: '[M,H]'
 - parent_node: top.decoder_stack
   boundary_mode: exact_node
   child_view: stack
-  input_shape: '[B,T,H] + KV[15,B,2,S,256] + conv[45,B,12288,3] + recurrent[45,B,64,128,128]'
+  input_shape: '[B,T,H] + KV[15,B,KV_heads,S,attention_head_dim] + conv[45,B,12288,3] + recurrent[45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim]'
   output_shape: '[B,T,H] + KV_next + conv_next + recurrent_next'
 - parent_node: top.state_store
   boundary_mode: external_entry
   child_view: state_tensors
-  input_shape: '[15,B,2,S,256]'
-  output_shape: '[15,B,2,S,256] + [1,B,2,S_draft,256] + [45,B,12288,3] + [45,B,64,128,128] + [B]'
+  input_shape: '[15,B,KV_heads,S,attention_head_dim] + [1,B,KV_heads,S_draft,attention_head_dim] + [45,B,12288,3] + [45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] + [B]'
+  output_shape: '[15,B,KV_heads,S,attention_head_dim] + [1,B,KV_heads,S_draft,attention_head_dim] + [45,B,12288,3] + [45,B,GDN_value_heads,GDN_value_head_dim,GDN_key_head_dim] + [B]'
 - parent_node: top.generation_controller
   boundary_mode: external_entry
   child_view: generation_loop
@@ -6305,5 +6305,5 @@ boundary_contracts:
 - parent_node: vision_frontend.vision_blocks
   boundary_mode: exact_node
   child_view: vision_block
-  input_shape: '[P,1152]'
-  output_shape: '[P,1152]'
+  input_shape: '[P,Hv]'
+  output_shape: '[P,Hv]'

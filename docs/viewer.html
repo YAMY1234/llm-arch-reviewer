@@ -2145,7 +2145,7 @@ function drawAllViews(layouts, totalW, totalH, drillFrom) {
       const dst = childById.get(e.to);
       if (!src || !dst) continue;
       const layoutedEdge = (layout.edges || []).find(x => x.sources?.[0] === e.from && x.targets?.[0] === e.to);
-      drawEdge(inner, e, layoutedEdge);
+      drawEdge(inner, e, layoutedEdge, viewName);
     }
 
     // nodes
@@ -2215,7 +2215,7 @@ function drawCrossViewBeams(root, layouts, viewBoxes, drillFrom) {
   }
 }
 
-function drawEdge(root, e, layoutedEdge) {
+function drawEdge(root, e, layoutedEdge, viewName = "") {
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   const kind = e.kind || "data";
   g.setAttribute("class", `edge kind-${kind}`);
@@ -2239,7 +2239,17 @@ function drawEdge(root, e, layoutedEdge) {
   if (labelPos) {
     const parts = [];
     if (e.label) parts.push({text: e.label, cls: ""});
-    if (e.shape) parts.push({text: e.shape, cls: ""});
+    if (e.shape) {
+      const target = viewName && e.to ? `${viewName}.${e.to}` : "";
+      const shape = resolveSymbolicShape(e.shape, target);
+      parts.push({text: shape.symbolic, cls: "shape-symbolic"});
+      // Symbolic axes are authoritative.  Only add a concrete row when every
+      // runtime/stage symbol is validated for the selected profile and the
+      // result is genuinely different from the authored shape.
+      if (shape.resolved != null && shape.resolved !== shape.symbolic) {
+        parts.push({text: `resolved ${shape.resolved}`, cls: "shape-resolved"});
+      }
+    }
     if (e.dtype) parts.push({text: e.dtype, cls: "dtype"});
     if (parts.length) {
       // bg rect + text

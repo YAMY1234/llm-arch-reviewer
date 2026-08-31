@@ -112,6 +112,48 @@ def test_qwen35_compiled_semantics_are_edge_derived_and_equation_complete() -> N
             } == set(outgoing[raw_node["id"]])
 
 
+def test_qwen35_semantic_tensor_axes_keep_declared_dimension_labels() -> None:
+    """Do not collapse named model axes back into unexplained constants.
+
+    Concrete values belong to ``dimension_symbols`` and the Viewer resolver;
+    Model IR edges and equations must preserve the semantic axis names that
+    make the same data flow comparable across framework implementations.
+    """
+
+    model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    text = json.dumps(model, sort_keys=True)
+    for legacy in (
+        "[N,64,128]",
+        "[B,64,128,128]",
+        "[N,32,256]",
+        "[N,2,256]",
+        "[B,2,S,256]",
+        "[P,1152]",
+        "[M,4096]",
+    ):
+        assert legacy not in text
+
+    gdn_edges = {
+        edge["identity"]: edge
+        for edge in model["views"]["gdn_attention"]["edges"]
+    }
+    assert gdn_edges["Z gate"]["shape"] == (
+        "Z [N,GDN_value_heads,GDN_value_head_dim]"
+    )
+    assert gdn_edges[
+        "gdn_attention.gated_delta_recurrence_to_output_gate_norm"
+    ]["shape"] == "[N,GDN_value_heads,GDN_value_head_dim]"
+
+    attention_edges = {
+        edge["identity"]: edge
+        for edge in model["views"]["full_attention"]["edges"]
+    }
+    assert attention_edges["Q/K"]["shape"] == (
+        "Q [N,Q_heads,attention_head_dim] + "
+        "K [N,KV_heads,attention_head_dim]"
+    )
+
+
 def test_qwen35_model_ir_is_framework_and_collective_independent() -> None:
     text = json.dumps(load_yaml(MODEL_ROOT / "model_ir.yaml"), sort_keys=True).lower()
     for forbidden in ("sglang", "vllm", "triton", "cuda", "nccl", "all_reduce", "all_gather", "reduce_scatter"):
@@ -612,7 +654,7 @@ def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
         assert implementation["source_lock_status"] == "runtime_verified"
         assert implementation["execution_validation"]["status"] == "pass"
         assert implementation["execution_validation"]["cuda_graph_enabled"] is False
-        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_50bb583c3a3d0557"
+        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_9772c24a3aa3f623"
         assert len(implementation["node_bindings"]) == target_count
 
 

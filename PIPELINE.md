@@ -77,6 +77,14 @@ remain authoritative. The Viewer adds a resolved shape only when every
 referenced dynamic symbol is valid for the selected profile and drill path;
 otherwise it shows the unresolved symbols and reason.
 
+Named axes must remain named on architecture edges. A catalog must not replace
+`[N,GDN_value_heads,GDN_value_head_dim]` with an unexplained `[N,64,128]`
+merely because the checkpoint constants are known. The graph displays the
+symbolic shape first; a distinct `resolved ...` row is optional evidence and is
+shown only after complete profile/stage resolution. Semantic-closure tests must
+reject model-specific legacy literals for axes that the catalog declares as
+symbols.
+
 Every drill-down declares its boundary direction and a checked boundary
 contract. The child input/output contracts must match the parent edge contract.
 A multi-call semantic lifecycle, such as mHC pre-collapse plus post-sublayer
