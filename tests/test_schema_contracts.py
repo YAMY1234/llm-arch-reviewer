@@ -7,6 +7,8 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
+from llm_arch_v2.compiler import CatalogError, compile_catalog
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG_ROOT = REPO_ROOT / "catalog"
@@ -46,3 +48,47 @@ def test_model_ir_documents_match_json_schema(model_ir_path: Path) -> None:
 )
 def test_semantic_source_ledgers_match_json_schema(ledger_path: Path) -> None:
     _validate_yaml(ledger_path, SEMANTIC_LEDGER_SCHEMA)
+
+
+def test_dimension_symbol_contracts_are_complete_and_fail_closed() -> None:
+    for model in ("qwen40", "qwen35"):
+        bundle = compile_catalog(CATALOG_ROOT / model)
+        dimensions = bundle["model_ir"]["dimensions"]
+        symbols = bundle["model_ir"]["dimension_symbols"]
+        assert set(symbols) == set(dimensions)
+        assert symbols["B"] == {
+            "meaning": "request batch count",
+            "value_class": "profile_runtime",
+            "source_path": "workload.batch_size",
+            "provenance": "validated profile workload.batch_size",
+        }
+
+    qwen40 = compile_catalog(CATALOG_ROOT / "qwen40")
+    draft = qwen40["model_ir"]["dimension_symbols"]["D"]
+    assert draft["value_class"] == "stage_dependent"
+    assert draft["stage_resolutions"] == [
+        {
+            "scope_targets": ["mtp_generation.mtp_draft_extend"],
+            "phases": ["decode"],
+            "generation_modes": ["eagle_mtp"],
+            "source_path": "workload.speculative_num_draft_tokens",
+            "provenance": "validated MTP decode workload.speculative_num_draft_tokens",
+        }
+    ]
+    assert "global" in draft["provenance"]
+
+
+def test_dimension_symbol_schema_rejects_unscoped_or_unknown_stage_resolution(
+    tmp_path: Path,
+) -> None:
+    source = yaml.safe_load((CATALOG_ROOT / "qwen40" / "model_ir.yaml").read_text())
+    source["dimension_symbols"]["D"]["stage_resolutions"][0]["scope_targets"] = [
+        "missing.stage"
+    ]
+    model_root = tmp_path / "qwen40"
+    model_root.mkdir()
+    (model_root / "model_ir.yaml").write_text(yaml.safe_dump(source, sort_keys=False))
+    # Copying a complete catalog is unnecessary: dimension validation happens
+    # before execution/binding/profile discovery.
+    with pytest.raises(CatalogError, match="unknown targets"):
+        compile_catalog(model_root)

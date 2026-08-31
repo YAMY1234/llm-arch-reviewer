@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 from llm_arch_v2.compiler import compile_catalog
 
@@ -36,9 +38,46 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert "shared Model IR with separate validated Execution IR fingerprints" in viewer
     assert "execution?.enriched?.[viewName]" in viewer
     assert "appendComparisonFusionOwnerNodeLink" in viewer
+    assert "renderComparisonDetails" in viewer
+    assert "comparison-detail-frame" in viewer
+    assert "independentCenter: true" in viewer
+    assert "dimensionResolutionScope" in viewer
+    assert "Tensor symbols and profile-resolved dimensions" in viewer
+    assert "symbolic shape" in viewer
+    assert "resolved shape" in viewer
     assert "irTargetExistsForNavigation" in viewer
     assert "showComparisonFusionOwnerInArchitecture(context.implementation_id" in viewer
     assert "profile_id.includes" not in viewer
+
+
+def test_standalone_export_keeps_symbol_resolution_and_comparison_details(
+    tmp_path: Path,
+) -> None:
+    elk = tmp_path / "elk.js"
+    elk.write_text("window.ELK = function ELK() {};\n")
+    output = tmp_path / "qwen35-standalone.html"
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "export_standalone.py"),
+            "--model",
+            "qwen35_v2",
+            "--output",
+            str(output),
+            "--elk-js",
+            str(elk),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    standalone = output.read_text()
+    assert "window.__LLM_ARCH_STANDALONE__ = true" in standalone
+    assert "function resolveDimensionSymbol" in standalone
+    assert "Tensor symbols and profile-resolved dimensions" in standalone
+    assert "function renderComparisonDetails" in standalone
+    assert "comparison-detail-frame" in standalone
 
 
 def test_qwen35_comparison_drill_parent_has_framework_specific_union_timing() -> None:
@@ -76,6 +115,12 @@ def test_real_browser_comparison_audit_covers_release_contract() -> None:
         "comparison_parent_union_timing",
         "comparison_fusion_owner_links",
         "comparison_all_fused_rows_linked",
+        "comparison_dual_details",
+        "comparison_independent_center",
+        "comparison_kernel_peer_details",
+        "tensor_symbol_resolution",
+        "profile_symbol_refresh",
+        "mtp_stage_scoped_dimension",
         "normalized_range_sync",
         "url_history_reload",
         "glm53_real_sglang_vllm",

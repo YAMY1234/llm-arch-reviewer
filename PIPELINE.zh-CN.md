@@ -41,6 +41,17 @@ Model IR 应根据 model config、模型规范或论文以及 source review 起�
 
 Compiler 将两者合成为节点本地的 **Inputs → Transition / Equation → Outputs** contract，并在右侧详情栏固定展示。Label 只用于显示，不能作为语义证据。如果 operation 不改变 contract，输入输出仍需显式保持相同 shape/layout；如果 shape、layout、dtype、identity 或 state lifetime 发生变化，outgoing edge 必须写出新值。
 
+Symbolic tensor dimension 同样属于一等 Model IR contract。每个 symbol 都必须
+声明 meaning、value class（`model_constant`、`profile_runtime` 或
+`stage_dependent`）和 provenance。Model constant 只能来自精确 checkpoint/config；
+profile-runtime value 只能读取所选 profile 中显式 authored 的 metadata path；
+stage-dependent value 必须带明确的 phase、generation mode 和 IR scope 规则。
+Catalog 一旦声明该 dictionary，Symbol 缺失、stage target 不存在或动态值缺少验证
+provenance 时，Compiler 必须 fail closed。特别是 speculative draft width 绝不能被当作全局 `D`；它只能在显式
+定义的 MTP/draft scope 内解析。Symbolic shape 始终是真源；只有当所选 profile 和
+当前 drill path 下引用的每个动态 symbol 都有效时，Viewer 才能附加 resolved shape，
+否则必须显示 unresolved symbol 和原因。
+
 每个 drill-down 都必须声明 boundary direction 和可验证的 boundary contract。子 view 的输入输出必须与 parent edge contract 一致。对于 mHC pre-collapse 与 post-sublayer recombination 这种跨多次调用的完整语义生命周期，必须显式声明 scoped parent nodes 和中间 handoff，不能伪装成单个节点等价。由 runtime 提供输入的 optional entry 也必须明确标记，不能绕过校验。
 
 #### Repeated layer 与展开规则
@@ -555,6 +566,12 @@ IR geometry，并为每个 framework 显示一行 compact evidence；Timeline co
 artifact。可同步 normalized visible range 和 IR selection，但每个 profile 内的
 physical stream ID、event、fusion ownership 和 timing 必须原样保留。Fused member
 仍然只能链接到该 framework 唯一的 timing owner，不能复制 owner 的标量时间。
+当共享 Architecture node 要求居中时，每张 comparison timeline 必须分别将该
+framework 自己最近的 matching event 居中；后续 normalized-range 同步消息不能覆盖
+这些 framework-local center。右侧 detail 同样必须隔离：按相同固定顺序为每个
+implementation 渲染一个 pane。Architecture selection 会用各 framework 自己的
+node evidence 更新所有 pane；点击某个精确 kernel 时，来源 pane 保留该 kernel 的
+精确 evidence，其他 pane 显示共享 IR target 的对应 module evidence。
 每个 framework evidence row 必须读取该 profile 的 enriched cell，而不是 roll-up
 之前的 raw state：只要已选 descendant 存在 timing，可执行 drill parent 就必须
 显示该 framework 的数值化 `inclusive_rollup`，不得显示 `structural`。Graph 和
@@ -569,6 +586,13 @@ framework 的 architecture owner。
 - Model IR ID 稳定，所有 drill target 都能解析。
 - 已选中的可展开 compute/module 节点以及 runtime-bearing primitive leaf 绝不能显示为 `structural` boundary；它必须拥有正数的 measured／inclusive-union timing、是明确指向唯一 timing owner 的 fused member，或者具有不相交的 `fused_by_occurrence` partitions。只有显式定义的 boundary/control/state 节点，以及 `not_selected`、`disabled`、`out_of_scope` 等明确未激活分支可以没有 timing。
 - 每条 edge 都有 identity、shape、layout、dtype 和 state lifetime；每个语义节点都有 authored equation。缺少 operation、equation 为空，或出现 `None = None(None)` 一类 fallback artifact 时，编译必须直接失败。
+- 每个新建或发生修改的 catalog，都必须为每个声明的 dimension 提供唯一 authored
+  symbol contract。Constant、profile-runtime value 和 stage-dependent resolution
+  都必须通过 schema check；未知 stage 和无 scope 的动态推断必须编译失败。尚未迁移
+  symbol dictionary 的 legacy catalog 仍可兼容加载，但 Viewer 只能解析字面数字常量，
+  所有动态 symbol 必须明确显示为 unresolved，不能猜测。Viewer test 必须覆盖
+  constant、所选 profile batch 及其切换刷新、stage-scoped draft、unresolved fallback
+  和 standalone parity。
 - 编译后节点的 Inputs/Outputs 与 incident edge contract 完全一致；每个 drill boundary 都通过 parent/child 或 scoped-lifecycle closure。
 - Viewer 从编译后的 contract 展示 Inputs、Transition / Equation 和 Outputs，而不是解析 label。
 - 编译后的 Execution IR fingerprint 与 Binding、Profile 一致。
@@ -615,7 +639,8 @@ framework 的 architecture owner。
 - 选择 Architecture node 时高亮所有匹配的 Timeline event；选择 Timeline event 时自动展开、居中并选中精确的 Architecture leaf。
 - Multi-framework 验收必须覆盖 1/2/3 个选择、固定顺序、缺失 exact match、相同
   与不同 Execution IR、URL reload/back/forward、framework-specific fusion link、
-  range 同步，并通过真实 SVG/Canvas click 验证双向跳转。
+  range 同步、每个 framework 独立居中、一套 detail pane 对应一个 framework、
+  精确 kernel 与 peer module detail，并通过真实 SVG/Canvas click 验证双向跳转。
 - 发布验收必须真实点击渲染后的 SVG node 和 Canvas kernel/owner lane，分别验证两个方向；只调用内部导航函数不算通过。测试还必须证明被点击的 kernel 是唯一保持实色的 kernel slice，其他无关 slice 均被淡化。
 - Stream、overlap、idle、module wall envelope、active GPU 和 residency 可以分别查看。
 - 默认显示 compact activity lanes，同时允许切换到精确 physical streams。

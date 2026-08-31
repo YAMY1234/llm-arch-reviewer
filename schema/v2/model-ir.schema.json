@@ -13,6 +13,11 @@
     "default_view": {"type": "string", "minLength": 1},
     "default_execution_path": {"type": "string"},
     "dimensions": {"type": "object"},
+    "dimension_symbols": {
+      "type": "object",
+      "description": "Model-generic symbol dictionary. Symbolic shapes remain authoritative; concrete values are exposed only through explicit constant, profile, or stage-scoped contracts.",
+      "additionalProperties": {"$ref": "#/$defs/dimensionSymbol"}
+    },
     "facts": {"type": "object"},
     "semantic_evidence": {"type": "object"},
     "semantic_coverage": {"type": "object"},
@@ -28,6 +33,54 @@
     }
   },
   "$defs": {
+    "dimensionSymbol": {
+      "type": "object",
+      "required": ["meaning", "value_class", "provenance"],
+      "properties": {
+        "meaning": {"type": "string", "minLength": 1},
+        "value_class": {
+          "enum": ["model_constant", "profile_runtime", "stage_dependent"]
+        },
+        "value": {"type": ["integer", "number", "string"]},
+        "source_path": {"type": "string", "minLength": 1},
+        "provenance": {"type": "string", "minLength": 1},
+        "unresolved_reason": {"type": "string", "minLength": 1},
+        "stage_resolutions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/dimensionResolution"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "dimensionResolution": {
+      "type": "object",
+      "required": ["scope_targets", "provenance"],
+      "properties": {
+        "scope_targets": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 3},
+          "minItems": 1
+        },
+        "phases": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        },
+        "generation_modes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        },
+        "value": {"type": ["integer", "number", "string"]},
+        "source_path": {"type": "string", "minLength": 1},
+        "provenance": {"type": "string", "minLength": 1}
+      },
+      "oneOf": [
+        {"required": ["value"]},
+        {"required": ["source_path"]}
+      ],
+      "additionalProperties": false
+    },
     "semanticContract": {
       "type": "object",
       "required": ["version", "operations"],

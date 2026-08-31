@@ -21,6 +21,47 @@ dimensions:
   N_blocks: complete compressed QSA blocks visible to the current query
   D: MTP draft/verify positions per request
 
+dimension_symbols:
+  B:
+    meaning: request batch count
+    value_class: profile_runtime
+    source_path: workload.batch_size
+    provenance: validated profile workload.batch_size
+  T:
+    meaning: token positions in the selected model stage
+    value_class: stage_dependent
+    provenance: Model IR tensor contract; stage window must supply T explicitly
+    unresolved_reason: token count differs across prefill, autoregressive decode, and MTP target verification
+  H: {meaning: hidden width, value_class: model_constant, value: 2560, provenance: model_ir.facts.hidden_size}
+  HC: {meaning: flattened four-branch hyper-connection width, value_class: model_constant, value: 10240, provenance: 4 × model_ir.facts.hidden_size}
+  R: {meaning: hyper-connection branch count, value_class: model_constant, value: 4, provenance: model_ir.facts.hyperconnection_branches}
+  L: {meaning: hyper-connection low-rank gate width, value_class: model_constant, value: 320, provenance: model_ir.facts.hyperconnection_low_rank}
+  V: {meaning: vocabulary width, value_class: model_constant, value: 248320, provenance: checkpoint vocabulary contract}
+  E: {meaning: routed expert count, value_class: model_constant, value: 512, provenance: model_ir.facts.routed_experts}
+  K: {meaning: selected experts per token, value_class: model_constant, value: 10, provenance: model_ir.facts.experts_per_token}
+  I: {meaning: expert intermediate width, value_class: model_constant, value: 640, provenance: model_ir.facts.expert_intermediate_size}
+  N_e:
+    meaning: tokens dispatched to one routed expert
+    value_class: stage_dependent
+    provenance: runtime router assignment for the selected expert occurrence
+    unresolved_reason: requires validated per-expert routing counts from the selected iteration
+  N_blocks:
+    meaning: complete compressed QSA blocks visible to the current query
+    value_class: stage_dependent
+    provenance: runtime QSA cache state for the selected request and layer
+    unresolved_reason: requires validated QSA cache-state evidence for the selected occurrence
+  D:
+    meaning: MTP draft positions processed by the auxiliary head
+    value_class: stage_dependent
+    provenance: MTP stage contract; never inferred globally from model configuration
+    unresolved_reason: resolved only when the auxiliary head is entered from the validated draft-extend stage
+    stage_resolutions:
+      - scope_targets: [mtp_generation.mtp_draft_extend]
+        phases: [decode]
+        generation_modes: [eagle_mtp]
+        source_path: workload.speculative_num_draft_tokens
+        provenance: validated MTP decode workload.speculative_num_draft_tokens
+
 facts:
   scope: target_text_model_plus_eagle_mtp
   maximum_context_length: 262144

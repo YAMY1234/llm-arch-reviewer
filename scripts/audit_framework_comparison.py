@@ -62,6 +62,25 @@ def comparison_frames(page, expected: int):
     return frames
 
 
+def comparison_detail_frames(page, expected: int):
+    page.wait_for_function(
+        "count => document.querySelectorAll('#comparison-details iframe.comparison-detail-frame').length === count",
+        arg=expected,
+        timeout=60_000,
+    )
+    frames = []
+    for index in range(expected):
+        frame = page.locator(
+            "#comparison-details iframe.comparison-detail-frame"
+        ).nth(index).element_handle().content_frame()
+        frame.wait_for_function(
+            "RAW_DATA && document.body.classList.contains('embedded-detail')",
+            timeout=60_000,
+        )
+        frames.append(frame)
+    return frames
+
+
 def main(args: argparse.Namespace | None = None) -> int:
     args = args or parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -99,6 +118,7 @@ def main(args: argparse.Namespace | None = None) -> int:
             timeout=60_000,
         )
         frames = comparison_frames(page, 2)
+        detail_frames = comparison_detail_frames(page, 2)
         state = page.evaluate(
             """() => ({
               selected: SELECTED_IMPLEMENTATIONS,
@@ -112,6 +132,60 @@ def main(args: argparse.Namespace | None = None) -> int:
         require(state["compatible"] is True, "shared_execution_ir", actual=state)
         require(state["mode"] == "split", "view_mode_restore", actual=state)
         require(state["cards"] == 2, "two_timeline_cards", actual=state)
+        require(
+            page.locator(".comparison-detail-card").count() == 2,
+            "two_framework_detail_panes",
+        )
+        checks["comparison_dual_details"] = len(detail_frames)
+
+        # Symbol resolution is profile- and stage-aware, while the standalone
+        # exporter reuses this exact viewer and embedded compiled contract.
+        symbol_resolution = page.evaluate(
+            """() => ({
+              batch: resolveDimensionSymbol('B', 'top.decoder_stack'),
+              hidden: resolveDimensionSymbol('H', 'top.decoder_stack'),
+              token: resolveDimensionSymbol('T', 'top.decoder_stack'),
+              shape: resolveSymbolicShape('[B,H]', 'top.decoder_stack'),
+            })"""
+        )
+        require(
+            symbol_resolution["batch"].get("resolved") is True
+            and symbol_resolution["batch"].get("value") == 64
+            and symbol_resolution["hidden"].get("value") == 4096
+            and symbol_resolution["token"].get("resolved") is False
+            and symbol_resolution["shape"].get("resolved") == "[64,4096]",
+            "profile_symbol_resolution",
+            actual=symbol_resolution,
+        )
+        checks["tensor_symbol_resolution"] = 1
+
+        # Profile selection must update the resolver in-place. This catches a
+        # stale glossary/detail cache that would otherwise keep showing the
+        # previous batch after the user changes the selected profile.
+        profile_refresh = page.evaluate(
+            """async () => {
+              const select = document.getElementById('profile-select');
+              const switchTo = async (profileId) => {
+                select.value = profileId;
+                select.dispatchEvent(new Event('change', {bubbles: true}));
+                for (let i = 0; i < 200 && CURRENT_PROFILE !== profileId; i++) {
+                  await new Promise(resolve => setTimeout(resolve, 10));
+                }
+                return resolveDimensionSymbol('B', 'top.decoder_stack');
+              };
+              const bs1 = await switchTo('qwen35_tp8_sglang_cg_decode_bs1_8k1k');
+              const bs64 = await switchTo('qwen35_tp8_sglang_cg_decode_bs64_8k1k');
+              return {bs1, bs64, current: CURRENT_PROFILE};
+            }"""
+        )
+        require(
+            profile_refresh["bs1"].get("value") == 1
+            and profile_refresh["bs64"].get("value") == 64
+            and profile_refresh["current"] == QWEN_PROFILE,
+            "profile_symbol_refresh",
+            actual=profile_refresh,
+        )
+        checks["profile_symbol_refresh"] = 2
 
         # A drillable GDN parent must expose each framework's descendant-event
         # union. Reading the raw structural authoring state here would hide
@@ -249,11 +323,45 @@ def main(args: argparse.Namespace | None = None) -> int:
 
         # An actual rendered SVG click selects the node and broadcasts a module
         # highlight into each isolated physical timeline.
+        # Profile switching rebuilds the comparison iframes, so reacquire the
+        # live frames instead of retaining the deliberately detached BS64
+        # handles created before the refresh test above.
+        frames = comparison_frames(page, 2)
         node = page.locator("#svg-host g.view-group g.node.selected").first
         node.click()
         page.wait_for_function("SELECTED && document.querySelectorAll('.comparison-evidence-table tbody tr').length === 2")
         for frame in frames:
-            frame.wait_for_function("TIMELINE_IR_TARGET !== ''")
+            frame.wait_for_function(
+                "TIMELINE_IR_TARGET !== '' && TIMELINE_SELECTED_EVENT !== null"
+            )
+        detail_frames = comparison_detail_frames(page, 2)
+        for frame in detail_frames:
+            frame.wait_for_function("document.querySelector('#detail h2') !== null")
+        centered = [
+            frame.evaluate(
+                """() => {
+                  const step = currentTimelineStep();
+                  const event = TIMELINE_SELECTED_EVENT;
+                  const center = Number(event.start_us) + Number(event.duration_us) / 2;
+                  const rangeCenter = (TIMELINE_RANGE.startUs + TIMELINE_RANGE.endUs) / 2;
+                  const span = TIMELINE_RANGE.endUs - TIMELINE_RANGE.startUs;
+                  const atBoundary = TIMELINE_RANGE.startUs === 0
+                    || Math.abs(TIMELINE_RANGE.endUs - Number(step.duration_us)) < 1e-6;
+                  return {center, rangeCenter, span, atBoundary, target: TIMELINE_IR_TARGET};
+                }"""
+            )
+            for frame in frames
+        ]
+        require(
+            all(
+                row["atBoundary"]
+                or abs(row["center"] - row["rangeCenter"]) <= max(1.0, row["span"] * 0.01)
+                for row in centered
+            ),
+            "comparison_timeline_not_independently_centered",
+            actual=centered,
+        )
+        checks["comparison_independent_center"] = len(centered)
         checks["architecture_to_timeline"] = 2
 
         # An actual Canvas hit selects exactly one kernel in the source iframe,
@@ -286,6 +394,31 @@ def main(args: argparse.Namespace | None = None) -> int:
             page.wait_for_function("SELECTED !== null", timeout=60_000)
             source.wait_for_function("TIMELINE_EXPLICIT_SELECTION?.kind === 'event'", timeout=60_000)
             peer.wait_for_function("TIMELINE_IR_TARGET !== ''", timeout=60_000)
+            detail_frames[0].wait_for_function(
+                "document.querySelector('#detail h3')?.textContent === 'mapped Python stack' || document.querySelector('#detail .kv .k')?.textContent === 'IR node'",
+                timeout=60_000,
+            )
+            detail_frames[1].wait_for_function(
+                "document.querySelector('#detail h2') !== null",
+                timeout=60_000,
+            )
+            detail_state = [
+                frame.evaluate(
+                    """() => ({
+                      title: document.querySelector('#detail h2')?.textContent || '',
+                      hasKernelField: Array.from(document.querySelectorAll('#detail .kv .k'))
+                        .some(node => node.textContent === 'kernel'),
+                    })"""
+                )
+                for frame in detail_frames
+            ]
+            require(
+                detail_state[0]["hasKernelField"] is True
+                and detail_state[1]["title"],
+                "comparison_kernel_and_peer_details",
+                actual=detail_state,
+            )
+            checks["comparison_kernel_peer_details"] = 2
         checks["timeline_to_architecture"] = 1 if hit else 0
 
         # Ranges synchronize by normalized formal-step coordinates; physical
@@ -321,6 +454,48 @@ def main(args: argparse.Namespace | None = None) -> int:
         comparison_frames(page, 2)
         require(page.evaluate("CURRENT_VIEW_MODE") == "split", "reload_lost_view_mode")
         checks["url_history_reload"] = 3
+
+        # Draft width resolves only within the authored MTP draft-extend
+        # occurrence. The same selected profile must not leak D into the seed
+        # prefill occurrence or any other model scope.
+        page.goto(
+            viewer_url(
+                args.base_url,
+                model="qwen40_v2",
+                profile="qwen40_tp4_mtp_cg_decode_gbs001_8k1k",
+                implementation="sglang_qwen4_main_32e9cb5_qsa_hardening_flashinfer_gdn",
+                generation="eagle_mtp",
+                phase="decode",
+                viewMode="architecture",
+                irLayer="model",
+            ),
+            wait_until="domcontentloaded",
+            timeout=60_000,
+        )
+        page.wait_for_function(
+            "CURRENT_PROFILE === 'qwen40_tp4_mtp_cg_decode_gbs001_8k1k'",
+            timeout=60_000,
+        )
+        draft_resolution = page.evaluate(
+            """() => {
+              VIEW_STACK = ['mtp_generation', 'mtp_head'];
+              DRILL_FROM = [null, 'mtp_draft_extend'];
+              const draft = resolveDimensionSymbol('D', 'mtp_head.candidate_ids');
+              const shape = resolveSymbolicShape('[B,D,R,H]', 'mtp_head.candidate_ids');
+              DRILL_FROM = [null, 'mtp_prefill'];
+              const seed = resolveDimensionSymbol('D', 'mtp_head.candidate_ids');
+              return {draft, shape, seed};
+            }"""
+        )
+        require(
+            draft_resolution["draft"].get("resolved") is True
+            and draft_resolution["draft"].get("value") == 2
+            and draft_resolution["shape"].get("resolved") == "[1,2,4,2560]"
+            and draft_resolution["seed"].get("resolved") is False,
+            "mtp_stage_scoped_dimension",
+            actual=draft_resolution,
+        )
+        checks["mtp_stage_scoped_dimension"] = 1
 
         # GLM-5.3-Flash is the second real SGLang/vLLM acceptance model. It
         # must resolve to two decode traces under one exact contract rather

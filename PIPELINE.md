@@ -64,6 +64,19 @@ used as semantic evidence. If an operation preserves a contract, the identical
 input/output shape and layout remain explicit; if it changes shape, layout,
 dtype, identity, or state lifetime, the outgoing edge must state the new value.
 
+Symbolic tensor dimensions are also a first-class Model IR contract. Every
+symbol declares its meaning, value class (`model_constant`, `profile_runtime`,
+or `stage_dependent`), and provenance. Model constants come from the exact
+checkpoint/config; profile-runtime values come only from an authored metadata
+path in the selected profile; stage-dependent values require an explicit
+phase/generation/IR-scope rule. Once a catalog authors this dictionary, the
+compiler fails closed when a symbol is missing, a stage target does not exist,
+or a dynamic value lacks validated provenance. In particular, speculative draft width must never become a global
+`D`: it resolves only inside the authored MTP/draft scope. Symbolic shapes
+remain authoritative. The Viewer adds a resolved shape only when every
+referenced dynamic symbol is valid for the selected profile and drill path;
+otherwise it shows the unresolved symbols and reason.
+
 Every drill-down declares its boundary direction and a checked boundary
 contract. The child input/output contracts must match the parent edge contract.
 A multi-call semantic lifecycle, such as mHC pre-collapse plus post-sublayer
@@ -841,6 +854,13 @@ ranges and IR selections may synchronize, but physical stream IDs, events,
 fusion ownership, and timing remain unchanged inside each profile. A fused
 member still links to its framework-specific single timing owner and never
 copies the owner's scalar time.
+When a shared Architecture node is centered, every compared timeline centers
+its own nearest matching event independently; subsequent normalized-range
+messages must not overwrite those framework-local centers. The detail area is
+also framework-isolated: it renders one pane per selected implementation in the
+same deterministic order. Architecture selection updates every pane with that
+implementation's node evidence, while an exact kernel click keeps the source
+framework's kernel evidence and the peer panes on the shared IR target.
 Each comparison row resolves the selected profile's enriched cell, not its raw
 pre-rollup state: an executable drill parent therefore shows that framework's
 numeric `inclusive_rollup`, never `structural`, whenever its selected
@@ -862,6 +882,15 @@ link to that framework's architecture owner in both the graph and detail pane.
 - Every edge has identity, shape, layout, dtype, and state lifetime; every
   semantic node has an authored equation. Missing operations, empty equations,
   and fallback artifacts such as `None = None(None)` fail compilation.
+- Every newly authored or modified catalog must give every declared dimension
+  one authored symbol contract. Constants, profile-runtime values, and
+  stage-dependent resolutions are schema-checked; unknown stages and unscoped
+  dynamic inference fail compilation. A legacy catalog without this dictionary
+  remains backward-compatible, but the Viewer may resolve only literal numeric
+  constants and must leave every dynamic symbol explicitly unresolved until the
+  catalog is migrated. Viewer tests cover constant resolution,
+  selected-profile batch resolution and refresh, stage-scoped draft resolution,
+  unresolved fallback, and standalone parity.
 - Compiled node Inputs/Outputs equal the incident edge contracts exactly, and
   every drill boundary passes parent/child or scoped-lifecycle closure.
 - The viewer renders Inputs, Transition / Equation, and Outputs from the
@@ -956,7 +985,9 @@ link to that framework's architecture owner in both the graph and detail pane.
 - Multi-framework acceptance exercises 1/2/3 selections, deterministic order,
   unavailable exact matches, same- and different-Execution-IR cases, URL
   reload/back/forward state, framework-specific fusion links, synchronized
-  ranges, and both navigation directions through real SVG/Canvas clicks.
+  ranges, independent per-framework centering, one detail pane per framework,
+  exact-kernel versus peer-module details, and both navigation directions
+  through real SVG/Canvas clicks.
 - Release acceptance exercises both directions through real browser clicks on
   the rendered SVG node and Canvas kernel/owner lane. Calling navigation helper
   functions directly is insufficient: the test must also prove that a clicked

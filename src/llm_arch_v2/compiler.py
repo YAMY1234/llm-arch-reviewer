@@ -213,6 +213,59 @@ def _validate_notation_contract(model_ir: dict[str, Any], *, source: Path) -> No
                 )
 
 
+def _validate_dimension_symbols(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Validate explicit, fail-closed symbolic-dimension resolution contracts."""
+
+    symbols = model_ir.get("dimension_symbols")
+    if symbols is None:
+        return
+    dimensions = model_ir.get("dimensions") or {}
+    if not isinstance(symbols, dict) or set(symbols) != set(dimensions):
+        raise CatalogError(
+            f"{source}: dimension_symbols must define exactly the declared "
+            "dimensions"
+        )
+    targets = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in (model_ir.get("views") or {}).items()
+        for node in view.get("nodes", []) or []
+    }
+    for symbol, contract in symbols.items():
+        if not isinstance(contract, dict):
+            raise CatalogError(f"{source}: dimension symbol {symbol} must be a mapping")
+        value_class = contract.get("value_class")
+        if value_class == "model_constant" and "value" not in contract:
+            raise CatalogError(
+                f"{source}: model_constant dimension {symbol} requires value"
+            )
+        if value_class == "profile_runtime" and not contract.get("source_path"):
+            raise CatalogError(
+                f"{source}: profile_runtime dimension {symbol} requires source_path"
+            )
+        if value_class == "stage_dependent" and not (
+            contract.get("stage_resolutions") or contract.get("unresolved_reason")
+        ):
+            raise CatalogError(
+                f"{source}: stage_dependent dimension {symbol} requires "
+                "stage_resolutions or unresolved_reason"
+            )
+        paths = [contract.get("source_path")]
+        for resolution in contract.get("stage_resolutions") or []:
+            paths.append(resolution.get("source_path"))
+            unknown = sorted(set(resolution.get("scope_targets") or []) - targets)
+            if unknown:
+                raise CatalogError(
+                    f"{source}: dimension {symbol} stage resolution references "
+                    f"unknown targets {unknown}"
+                )
+        for path in filter(None, paths):
+            if not str(path).startswith(("workload.", "execution_parameters.", "hardware.")):
+                raise CatalogError(
+                    f"{source}: dimension {symbol} source_path {path!r} is not "
+                    "an approved validated profile metadata path"
+                )
+
+
 def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     allowed_shapes = {"io", "block", "gemm", "attn", "moe", "norm", "elem", "cache"}
@@ -1668,6 +1721,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     _validate_operator_granularity(model_ir, source=model_path)
     _validate_leaf_equation_coverage(model_ir, source=model_path)
     _validate_notation_contract(model_ir, source=model_path)
+    _validate_dimension_symbols(model_ir, source=model_path)
     _validate_boundary_contracts(model_ir, source=model_path)
     _validate_timing_scope_contracts(model_ir, source=model_path)
     if model_ir["default_view"] not in model_ir["views"]:
@@ -2080,6 +2134,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     "semantic_evidence",
                     "semantic_coverage",
                     "dimensions",
+                    "dimension_symbols",
                     "facts",
                     "default_view",
                 )

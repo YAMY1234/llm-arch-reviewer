@@ -22,6 +22,52 @@ dimensions:
   P: vision patch count
   M: merged vision-token count
   Hv: 1152
+dimension_symbols:
+  B:
+    meaning: request batch count
+    value_class: profile_runtime
+    source_path: workload.batch_size
+    provenance: validated profile workload.batch_size
+  B_local:
+    meaning: requests assigned to one attention-DP rank
+    value_class: stage_dependent
+    provenance: runtime attention-DP scheduler assignment
+    unresolved_reason: the selected pure-TP profiles do not expose an independent local request count
+  T:
+    meaning: token positions in the selected stage
+    value_class: stage_dependent
+    provenance: Model IR tensor contract and validated scheduler window
+    unresolved_reason: token positions differ between prefill, decode, and optional MTP verification
+  N:
+    meaning: flattened active tokens
+    value_class: stage_dependent
+    provenance: runtime flattened scheduler batch
+    unresolved_reason: requires a validated stage-specific active-token count
+  H: {meaning: hidden width, value_class: model_constant, value: 4096, provenance: model_ir.facts.hidden_size}
+  V: {meaning: vocabulary width, value_class: model_constant, value: 248320, provenance: model_ir.facts.vocab_size}
+  Q_heads: {meaning: query head count, value_class: model_constant, value: 32, provenance: model_ir.facts.attention_heads}
+  KV_heads: {meaning: key/value head count, value_class: model_constant, value: 2, provenance: model_ir.facts.kv_heads}
+  attention_head_dim: {meaning: attention head width, value_class: model_constant, value: 256, provenance: model_ir.facts.attention_head_dim}
+  GDN_key_heads: {meaning: GDN key head count, value_class: model_constant, value: 16, provenance: model_ir.facts.gdn_key_heads}
+  GDN_value_heads: {meaning: GDN value head count, value_class: model_constant, value: 64, provenance: model_ir.facts.gdn_value_heads}
+  GDN_key_head_dim: {meaning: GDN key head width, value_class: model_constant, value: 128, provenance: model_ir.facts.gdn_key_head_dim}
+  GDN_value_head_dim: {meaning: GDN value head width, value_class: model_constant, value: 128, provenance: model_ir.facts.gdn_value_head_dim}
+  S:
+    meaning: cached sequence length
+    value_class: stage_dependent
+    provenance: selected request KV-cache state
+    unresolved_reason: requires validated per-request cache length for the selected occurrence
+  P:
+    meaning: vision patch count
+    value_class: stage_dependent
+    provenance: selected multimodal input contract
+    unresolved_reason: text-only profiles intentionally do not select a vision patch count
+  M:
+    meaning: merged vision-token count
+    value_class: stage_dependent
+    provenance: selected multimodal patch-merger output
+    unresolved_reason: text-only profiles intentionally do not select merged vision tokens
+  Hv: {meaning: vision hidden width, value_class: model_constant, value: 1152, provenance: model_ir.facts.vision_hidden_size}
 facts:
   checkpoint: nvidia/Qwen3.5-397B-A17B-NVFP4-V2
   checkpoint_revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8

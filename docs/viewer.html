@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="llm-arch-reviewer-viewer-build" content="2026-08-30-compact-stream-lanes-v1" />
+<meta name="llm-arch-reviewer-viewer-build" content="2026-08-31-comparison-details-symbols-v1" />
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <title>llm-arch-reviewer</title>
@@ -172,6 +172,15 @@
   .timeline-comparison-header strong { margin-right: 8px; }
   .timeline-comparison-header code { color: var(--muted); font-size: 10px; }
   .timeline-comparison-card iframe { flex: 1 1 auto; width: 100%; border: 0; background: white; }
+  #comparison-details { display: none; min-height: 0; height: 100%; gap: 8px; padding: 8px; background: var(--panel2); }
+  aside.right.comparison-mode { padding: 0; overflow: hidden; }
+  aside.right.comparison-mode > #detail { display: none; }
+  aside.right.comparison-mode > #comparison-details { display: flex; flex-direction: column; }
+  .comparison-detail-card { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); overflow: hidden; }
+  .comparison-detail-header { flex: 0 0 auto; padding: 6px 9px; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .comparison-detail-header strong { margin-right: 8px; }
+  .comparison-detail-header code { color: var(--muted); font-size: 10px; }
+  .comparison-detail-card iframe { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: white; }
   .comparison-evidence-table { width: 100%; border-collapse: collapse; font-size: 10px; }
   .comparison-evidence-table th, .comparison-evidence-table td { padding: 4px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
   .comparison-evidence-table th { color: var(--muted); font-weight: 500; }
@@ -180,6 +189,13 @@
   body.embedded-timeline > nav.crumbs,
   body.embedded-timeline > aside.right { display: none !important; }
   body.embedded-timeline > main { position: absolute; inset: 0; }
+  body.embedded-detail { display: block; height: 100vh; overflow: hidden; }
+  body.embedded-detail > header,
+  body.embedded-detail > nav.crumbs,
+  body.embedded-detail > main { display: none !important; }
+  body.embedded-detail > aside.right {
+    position: absolute; inset: 0; border: 0; padding: 10px 12px; overflow: auto;
+  }
   .timeline-toolbar {
     flex: 0 0 auto; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
     padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel2);
@@ -279,6 +295,9 @@
   table.semantic-contract th, table.semantic-contract td {
     min-width: 0; overflow-wrap: anywhere; word-break: break-word;
   }
+  .tensor-symbol-glossary { margin-top: 10px; }
+  .tensor-symbol-glossary summary { cursor: pointer; color: var(--link); font-size: 11px; }
+  .unresolved-dimension { color: var(--muted); font-style: italic; }
 
   .empty { color: var(--muted); font-style: italic; padding: 20px 0; text-align: center; }
 
@@ -476,6 +495,7 @@
         </optgroup>
       </select>
     </label>
+    <button id="btn-symbols" title="Open the model-generic tensor-symbol glossary for this profile and stage">symbols</button>
     <button id="btn-fit">fit</button>
     <button id="btn-up">⬆ up</button>
   </div>
@@ -545,6 +565,7 @@
   <div id="detail">
     <div class="empty">Click any node for details (incl. block-level aggregate).<br/>Double-click a module (thick border) or click "Open …" in the detail panel to drill in.</div>
   </div>
+  <div id="comparison-details" aria-label="Compared framework details"></div>
 </aside>
 
 <script>
@@ -611,9 +632,11 @@ let TIMELINE_LAST_RENDER_STATS = null;
 let PERFETTO_TRACE_BUFFER = null;
 let PERFETTO_TRACE_FILE = "";
 const EMBEDDED_TIMELINE = new URLSearchParams(location.search).get("embeddedTimeline") === "1";
+const EMBEDDED_DETAIL = new URLSearchParams(location.search).get("embeddedDetail") === "1";
 let EMBEDDED_RANGE_SYNC_SUPPRESS = false;
 let EMBEDDED_LAST_RANGE_KEY = "";
 if (EMBEDDED_TIMELINE) document.body.classList.add("embedded-timeline");
+if (EMBEDDED_DETAIL) document.body.classList.add("embedded-detail");
 
 // VIEW_STACK 现在是"打开的多张图", 从左到右水平排列.
 // drill_from[i] = 第 i 张图是从第 i-1 张图哪个 node 钻进来的 (用于画跨图虚线)
@@ -1477,7 +1500,7 @@ function comparisonAvailability() {
 }
 
 function refreshComparisonImplementationOptions() {
-  if (!isV2Bundle() || EMBEDDED_TIMELINE) return;
+  if (!isV2Bundle() || EMBEDDED_TIMELINE || EMBEDDED_DETAIL) return;
   const {matches, rows} = comparisonAvailability();
   const options = document.getElementById("implementation-options");
   options.innerHTML = "";
@@ -1535,7 +1558,7 @@ function initializeComparisonSelection() {
   if (!isV2Bundle()) return;
   const query = new URLSearchParams(location.search);
   const requestedContract = query.get("comparison") || "";
-  const requested = EMBEDDED_TIMELINE
+  const requested = (EMBEDDED_TIMELINE || EMBEDDED_DETAIL)
     ? [CURRENT_IMPLEMENTATION]
     : (query.get("implementations") || CURRENT_IMPLEMENTATION).split(",").filter(Boolean);
   const anchorContract = comparisonContractForProfile(CURRENT_PROFILE);
@@ -1581,7 +1604,7 @@ function syncV2SelectionQuery(push = false) {
   else url.searchParams.delete("compareMetric");
   if (CURRENT_VIEW_MODE) url.searchParams.set("viewMode", CURRENT_VIEW_MODE);
   if (CURRENT_IR_LAYER) url.searchParams.set("irLayer", CURRENT_IR_LAYER);
-  if (!EMBEDDED_TIMELINE && SELECTED_IMPLEMENTATIONS.length > 1) {
+  if (!EMBEDDED_TIMELINE && !EMBEDDED_DETAIL && SELECTED_IMPLEMENTATIONS.length > 1) {
     url.searchParams.set("comparison", CURRENT_COMPARISON_CONTRACT);
     url.searchParams.set("implementations", SELECTED_IMPLEMENTATIONS.join(","));
     url.searchParams.set("profiles", comparisonContextList().map(context =>
@@ -1753,6 +1776,7 @@ function initUI() {
   };
 
   document.getElementById("btn-fit").onclick = () => fitToSvg();
+  document.getElementById("btn-symbols").onclick = () => showTensorSymbolGlossary();
   document.getElementById("btn-up").onclick = () => goUp();
   window.addEventListener("hashchange", parseHash);
   window.addEventListener("popstate", () => {
@@ -2484,7 +2508,9 @@ function drawNode(root, n, c, viewName) {
     SELECTED = {view: viewName, nodeId: n.id};
     syncHash(true);
     updateArchitectureSelection(viewName, n.id);
-    highlightNodeOnTimeline(viewName, n.id);
+    if (comparisonModeActive()) centerNodeOnTimeline(viewName, n.id);
+    else highlightNodeOnTimeline(viewName, n.id);
+    selectComparisonDetails(`${viewName}.${n.id}`);
     // 总是先显示 detail (block aggregate 也需要看), drill 通过 detail 里
     // 的大 button 或者下面的双击 / shift+click 触发.
     showDetail(n, viewName);
@@ -2565,6 +2591,21 @@ function comparisonTimelineUrl(context) {
   return url.href;
 }
 
+function comparisonDetailUrl(context) {
+  const url = new URL(location.href);
+  url.searchParams.set("execution", context.execution_variant_id);
+  url.searchParams.set("implementation", context.implementation_id);
+  url.searchParams.set("profile", context.profile_id);
+  url.searchParams.set("embeddedDetail", "1");
+  url.searchParams.set("viewMode", "architecture");
+  url.searchParams.delete("embeddedTimeline");
+  url.searchParams.delete("comparison");
+  url.searchParams.delete("implementations");
+  url.searchParams.delete("profiles");
+  url.hash = "";
+  return url.href;
+}
+
 function renderComparisonTimelines() {
   const pane = document.getElementById("timeline-pane");
   const container = document.getElementById("timeline-comparison");
@@ -2581,6 +2622,7 @@ function renderComparisonTimelines() {
     card.appendChild(header);
     if (meta) {
       const iframe = document.createElement("iframe");
+      iframe.className = "comparison-timeline-frame";
       iframe.title = `${context.framework} production timeline`;
       iframe.loading = "eager";
       iframe.src = comparisonTimelineUrl(context);
@@ -2593,19 +2635,79 @@ function renderComparisonTimelines() {
     }
     container.appendChild(card);
   }
+  renderComparisonDetails();
+}
+
+function renderComparisonDetails() {
+  const aside = document.querySelector("aside.right");
+  const container = document.getElementById("comparison-details");
+  aside.classList.add("comparison-mode");
+  container.innerHTML = "";
+  for (const context of comparisonContextList()) {
+    const card = document.createElement("section");
+    card.className = "comparison-detail-card";
+    card.dataset.implementation = context.implementation_id;
+    const header = document.createElement("div");
+    header.className = "comparison-detail-header";
+    header.innerHTML = `<strong>${escapeHtml(context.framework)}</strong><code>${escapeHtml(context.profile_id)}</code>`;
+    const iframe = document.createElement("iframe");
+    iframe.className = "comparison-detail-frame";
+    iframe.title = `${context.framework} node and kernel details`;
+    iframe.loading = "eager";
+    iframe.src = comparisonDetailUrl(context);
+    iframe.addEventListener("load", () => {
+      if (!SELECTED) return;
+      iframe.contentWindow?.postMessage({
+        type: "llm-arch-reviewer:detail-select",
+        target: `${SELECTED.view}.${SELECTED.nodeId}`,
+        irLayer: CURRENT_IR_LAYER,
+      }, location.origin);
+    });
+    card.append(header, iframe);
+    container.appendChild(card);
+  }
 }
 
 function leaveComparisonTimelineMode() {
   document.getElementById("timeline-pane").classList.remove("comparison-mode");
   document.getElementById("timeline-comparison").innerHTML = "";
+  document.querySelector("aside.right").classList.remove("comparison-mode");
+  document.getElementById("comparison-details").innerHTML = "";
 }
 
 function broadcastComparisonTimeline(message, exceptWindow = null) {
-  for (const iframe of document.querySelectorAll("#timeline-comparison iframe")) {
+  for (const iframe of document.querySelectorAll("#timeline-comparison iframe.comparison-timeline-frame")) {
     if (iframe.contentWindow && iframe.contentWindow !== exceptWindow) {
       iframe.contentWindow.postMessage(message, location.origin);
     }
   }
+}
+
+function broadcastComparisonDetail(message, implementationId = "") {
+  for (const card of document.querySelectorAll(".comparison-detail-card")) {
+    if (implementationId && card.dataset.implementation !== implementationId) continue;
+    const iframe = card.querySelector("iframe.comparison-detail-frame");
+    iframe?.contentWindow?.postMessage(message, location.origin);
+  }
+}
+
+function selectComparisonDetails(target) {
+  if (!comparisonModeActive() || EMBEDDED_TIMELINE || EMBEDDED_DETAIL) return;
+  broadcastComparisonDetail({
+    type: "llm-arch-reviewer:detail-select",
+    target,
+    irLayer: CURRENT_IR_LAYER,
+  });
+}
+
+function selectEmbeddedDetailLayer(irLayer) {
+  if (!EMBEDDED_DETAIL || !isV2Bundle()) return;
+  const requested = irLayer === "execution" ? "execution" : "model";
+  if (CURRENT_IR_LAYER === requested) return;
+  CURRENT_IR_LAYER = requested;
+  document.getElementById("ir-layer-select").value = requested;
+  activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+  updateProfileSummary();
 }
 
 function setViewMode(mode, sync = true, shouldRender = true) {
@@ -4070,12 +4172,29 @@ async function showTimelineEventInArchitecture(options = {}) {
   if (EMBEDDED_TIMELINE && window.parent !== window && !options.fromParent) {
     window.parent.postMessage({
       type: "llm-arch-reviewer:timeline-select",
+      implementation_id: CURRENT_IMPLEMENTATION,
       event: {
         _irNode: event._irNode || "",
         _irTargets: [...(event._irTargets || [])],
         _layerKind: event._layerKind || "",
         _substage: event._substage || "",
         _occurrenceId: event._occurrenceId || "",
+        _kernelName: event._kernelName || "",
+        _kernelLabel: event._kernelLabel || "",
+        _kernelKind: event._kernelKind || "",
+        _stack: event._stack || null,
+        _eagerEventIds: [...(event._eagerEventIds || [])],
+        _cpuOpName: event._cpuOpName || "",
+        _attributionMethod: event._attributionMethod || "",
+        _confidence: event._confidence || "",
+        _reconciliationStatus: event._reconciliationStatus || "",
+        _reconciliationReason: event._reconciliationReason || "",
+        _supportClass: event._supportClass || "",
+        _supportReason: event._supportReason || "",
+        start_us: Number(event.start_us || 0),
+        duration_us: Number(event.duration_us || 0),
+        stream_id: event.stream_id,
+        layer_id: event.layer_id,
       },
     }, location.origin);
     return;
@@ -4194,6 +4313,7 @@ function centerNodeOnTimeline(viewName, nodeId) {
       type: "llm-arch-reviewer:highlight",
       target,
       center: true,
+      independentCenter: true,
     });
     return;
   }
@@ -4495,6 +4615,14 @@ function initComparisonMessaging() {
             target: `${viewName}.${nodeId}`,
             center: false,
           }, message.source);
+          selectComparisonDetails(`${viewName}.${nodeId}`);
+          if (message.data.implementation_id) {
+            broadcastComparisonDetail({
+              type: "llm-arch-reviewer:kernel-detail",
+              event,
+              irLayer: CURRENT_IR_LAYER,
+            }, String(message.data.implementation_id));
+          }
         }
       });
       return;
@@ -4506,8 +4634,46 @@ function initComparisonMessaging() {
     if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:highlight") {
       const [viewName, nodeId] = String(message.data.target || "").split(".", 2);
       if (!viewName || !nodeId) return;
-      if (message.data.center) centerNodeOnTimeline(viewName, nodeId);
+      if (message.data.center) {
+        if (message.data.independentCenter) EMBEDDED_RANGE_SYNC_SUPPRESS = true;
+        centerNodeOnTimeline(viewName, nodeId);
+        if (message.data.independentCenter) {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            EMBEDDED_RANGE_SYNC_SUPPRESS = false;
+            EMBEDDED_LAST_RANGE_KEY = `${(TIMELINE_RANGE.startUs / Number(currentTimelineStep()?.duration_us || 1)).toFixed(7)}:${(TIMELINE_RANGE.endUs / Number(currentTimelineStep()?.duration_us || 1)).toFixed(7)}`;
+          }));
+        }
+      }
       else highlightNodeOnTimeline(viewName, nodeId);
+      return;
+    }
+    if (EMBEDDED_DETAIL && message.data.type === "llm-arch-reviewer:detail-select") {
+      selectEmbeddedDetailLayer(message.data.irLayer);
+      const target = String(message.data.target || "");
+      const split = target.indexOf(".");
+      const viewName = split > 0 ? target.slice(0, split) : "";
+      const nodeId = split > 0 ? target.slice(split + 1) : "";
+      const node = (DATA.views?.[viewName]?.nodes || []).find(candidate => candidate.id === nodeId);
+      if (node) {
+        SELECTED = {view: viewName, nodeId};
+        showDetail(node, viewName);
+      } else {
+        document.getElementById("detail").innerHTML = `<div class="empty">No corresponding IR target in this framework execution: ${escapeHtml(target)}</div>`;
+      }
+      return;
+    }
+    if (EMBEDDED_DETAIL && message.data.type === "llm-arch-reviewer:kernel-detail") {
+      selectEmbeddedDetailLayer(message.data.irLayer);
+      const event = message.data.event || null;
+      if (event) {
+        event._irTargets = event._irTargets || [];
+        event._eagerEventIds = event._eagerEventIds || [];
+        showTimelineEventDetail(event);
+      }
+      return;
+    }
+    if (EMBEDDED_DETAIL && message.data.type === "llm-arch-reviewer:show-symbols") {
+      document.getElementById("detail").innerHTML = `<h2>Tensor symbol glossary</h2>${tensorSymbolGlossaryHtml(String(message.data.target || ""), true)}`;
       return;
     }
     if (EMBEDDED_TIMELINE && message.data.type === "llm-arch-reviewer:timeline-range") {
@@ -4791,6 +4957,123 @@ function heatLevel(ms, viewName) {
 // ============================================================
 // 详情面板
 // ============================================================
+function dimensionDefinitions() {
+  const declared = RAW_DATA?.model_ir?.dimensions || {};
+  const authored = RAW_DATA?.model_ir?.dimension_symbols || {};
+  return Object.fromEntries(Object.entries(declared).map(([symbol, legacy]) => {
+    if (authored[symbol]) return [symbol, authored[symbol]];
+    if (typeof legacy === "number") {
+      return [symbol, {
+        meaning: `${symbol} model dimension`,
+        value_class: "model_constant",
+        value: legacy,
+        provenance: `model_ir.dimensions.${symbol}`,
+      }];
+    }
+    return [symbol, {
+      meaning: String(legacy || symbol),
+      value_class: "stage_dependent",
+      provenance: `model_ir.dimensions.${symbol}`,
+      unresolved_reason: "No authored profile/stage resolution contract; symbolic value remains authoritative.",
+    }];
+  }));
+}
+
+function profileMetadataValue(sourcePath) {
+  let value = DATA?.profiles?.[CURRENT_PROFILE]?.meta;
+  for (const part of String(sourcePath || "").split(".").filter(Boolean)) {
+    if (value == null || typeof value !== "object" || !(part in value)) return undefined;
+    value = value[part];
+  }
+  return value;
+}
+
+function dimensionResolutionScope(target = "") {
+  const scope = new Set(target ? [target] : []);
+  for (let index = 1; index < VIEW_STACK.length; index += 1) {
+    const sourceNode = DRILL_FROM[index];
+    if (sourceNode) scope.add(`${VIEW_STACK[index - 1]}.${sourceNode}`);
+  }
+  return scope;
+}
+
+function resolveDimensionSymbol(symbol, target = "") {
+  const contract = dimensionDefinitions()[symbol];
+  if (!contract) return {resolved: false, reason: "undeclared symbol"};
+  if (contract.value_class === "model_constant") {
+    return {resolved: contract.value != null, value: contract.value, provenance: contract.provenance};
+  }
+  if (contract.value_class === "profile_runtime") {
+    const value = profileMetadataValue(contract.source_path);
+    return value == null
+      ? {resolved: false, reason: `selected profile does not provide ${contract.source_path}`, provenance: contract.provenance}
+      : {resolved: true, value, provenance: contract.provenance};
+  }
+  const scope = dimensionResolutionScope(target);
+  const profile = DATA?.profiles?.[CURRENT_PROFILE]?.meta || {};
+  const resolution = (contract.stage_resolutions || []).find(candidate => {
+    const targetMatch = (candidate.scope_targets || []).some(item => scope.has(item));
+    const phaseMatch = !(candidate.phases || []).length || candidate.phases.includes(profile.phase || CURRENT_PHASE);
+    const generationMatch = !(candidate.generation_modes || []).length
+      || candidate.generation_modes.includes(profile.generation_mode || CURRENT_GENERATION);
+    return targetMatch && phaseMatch && generationMatch;
+  });
+  if (!resolution) {
+    return {resolved: false, reason: contract.unresolved_reason || "no validated stage resolution applies", provenance: contract.provenance};
+  }
+  const value = resolution.value != null
+    ? resolution.value : profileMetadataValue(resolution.source_path);
+  return value == null
+    ? {resolved: false, reason: `selected profile does not provide ${resolution.source_path}`, provenance: resolution.provenance}
+    : {resolved: true, value, provenance: resolution.provenance};
+}
+
+function resolveSymbolicShape(shape, target = "") {
+  const symbolic = String(shape || "");
+  const definitions = dimensionDefinitions();
+  const mentioned = Object.keys(definitions).filter(symbol => {
+    const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(symbolic);
+  });
+  if (!mentioned.length) return {symbolic, resolved: symbolic, unresolved: []};
+  const resolutions = Object.fromEntries(mentioned.map(symbol => [symbol, resolveDimensionSymbol(symbol, target)]));
+  const unresolved = mentioned.filter(symbol => !resolutions[symbol].resolved);
+  if (unresolved.length) return {symbolic, resolved: null, unresolved, resolutions};
+  let resolved = symbolic;
+  for (const symbol of [...mentioned].sort((left, right) => right.length - left.length)) {
+    const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    resolved = resolved.replace(
+      new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "g"),
+      String(resolutions[symbol].value),
+    );
+  }
+  return {symbolic, resolved, unresolved: [], resolutions};
+}
+
+function tensorSymbolGlossaryHtml(target = "", open = false) {
+  const rows = Object.entries(dimensionDefinitions()).map(([symbol, contract]) => {
+    const result = resolveDimensionSymbol(symbol, target);
+    const value = result.resolved
+      ? escapeHtml(result.value)
+      : `<span class="unresolved-dimension">unresolved — ${escapeHtml(result.reason || contract.unresolved_reason || "no validated value")}</span>`;
+    return `<tr><td class="name"><b>${escapeHtml(symbol)}</b></td><td class="name">${escapeHtml(contract.meaning || "")}</td><td>${escapeHtml(contract.value_class || "")}</td><td class="name">${value}</td><td class="name">${escapeHtml(result.provenance || contract.provenance || "")}</td></tr>`;
+  }).join("");
+  return `<details class="tensor-symbol-glossary"${open ? " open" : ""}>
+    <summary>Tensor symbols and profile-resolved dimensions</summary>
+    <div style="color:var(--muted); font-size:11px; margin:6px 0">Symbolic shapes are the source of truth. A concrete shape is shown only when every dynamic symbol is validated for this profile and drill stage.</div>
+    <table class="kernels"><thead><tr><th class="name">symbol</th><th class="name">meaning</th><th>value class</th><th class="name">current value</th><th class="name">provenance</th></tr></thead><tbody>${rows}</tbody></table>
+  </details>`;
+}
+
+function showTensorSymbolGlossary() {
+  const target = SELECTED ? `${SELECTED.view}.${SELECTED.nodeId}` : "";
+  if (comparisonModeActive() && !EMBEDDED_DETAIL && !EMBEDDED_TIMELINE) {
+    broadcastComparisonDetail({type: "llm-arch-reviewer:show-symbols", target});
+    return;
+  }
+  document.getElementById("detail").innerHTML = `<h2>Tensor symbol glossary</h2>${tensorSymbolGlossaryHtml(target, true)}`;
+}
+
 function showDetail(n, viewName) {
   const ms = nodeMs(n, viewName);
   const e = DATA.enriched[viewName];
@@ -4826,16 +5109,23 @@ function showDetail(n, viewName) {
     if (!items?.length) {
       return `<div style="color:var(--muted); font-size:11px">No ${endpoint === "source" ? "incoming" : "outgoing"} tensor/state edge.</div>`;
     }
-    const rows = items.map(item => `<tr>
+    const rows = items.map(item => {
+      const shape = resolveSymbolicShape(item.shape || "", target);
+      const resolved = shape.resolved == null
+        ? `<span class="unresolved-dimension" title="${escapeHtml(shape.unresolved.map(symbol => `${symbol}: ${shape.resolutions[symbol]?.reason || "unresolved"}`).join("; "))}">unresolved (${escapeHtml(shape.unresolved.join(", "))})</span>`
+        : escapeHtml(shape.resolved);
+      return `<tr>
       <td class="name">${escapeHtml(item.name || "")}</td>
       <td>${escapeHtml(item.shape || "")}</td>
+      <td>${resolved}</td>
       <td>${escapeHtml(item.dtype || "")}</td>
       <td class="name" title="${escapeHtml(item.layout || "")}">${escapeHtml(shorten(item.layout || "", 28))}</td>
       <td class="name" title="${escapeHtml(item.state || "")}">${escapeHtml(shorten(item.state || "", 24))}</td>
       <td>${escapeHtml(item[endpoint] || "")}</td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     return `<table class="kernels semantic-contract"><thead><tr>
-      <th class="name">tensor/state</th><th>shape</th><th>dtype</th><th class="name">layout</th><th class="name">lifetime</th><th>${endpoint}</th>
+      <th class="name">tensor/state</th><th>symbolic shape</th><th>resolved shape</th><th>dtype</th><th class="name">layout</th><th class="name">lifetime</th><th>${endpoint}</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   };
   const semanticsHtml = semantics ? `<h3>Semantics</h3>
@@ -5165,6 +5455,7 @@ function showDetail(n, viewName) {
       <div class="k">ms (cur)</div><div>${msBadge}</div>
     </div>
     ${semanticsHtml}
+    ${tensorSymbolGlossaryHtml(target)}
     ${comparisonHtml}
     ${provenanceHtml}
     ${solHtml}

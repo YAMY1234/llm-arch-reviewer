@@ -196,6 +196,10 @@ mapping/timing row per framework; Timeline comparison stacks the untouched
 production traces in SGLang, vLLM, TensorRT-LLM order with synchronized ranges
 and bidirectional selection. If validated Execution IR fingerprints differ,
 only Model IR is shared and each framework keeps a separate execution overlay.
+Selecting one Architecture node independently centers each framework's nearest
+matching event and updates one framework-specific detail pane per timeline.
+Tensor symbols remain symbolic in Model IR, with profile/stage-resolved values
+shown only when their authored provenance contract is valid.
 The full comparison selection is URL-persistent (`comparison`,
 `implementations`, and `profiles`) while existing single-profile links remain
 backward compatible.
