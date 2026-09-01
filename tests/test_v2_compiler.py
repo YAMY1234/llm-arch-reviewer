@@ -389,6 +389,36 @@ def test_qwen40_compute_leaf_requires_authored_equation_or_exemption() -> None:
         )
 
 
+def test_semantic_contract_operation_equation_satisfies_leaf_coverage() -> None:
+    model_ir = {
+        "semantic_revision": 6,
+        "semantic_contract": {
+            "operations": {
+                "example.scale": {
+                    "kind": "elementwise",
+                    "equation": "y = alpha * x",
+                }
+            }
+        },
+        "views": {
+            "top": {
+                "nodes": [
+                    {
+                        "id": "scale",
+                        "label": "scale",
+                        "shape": "elem",
+                        "semantic_op": "example.scale",
+                    }
+                ]
+            }
+        },
+    }
+
+    _validate_leaf_equation_coverage(
+        model_ir, source=Path("catalog/example/model_ir.yaml")
+    )
+
+
 def test_operator_signature_does_not_change_execution_fingerprint() -> None:
     model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
     plan = load_yaml(QWEN40_ROOT / "execution_paths" / "tp_only.yaml")

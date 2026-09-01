@@ -40,7 +40,10 @@ profiler:
   type: nsight_systems
   representative_rank: 0
   cuda_graph_enabled: true
+  cuda_graph_trace: node
+  event_visibility: kernel_and_device_activity
   with_stack: false
+  capture_control: {}
   selected_runtime_coordinate:
     graph: true
     native_batch: 7751
@@ -70,8 +73,8 @@ evidence:
   raw_trace_sha256: b935aeab977517c2d7cdcd4bf83e3e586b3c71bf262579c95fcf227b9fbbdc68
   eager_mapping_sha256: fc24b5c44eb906688881bbda9544b5ad28ac70397c702156729f4d628517cbd3
   mapping_policy: 78-layer hard-anchor bounded exact/normalized sequence and occurrence order, eager-unique identity, reviewed GLM semantic signatures, and eager-validated collective order; no greedy matching
-  mapped_kernel_count_ratio: 0.58177677
-  mapped_kernel_duration_ratio: 0.81039073
+  mapped_kernel_count_ratio: 0.99362187
+  mapped_kernel_duration_ratio: 0.99767698
   timing:
     elapsed_ms: 21.097667
     active_gpu_ms: 19.660806
@@ -82,7 +85,7 @@ evidence:
 timeline:
   schema_version: timeline.v1
   artifact: decode_bs16.timeline.json.gz
-  sha256: 612704fe859de99fddb32e93440ee1b22c34a6d320f8ade1f542fdb150ba8971
+  sha256: 598fe942d71315ab1bcca165479eab884e988fcbaa97fcc03c0bd951f9a5b41d
   reference_rank: 0
   step_count: 1
   event_count: 2200
@@ -155,7 +158,25 @@ node_states:
   mtp_extension.embedding_norm:
     status: not_selected
     label: MTP off autoregressive baseline
-  mtp_extension.target_hidden_state:
+  mtp_extension.draft_logits:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_decoder:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.concatenate:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_embedding:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.eh_projection:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.candidate_token_ids:
+    status: not_selected
+    label: MTP off autoregressive baseline
+  mtp_extension.nextn_lm_head:
     status: not_selected
     label: MTP off autoregressive baseline
   mtp_extension.hidden_norm:
@@ -164,71 +185,24 @@ node_states:
   mtp_extension.shared_head_norm:
     status: not_selected
     label: MTP off autoregressive baseline
-  mtp_extension.candidate_embedding:
+  mtp_extension.target_hidden_state:
     status: not_selected
     label: MTP off autoregressive baseline
-  mtp_extension.nextn_decoder:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  mtp_extension.draft_logits:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  mtp_extension.eh_projection:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  mtp_extension.concatenate:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  mtp_extension.nextn_lm_head:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  mtp_extension.candidate_token_ids:
-    status: not_selected
-    label: MTP off autoregressive baseline
-  moe.dispatch:
-    status: fused
-    label: decode token routing is fused into the routed-expert runner
-    included_in: moe.routed_experts
-  dsa_attention.q_a_projection:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  moe.shared_expert_down:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  moe.topk:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  moe.router:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dsa_attention.kv_a_norm:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  top.lm_head:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dsa_attention.q_b_projection:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dense_mlp.down_projection:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
   stack.post_attention_norm:
     status: unmapped
     label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  stack.input_norm:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dsa_attention.latent_kv_reconstruction:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dsa_attention.q_a_norm:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
-  dsa_attention.output_projection:
-    status: unmapped
-    label: semantic node executes in this phase, but its production kernels remain ambiguous under fail-closed eager attribution transfer
 node_metrics:
+  dense_mlp.down_projection:
+    ms_per_iter: 0.016256
+    gpu_residency_ms_per_iter: 0.016256
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 3
+      count_per_iter: 3.0
+      avg_us: 5.418667
+      total_us_per_iter: 16.256
+      share_in_node_residency_pct: 100.0
   dense_mlp.gate_up_projection:
     ms_per_iter: 0.033632
     gpu_residency_ms_per_iter: 0.033632
@@ -240,10 +214,6 @@ node_metrics:
       avg_us: 11.210667
       total_us_per_iter: 33.632
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.033632
-    gpu_residency_ms: 0.033632
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dense_mlp.swiglu:
     ms_per_iter: 0.009407
     gpu_residency_ms_per_iter: 0.009407
@@ -255,10 +225,6 @@ node_metrics:
       avg_us: 3.135667
       total_us_per_iter: 9.407
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.009407
-    gpu_residency_ms: 0.009407
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dense_mlp.tp_dense_mlp_output_collective:
     ms_per_iter: 0.024256
     gpu_residency_ms_per_iter: 0.03184
@@ -270,25 +236,17 @@ node_metrics:
       avg_us: 5.306667
       total_us_per_iter: 31.84
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.024256
-    gpu_residency_ms: 0.03184
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.index_k_gate_projection:
-    ms_per_iter: 0.127904
-    gpu_residency_ms_per_iter: 0.130432
+    ms_per_iter: 0.165761
+    gpu_residency_ms_per_iter: 0.184129
     timing_semantics: same-rank active interval union
     kernels:
     - name: aten::mm
-      count: 24
-      count_per_iter: 24.0
-      avg_us: 5.434667
-      total_us_per_iter: 130.432
+      count: 42
+      count_per_iter: 42.0
+      avg_us: 4.384024
+      total_us_per_iter: 184.129
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.127904
-    gpu_residency_ms: 0.130432
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.index_k_norm_rope:
     ms_per_iter: 0.046529
     gpu_residency_ms_per_iter: 0.046529
@@ -300,10 +258,6 @@ node_metrics:
       avg_us: 2.215667
       total_us_per_iter: 46.529
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.046529
-    gpu_residency_ms: 0.046529
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.index_logits:
     ms_per_iter: 0.16464
     gpu_residency_ms_per_iter: 0.16464
@@ -315,31 +269,17 @@ node_metrics:
       avg_us: 7.483636
       total_us_per_iter: 164.64
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.16464
-    gpu_residency_ms: 0.16464
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.index_q_projection:
-    ms_per_iter: 0.141377
-    gpu_residency_ms_per_iter: 0.153985
+    ms_per_iter: 0.046016
+    gpu_residency_ms_per_iter: 0.047008
     timing_semantics: same-rank active interval union
     kernels:
-    - name: sglang::cutedsl_tgv_bf16_gemm
-      count: 21
-      count_per_iter: 21.0
-      avg_us: 5.391286
-      total_us_per_iter: 113.217
-      share_in_node_residency_pct: 73.5247
     - name: dsa_attention.index_q_projection
-      count: 21
-      count_per_iter: 21.0
-      avg_us: 1.941333
-      total_us_per_iter: 40.768
-      share_in_node_residency_pct: 26.4753
-    active_gpu_ms: 0.141377
-    gpu_residency_ms: 0.153985
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+      count: 22
+      count_per_iter: 22.0
+      avg_us: 2.136727
+      total_us_per_iter: 47.008
+      share_in_node_residency_pct: 100.0
   dsa_attention.index_topk:
     ms_per_iter: 0.180096
     gpu_residency_ms_per_iter: 0.180096
@@ -351,10 +291,17 @@ node_metrics:
       avg_us: 8.576
       total_us_per_iter: 180.096
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.180096
-    gpu_residency_ms: 0.180096
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  dsa_attention.kv_a_norm:
+    ms_per_iter: 0.116864
+    gpu_residency_ms_per_iter: 0.116864
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.kv_a_norm
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 1.498256
+      total_us_per_iter: 116.864
+      share_in_node_residency_pct: 100.0
   dsa_attention.latent_kv_cache:
     ms_per_iter: 0.144335
     gpu_residency_ms_per_iter: 0.144335
@@ -366,10 +313,61 @@ node_metrics:
       avg_us: 1.850449
       total_us_per_iter: 144.335
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.144335
-    gpu_residency_ms: 0.144335
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  dsa_attention.latent_kv_reconstruction:
+    ms_per_iter: 0.311011
+    gpu_residency_ms_per_iter: 0.311011
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::bmm
+      count: 99
+      count_per_iter: 99.0
+      avg_us: 3.141525
+      total_us_per_iter: 311.011
+      share_in_node_residency_pct: 100.0
+  dsa_attention.output_projection:
+    ms_per_iter: 0.548966
+    gpu_residency_ms_per_iter: 0.548966
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 7.038026
+      total_us_per_iter: 548.966
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_a_norm:
+    ms_per_iter: 0.232481
+    gpu_residency_ms_per_iter: 0.232481
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: dsa_attention.q_a_norm
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 2.980526
+      total_us_per_iter: 232.481
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_a_projection:
+    ms_per_iter: 0.901507
+    gpu_residency_ms_per_iter: 0.901507
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::jit_dsv3_fused_a_gemm
+      count: 78
+      count_per_iter: 78.0
+      avg_us: 11.557782
+      total_us_per_iter: 901.507
+      share_in_node_residency_pct: 100.0
+  dsa_attention.q_b_projection:
+    ms_per_iter: 0.601538
+    gpu_residency_ms_per_iter: 0.601538
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::jit_dsv3_fused_a_gemm
+      count: 155
+      count_per_iter: 155.0
+      avg_us: 3.88089
+      total_us_per_iter: 601.538
+      share_in_node_residency_pct: 100.0
   dsa_attention.q_split_rope:
     ms_per_iter: 0.210275
     gpu_residency_ms_per_iter: 0.210275
@@ -381,10 +379,6 @@ node_metrics:
       avg_us: 2.695833
       total_us_per_iter: 210.275
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.210275
-    gpu_residency_ms: 0.210275
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.sparse_mla_core:
     ms_per_iter: 1.126495
     gpu_residency_ms_per_iter: 1.126495
@@ -396,10 +390,6 @@ node_metrics:
       avg_us: 14.442244
       total_us_per_iter: 1126.495
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 1.126495
-    gpu_residency_ms: 1.126495
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   dsa_attention.tp_attention_output_collective:
     ms_per_iter: 0.636707
     gpu_residency_ms_per_iter: 0.827971
@@ -411,10 +401,6 @@ node_metrics:
       avg_us: 5.307506
       total_us_per_iter: 827.971
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.636707
-    gpu_residency_ms: 0.827971
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   moe.combine:
     ms_per_iter: 0.156578
     gpu_residency_ms_per_iter: 0.156578
@@ -426,10 +412,17 @@ node_metrics:
       avg_us: 1.535078
       total_us_per_iter: 156.578
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.156578
-    gpu_residency_ms: 0.156578
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  moe.dispatch:
+    ms_per_iter: 0.148095
+    gpu_residency_ms_per_iter: 0.148095
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::flashinfer_fp4_quantize
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 1.9746
+      total_us_per_iter: 148.095
+      share_in_node_residency_pct: 100.0
   moe.routed_experts:
     ms_per_iter: 1.836968
     gpu_residency_ms_per_iter: 2.059914
@@ -441,10 +434,6 @@ node_metrics:
       avg_us: 13.73276
       total_us_per_iter: 2059.914
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 1.836968
-    gpu_residency_ms: 2.059914
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   moe.routed_weighted_combine:
     ms_per_iter: 0.227905
     gpu_residency_ms_per_iter: 0.227905
@@ -456,10 +445,17 @@ node_metrics:
       avg_us: 3.038733
       total_us_per_iter: 227.905
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.227905
-    gpu_residency_ms: 0.227905
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  moe.router:
+    ms_per_iter: 0.662021
+    gpu_residency_ms_per_iter: 0.735942
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: sglang::dsv3_router_gemm
+      count: 150
+      count_per_iter: 150.0
+      avg_us: 4.90628
+      total_us_per_iter: 735.942
+      share_in_node_residency_pct: 100.0
   moe.shared_expert_activation:
     ms_per_iter: 0.237583
     gpu_residency_ms_per_iter: 0.237583
@@ -471,25 +467,39 @@ node_metrics:
       avg_us: 3.167773
       total_us_per_iter: 237.583
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.237583
-    gpu_residency_ms: 0.237583
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
-  moe.shared_expert_up:
-    ms_per_iter: 0.472196
-    gpu_residency_ms_per_iter: 0.665735
+  moe.shared_expert_down:
+    ms_per_iter: 0.220512
+    gpu_residency_ms_per_iter: 0.220512
     timing_semantics: same-rank active interval union
     kernels:
     - name: aten::mm
-      count: 189
-      count_per_iter: 189.0
-      avg_us: 3.522407
-      total_us_per_iter: 665.735
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 2.94016
+      total_us_per_iter: 220.512
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.472196
-    gpu_residency_ms: 0.665735
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  moe.shared_expert_up:
+    ms_per_iter: 0.505252
+    gpu_residency_ms_per_iter: 0.571396
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 150
+      count_per_iter: 150.0
+      avg_us: 3.809307
+      total_us_per_iter: 571.396
+      share_in_node_residency_pct: 100.0
+  moe.topk:
+    ms_per_iter: 0.591428
+    gpu_residency_ms_per_iter: 0.591428
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: moe.topk
+      count: 75
+      count_per_iter: 75.0
+      avg_us: 7.885707
+      total_us_per_iter: 591.428
+      share_in_node_residency_pct: 100.0
   moe.tp_moe_output_collective:
     ms_per_iter: 0.682016
     gpu_residency_ms_per_iter: 0.977216
@@ -507,10 +517,17 @@ node_metrics:
       avg_us: 25.856
       total_us_per_iter: 25.856
       share_in_node_residency_pct: 2.6459
-    active_gpu_ms: 0.682016
-    gpu_residency_ms: 0.977216
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  stack.input_norm:
+    ms_per_iter: 0.003648
+    gpu_residency_ms_per_iter: 0.003648
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: stack.input_norm
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 3.648
+      total_us_per_iter: 3.648
+      share_in_node_residency_pct: 100.0
   top.embedding:
     ms_per_iter: 0.001856
     gpu_residency_ms_per_iter: 0.001856
@@ -522,25 +539,28 @@ node_metrics:
       avg_us: 1.856
       total_us_per_iter: 1.856
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.001856
-    gpu_residency_ms: 0.001856
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   top.final_norm:
-    ms_per_iter: 0.008192
-    gpu_residency_ms_per_iter: 0.008192
+    ms_per_iter: 0.004544
+    gpu_residency_ms_per_iter: 0.004544
     timing_semantics: same-rank active interval union
     kernels:
     - name: top.final_norm
-      count: 2
-      count_per_iter: 2.0
-      avg_us: 4.096
-      total_us_per_iter: 8.192
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 4.544
+      total_us_per_iter: 4.544
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.008192
-    gpu_residency_ms: 0.008192
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
+  top.lm_head:
+    ms_per_iter: 0.036608
+    gpu_residency_ms_per_iter: 0.036608
+    timing_semantics: same-rank active interval union
+    kernels:
+    - name: aten::mm
+      count: 1
+      count_per_iter: 1.0
+      avg_us: 36.608
+      total_us_per_iter: 36.608
+      share_in_node_residency_pct: 100.0
   top.tp_embedding_output_collective:
     ms_per_iter: 11.241204
     gpu_residency_ms_per_iter: 11.241204
@@ -552,10 +572,6 @@ node_metrics:
       avg_us: 11241.204
       total_us_per_iter: 11241.204
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 11.241204
-    gpu_residency_ms: 11.241204
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
   top.tp_logits_all_gather:
     ms_per_iter: 0.029152
     gpu_residency_ms_per_iter: 0.029152
@@ -567,35 +583,17 @@ node_metrics:
       avg_us: 29.152
       total_us_per_iter: 29.152
       share_in_node_residency_pct: 100.0
-    active_gpu_ms: 0.029152
-    gpu_residency_ms: 0.029152
-    attribution_status: measured_direct
-    metric_kind: exclusive_leaf
-  stack.moe:
-    ms_per_iter: 2.85923
-    active_gpu_ms: 2.85923
-    gpu_residency_ms: 3.347715
-    gpu_residency_ms_per_iter: 3.347715
-    attribution_status: inclusive_rollup
-    metric_kind: inclusive_rollup
-    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
-    mapped_event_count: 591
-    rollup_sources:
-    - moe.combine
-    - moe.routed_experts
-    - moe.routed_weighted_combine
-    - moe.shared_expert_activation
-    - moe.shared_expert_up
   top.decoder_stack:
-    ms_per_iter: 6.228435
-    active_gpu_ms: 6.228435
-    gpu_residency_ms: 7.384568
-    gpu_residency_ms_per_iter: 7.384568
+    ms_per_iter: 8.30517
+    active_gpu_ms: 8.30517
+    gpu_residency_ms: 11.665197
+    gpu_residency_ms_per_iter: 11.665197
     attribution_status: inclusive_rollup
     metric_kind: inclusive_rollup
     timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
-    mapped_event_count: 1272
+    mapped_event_count: 2176
     rollup_sources:
+    - dense_mlp.down_projection
     - dense_mlp.gate_up_projection
     - dense_mlp.swiglu
     - dense_mlp.tp_dense_mlp_output_collective
@@ -604,43 +602,81 @@ node_metrics:
     - dsa_attention.index_logits
     - dsa_attention.index_q_projection
     - dsa_attention.index_topk
+    - dsa_attention.kv_a_norm
     - dsa_attention.latent_kv_cache
+    - dsa_attention.latent_kv_reconstruction
+    - dsa_attention.output_projection
+    - dsa_attention.q_a_norm
+    - dsa_attention.q_a_projection
+    - dsa_attention.q_b_projection
     - dsa_attention.q_split_rope
     - dsa_attention.sparse_mla_core
     - dsa_attention.tp_attention_output_collective
     - moe.combine
+    - moe.dispatch
     - moe.routed_experts
     - moe.routed_weighted_combine
+    - moe.router
     - moe.shared_expert_activation
+    - moe.shared_expert_down
     - moe.shared_expert_up
+    - moe.topk
     - moe.tp_moe_output_collective
-  stack.dense_mlp:
-    ms_per_iter: 0.039551
-    active_gpu_ms: 0.039551
-    gpu_residency_ms: 0.043039
-    gpu_residency_ms_per_iter: 0.043039
+    - stack.input_norm
+  stack.moe:
+    ms_per_iter: 3.487731
+    active_gpu_ms: 3.487731
+    gpu_residency_ms: 4.949353
+    gpu_residency_ms_per_iter: 4.949353
     attribution_status: inclusive_rollup
     metric_kind: inclusive_rollup
     timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
-    mapped_event_count: 6
+    mapped_event_count: 927
     rollup_sources:
-    - dense_mlp.gate_up_projection
-    - dense_mlp.swiglu
+    - moe.combine
+    - moe.dispatch
+    - moe.routed_experts
+    - moe.routed_weighted_combine
+    - moe.router
+    - moe.shared_expert_activation
+    - moe.shared_expert_down
+    - moe.shared_expert_up
+    - moe.topk
   stack.dsa_attention:
-    ms_per_iter: 2.001395
-    active_gpu_ms: 2.001395
-    gpu_residency_ms: 2.156787
-    gpu_residency_ms_per_iter: 2.156787
+    ms_per_iter: 4.207967
+    active_gpu_ms: 4.207967
+    gpu_residency_ms: 4.815874
+    gpu_residency_ms_per_iter: 4.815874
     attribution_status: inclusive_rollup
     metric_kind: inclusive_rollup
     timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
-    mapped_event_count: 364
+    mapped_event_count: 928
     rollup_sources:
     - dsa_attention.index_k_gate_projection
     - dsa_attention.index_k_norm_rope
     - dsa_attention.index_logits
     - dsa_attention.index_q_projection
     - dsa_attention.index_topk
+    - dsa_attention.kv_a_norm
     - dsa_attention.latent_kv_cache
+    - dsa_attention.latent_kv_reconstruction
+    - dsa_attention.output_projection
+    - dsa_attention.q_a_norm
+    - dsa_attention.q_a_projection
+    - dsa_attention.q_b_projection
     - dsa_attention.q_split_rope
     - dsa_attention.sparse_mla_core
+  stack.dense_mlp:
+    ms_per_iter: 0.055775
+    active_gpu_ms: 0.055775
+    gpu_residency_ms: 0.059295
+    gpu_residency_ms_per_iter: 0.059295
+    attribution_status: inclusive_rollup
+    metric_kind: inclusive_rollup
+    timing_semantics: union of validated descendant production-kernel intervals; overlap counted once
+    mapped_event_count: 9
+    rollup_sources:
+    - dense_mlp.down_projection
+    - dense_mlp.gate_up_projection
+    - dense_mlp.swiglu
+fusion_groups: {}

@@ -2,7 +2,7 @@
 
 - Status: **COMPLETE**
 - Scope: `target_text_model_plus_eagle_mtp`
-- Audit fingerprint: `b8a58116e41a62343bdb`
+- Audit fingerprint: `c4b00eb631a7d4451fd5`
 - This is a fail-closed report: an incomplete ledger is not a semantic PASS.
 
 ## Gate summary

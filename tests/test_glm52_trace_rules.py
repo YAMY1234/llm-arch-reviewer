@@ -1,9 +1,13 @@
 from models.common.trace_mapping import FrameRef
 from models.glm52.build.glm52_trace_rules import classify_glm52_node
 from models.glm52.build.build_glm52_production_profile import (
+    assign_trtllm_decode_layer_schedules,
+    assign_sglang_decode_layer_schedules,
+    align_layer_segment,
     anchor_segments,
     attribute_aggregate_graph_events,
     build_profile_node_states,
+    enrich_eager_semantics,
     expected_profile_nodes,
     trtllm_layer_collective_node,
 )
@@ -23,6 +27,20 @@ def test_unique_moe_kernel_overrides_stale_indexer_span() -> None:
         ),
     )
     assert (node, confidence) == ("moe.routed_experts", "high")
+
+
+def test_graph_decode_moe_variants_use_frozen_eager_stack_semantics() -> None:
+    moe_stack = _stack(
+        "python/sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py(890): quantize_hidden_states_fp4",
+        "python/sglang/srt/models/deepseek_v2.py(1024): forward_normal",
+        "nn.Module: DeepseekV2MoE_3",
+    )
+    assert classify_glm52_node(
+        "kernel_flashinfer_nvfp4_quantize_NVFP4QuantizeLinearKernel", None, moe_stack
+    )[0] == "moe.dispatch"
+    assert classify_glm52_node(
+        "routingIndicesDynBlockKernel", None, []
+    )[0] == "moe.topk"
 
 
 def test_collectives_are_split_by_semantic_boundary() -> None:
@@ -164,3 +182,174 @@ def test_aggregate_graph_event_remains_explicitly_unmapped() -> None:
     )
     assert report["observability"] == "aggregate_cuda_graph"
     assert report["mapped_kernel_duration_ratio"] == 0.0
+
+
+def test_layer_alignment_preserves_semantics_across_production_insertions() -> None:
+    source = [
+        {"kernel_name": "anchor_16x16", "selected_node": "attention"},
+        {"kernel_name": "gemm_64x128", "selected_node": "projection"},
+        {"kernel_name": "norm_128", "selected_node": "norm"},
+    ]
+    production = [
+        {"kernel_name": "anchor_32x16"},
+        {"kernel_name": "runtime_metadata"},
+        {"kernel_name": "gemm_128x128"},
+        {"kernel_name": "norm_256"},
+    ]
+    aligned = align_layer_segment(source, production)
+    assert [
+        (source_index, production_index)
+        for source_index, production_index, _ in aligned
+    ] == [(0, 0), (1, 2), (2, 3)]
+
+
+def test_eager_enrichment_uses_frozen_stack_without_overwriting_existing_node() -> None:
+    rows = [
+        {
+            "event_id": "e1",
+            "kernel_name": "bmm_E2m1_E2m1E2m1_Fp32_Ab16",
+            "cpu_op_name": None,
+            "selected_node": None,
+            "semantic_frame": {
+                "raw": "python/sglang/srt/models/deepseek_v2.py(1024): forward_normal"
+            },
+            "model_context_frame": {"raw": "nn.Module: DeepseekV2MoE_3"},
+        },
+        {
+            "event_id": "e2",
+            "kernel_name": "bmm_E2m1_E2m1E2m1_Fp32_Ab16",
+            "cpu_op_name": None,
+            "selected_node": "already.reviewed",
+        },
+    ]
+    assert enrich_eager_semantics(rows, framework="sglang") == 1
+    assert rows[0]["selected_node"] == "moe.routed_experts"
+    assert rows[1]["selected_node"] == "already.reviewed"
+
+
+def test_sglang_decode_schedule_closes_graph_shape_variants_inside_layer() -> None:
+    names = [
+        "fmhaSm100fKernel_QkvE4m3OBfloat16HQk576",
+        "nvjet_sm103_tst_64x8_64x16_2x2_h_bz_TNT",
+        "nvjet_sm103_tst_64x16_64x16_4x1_v_bz_TNT",
+        "twoshotAllreduceKernel",
+        "nvjet_sm103_tst_128x32_64x16_2x1_h_bz_TNT",
+        "silu_and_mul_kernel",
+        "nvjet_sm103_tst_128x16_64x16_2x1_h_bz_TNT",
+        "twoshotAllreduceKernel",
+        "nvjet_sm103_tst_128x8_64x16_2x1_h_bz_TNT",
+        "RMSNormKernel_oi642048",
+        "RMSNormKernel_oi64512",
+        "catArrayBatchedCopy",
+        "nvjet_sm103_tst_32x8_64x16_2x1_h_bz_TNT",
+        "TgvGemmCuteExtKernel",
+        "fused_q_indexer_rope_hadamard_quant",
+        "nvjet_sm103_tst_32x64_64x16_4x1_v_bz_splitK_TNN",
+        "splitKreduce_kernel",
+        "fused_k_indexer_norm_rope_store",
+        "topk_main_kernel",
+        "nvjet_sm103_tst_64x8_64x16_4x2_h_bz_TNT",
+    ]
+    rows = [{"kernel_name": name, "node": None} for name in names]
+    nodes = {
+        "dsa_attention.q_a_projection",
+        "dsa_attention.q_a_norm",
+        "dsa_attention.kv_a_norm",
+        "dsa_attention.q_b_projection",
+        "dsa_attention.index_k_gate_projection",
+        "dsa_attention.index_q_projection",
+        "dsa_attention.latent_kv_reconstruction",
+        "dsa_attention.output_projection",
+        "dense_mlp.gate_up_projection",
+        "dense_mlp.down_projection",
+    }
+    examples = {
+        node: {"selected_node": node, "event_id": f"eager-{node}"}
+        for node in nodes
+    }
+    assign_sglang_decode_layer_schedules(rows, [(0, len(rows))], examples)
+    assert rows[1]["node"] == "dsa_attention.latent_kv_reconstruction"
+    assert rows[2]["node"] == "dsa_attention.output_projection"
+    assert rows[4]["node"] == "dense_mlp.gate_up_projection"
+    assert rows[6]["node"] == "dense_mlp.down_projection"
+    assert rows[8]["node"] == "dsa_attention.q_a_projection"
+    assert rows[9]["node"] == "dsa_attention.q_a_norm"
+    assert rows[10]["node"] == "dsa_attention.kv_a_norm"
+    assert rows[12]["node"] == "dsa_attention.q_b_projection"
+    assert rows[13]["node"] == "dsa_attention.index_q_projection"
+    assert rows[15]["node"] == "dsa_attention.index_k_gate_projection"
+    assert rows[16]["node"] == "dsa_attention.index_k_gate_projection"
+    assert rows[19]["node"] == "dsa_attention.latent_kv_reconstruction"
+    assert all(row.get("eager_event_id") for row in rows if row.get("node"))
+
+
+def test_sglang_decode_schedule_pairs_moe_splitk_by_stream() -> None:
+    rows = [
+        {"kernel_name": "sparse_core", "stream_id": 0},
+        {"kernel_name": "nvjet_sm103_tst_64x8_64x16_2x2_h_bz_TNT", "stream_id": 0},
+        {"kernel_name": "nvjet_sm103_tst_64x16_64x16_4x1_v_bz_TNT", "stream_id": 0},
+        {"kernel_name": "twoshotAllreduceKernel", "stream_id": 0},
+        {"kernel_name": "nvjet_sm103_tss_32x64_64x16_4x1_v_bz_splitK_TNN", "stream_id": 7},
+        {"kernel_name": "splitKreduce_kernel", "stream_id": 7},
+        {"kernel_name": "nvjet_sm103_tst_64x64_64x16_4x1_v_bz_splitK_TNN", "stream_id": 9},
+        {"kernel_name": "splitKreduce_kernel", "stream_id": 9},
+        {"kernel_name": "silu_and_mul_kernel", "stream_id": 9},
+        {"kernel_name": "nvjet_sm103_tst_64x32_64x16_4x1_v_bz_TNT", "stream_id": 9},
+        {"kernel_name": "routingIndicesBlockScoresKernel", "stream_id": 0},
+        {"kernel_name": "NVFP4QuantizeLinearKernel", "stream_id": 0},
+        {"kernel_name": "twoshotAllreduceKernel", "stream_id": 0},
+    ]
+    nodes = {
+        "dsa_attention.latent_kv_reconstruction",
+        "dsa_attention.output_projection",
+        "moe.router",
+        "moe.shared_expert_up",
+        "moe.shared_expert_down",
+        "moe.topk",
+        "moe.dispatch",
+    }
+    examples = {
+        node: {"selected_node": node, "event_id": f"eager-{node}"}
+        for node in nodes
+    }
+    assign_sglang_decode_layer_schedules(
+        rows, [(0, 0), (0, 0), (0, 0), (0, len(rows))], examples
+    )
+    assert [rows[index]["node"] for index in (4, 5)] == ["moe.router"] * 2
+    assert [rows[index]["node"] for index in (6, 7)] == [
+        "moe.shared_expert_up"
+    ] * 2
+    assert rows[9]["node"] == "moe.shared_expert_down"
+    assert rows[10]["node"] == "moe.topk"
+    assert rows[11]["node"] == "moe.dispatch"
+
+
+def test_trtllm_decode_schedule_binds_final_lm_head_from_raw_collective_boundary() -> None:
+    rows = []
+    segments = []
+    for _ in range(78):
+        start = len(rows)
+        rows.extend(
+            [
+                {"kernel_name": "applyMLARopeAndAssignQKVKernelGeneration"},
+                {"kernel_name": "twoshotAllreduceKernel"},
+                {"kernel_name": "twoshotAllreduceKernel"},
+            ]
+        )
+        segments.append((start, len(rows)))
+    rows.extend(
+        [
+            {"kernel_name": "rmsNormLamportKernel"},
+            {"kernel_name": "nvjet_sm103_tst_128x64_64x10_2x1_2cta_v_bz_TNT"},
+            {"kernel_name": "ncclDevKernel_AllGather_RING_LL"},
+        ]
+    )
+    examples = {
+        node: {"selected_node": node, "event_id": f"eager-{node}"}
+        for node in ("dsa_attention.q_split_rope", "top.lm_head")
+    }
+
+    assign_trtllm_decode_layer_schedules(rows, segments, examples)
+
+    assert rows[-2]["node"] == "top.lm_head"
+    assert rows[-2]["eager_event_id"] == "eager-top.lm_head"

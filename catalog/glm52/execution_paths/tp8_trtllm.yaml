@@ -125,8 +125,11 @@ transforms:
         payload: local top-k index rows · int32 [T/8,Ki] = [1024,2048] at T=8192
         result: replicated full prefill top-k indices · int32 [T,Ki] = [8192,2048]
     edge:
+      identity: replicated_prefill_topk_indices
       shape: "[B,T,Ki]"
+      layout: batch_sequence_selected_positions
       dtype: int32
+      state: persistent
 
   - op: annotate_node
     target: dsa_attention.index_topk_state
@@ -161,8 +164,11 @@ transforms:
         payload: row-parallel attention output partials · bf16 [B,T,H]
         result: replicated attention output · bf16 [B,T,H]
     edge:
+      identity: replicated_attention_output
       shape: "[B,T,H]"
+      layout: batch_sequence_hidden
       dtype: bf16
+      state: ephemeral_activation
 
   - op: annotate_node
     target: dense_mlp.gate_up_projection
@@ -197,8 +203,11 @@ transforms:
         payload: row-parallel dense-MLP output partials · bf16 [B,T,H]
         result: replicated dense-MLP output · bf16 [B,T,H]
     edge:
+      identity: replicated_dense_mlp_output
       shape: "[B,T,H]"
+      layout: batch_sequence_hidden
       dtype: bf16
+      state: ephemeral_activation
 
   - op: annotate_node
     target: moe.router
@@ -265,8 +274,11 @@ transforms:
         payload: routed plus shared expert output partials · bf16 [B,T,H]
         result: replicated combined MoE output · bf16 [B,T,H]
     edge:
+      identity: replicated_moe_output
       shape: "[B,T,H]"
+      layout: batch_sequence_hidden
       dtype: bf16
+      state: ephemeral_activation
 
   - op: annotate_node
     target: top.lm_head
@@ -293,8 +305,11 @@ transforms:
         payload: local vocabulary logits · fp32 [B,T,V/8] with padding as required
         result: replicated full-vocabulary logits · fp32 [B,T,V]
     edge:
+      identity: replicated_full_vocabulary_logits
       shape: "[B,T,V]"
+      layout: batch_sequence_vocabulary
       dtype: fp32
+      state: ephemeral_activation
 
   - op: annotate_node
     target: top.mtp_extension

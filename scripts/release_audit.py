@@ -54,6 +54,177 @@ def object_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def tree_manifest_sha256(root: Path) -> str:
+    """Hash a catalog as a path-addressed, deterministic file manifest."""
+
+    entries = [
+        {
+            "path": str(path.relative_to(root)),
+            "sha256": sha256_file(path),
+        }
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
+    ]
+    return object_sha256(entries)
+
+
+def build_acceptance_summary(
+    *,
+    repo_root: Path,
+    catalog_root: Path,
+    docs_root: Path,
+    models: list[str],
+    model_reports: list[dict[str, Any]],
+    acceptance_level: str,
+    static_gate: str,
+    browser_report: dict[str, Any] | None,
+    release_ready: bool,
+) -> dict[str, Any]:
+    """Build the concise, deterministic public acceptance ledger for M0."""
+
+    reports = {report["model"]: report for report in model_reports}
+    model_summaries: list[dict[str, Any]] = []
+    for model in models:
+        bundle = json.loads(
+            (docs_root / f"{model}_v2" / "arch_data.json").read_text()
+        )
+        report = reports[model]
+        timeline_reports = {
+            item["profile"]: item for item in report.get("timelines") or []
+        }
+        implementations = bundle.get("implementations") or {}
+        profile_summaries: list[dict[str, Any]] = []
+        for profile_id, profile in sorted((bundle.get("profiles") or {}).items()):
+            meta = profile.get("meta") or {}
+            profiler = meta.get("profiler") or {}
+            contract = {
+                "phase": meta.get("phase"),
+                "generation_mode": meta.get("generation_mode"),
+                "execution_parameters": meta.get("execution_parameters") or {},
+                "hardware": meta.get("hardware") or {},
+                "workload": meta.get("workload") or {},
+                "profiler": {
+                    key: profiler.get(key)
+                    for key in (
+                        "type",
+                        "cuda_graph_enabled",
+                        "with_stack",
+                        "formal_window_count",
+                        "all_tp_ranks_validated",
+                        "timing_gate_status",
+                    )
+                    if key in profiler
+                },
+            }
+            timeline = timeline_reports.get(profile_id) or {}
+            profile_summaries.append(
+                {
+                    "profile_id": profile_id,
+                    "implementation_id": profile.get("implementation_id"),
+                    "execution_fingerprint": profile.get("execution_variant"),
+                    "contract": contract,
+                    "contract_sha256": object_sha256(contract),
+                    "timeline_sha256": timeline.get("source_sha256"),
+                    "mapped_kernel_count_ratio": timeline.get(
+                        "mapped_kernel_count_ratio"
+                    ),
+                    "mapped_residency_ratio": timeline.get(
+                        "mapped_residency_ratio"
+                    ),
+                    "attribution_passed": timeline.get("attribution_passed"),
+                }
+            )
+
+        source_revisions = [
+            {
+                "implementation_id": implementation_id,
+                "framework_id": implementation.get("framework_id"),
+                "source_repo": implementation.get("source_repo"),
+                "source_commit": implementation.get("source_commit"),
+                "binding_status": implementation.get("binding_status"),
+                "execution_fingerprint": implementation.get("execution_variant"),
+            }
+            for implementation_id, implementation in sorted(implementations.items())
+        ]
+        evidence_hashes = sorted(
+            item["timeline_sha256"]
+            for item in profile_summaries
+            if item.get("timeline_sha256")
+        )
+        model_summaries.append(
+            {
+                "model": model,
+                "status": report.get("status"),
+                "model_ir_version": (bundle.get("meta") or {}).get(
+                    "model_ir_version"
+                ),
+                "model_semantic_revision": (bundle.get("meta") or {}).get(
+                    "model_semantic_revision"
+                ),
+                "catalog_manifest_sha256": tree_manifest_sha256(
+                    catalog_root / model
+                ),
+                "published_bundle_sha256": (report.get("bundle") or {}).get(
+                    "published_sha256"
+                ),
+                "evidence_set_sha256": object_sha256(evidence_hashes),
+                "execution_variants": [
+                    {
+                        "execution_fingerprint": fingerprint,
+                        "execution_path_id": variant.get("execution_path_id"),
+                        "execution_plan_version": variant.get(
+                            "execution_plan_version"
+                        ),
+                    }
+                    for fingerprint, variant in sorted(
+                        (bundle.get("execution_variants") or {}).items()
+                    )
+                ],
+                "source_revisions": source_revisions,
+                "profiles": profile_summaries,
+            }
+        )
+
+    browser_checks = [
+        {"name": check.get("name"), "passed": bool(check.get("passed"))}
+        for check in ((browser_report or {}).get("checks") or [])
+    ]
+    return {
+        "schema_version": "release-acceptance.v1",
+        "acceptance_level": acceptance_level,
+        "static_gate": static_gate,
+        "browser_gate": (
+            browser_report.get("status") if browser_report else "not_evaluated"
+        ),
+        "release_ready": release_ready,
+        "release_identity": {
+            "compiler_sha256": sha256_file(
+                repo_root / "src" / "llm_arch_v2" / "compiler.py"
+            ),
+            "viewer_sha256": sha256_file(repo_root / "docs" / "viewer.html"),
+            "model_set_sha256": object_sha256(
+                [
+                    {
+                        "model": item["model"],
+                        "catalog_manifest_sha256": item[
+                            "catalog_manifest_sha256"
+                        ],
+                        "published_bundle_sha256": item[
+                            "published_bundle_sha256"
+                        ],
+                        "evidence_set_sha256": item["evidence_set_sha256"],
+                    }
+                    for item in model_summaries
+                ]
+            ),
+        },
+        "browser_checks": browser_checks,
+        "models": model_summaries,
+    }
+
+
 def summarize_attribution_failures(
     failures: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -401,6 +572,11 @@ def parse_args() -> argparse.Namespace:
         help="running viewer server used by --level release",
     )
     parser.add_argument("--browser", help="optional Chromium/Chrome executable")
+    parser.add_argument(
+        "--publish-summary",
+        type=Path,
+        help="also write the deterministic release-acceptance.v1 ledger here",
+    )
     return parser.parse_args()
 
 
@@ -470,10 +646,32 @@ def main() -> int:
     }
     report_path = output / "report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    acceptance_summary = build_acceptance_summary(
+        repo_root=REPO_ROOT,
+        catalog_root=catalog_root,
+        docs_root=docs_root,
+        models=models,
+        model_reports=model_reports,
+        acceptance_level=args.level,
+        static_gate=report["static_gate"],
+        browser_report=browser_report,
+        release_ready=release_ready,
+    )
+    acceptance_path = output / "acceptance-summary.json"
+    acceptance_path.write_text(
+        json.dumps(acceptance_summary, indent=2, sort_keys=True) + "\n"
+    )
+    if args.publish_summary:
+        published_acceptance = args.publish_summary.resolve()
+        published_acceptance.parent.mkdir(parents=True, exist_ok=True)
+        published_acceptance.write_text(
+            json.dumps(acceptance_summary, indent=2, sort_keys=True) + "\n"
+        )
     print(
         json.dumps(
             {
                 "report": str(report_path),
+                "acceptance_summary": str(acceptance_path),
                 "acceptance_level": args.level,
                 "static_gate": report["static_gate"],
                 "browser_gate": report["browser_gate"],

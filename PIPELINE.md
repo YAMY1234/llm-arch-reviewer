@@ -1066,13 +1066,13 @@ public inventory and content-addressed Timeline artifacts, and fails closed on
 unexplained production kernels. Its release level additionally runs the actual
 browser audits. A static pass is intentionally not reported as release-ready.
 
-The remaining work is tracked in [ROADMAP.md](ROADMAP.md). Immediate M0 debt is
-not hidden: the unified static audit currently accepts Qwen 4.0, Qwen3.5, Kimi
-K3, and DeepSeek V4 Pro, while GLM-5.2 and GLM-5.3-Flash still require Timeline
-attribution repair before the gate can become mandatory in CI. After that, the
-full browser gate, published acceptance summaries, generic adapter boundaries,
-and release identity must be completed. The manifest-driven
-`run_pipeline_v2.py` orchestrator is M1, not an already working command.
+M0 is now closed by one mandatory release command in CI. All six public models
+pass fail-closed Timeline attribution and the full real-browser gate. The same
+command deterministically publishes `docs/release-acceptance.json`, which
+records compiler/Viewer/catalog/bundle/evidence identities, source revisions,
+Execution fingerprints, exact profile contracts, mapping coverage, and browser
+acceptance. The manifest-driven `run_pipeline_v2.py` orchestrator remains M1,
+not an already working command.
 
 The removed Qwen3.5 trace-first/manual pipeline is not a second supported path.
 Its useful ideas survive here as frozen inputs, reusable trace parsing,

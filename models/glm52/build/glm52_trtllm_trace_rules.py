@@ -81,10 +81,48 @@ def classify_trtllm_node(
         return "dsa_attention.index_k_cache", "high"
     if _has_any(kernel, "sm100_fp8_mqa_logits", "sm100_fp8_paged_mqa_logits"):
         return "dsa_attention.index_logits", "high"
-    if _has_any(kernel, "topk_transform_prefill_kernel", "topk_main_kernel", "fast_topk"):
+    if _has_any(
+        kernel,
+        "topk_transform_prefill_kernel",
+        "topk_main_kernel",
+        "topkperrowdecode",
+        "fast_topk",
+    ):
         return "dsa_attention.index_topk", "high"
     if "fmhasm103akernel_qkve4m3" in kernel:
         return "dsa_attention.sparse_mla_core", "high"
+
+    # TRT-LLM eager stacks expose the two latent reconstruction BMMs through
+    # the stable MLA helper even though graph replay selects different NVJet
+    # schedules for them.
+    if cpu == "aten::bmm" and "_bmm_bf16_out" in lowered:
+        return "dsa_attention.latent_kv_reconstruction", "high"
+
+    # The DSA indexer is implemented by several ordinary ATen/TRT kernels.
+    # These stack-local roles are stable across eager and CUDA Graph modes;
+    # the two identical FP8 concat kernels are intentionally left to the
+    # anchor-bounded schedule reconciler because their names alone do not say
+    # whether they prepare Q or K.
+    if "pre_indexer_proj" in lowered and cpu in {
+        "aten::mm",
+        "aten::copy_",
+    }:
+        return "dsa_attention.index_q_projection", "high"
+    if "_qk_projection_and_rope" in lowered:
+        if cpu in {"aten::mm", "trtllm::cublas_mm"}:
+            return "dsa_attention.index_k_gate_projection", "high"
+        if _has_any(
+            kernel,
+            "triton_per_fused__to_copy_native_layer_norm",
+            "batchqkapplyrotaryposidscossincacheheadparallelismkernel",
+        ):
+            return "dsa_attention.index_k_norm_rope", "high"
+    if "_update_k_cache" in lowered and "indexerkcachescatter" in kernel:
+        return "dsa_attention.index_k_cache", "high"
+    if "sparse_attn_indexer" in lowered and _has_any(
+        cpu, "indexer_topk_decode", "fast_topk_transform"
+    ):
+        return "dsa_attention.index_topk", "high"
 
     if _has_any(lowered, "forward_dsa_proj", "modules/mla.py"):
         if cpu in {"aten::mm", "trtllm::fp4_gemm", "trtllm::nvfp4_gemm"}:
@@ -94,16 +132,23 @@ def classify_trtllm_node(
                 return "dsa_attention.q_b_projection", "high"
             if _has_any(lowered, "kv_a_proj", "kva_proj", "kv_a_projection"):
                 return "dsa_attention.kv_a_projection", "high"
+            if "forward_dsa_proj" in lowered:
+                return "dsa_attention.q_b_projection", "high"
             return "dsa_attention.q_a_projection", "medium"
         if "rmsnorm" in kernel:
-            if _has_any(lowered, "kv_a", "kva"):
+            if "oi64512" in kernel or _has_any(lowered, "kv_a", "kva", "<lambda>"):
                 return "dsa_attention.kv_a_norm", "high"
-            return "dsa_attention.q_a_norm", "medium"
+            if "oi642048" in kernel or "_q_a_layernorm_maybe_fused" in lowered:
+                return "dsa_attention.q_a_norm", "high"
+
+    if "fused_add_rmsnorm" in kernel and "forward_mlp" in lowered:
+        return "stack.post_attention_norm", "high"
 
     if _has_any(
         kernel,
         "routingindiceshistogramscoreskernel",
         "routingindicesblockkernel",
+        "routingindicesclusterkernel",
     ):
         return "moe.topk", "high"
     if _has_any(
@@ -111,6 +156,7 @@ def classify_trtllm_node(
         "moe::dev::routing::routinginitexpertcounts",
         "moe::dev::routing::routingindicescoopkernel",
         "nvfp4quantizetmakernel",
+        "quantize_with_block_size",
     ) and _has_any(lowered, "forward_moe", "deepseekv3moe"):
         return "moe.dispatch", "high"
     if _has_any(kernel, "bmm_e2m1", "bmm_bfloat16"):
@@ -124,7 +170,7 @@ def classify_trtllm_node(
             if _has_any(lowered, "rowlinear", "down_proj", "downprojection"):
                 return "moe.shared_expert_down", "high"
             return "moe.shared_expert_up", "medium"
-        if "act_and_mul" in kernel:
+        if _has_any(kernel, "act_and_mul", "silu_and_mul"):
             return "moe.shared_expert_activation", "high"
 
     if _has_any(lowered, "gatedmlp", "forward_dense"):
@@ -132,15 +178,18 @@ def classify_trtllm_node(
             if _has_any(lowered, "rowlinear", "down_proj", "downprojection"):
                 return "dense_mlp.down_projection", "high"
             return "dense_mlp.gate_up_projection", "medium"
-        if "act_and_mul" in kernel:
+        if _has_any(kernel, "act_and_mul", "silu_and_mul"):
             return "dense_mlp.swiglu", "high"
 
     if _has_any(lowered, "deepseekv3gate", "forward_moe") and cpu in {
         "aten::mm",
         "trtllm::fp4_gemm",
         "trtllm::nvfp4_gemm",
+        "trtllm::dsv3_router_gemm_op",
     }:
         return "moe.router", "medium"
+    if cpu == "aten::add" and "deepseekv3decoderlayer" in lowered:
+        return "moe.combine", "high"
     if "rmsnorm" in kernel and "deepseekv3decoderlayer" in lowered:
         if _has_any(lowered, "forward_moe", "forward_dense"):
             return "stack.post_attention_norm", "medium"

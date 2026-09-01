@@ -2,6 +2,7 @@ from models.common.trace_mapping import FrameRef
 from models.glm53_flash.build.glm53_vllm_trace_rules import classify_glm53_vllm_node
 from models.glm53_flash.build.glm53_vllm_production_attribution import (
     _annotate_segment_scope,
+    _assign_decode_graph_segment_schedules,
     _classify_runtime_support,
     _transfer_matching_scope,
 )
@@ -130,3 +131,61 @@ def test_vllm_runtime_support_has_explicit_class_and_reason() -> None:
         "sampling_and_output",
     ]
     assert all(row["support_reason"] for row in rows)
+
+
+def test_decode_dsa_shape_specializations_stay_inside_their_occurrence() -> None:
+    def anchor() -> dict:
+        return {"kernel_name": "mhc_pre_big_fuse_with_norm", "node": None}
+
+    # The production helper requires one complete 45-layer / 90-sublayer
+    # graph.  Keep every non-target occurrence minimal while preserving the
+    # 34 KDA-update admission contract.
+    rows: list[dict] = []
+    for layer_id in range(45):
+        rows.append(anchor())
+        if layer_id % 4 == 3:
+            rows.extend(
+                [
+                    {"kernel_name": "_fused_q_kv_rmsnorm_kernel", "node": None},
+                    {"kernel_name": "void cutlass::Kernel2<cutlass_80_simt_sgemm>", "node": None},
+                    {"kernel_name": "void cublasLt::splitKreduce_kernel", "node": None},
+                    {"kernel_name": "triton_per_fused_native_layer_norm_0", "node": None},
+                    {"kernel_name": "triton_poi_fused_mul_unsqueeze_0", "node": None},
+                    {"kernel_name": "_kpool_decode_update_batched_kernel", "node": None},
+                    {"kernel_name": "concat_and_cache_mla_kernel", "node": None},
+                    {"kernel_name": "nvjet_shape_specialized_bmm", "node": None},
+                    {"kernel_name": "CatArrayBatchedCopy", "node": None},
+                    {"kernel_name": "scaled_fp8_quant_kernel", "node": None},
+                ]
+            )
+        else:
+            rows.append({"kernel_name": "_causal_conv1d_update_kernel", "node": None})
+        rows.append(anchor())
+
+    _assign_decode_graph_segment_schedules(rows)
+    target = [
+        row
+        for row in rows
+        if "cutlass_80_simt_sgemm" in row["kernel_name"]
+        or "splitKreduce_kernel" in row["kernel_name"]
+        or row["kernel_name"] in {
+            "nvjet_shape_specialized_bmm",
+            "CatArrayBatchedCopy",
+            "scaled_fp8_quant_kernel",
+        }
+    ]
+    assert all(
+        row["node"] == "dsa_attention.index_weight_projection"
+        for row in target
+        if "cutlass_80_simt_sgemm" in row["kernel_name"]
+        or "splitKreduce_kernel" in row["kernel_name"]
+    )
+    assert all(
+        row["node"] == "dsa_attention.latent_kv_reconstruction"
+        for row in target
+        if row["kernel_name"] in {
+            "nvjet_shape_specialized_bmm",
+            "CatArrayBatchedCopy",
+            "scaled_fp8_quant_kernel",
+        }
+    )

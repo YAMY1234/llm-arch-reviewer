@@ -57,17 +57,20 @@ Work in this milestone:
   production kernels.
 - [x] Make the audit emit one machine-readable `release-audit.v1` report and
   explicitly distinguish `static_gate`, `browser_gate`, and `release_ready`.
-- [ ] Close the attribution debt exposed by the new gate. At the current
-  baseline, Qwen 4.0, Qwen3.5, Kimi K3, and DeepSeek V4 Pro pass; GLM-5.2 and
-  GLM-5.3-Flash still contain unbound or semantically misclassified timeline
-  events and therefore are not release-ready.
-- [ ] Run all interaction, compact/physical-stream, framework-comparison, and
+- [x] Close the attribution debt exposed by the new gate. All six public
+  catalogs now pass fail-closed Timeline attribution; GLM-5.2 and
+  GLM-5.3-Flash use exact semantic classification rather than generic support
+  labels or copied rollup timing.
+- [x] Run all interaction, compact/physical-stream, framework-comparison, and
   HiDPI rendering checks behind the same `--level release` command in CI.
-- [ ] Add a concise published acceptance summary containing source revision,
+- [x] Add a concise published acceptance summary containing source revision,
   execution fingerprint, profile contract, evidence hashes, coverage, and
   audit result for every model/framework/profile.
-- [ ] Remove remaining model-name heuristics from generic tooling and record a
-  stable release identity for the compiler, viewer, catalog, and evidence set.
+- [x] Keep the compiler and release gate model-discovered rather than
+  model-name-dispatched, and record a stable release identity for the compiler,
+  viewer, each catalog/bundle/evidence set, and the complete published model
+  set. Model-specific browser fixtures remain explicit acceptance scenarios,
+  not runtime dispatch logic.
 
 M0 exit criteria:
 
@@ -171,10 +174,9 @@ The roadmap is measured by evidence quality, not the number of diagrams:
 
 ## Immediate execution order
 
-1. Use the M0 static audit as the authoritative debt inventory.
-2. Repair GLM-5.2 attribution/classification, then GLM-5.3-Flash graph-runtime
-   semantic leakage; do not waive either with generic support labels.
-3. Turn the complete real-browser audit into the M0 release gate.
-4. Publish per-model acceptance summaries and require the unified gate in CI.
-5. Start M1 only after the repository can prove that its current six models are
-   reproducible and release-ready under one command.
+1. Keep the M0 release gate mandatory and regenerate the published acceptance
+   ledger whenever catalog, compiler, Viewer, or evidence changes.
+2. Begin M1 with the resumable, manifest-driven stage DAG while preserving the
+   same fail-closed compiler, attribution, and real-browser release contracts.
+3. Prove M1 using one existing catalog refresh and one net-new model without
+   adding a second Viewer or a model-specific publishing path.

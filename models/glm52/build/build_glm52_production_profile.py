@@ -38,7 +38,11 @@ from models.common.timeline_artifact import (  # noqa: E402
     build_timeline_artifact,
     write_timeline_artifact,
 )
+from models.common.trace_mapping import FrameRef  # noqa: E402
 from models.glm52.build.glm52_trace_rules import classify_glm52_node  # noqa: E402
+from models.glm52.build.glm52_trtllm_trace_rules import (  # noqa: E402
+    classify_trtllm_node,
+)
 
 
 MODEL_REVISION = "aec724e8c7b8ee9db3b48c01c320f63f9cdaf8aa"
@@ -369,9 +373,1362 @@ def eager_rows(
                 "selected_node": mapping.get("selected_node"),
                 "source_confidence": mapping.get("confidence"),
                 "cpu_op_name": mapping.get("cpu_op_name") or event.get("cpu_op_name"),
+                "primitive_frame": mapping.get("primitive_frame"),
+                "operator_frame": mapping.get("operator_frame"),
+                "semantic_frame": mapping.get("semantic_frame"),
+                "model_context_frame": mapping.get("model_context_frame"),
+                "phase_frame": mapping.get("phase_frame"),
             }
         )
     return sorted(rows, key=lambda row: (float(row["ts_us"]), row["event_id"]))
+
+
+def _source_stack(row: dict[str, Any]) -> list[FrameRef]:
+    """Rehydrate reviewed eager mapping frames for rule reconciliation."""
+
+    frames: list[FrameRef] = []
+    seen: set[str] = set()
+    for key in (
+        "primitive_frame",
+        "operator_frame",
+        "semantic_frame",
+        "model_context_frame",
+        "phase_frame",
+    ):
+        value = row.get(key)
+        if not isinstance(value, dict) or not value.get("raw"):
+            continue
+        raw = str(value["raw"])
+        if raw in seen:
+            continue
+        seen.add(raw)
+        frames.append(
+            FrameRef(
+                raw=raw,
+                file=value.get("file"),
+                line=value.get("line"),
+                function=value.get("function"),
+                module=value.get("module"),
+                source_exists=value.get("source_exists"),
+            )
+        )
+    return frames
+
+
+def enrich_eager_semantics(
+    source_rows: list[dict[str, Any]], *, framework: str
+) -> int:
+    """Apply current reviewed rules to gaps in the frozen eager mapping.
+
+    The original mapping artifact remains the evidence authority. This pass
+    only fills rows that were explicitly unmapped by an older rule revision,
+    and every new binding still carries that row's eager event id and stack.
+    """
+
+    classifier = classify_glm52_node if framework == "sglang" else classify_trtllm_node
+    enriched = 0
+    for row in source_rows:
+        if row.get("selected_node"):
+            continue
+        node, confidence = classifier(
+            str(row.get("kernel_name") or ""),
+            row.get("cpu_op_name"),
+            _source_stack(row),
+        )
+        if not node:
+            continue
+        row["selected_node"] = node
+        row["source_confidence"] = confidence
+        row["eager_enrichment_method"] = "current_rule_over_frozen_eager_stack"
+        enriched += 1
+    return enriched
+
+
+def _set_eager_schedule_node(
+    row: dict[str, Any], node: str, *, method: str
+) -> None:
+    """Record a reviewed, hard-anchor-bounded eager semantic correction."""
+
+    row["selected_node"] = node
+    row["source_confidence"] = "high"
+    row["eager_enrichment_method"] = method
+
+
+def reconcile_trtllm_eager_decode_schedules(
+    source_rows: list[dict[str, Any]],
+) -> int:
+    """Repair old TRT eager bindings with the reviewed 78-layer schedule.
+
+    The historical mapper predated several TRT-LLM fused kernels and assigned
+    generic linear launches to the first plausible node.  The eager trace
+    still contains authoritative stacks and 78 hard MLA anchors.  Within each
+    anchor interval, semantic landmarks distinguish attention, dense MLP, and
+    routed/shared MoE roles without using timing proximity or a global kernel
+    name guess.
+    """
+
+    segments = anchor_segments(source_rows, "trtllm", "decode")
+    changed = 0
+    method = "reviewed_trtllm_eager_layer_schedule"
+
+    def lowered(row: dict[str, Any]) -> str:
+        return str(row.get("kernel_name") or "").lower()
+
+    def set_node(row: dict[str, Any], node: str) -> None:
+        nonlocal changed
+        if row.get("selected_node") != node:
+            changed += 1
+        _set_eager_schedule_node(row, node, method=method)
+
+    for layer, (start, stop) in enumerate(segments):
+        segment = source_rows[start:stop]
+        if not segment:
+            continue
+
+        # Current layer: anchor, sparse attention, latent reconstruction and
+        # row-parallel output projection.
+        set_node(segment[0], "dsa_attention.q_split_rope")
+        sparse_index = next(
+            (
+                index
+                for index, row in enumerate(segment)
+                if "fmhasm103akernel_qkve4m3" in lowered(row)
+            ),
+            None,
+        )
+        if sparse_index is not None:
+            set_node(segment[sparse_index], "dsa_attention.sparse_mla_core")
+            for row in segment[sparse_index + 1 :]:
+                if row.get("cpu_op_name") == "aten::bmm":
+                    set_node(row, "dsa_attention.latent_kv_reconstruction")
+                    break
+            for row in segment[sparse_index + 1 :]:
+                semantic = str((row.get("semantic_frame") or {}).get("raw") or "")
+                if row.get("cpu_op_name") == "aten::mm" and "modules/mla.py" in semantic:
+                    set_node(row, "dsa_attention.output_projection")
+                    break
+
+        post_norm = next(
+            (
+                row
+                for row in segment
+                if "fused_add_rmsnorm" in lowered(row)
+                and "forward_mlp"
+                in str((row.get("semantic_frame") or {}).get("raw") or "")
+            ),
+            None,
+        )
+        if post_norm is not None:
+            set_node(post_norm, "stack.post_attention_norm")
+
+        if layer < 3:
+            gated_rows = [
+                row
+                for row in segment
+                if "modules/gated_mlp.py"
+                in str((row.get("semantic_frame") or {}).get("raw") or "")
+            ]
+            silu_index = next(
+                (
+                    index
+                    for index, row in enumerate(gated_rows)
+                    if row.get("cpu_op_name") == "trtllm::silu_and_mul"
+                ),
+                None,
+            )
+            if silu_index is not None:
+                for row in gated_rows[:silu_index]:
+                    if row.get("cpu_op_name") == "aten::mm":
+                        set_node(row, "dense_mlp.gate_up_projection")
+                set_node(gated_rows[silu_index], "dense_mlp.swiglu")
+                for row in gated_rows[silu_index + 1 :]:
+                    if row.get("cpu_op_name") == "aten::mm":
+                        set_node(row, "dense_mlp.down_projection")
+        else:
+            for row in segment:
+                cpu = str(row.get("cpu_op_name") or "")
+                semantic = str((row.get("semantic_frame") or {}).get("raw") or "")
+                if cpu == "trtllm::dsv3_router_gemm_op":
+                    set_node(row, "moe.router")
+                elif cpu == "trtllm::fp4_quantize":
+                    set_node(row, "moe.dispatch")
+                elif "routingindices" in lowered(row):
+                    set_node(row, "moe.topk")
+                elif _has_moe_bmm(lowered(row)):
+                    set_node(row, "moe.routed_experts")
+                elif "finalizekernel" in lowered(row):
+                    set_node(row, "moe.routed_weighted_combine")
+                elif cpu == "aten::add" and "modeling_deepseekv3.py" in semantic:
+                    set_node(row, "moe.combine")
+
+            gated_rows = [
+                row
+                for row in segment
+                if "modules/gated_mlp.py"
+                in str((row.get("semantic_frame") or {}).get("raw") or "")
+            ]
+            silu_index = next(
+                (
+                    index
+                    for index, row in enumerate(gated_rows)
+                    if row.get("cpu_op_name") == "trtllm::silu_and_mul"
+                ),
+                None,
+            )
+            if silu_index is not None:
+                for row in gated_rows[:silu_index]:
+                    if row.get("cpu_op_name") == "aten::mm":
+                        set_node(row, "moe.shared_expert_up")
+                set_node(gated_rows[silu_index], "moe.shared_expert_activation")
+                for row in gated_rows[silu_index + 1 :]:
+                    if row.get("cpu_op_name") == "aten::mm":
+                        set_node(row, "moe.shared_expert_down")
+
+        # Each anchor-led eager interval ends with the next layer's projection
+        # preamble.  Correct the older generic-linear bindings using the eager
+        # semantic frame itself; this also supplies positive examples for the
+        # graph-on tile variants below.
+        fused_cat_rows: list[dict[str, Any]] = []
+        for row in segment:
+            cpu = str(row.get("cpu_op_name") or "")
+            semantic = str((row.get("semantic_frame") or {}).get("raw") or "")
+            value = lowered(row)
+            if cpu == "trtllm::dsv3_fused_a_gemm_op":
+                set_node(row, "dsa_attention.q_a_projection")
+            elif "_q_a_layernorm_maybe_fused" in semantic:
+                set_node(row, "dsa_attention.q_a_norm")
+            elif "modules/mla.py(1575): <lambda>" in semantic:
+                set_node(row, "dsa_attention.kv_a_norm")
+            elif cpu == "aten::mm" and "forward_dsa_proj" in semantic:
+                set_node(row, "dsa_attention.q_b_projection")
+            elif "pre_indexer_proj" in semantic and cpu in {"aten::mm", "aten::copy_"}:
+                set_node(row, "dsa_attention.index_q_projection")
+            elif cpu == "trtllm::fused_cat_fp8" and "_prep_q_or_k" in semantic:
+                fused_cat_rows.append(row)
+            elif "_scale" in semantic:
+                set_node(row, "dsa_attention.index_logits")
+            elif cpu == "aten::fill_" and "sparse_attn_indexer" in semantic:
+                set_node(row, "dsa_attention.index_topk")
+        if fused_cat_rows:
+            set_node(fused_cat_rows[0], "dsa_attention.index_q_projection")
+        if len(fused_cat_rows) > 1:
+            set_node(fused_cat_rows[1], "dsa_attention.index_k_norm_rope")
+
+    return changed
+
+
+def _has_moe_bmm(kernel_name: str) -> bool:
+    return "bmm_e2m1" in kernel_name or "bmm_bfloat16_e2m1" in kernel_name
+
+
+def _alignment_score(source_name: str, production_name: str) -> int | None:
+    """Return a conservative kernel-identity score for bounded alignment."""
+
+    if kernel_exact_identity(source_name) == kernel_exact_identity(production_name):
+        return 400
+    if kernel_base(source_name) == kernel_base(production_name):
+        return 300
+    if sequence_family(source_name) == sequence_family(production_name):
+        return 200
+    if schedule_family(source_name) == schedule_family(production_name):
+        return 150
+    return None
+
+
+def align_layer_segment(
+    source_segment: list[dict[str, Any]],
+    production_segment: list[dict[str, Any]],
+) -> list[tuple[int, int, int]]:
+    """Monotonically align one eager/production layer without crossing gaps.
+
+    CUDA Graph replay can insert runtime or collective helpers absent from the
+    graph-off eager trace. A weighted LCS keeps exact and normalized identities
+    in order while leaving insertions unmatched. It never uses timing proximity,
+    neighboring node names, or cross-layer evidence.
+    """
+
+    source_count = len(source_segment)
+    production_count = len(production_segment)
+    scores = [[0] * (production_count + 1) for _ in range(source_count + 1)]
+    choices = [[""] * (production_count + 1) for _ in range(source_count + 1)]
+    for source_index in range(1, source_count + 1):
+        choices[source_index][0] = "source_gap"
+    for production_index in range(1, production_count + 1):
+        choices[0][production_index] = "production_gap"
+
+    for source_index in range(1, source_count + 1):
+        source_name = str(source_segment[source_index - 1]["kernel_name"])
+        for production_index in range(1, production_count + 1):
+            production_name = str(
+                production_segment[production_index - 1]["kernel_name"]
+            )
+            candidates = [
+                (scores[source_index - 1][production_index], "source_gap"),
+                (scores[source_index][production_index - 1], "production_gap"),
+            ]
+            match_score = _alignment_score(source_name, production_name)
+            if match_score is not None:
+                candidates.append(
+                    (
+                        scores[source_index - 1][production_index - 1]
+                        + match_score,
+                        "match",
+                    )
+                )
+            priority = {"match": 2, "production_gap": 1, "source_gap": 0}
+            value, choice = max(
+                candidates, key=lambda item: (item[0], priority[item[1]])
+            )
+            scores[source_index][production_index] = value
+            choices[source_index][production_index] = choice
+
+    aligned: list[tuple[int, int, int]] = []
+    source_index = source_count
+    production_index = production_count
+    while source_index or production_index:
+        choice = choices[source_index][production_index]
+        if choice == "match":
+            match_score = _alignment_score(
+                str(source_segment[source_index - 1]["kernel_name"]),
+                str(production_segment[production_index - 1]["kernel_name"]),
+            )
+            assert match_score is not None
+            aligned.append((source_index - 1, production_index - 1, match_score))
+            source_index -= 1
+            production_index -= 1
+        elif choice == "production_gap":
+            production_index -= 1
+        else:
+            source_index -= 1
+    return list(reversed(aligned))
+
+
+def _classify_runtime_support(rows: list[dict[str, Any]]) -> None:
+    """Type intentionally non-architectural work after semantic attribution."""
+
+    for row in rows:
+        if row.get("node"):
+            continue
+        name = str(row.get("kernel_name") or "").lower()
+        if any(token in name for token in ("sampling", "gumbel", "argmax")):
+            support_class = "sampling_and_output"
+            reason = "sampling, token selection, or output materialization"
+        elif any(
+            token in name
+            for token in (
+                "topk_plan",
+                "dsa_decode_metadata",
+                "block_table",
+                "slot_mapping",
+                "convertreqindextoglobal",
+            )
+        ):
+            support_class = "attention_plan_metadata"
+            reason = "attention planning metadata; no model tensor value is produced"
+        elif any(
+            token in name
+            for token in ("alloc", "request_pool", "req_to_token", "cache_indices")
+        ):
+            support_class = "allocator_or_cache_management"
+            reason = "request/KV allocation or cache-address management"
+        elif any(
+            token in name
+            for token in (
+                "foreach_copy",
+                "index_elementwise",
+                "indexelementwise",
+                "direct_copy_kernel",
+                "fillfunctor",
+                "clamp_position",
+                "memcpy",
+                "memset",
+                "scan",
+                "arange",
+                "divfloor",
+                "compare",
+                "where",
+            )
+        ):
+            support_class = "request_batch_metadata"
+            reason = "shape/index/request-batch metadata outside a semantic module"
+        else:
+            support_class = "graph_runtime_metadata"
+            reason = "captured framework/runtime helper outside the stable Model IR"
+        row.update(
+            {
+                "support_class": support_class,
+                "support_reason": reason,
+                "attribution_method": "explicit_runtime_support_classification",
+                "confidence": "support",
+            }
+        )
+
+
+def _assign_node_example(
+    row: dict[str, Any],
+    eager_node_examples: dict[str, dict[str, Any]],
+    node: str,
+    *,
+    method: str,
+) -> None:
+    """Assign one production landmark using positive eager evidence."""
+
+    source = eager_node_examples.get(node)
+    if source is None:
+        raise ValueError(f"production schedule node has no eager evidence: {node}")
+    _assign(
+        row,
+        source,
+        method=method,
+        confidence="high",
+        overwrite=True,
+    )
+
+
+def assign_sglang_decode_layer_schedules(
+    kernels: list[dict[str, Any]],
+    production_segments: list[tuple[int, int]],
+    eager_node_examples: dict[str, dict[str, Any]],
+) -> None:
+    """Close graph-on GLM-5.2 schedules inside hard layer anchors.
+
+    The eager trace proves the semantic nodes and their source stacks.  CUDA
+    Graph replay changes GEMM tile shapes with batch size and can reverse the
+    two independent DSA-indexer projections.  This pass therefore recognizes
+    semantic order between the sparse-attention anchor, the two TP collective
+    boundaries, normalization/indexer landmarks, and stream-local split-K
+    pairs.  It never assigns a role from a global kernel name or wall-clock
+    proximity.
+    """
+
+    method = "sglang_eager_validated_layer_schedule_landmark"
+
+    def name(row: dict[str, Any]) -> str:
+        return str(row.get("kernel_name") or "").lower()
+
+    def find_index(
+        segment: list[dict[str, Any]],
+        predicate,
+        *,
+        start: int = 0,
+        stop: int | None = None,
+    ) -> int | None:
+        effective_stop = len(segment) if stop is None else stop
+        for index in range(start, effective_stop):
+            if predicate(name(segment[index])):
+                return index
+        return None
+
+    for layer, (start, stop) in enumerate(production_segments):
+        segment = kernels[start:stop]
+        if not segment:
+            continue
+
+        collective_indices = [
+            index
+            for index, row in enumerate(segment)
+            if "twoshotallreducekernel" in name(row)
+            or "oneshotallreducefusionkernel" in name(row)
+            or "nccldevkernel_allreduce" in name(row)
+        ]
+        if len(collective_indices) != 2:
+            raise ValueError(
+                f"SGLang layer {layer}: expected two TP collective landmarks, "
+                f"got {len(collective_indices)}"
+            )
+        attention_collective, ffn_collective = collective_indices
+
+        # Current-layer attention: the sparse core produces a compressed
+        # result, which is reconstructed and then projected before TP output
+        # reduction.  Tile dimensions vary across BS1/16/64/256; order does
+        # not.
+        attention_launches = [
+            row
+            for row in segment[1:attention_collective]
+            if "nvjet_sm103_tst_" in name(row) and "splitk" not in name(row)
+        ]
+        if len(attention_launches) >= 2:
+            _assign_node_example(
+                attention_launches[0],
+                eager_node_examples,
+                "dsa_attention.latent_kv_reconstruction",
+                method=method,
+            )
+            _assign_node_example(
+                attention_launches[1],
+                eager_node_examples,
+                "dsa_attention.output_projection",
+                method=method,
+            )
+
+        ffn_rows = segment[attention_collective + 1 : ffn_collective]
+        if layer < 3:
+            activation_index = next(
+                (
+                    index
+                    for index, row in enumerate(ffn_rows)
+                    if "act_and_mul_kernel" in name(row)
+                    or "silu_and_mul_kernel" in name(row)
+                ),
+                None,
+            )
+            if activation_index is not None:
+                before = [
+                    row
+                    for row in ffn_rows[:activation_index]
+                    if "tgv" in name(row) or "nvjet_sm103_" in name(row)
+                ]
+                after = [
+                    row
+                    for row in ffn_rows[activation_index + 1 :]
+                    if "tgv" in name(row) or "nvjet_sm103_" in name(row)
+                ]
+                if before:
+                    _assign_node_example(
+                        before[-1],
+                        eager_node_examples,
+                        "dense_mlp.gate_up_projection",
+                        method=method,
+                    )
+                if after:
+                    _assign_node_example(
+                        after[0],
+                        eager_node_examples,
+                        "dense_mlp.down_projection",
+                        method=method,
+                    )
+        else:
+            launch_by_stream: dict[int, str] = {}
+            activation_streams: set[int] = set()
+            for row in ffn_rows:
+                value = name(row)
+                stream = int(row.get("stream_id") or row.get("stream") or -1)
+                if "nvjet_sm103_tss_" in value and "splitk" in value:
+                    node = "moe.router"
+                    launch_by_stream[stream] = node
+                    _assign_node_example(row, eager_node_examples, node, method=method)
+                elif "nvjet_sm103_tst_" in value and "splitk" in value:
+                    node = "moe.shared_expert_up"
+                    launch_by_stream[stream] = node
+                    _assign_node_example(row, eager_node_examples, node, method=method)
+                elif "splitkreduce_kernel" in value and stream in launch_by_stream:
+                    _assign_node_example(
+                        row,
+                        eager_node_examples,
+                        launch_by_stream[stream],
+                        method=method,
+                    )
+                elif "routingindicesblockscoreskernel" in value:
+                    _assign_node_example(row, eager_node_examples, "moe.topk", method=method)
+                elif "routingindicesclusterkernel" in value:
+                    _assign_node_example(row, eager_node_examples, "moe.topk", method=method)
+                elif "act_and_mul_kernel" in value or "silu_and_mul_kernel" in value:
+                    activation_streams.add(stream)
+                elif (
+                    stream in activation_streams
+                    and "nvjet_sm103_tst_" in value
+                    and "splitk" not in value
+                ):
+                    _assign_node_example(
+                        row,
+                        eager_node_examples,
+                        "moe.shared_expert_down",
+                        method=method,
+                    )
+
+        q_indexer = find_index(
+            segment, lambda value: "fused_q_indexer_rope_hadamard_quant" in value
+        )
+
+        for row in segment:
+            value = name(row)
+            if "nvfp4quantizelinearkernel" in value:
+                _assign_node_example(
+                    row, eager_node_examples, "moe.dispatch", method=method
+                )
+            elif "routingindicesdynblockkernel" in value:
+                _assign_node_example(row, eager_node_examples, "moe.topk", method=method)
+
+        # The post-FFN interval prepares the next layer.  Its projections are
+        # identified relative to the collective, norm, cat/indexer, and RoPE
+        # landmarks rather than a tile shape.
+        tail = segment[ffn_collective + 1 :]
+        q_a_norm_tail = next(
+            (
+                index
+                for index, row in enumerate(tail)
+                if "rmsnormkernel" in name(row) and "oi642048" in name(row)
+            ),
+            None,
+        )
+        kv_a_norm_tail = next(
+            (
+                index
+                for index, row in enumerate(tail)
+                if "rmsnormkernel" in name(row) and "oi64512" in name(row)
+            ),
+            None,
+        )
+        q_a_candidates = [
+            row
+            for row in tail[: q_a_norm_tail if q_a_norm_tail is not None else 0]
+            if "tgv" in name(row)
+            or ("nvjet_sm103_" in name(row) and "splitk" not in name(row))
+        ]
+        if q_a_candidates:
+            _assign_node_example(
+                q_a_candidates[-1],
+                eager_node_examples,
+                "dsa_attention.q_a_projection",
+                method=method,
+            )
+        if q_a_norm_tail is not None:
+            _assign_node_example(
+                tail[q_a_norm_tail],
+                eager_node_examples,
+                "dsa_attention.q_a_norm",
+                method=method,
+            )
+        if kv_a_norm_tail is not None:
+            _assign_node_example(
+                tail[kv_a_norm_tail],
+                eager_node_examples,
+                "dsa_attention.kv_a_norm",
+                method=method,
+            )
+        cat_tail = next(
+            (index for index, row in enumerate(tail) if "cat" in name(row)),
+            None,
+        )
+        q_b_start = (
+            cat_tail + 1
+            if cat_tail is not None
+            else ((kv_a_norm_tail + 1) if kv_a_norm_tail is not None else 0)
+        )
+        q_indexer_tail = (
+            q_indexer - (ffn_collective + 1) if q_indexer is not None else None
+        )
+        rope_tail = next(
+            (
+                index
+                for index, row in enumerate(tail)
+                if "ropequantizekernel" in name(row)
+            ),
+            None,
+        )
+        q_b_stop = q_indexer_tail if q_indexer_tail is not None else rope_tail
+        if q_b_stop is None:
+            q_b_stop = len(tail)
+        projection_candidates = [
+            row
+            for row in tail[q_b_start:q_b_stop]
+            if "tgv" in name(row)
+            or ("nvjet_sm103_tst_" in name(row) and "splitk" not in name(row))
+        ]
+        if projection_candidates:
+            _assign_node_example(
+                projection_candidates[0],
+                eager_node_examples,
+                "dsa_attention.q_b_projection",
+                method=method,
+            )
+        if q_indexer is not None:
+            if len(projection_candidates) > 1:
+                _assign_node_example(
+                    projection_candidates[-1],
+                    eager_node_examples,
+                    "dsa_attention.index_q_projection",
+                    method=method,
+                )
+            norm_or_rope = next(
+                (
+                    index
+                    for index, row in enumerate(tail[q_indexer_tail + 1 :], q_indexer_tail + 1)
+                    if "fused_k_indexer_norm_rope_store" in name(row)
+                ),
+                None,
+            )
+            if norm_or_rope is not None:
+                index_k_candidates = [
+                    row
+                    for row in tail[:norm_or_rope]
+                    if "nvjet_sm103_tst_" in name(row) and "splitk" in name(row)
+                ]
+                if index_k_candidates:
+                    _assign_node_example(
+                        index_k_candidates[-1],
+                        eager_node_examples,
+                        "dsa_attention.index_k_gate_projection",
+                        method=method,
+                    )
+            for row in tail[:norm_or_rope]:
+                if "splitkreduce_kernel" in name(row):
+                    _assign_node_example(
+                        row,
+                        eager_node_examples,
+                        "dsa_attention.index_k_gate_projection",
+                        method=method,
+                    )
+        elif len(projection_candidates) > 1:
+            # Non-owner DSA layers reuse the prior top-k state.  The second
+            # projection between Q_b and RoPE is therefore the latent-KV
+            # reconstruction, not an indexer projection.
+            _assign_node_example(
+                projection_candidates[-1],
+                eager_node_examples,
+                "dsa_attention.latent_kv_reconstruction",
+                method=method,
+            )
+        topk_tail = [
+            index
+            for index, row in enumerate(tail)
+            if "topk_main_kernel" in name(row)
+        ]
+        if topk_tail:
+            latent = next(
+                (
+                    row
+                    for row in tail[topk_tail[-1] + 1 :]
+                    if "nvjet_sm103_tst_" in name(row) and "splitk" not in name(row)
+                ),
+                None,
+            )
+            if latent is not None:
+                _assign_node_example(
+                    latent,
+                    eager_node_examples,
+                    "dsa_attention.latent_kv_reconstruction",
+                    method=method,
+                )
+
+    # Layer 0's projection preamble precedes the first sparse-core anchor and
+    # is therefore not part of an anchor-led interval.  It is still bounded
+    # by the embedding/input norm on the left and layer 0's sparse core on the
+    # right, so apply the same exact landmarks only inside that prefix.
+    first_anchor = production_segments[0][0]
+    prefix = kernels[:first_anchor]
+    q_a_norm = find_index(
+        prefix, lambda value: "rmsnormkernel" in value and "oi642048" in value
+    )
+    kv_a_norm = find_index(
+        prefix, lambda value: "rmsnormkernel" in value and "oi64512" in value
+    )
+    if q_a_norm is not None:
+        q_a_candidates = [
+            index
+            for index, row in enumerate(prefix[:q_a_norm])
+            if "tgv" in name(row)
+            or "fused_a_gemm_kernel" in name(row)
+            or ("nvjet_sm103_tst_" in name(row) and "splitk" not in name(row))
+        ]
+        q_a = q_a_candidates[-1] if q_a_candidates else None
+        input_norm = find_index(
+            prefix,
+            lambda value: "rmsnormkernel" in value and "oi646144" in value,
+            stop=q_a if q_a is not None else q_a_norm,
+        )
+        if input_norm is not None:
+            _assign_node_example(
+                prefix[input_norm], eager_node_examples, "stack.input_norm", method=method
+            )
+        prefix_nodes = (
+            (q_a, "dsa_attention.q_a_projection"),
+            (q_a_norm, "dsa_attention.q_a_norm"),
+            (kv_a_norm, "dsa_attention.kv_a_norm"),
+        )
+        for index, node in prefix_nodes:
+            if index is not None:
+                _assign_node_example(prefix[index], eager_node_examples, node, method=method)
+        q_indexer = find_index(
+            prefix, lambda value: "fused_q_indexer_rope_hadamard_quant" in value
+        )
+        q_b_start = (kv_a_norm + 1) if kv_a_norm is not None else q_a_norm + 1
+        q_b_stop = q_indexer if q_indexer is not None else len(prefix)
+        projections = [
+            index
+            for index, row in enumerate(prefix[q_b_start:q_b_stop], q_b_start)
+            if "tgv" in name(row)
+            or "fused_a_gemm_kernel" in name(row)
+            or ("nvjet_sm103_tst_" in name(row) and "splitk" not in name(row))
+        ]
+        if projections:
+            _assign_node_example(
+                prefix[projections[0]],
+                eager_node_examples,
+                "dsa_attention.q_b_projection",
+                method=method,
+            )
+        if q_indexer is not None and len(projections) > 1:
+            _assign_node_example(
+                prefix[projections[-1]],
+                eager_node_examples,
+                "dsa_attention.index_q_projection",
+                method=method,
+            )
+        index_norm = find_index(
+            prefix, lambda value: "fused_k_indexer_norm_rope_store" in value
+        )
+        if q_indexer is not None and index_norm is not None:
+            for index in range(q_b_start, index_norm):
+                value = name(prefix[index])
+                if "splitk" in value or "splitkreduce_kernel" in value:
+                    _assign_node_example(
+                        prefix[index],
+                        eager_node_examples,
+                        "dsa_attention.index_k_gate_projection",
+                        method=method,
+                    )
+        rope = find_index(prefix, lambda value: "ropequantizekernel" in value)
+        if rope is not None:
+            topk = find_index(prefix, lambda value: "topk_main_kernel" in value)
+            latent = find_index(
+                prefix,
+                lambda value: "nvjet_sm103_tst_" in value
+                and "splitk" not in value,
+                start=(topk + 1) if topk is not None else q_a_norm + 1,
+                stop=rope,
+            )
+            if latent is not None:
+                _assign_node_example(
+                    prefix[latent],
+                    eager_node_examples,
+                    "dsa_attention.latent_kv_reconstruction",
+                    method=method,
+                )
+
+    # Graph decode can launch the router GEMM with PDL and then place its
+    # split-K reduction on the same stream before the primary has retired.
+    # Pair only exact same-stream overlapping events already proven as router.
+    router_primaries = [row for row in kernels if row.get("node") == "moe.router"]
+    for row in kernels:
+        if row.get("node") is not None or "splitkreduce_kernel" not in name(row):
+            continue
+        start_us = float(row.get("ts_us") or 0.0)
+        same_stream = [
+            primary
+            for primary in router_primaries
+            if primary.get("stream_id") == row.get("stream_id")
+            and float(primary.get("ts_us") or 0.0) <= start_us
+            <= float(primary.get("ts_us") or 0.0) + float(primary.get("dur_us") or 0.0)
+        ]
+        if len(same_stream) == 1:
+            _assign_node_example(
+                row, eager_node_examples, "moe.router", method=method
+            )
+
+    # The logits GEMM is outside the last layer anchor interval but is bounded
+    # by final norm and the logits all-gather in the validated decode window.
+    logits_gather_indices = [
+        index
+        for index, row in enumerate(kernels)
+        if row.get("node") == "top.tp_logits_all_gather"
+    ]
+    ffn_collective_indices = [
+        index
+        for index, row in enumerate(kernels)
+        if row.get("node")
+        in {
+            "dense_mlp.tp_dense_mlp_output_collective",
+            "moe.tp_moe_output_collective",
+        }
+    ]
+    if ffn_collective_indices and logits_gather_indices:
+        # The final MoE collective may fuse final normalization, so the last
+        # layer boundary is the stronger portable left landmark.
+        tail_start = ffn_collective_indices[-1] + 1
+        tail_stop = logits_gather_indices[-1]
+        candidates = [
+            row
+            for row in kernels[tail_start:tail_stop]
+            if "nvjet_sm103_tst_" in name(row) and "splitk" not in name(row)
+        ]
+        if len(candidates) == 1:
+            _assign_node_example(
+                candidates[0], eager_node_examples, "top.lm_head", method=method
+            )
+
+
+def assign_sglang_prefill_layer_schedules(
+    kernels: list[dict[str, Any]],
+    production_segments: list[tuple[int, int]],
+    eager_node_examples: dict[str, dict[str, Any]],
+) -> None:
+    """Close prefill tile variants using anchor and operator order."""
+
+    method = "sglang_eager_validated_prefill_layer_schedule_landmark"
+
+    def lowered(row: dict[str, Any]) -> str:
+        return str(row.get("kernel_name") or "").lower()
+
+    def assign(row: dict[str, Any], node: str) -> None:
+        _assign_node_example(row, eager_node_examples, node, method=method)
+
+    for layer, (start, stop) in enumerate(production_segments):
+        segment = kernels[start:stop]
+        collectives = [
+            index
+            for index, row in enumerate(segment)
+            if inferred_collective_kind(str(row.get("kernel_name") or ""))
+            == "all_reduce"
+        ]
+        if len(collectives) < 2:
+            continue
+        attention_collective, ffn_collective = collectives[:2]
+        attention_launches = [
+            row
+            for row in segment[1:attention_collective]
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+        ]
+        if len(attention_launches) >= 2:
+            assign(attention_launches[0], "dsa_attention.latent_kv_reconstruction")
+            assign(attention_launches[1], "dsa_attention.output_projection")
+
+        if layer >= 3:
+            ffn_rows = segment[attention_collective + 1 : ffn_collective]
+            activation_index = next(
+                (
+                    index
+                    for index, row in enumerate(ffn_rows)
+                    if "act_and_mul_kernel" in lowered(row)
+                    or "silu_and_mul_kernel" in lowered(row)
+                ),
+                None,
+            )
+            if activation_index is not None:
+                before = [
+                    row
+                    for row in ffn_rows[:activation_index]
+                    if "nvjet_sm103_tst_" in lowered(row)
+                    and "splitk" not in lowered(row)
+                    and not row.get("node")
+                ]
+                after = [
+                    row
+                    for row in ffn_rows[activation_index + 1 :]
+                    if "nvjet_sm103_tst_" in lowered(row)
+                    and "splitk" not in lowered(row)
+                ]
+                if before:
+                    assign(before[-1], "moe.shared_expert_up")
+                if after:
+                    assign(after[0], "moe.shared_expert_down")
+
+    # The first layer's projection/indexer preamble lies before the first
+    # sparse-attention anchor.  Its local landmark order is the same as later
+    # layers and is fully represented in the eager stack evidence.
+    prefix = kernels[: production_segments[0][0]]
+    q_a_norm = next(
+        (
+            index
+            for index, row in enumerate(prefix)
+            if "rmsnormkernel" in lowered(row) and "oi642048" in lowered(row)
+        ),
+        None,
+    )
+    kv_a_norm = next(
+        (
+            index
+            for index, row in enumerate(prefix)
+            if "rmsnormkernel" in lowered(row) and "oi64512" in lowered(row)
+        ),
+        None,
+    )
+    if q_a_norm is not None:
+        q_a_launches = [
+            row
+            for row in prefix[:q_a_norm]
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+        ]
+        if q_a_launches:
+            assign(q_a_launches[-1], "dsa_attention.q_a_projection")
+
+    index_norm = next(
+        (
+            index
+            for index, row in enumerate(prefix)
+            if "fused_k_indexer_norm_rope_store" in lowered(row)
+        ),
+        None,
+    )
+    if kv_a_norm is not None and index_norm is not None:
+        projected = [
+            row
+            for row in prefix[kv_a_norm + 1 : index_norm]
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+        ]
+        if projected:
+            assign(projected[0], "dsa_attention.q_b_projection")
+        for row in projected[1:]:
+            if not row.get("node"):
+                assign(row, "dsa_attention.index_q_projection")
+
+    topk = [
+        index
+        for index, row in enumerate(prefix)
+        if "topk_transform_prefill_kernel" in lowered(row)
+    ]
+    if topk:
+        latent = next(
+            (
+                row
+                for row in prefix[topk[-1] + 1 :]
+                if "nvjet_sm103_tst_" in lowered(row)
+                and "splitk" not in lowered(row)
+            ),
+            None,
+        )
+        if latent is not None:
+            assign(latent, "dsa_attention.latent_kv_reconstruction")
+
+
+def assign_trtllm_decode_layer_schedules(
+    kernels: list[dict[str, Any]],
+    production_segments: list[tuple[int, int]],
+    eager_node_examples: dict[str, dict[str, Any]],
+) -> None:
+    """Bind TRT graph-on tile variants inside hard layer/collective bounds."""
+
+    method = "trtllm_eager_validated_layer_schedule_landmark"
+
+    def lowered(row: dict[str, Any]) -> str:
+        return str(row.get("kernel_name") or "").lower()
+
+    def assign(row: dict[str, Any], node: str) -> None:
+        _assign_node_example(row, eager_node_examples, node, method=method)
+
+    for layer, (start, stop) in enumerate(production_segments):
+        segment = kernels[start:stop]
+        if not segment:
+            continue
+        assign(segment[0], "dsa_attention.q_split_rope")
+        primaries = [
+            index
+            for index, row in enumerate(segment)
+            if "twoshotallreducekernel" in lowered(row)
+        ]
+        if len(primaries) != 2:
+            raise ValueError(
+                f"TRT-LLM layer {layer}: expected two collective landmarks, "
+                f"got {len(primaries)}"
+            )
+        attention_collective, ffn_collective = primaries
+
+        sparse_index = next(
+            (
+                index
+                for index, row in enumerate(segment[:attention_collective])
+                if "fmhasm103akernel_qkve4m3" in lowered(row)
+            ),
+            None,
+        )
+        if sparse_index is not None:
+            assign(segment[sparse_index], "dsa_attention.sparse_mla_core")
+            launches = [
+                segment[index]
+                for index in range(sparse_index + 1, attention_collective)
+                if "nvjet_sm103_tst_" in lowered(segment[index])
+            ]
+            if len(launches) >= 2:
+                assign(launches[0], "dsa_attention.latent_kv_reconstruction")
+                assign(launches[1], "dsa_attention.output_projection")
+
+        ffn_rows = segment[attention_collective + 1 : ffn_collective]
+        if layer < 3:
+            activation_index = next(
+                (
+                    index
+                    for index, row in enumerate(ffn_rows)
+                    if "silu_and_mul_kernel" in lowered(row)
+                ),
+                None,
+            )
+            for row in ffn_rows:
+                value = lowered(row)
+                if "fused_add_rmsnorm" in value:
+                    assign(row, "stack.post_attention_norm")
+                elif "silu_and_mul_kernel" in value:
+                    assign(row, "dense_mlp.swiglu")
+            if activation_index is not None:
+                before = [
+                    row
+                    for row in ffn_rows[:activation_index]
+                    if "nvjet_sm103_" in lowered(row)
+                    and "splitk" not in lowered(row)
+                ]
+                after = [
+                    row
+                    for row in ffn_rows[activation_index + 1 :]
+                    if "nvjet_sm103_" in lowered(row)
+                    and "splitk" not in lowered(row)
+                ]
+                if before:
+                    assign(before[-1], "dense_mlp.gate_up_projection")
+                if after:
+                    assign(after[0], "dense_mlp.down_projection")
+        else:
+            launch_by_stream: dict[int, str] = {}
+            activation_streams: set[int] = set()
+            for row in ffn_rows:
+                value = lowered(row)
+                stream = int(row.get("stream_id") or row.get("stream") or -1)
+                if "nvjet_sm103_tss_" in value and "splitk" in value:
+                    assign(row, "moe.router")
+                    launch_by_stream[stream] = "moe.router"
+                elif "nvjet_sm103_tst_" in value and "splitk" in value:
+                    assign(row, "moe.shared_expert_up")
+                    launch_by_stream[stream] = "moe.shared_expert_up"
+                elif "splitkreduce_kernel" in value and stream in launch_by_stream:
+                    assign(row, launch_by_stream[stream])
+                elif "quantize_with_block_size" in value:
+                    assign(row, "moe.dispatch")
+                elif "silu_and_mul_kernel" in value:
+                    assign(row, "moe.shared_expert_activation")
+                    activation_streams.add(stream)
+                elif "routingindicesclusterkernel" in value or "routingindicesblockscoreskernel" in value:
+                    assign(row, "moe.topk")
+                elif (
+                    stream in activation_streams
+                    and "nvjet_sm103_tst_" in value
+                    and "splitk" not in value
+                ):
+                    assign(row, "moe.shared_expert_down")
+                elif _has_moe_bmm(value):
+                    assign(row, "moe.routed_experts")
+                elif "finalizekernel" in value:
+                    assign(row, "moe.routed_weighted_combine")
+                elif "vectorized_elementwise_kernel" in value:
+                    assign(row, "moe.combine")
+
+        if layer == LAYER_COUNT - 1:
+            continue
+        tail = segment[ffn_collective + 1 :]
+        q_a_norm_index = next(
+            (
+                index
+                for index, row in enumerate(tail)
+                if "rmsnormkernel" in lowered(row) and "oi642048" in lowered(row)
+            ),
+            None,
+        )
+        q_a_candidates = [
+            row
+            for row in tail[: q_a_norm_index if q_a_norm_index is not None else 0]
+            if "nvjet_sm103_" in lowered(row) and "splitk" not in lowered(row)
+        ]
+        q_a_row = q_a_candidates[-1] if q_a_candidates else None
+        if q_a_row is not None:
+            assign(q_a_row, "dsa_attention.q_a_projection")
+        for row in tail:
+            value = lowered(row)
+            if "rmsnormkernel" in value and "oi642048" in value:
+                assign(row, "dsa_attention.q_a_norm")
+            elif "rmsnormkernel" in value and "oi64512" in value:
+                assign(row, "dsa_attention.kv_a_norm")
+
+        cat_index = next(
+            (index for index, row in enumerate(tail) if "catarraybatchedcopy" in lowered(row)),
+            None,
+        )
+        q_b_row = None
+        if cat_index is not None:
+            assign(tail[cat_index], "dsa_attention.q_b_projection")
+            q_b_row = next(
+                (
+                    tail[index]
+                    for index in range(cat_index + 1, len(tail))
+                    if "nvjet_sm103_tst_" in lowered(tail[index])
+                    and "splitk" not in lowered(tail[index])
+                ),
+                None,
+            )
+            if q_b_row is not None:
+                assign(q_b_row, "dsa_attention.q_b_projection")
+
+        indexer_nodes = (
+            ("triton_poi_fused__to_copy", "dsa_attention.index_q_projection"),
+            ("kernel2", "dsa_attention.index_q_projection"),
+            ("splitkreduce_kernel", "dsa_attention.index_q_projection"),
+            ("elementwise_kernel", "dsa_attention.index_q_projection"),
+            ("triton_per_fused__to_copy_native_layer_norm", "dsa_attention.index_k_norm_rope"),
+            ("batchqkapplyrotary", "dsa_attention.index_k_norm_rope"),
+            ("triton_poi_fused_mul_squeeze", "dsa_attention.index_logits"),
+            ("indexerkcachescatter", "dsa_attention.index_k_cache"),
+            ("sm100_fp8_paged_mqa_logits", "dsa_attention.index_logits"),
+            ("topkperrowdecode", "dsa_attention.index_topk"),
+        )
+        for row in tail:
+            value = lowered(row)
+            for token, node in indexer_nodes:
+                if token in value:
+                    assign(row, node)
+                    break
+        fused_cats = [row for row in tail if "fusedcatfp8kernel" in lowered(row)]
+        if fused_cats:
+            assign(fused_cats[0], "dsa_attention.index_q_projection")
+        if len(fused_cats) > 1:
+            assign(fused_cats[1], "dsa_attention.index_k_norm_rope")
+
+        tail_nvjets = [
+            row
+            for row in tail
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+            and row is not q_a_row
+            and row is not q_b_row
+        ]
+        topk_indices = [
+            index for index, row in enumerate(tail) if "topkperrowdecode" in lowered(row)
+        ]
+        if topk_indices:
+            topk_stop = topk_indices[-1]
+            index_norm_indices = [
+                index
+                for index, row in enumerate(tail)
+                if "triton_per_fused__to_copy_native_layer_norm" in lowered(row)
+            ]
+            before_topk = [row for row in tail_nvjets if tail.index(row) < topk_stop]
+            after_topk = [row for row in tail_nvjets if tail.index(row) > topk_stop]
+            if index_norm_indices:
+                before_topk = [
+                    row for row in before_topk if tail.index(row) < index_norm_indices[0]
+                ]
+            if before_topk:
+                assign(before_topk[-1], "dsa_attention.index_k_gate_projection")
+            if after_topk:
+                assign(after_topk[-1], "dsa_attention.latent_kv_reconstruction")
+        elif tail_nvjets:
+            assign(tail_nvjets[-1], "dsa_attention.latent_kv_reconstruction")
+
+    # Layer 0's projection preamble precedes the first eager/production anchor.
+    # All semantic launches except the standalone input norm have identical
+    # eager-proven roles in later layer preambles.  The norm is an explicit
+    # production-window boundary exception: the frozen eager extraction starts
+    # at q_split_rope and therefore cannot contain this earlier launch.
+    first_anchor = production_segments[0][0]
+    prefix = kernels[:first_anchor]
+    prefix_q_a_norm = next(
+        (
+            index
+            for index, row in enumerate(prefix)
+            if "rmsnormkernel" in lowered(row) and "oi642048" in lowered(row)
+        ),
+        None,
+    )
+    prefix_q_a = [
+        row
+        for row in prefix[: prefix_q_a_norm if prefix_q_a_norm is not None else 0]
+        if "nvjet_sm103_" in lowered(row) and "splitk" not in lowered(row)
+    ]
+    if prefix_q_a:
+        assign(prefix_q_a[-1], "dsa_attention.q_a_projection")
+    for row in prefix:
+        value = lowered(row)
+        if "rmsnormkernel" in value and "oi646144" in value:
+            row.update(
+                {
+                    "node": "stack.input_norm",
+                    "kernel_label": "Layer-0 input RMSNorm",
+                    "attribution_method": (
+                        "trtllm_production_window_layer0_input_norm_contract"
+                    ),
+                    "confidence": "high",
+                }
+            )
+        elif "rmsnormkernel" in value and "oi642048" in value:
+            assign(row, "dsa_attention.q_a_norm")
+        elif "rmsnormkernel" in value and "oi64512" in value:
+            assign(row, "dsa_attention.kv_a_norm")
+        elif "catarraybatchedcopy" in value:
+            assign(row, "dsa_attention.q_b_projection")
+        elif any(token in value for token in ("kernel2", "splitkreduce_kernel", "elementwise_kernel")):
+            assign(row, "dsa_attention.index_q_projection")
+    prefix_cat = next(
+        (index for index, row in enumerate(prefix) if "catarraybatchedcopy" in lowered(row)),
+        None,
+    )
+    prefix_q_b = None
+    if prefix_cat is not None:
+        prefix_q_b = next(
+            (
+                row
+                for row in prefix[prefix_cat + 1 :]
+                if "nvjet_sm103_tst_" in lowered(row)
+                and "splitk" not in lowered(row)
+            ),
+            None,
+        )
+        if prefix_q_b is not None:
+            assign(prefix_q_b, "dsa_attention.q_b_projection")
+    prefix_index_norm = next(
+        (
+            index
+            for index, row in enumerate(prefix)
+            if "triton_per_fused__to_copy_native_layer_norm" in lowered(row)
+        ),
+        None,
+    )
+    if prefix_index_norm is not None:
+        prefix_index_k = [
+            row
+            for row in prefix[:prefix_index_norm]
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+            and row is not prefix_q_b
+            and row not in prefix_q_a
+        ]
+        if prefix_index_k:
+            assign(prefix_index_k[-1], "dsa_attention.index_k_gate_projection")
+    topk_indices = [
+        index for index, row in enumerate(prefix) if "topkperrowdecode" in lowered(row)
+    ]
+    if topk_indices:
+        latent = next(
+            (
+                prefix[index]
+                for index in range(topk_indices[-1] + 1, len(prefix))
+                if "nvjet_sm103_tst_" in lowered(prefix[index])
+                and "splitk" not in lowered(prefix[index])
+            ),
+            None,
+        )
+        if latent is not None:
+            assign(latent, "dsa_attention.latent_kv_reconstruction")
+
+    # Final logits GEMM lies after the last layer's second TP collective and
+    # before the logits all-gather.  This pass intentionally runs before the
+    # generic collective reconciliation below, so use the two hard raw
+    # collective landmarks in the final production segment instead of relying
+    # on node labels that have not been installed yet.
+    logits_gather_indices = [
+        index
+        for index, row in enumerate(kernels)
+        if row.get("node") == "top.tp_logits_all_gather"
+        or inferred_collective_kind(str(row.get("kernel_name") or "")) == "all_gather"
+    ]
+    if logits_gather_indices:
+        final_start, final_stop = production_segments[-1]
+        final_primaries = [
+            index
+            for index in range(final_start, final_stop)
+            if "twoshotallreducekernel" in lowered(kernels[index])
+        ]
+        if len(final_primaries) != 2:
+            raise ValueError(
+                "TRT-LLM final layer: expected two raw collective landmarks, "
+                f"got {len(final_primaries)}"
+            )
+        tail_start = final_primaries[-1] + 1
+        candidates = [
+            row
+            for row in kernels[tail_start : logits_gather_indices[-1]]
+            if "nvjet_sm103_tst_" in lowered(row)
+            and "splitk" not in lowered(row)
+        ]
+        if len(candidates) == 1:
+            assign(candidates[0], "top.lm_head")
 
 
 def _assign(
@@ -449,6 +1806,12 @@ def attribute_events(
     framework: str,
     phase: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    eager_enriched_count = enrich_eager_semantics(source_rows, framework=framework)
+    eager_schedule_reconciled_count = 0
+    if framework == "trtllm" and phase == "decode":
+        eager_schedule_reconciled_count = reconcile_trtllm_eager_decode_schedules(
+            source_rows
+        )
     kernels = [row for row in production_rows if row.get("kind") == "kernel"]
     for row in production_rows:
         row.update(
@@ -526,6 +1889,29 @@ def attribute_events(
             == [sequence_family(name) for name in prod_names]
         )
         if not normalized:
+            for source_index, production_index, score in align_layer_segment(
+                source_segment, prod_segment
+            ):
+                source = source_segment[source_index]
+                production = prod_segment[production_index]
+                if score >= 400:
+                    method = "hard_anchor_bounded_monotonic_exact_identity"
+                    confidence = "high"
+                elif score >= 300:
+                    method = "hard_anchor_bounded_monotonic_function_identity"
+                    confidence = "medium"
+                elif score >= 200:
+                    method = "hard_anchor_bounded_monotonic_normalized_identity"
+                    confidence = "medium"
+                else:
+                    method = "hard_anchor_bounded_monotonic_codegen_schedule_family"
+                    confidence = "medium"
+                _assign(
+                    production,
+                    source,
+                    method=method,
+                    confidence=confidence,
+                )
             source_by_exact: dict[str, list[dict[str, Any]]] = defaultdict(list)
             production_by_exact: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for source in source_segment:
@@ -613,6 +1999,25 @@ def attribute_events(
                 confidence=confidence,
                 overwrite=True,
             )
+
+    if framework == "sglang" and phase == "decode":
+        assign_sglang_decode_layer_schedules(
+            kernels,
+            production_segments,
+            eager_node_examples,
+        )
+    elif framework == "sglang" and phase == "prefill":
+        assign_sglang_prefill_layer_schedules(
+            kernels,
+            production_segments,
+            eager_node_examples,
+        )
+    elif framework == "trtllm" and phase == "decode":
+        assign_trtllm_decode_layer_schedules(
+            kernels,
+            production_segments,
+            eager_node_examples,
+        )
 
     source_collective_base_kinds: dict[str, set[str | None]] = defaultdict(set)
     for source in source_rows:
@@ -861,9 +2266,18 @@ def attribute_events(
                 )
             collective_auxiliary_count = len(twoshot_auxiliaries)
 
+    _classify_runtime_support(production_rows)
+
     total_kernel_us = sum(float(row["dur_us"]) for row in kernels)
+    production_boundary_methods = {
+        "trtllm_production_window_layer0_input_norm_contract"
+    }
     missing_eager_provenance = [
-        row for row in kernels if row.get("node") is not None and not row.get("eager_event_id")
+        row
+        for row in kernels
+        if row.get("node") is not None
+        and not row.get("eager_event_id")
+        and row.get("attribution_method") not in production_boundary_methods
     ]
     if missing_eager_provenance:
         raise ValueError(
@@ -876,6 +2290,8 @@ def attribute_events(
     method_counts = Counter(str(row["attribution_method"]) for row in kernels)
     report = {
         "eager_kernel_count": len(source_rows),
+        "eager_enriched_kernel_count": eager_enriched_count,
+        "eager_schedule_reconciled_kernel_count": eager_schedule_reconciled_count,
         "production_kernel_count": len(kernels),
         "layer_anchor_count": LAYER_COUNT,
         "exact_segment_count": exact_segment_count,

@@ -819,6 +819,82 @@ def _assign_decode_graph_segment_schedules(events: list[dict[str, Any]]) -> int:
                             "dsa_attention.index_weight_projection",
                             method,
                         )
+
+            # BS16+ graph specialization replaces the eager FP32 index-weight
+            # GEMV with one SIMT SGEMM plus its split-K reduction.  The symbol
+            # is not unique model-wide, so bind it only inside this exact DSA
+            # occurrence and only when it is bracketed by the eager-proven
+            # index-K normalization and index-weight scale landmarks.
+            index_k_norm = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "native_layer_norm" in name
+                ),
+                None,
+            )
+            weight_scale = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "triton_poi_fused_mul_unsqueeze" in name
+                ),
+                None,
+            )
+            if index_k_norm is not None and weight_scale is not None:
+                fp32_weight_gemm = [
+                    index
+                    for index in range(qnorm + 1 if qnorm is not None else 0, index_k_norm)
+                    if "cutlass_80_simt_sgemm" in names[index]
+                ]
+                if len(fp32_weight_gemm) == 1:
+                    start = fp32_weight_gemm[0]
+                    stop = index_k_norm
+                    if (
+                        stop == start + 2
+                        and "splitkreduce_kernel" in names[start + 1]
+                    ):
+                        for row in segment[start:stop]:
+                            assign(
+                                row,
+                                "dsa_attention.index_weight_projection",
+                                method,
+                            )
+
+            # The decode graph also shape-specializes latent-KV
+            # reconstruction.  Eager proves the semantic sequence
+            # concat-cache -> BMM -> concatenate -> FP8 quantize.  Transfer
+            # that complete local interval instead of leaving the BMM and cat
+            # as generic graph-runtime work.
+            latent_cache = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "concat_and_cache_mla_kernel" in name
+                ),
+                None,
+            )
+            latent_quant = next(
+                (
+                    index
+                    for index, name in enumerate(names)
+                    if "scaled_fp8_quant_kernel" in name
+                ),
+                None,
+            )
+            if (
+                latent_cache is not None
+                and latent_quant is not None
+                and latent_quant == latent_cache + 3
+                and names[latent_cache + 1].startswith("nvjet_")
+                and "catarraybatchedcopy" in names[latent_cache + 2]
+            ):
+                for row in segment[latent_cache + 1 : latent_quant + 1]:
+                    assign(
+                        row,
+                        "dsa_attention.latent_kv_reconstruction",
+                        method,
+                    )
             allreduce = next(
                 (
                     index

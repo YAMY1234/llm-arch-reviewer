@@ -246,7 +246,7 @@ def main(args: argparse.Namespace | None = None) -> int:
             }"""
         )
         fusion_links = page.locator(
-            'g.view-group[data-view="gdn_attention"] '
+            '#svg-host g.view-group[data-view="gdn_attention"] '
             'g.node[data-id="ba_projection"] a.fusion-owner-link'
         )
         require(fusion_links.count() == 2, "comparison_fusion_owner_link_count")
@@ -280,7 +280,7 @@ def main(args: argparse.Namespace | None = None) -> int:
                 for (const context of comparisonContextList()) {
                   const cell = comparisonCellForTarget(context, target);
                   if (cell?.status !== 'fused') continue;
-                  const selector = `g.view-group[data-view="${view}"] g.node[data-id="${node.id}"] a.fusion-owner-link[data-comparison-owner="${context.implementation_id}"]`;
+                  const selector = `#svg-host g.view-group[data-view="${view}"] g.node[data-id="${node.id}"] a.fusion-owner-link[data-comparison-owner="${context.implementation_id}"]`;
                   rows.push({
                     target,
                     implementation: context.implementation_id,
@@ -299,13 +299,23 @@ def main(args: argparse.Namespace | None = None) -> int:
             actual=exhaustive_fusion,
         )
         execution_owner_link = page.locator(
-            'g.view-group[data-view="gdn_moe_block"] '
+            '#svg-host g.view-group[data-view="gdn_moe_block"] '
             'g.node[data-id="attention_residual"] '
             f'a.fusion-owner-link[data-comparison-owner="{QWEN_SGLANG}"]'
+        )
+        rendered_owner_links = page.evaluate(
+            """() => Array.from(document.querySelectorAll(
+              '#svg-host g.view-group[data-view="gdn_moe_block"] a.fusion-owner-link'
+            )).map(link => ({
+              implementation: link.dataset.comparisonOwner || '',
+              source: link.dataset.comparisonSource || '',
+              text: link.textContent || '',
+            }))"""
         )
         require(
             execution_owner_link.count() == 1,
             "comparison_execution_owner_link_missing",
+            actual=rendered_owner_links,
         )
         if execution_owner_link.count():
             page.evaluate("fitToSvg()")

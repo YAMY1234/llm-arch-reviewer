@@ -54,6 +54,8 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert 'parts.push({text: shape.symbolic, cls: "shape-symbolic"})' in viewer
     assert 'parts.push({text: `resolved ${shape.resolved}`, cls: "shape-resolved"})' in viewer
     assert "irTargetExistsForNavigation" in viewer
+    assert "RAW_DATA?.execution_variants?.[executionVariantId]?.views" in viewer
+    assert "CURRENT_EXECUTION = context.execution_variant_id;" in viewer
     assert "showComparisonFusionOwnerInArchitecture(context.implementation_id" in viewer
     assert "profile_id.includes" not in viewer
 

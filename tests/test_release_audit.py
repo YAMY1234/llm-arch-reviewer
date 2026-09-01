@@ -5,6 +5,7 @@ from pathlib import Path
 
 from scripts.release_audit import (
     audit_published_bundle,
+    build_acceptance_summary,
     discover_models,
     summarize_attribution_failures,
 )
@@ -81,3 +82,97 @@ def test_release_audit_groups_repeated_attribution_failures() -> None:
             "steps": [1, 2],
         }
     ]
+
+
+def test_release_acceptance_summary_is_deterministic_and_content_addressed(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    catalog_root = repo_root / "catalog"
+    docs_root = repo_root / "docs"
+    (repo_root / "src" / "llm_arch_v2").mkdir(parents=True)
+    (repo_root / "src" / "llm_arch_v2" / "compiler.py").write_text("compiler\n")
+    docs_root.mkdir()
+    (docs_root / "viewer.html").write_text("viewer\n")
+    (catalog_root / "toy").mkdir(parents=True)
+    (catalog_root / "toy" / "model_ir.yaml").write_text("model_id: toy\n")
+    (docs_root / "toy_v2").mkdir()
+    bundle = {
+        "meta": {"model_ir_version": 1, "model_semantic_revision": 6},
+        "execution_variants": {
+            "exec_123": {
+                "execution_path_id": "tp8",
+                "execution_plan_version": 1,
+            }
+        },
+        "implementations": {
+            "impl": {
+                "framework_id": "sglang",
+                "source_repo": "https://example.invalid/runtime",
+                "source_commit": "abc123",
+                "binding_status": "validated",
+                "execution_variant": "exec_123",
+            }
+        },
+        "profiles": {
+            "profile": {
+                "implementation_id": "impl",
+                "execution_variant": "exec_123",
+                "meta": {
+                    "phase": "decode",
+                    "generation_mode": "autoregressive",
+                    "execution_parameters": {"tp_size": 8},
+                    "hardware": {"gpu": "GB300"},
+                    "workload": {"batch_size": 1, "isl": 8192, "osl": 1024},
+                    "profiler": {
+                        "type": "torch_profiler",
+                        "cuda_graph_enabled": True,
+                    },
+                },
+            }
+        },
+    }
+    (docs_root / "toy_v2" / "arch_data.json").write_text(json.dumps(bundle))
+    reports = [
+        {
+            "model": "toy",
+            "status": "pass",
+            "bundle": {"published_sha256": "bundle-sha"},
+            "timelines": [
+                {
+                    "profile": "profile",
+                    "source_sha256": "trace-sha",
+                    "mapped_kernel_count_ratio": 1.0,
+                    "mapped_residency_ratio": 1.0,
+                    "attribution_passed": True,
+                }
+            ],
+        }
+    ]
+
+    kwargs = {
+        "repo_root": repo_root,
+        "catalog_root": catalog_root,
+        "docs_root": docs_root,
+        "models": ["toy"],
+        "model_reports": reports,
+        "acceptance_level": "release",
+        "static_gate": "pass",
+        "browser_report": {
+            "status": "pass",
+            "checks": [{"name": "viewer:toy", "passed": True}],
+        },
+        "release_ready": True,
+    }
+    first = build_acceptance_summary(**kwargs)
+    second = build_acceptance_summary(**kwargs)
+
+    assert first == second
+    assert first["schema_version"] == "release-acceptance.v1"
+    assert first["release_ready"] is True
+    assert first["release_identity"]["compiler_sha256"]
+    assert first["models"][0]["catalog_manifest_sha256"]
+    profile = first["models"][0]["profiles"][0]
+    assert profile["execution_fingerprint"] == "exec_123"
+    assert profile["timeline_sha256"] == "trace-sha"
+    assert profile["contract_sha256"]

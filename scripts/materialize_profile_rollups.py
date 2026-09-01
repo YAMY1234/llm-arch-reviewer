@@ -52,6 +52,40 @@ def drop_derived_parent_targets(
     return [target for target in targets if target not in derived]
 
 
+def drop_derived_fusion_members(
+    fusion_groups: dict[str, dict[str, Any]],
+    *,
+    rollup_targets: set[str],
+    scoped_targets: set[str],
+) -> None:
+    """Remove stale derived parents from physical fusion memberships.
+
+    Drill roll-ups and authored timing scopes are interval unions computed from
+    descendant production events.  They are navigation/aggregation nodes, not
+    semantic leaves sharing an owner's physical event set.  Older generated
+    profiles may nevertheless contain them in a fusion group; retaining that
+    membership while re-materializing would reattach every owner event and
+    destroy the scope filter.
+    """
+
+    derived = rollup_targets | scoped_targets
+    for group in fusion_groups.values():
+        owner = str(group.get("owner") or "")
+        group["ir_nodes"] = [
+            target
+            for target in group.get("ir_nodes") or []
+            if target == owner or target not in derived
+        ]
+        evidence_scope = group.get("evidence_scope") or {}
+        member_event_ids = evidence_scope.get("member_event_ids")
+        if isinstance(member_event_ids, dict):
+            evidence_scope["member_event_ids"] = {
+                target: event_ids
+                for target, event_ids in member_event_ids.items()
+                if target not in derived
+            }
+
+
 def merge_rollup_metrics(
     profile_metrics: dict[str, dict[str, Any]],
     rollups: dict[str, dict[str, Any]],
@@ -95,6 +129,7 @@ def materialize_typed_fusion_states(
     *,
     decoded_steps: list[dict[str, Any]],
     model_nodes: dict[str, dict[str, Any]],
+    excluded_targets: set[str] | None = None,
 ) -> None:
     """Replace compute-as-structural fallbacks with physical fusion relations.
 
@@ -104,6 +139,7 @@ def materialize_typed_fusion_states(
     are legitimate fusion, but neither is a structural boundary.
     """
 
+    excluded_targets = excluded_targets or set()
     events = [
         event
         for step in decoded_steps
@@ -125,6 +161,8 @@ def materialize_typed_fusion_states(
     fusion_groups = profile.setdefault("fusion_groups", {})
     candidates = []
     for target, state in list(node_states.items()):
+        if target in excluded_targets:
+            continue
         node = model_nodes.get(target) or {}
         runtime = (node.get("semantic_details") or {}).get(
             "runtime_mapping"
@@ -349,6 +387,11 @@ def main() -> int:
         rollup_targets = {
             target for values in ancestors.values() for target in values
         }
+        drop_derived_fusion_members(
+            profile.setdefault("fusion_groups", {}),
+            rollup_targets=rollup_targets,
+            scoped_targets=scoped_targets,
+        )
         timeline_spec = profile.get("timeline") or {}
         artifact_name = timeline_spec.get("artifact")
         if not artifact_name:
@@ -427,6 +470,7 @@ def main() -> int:
             profile,
             decoded_steps=decoded_steps,
             model_nodes=model_nodes,
+            excluded_targets=rollup_targets | scoped_targets,
         )
         drop_stale_structural_compute_states(
             profile.setdefault("node_states", {}), model_nodes=model_nodes
@@ -532,6 +576,18 @@ def main() -> int:
             # (kernel shares, attribution methods, rank policy) and must not be
             # rewritten from the compact timeline artifact.
             if measured is not None:
+                timing = direct_metrics[target]
+                measured.setdefault("active_gpu_ms", timing["active_gpu_ms"])
+                measured.setdefault(
+                    "gpu_residency_ms", timing["gpu_residency_ms"]
+                )
+                measured.setdefault(
+                    "gpu_residency_ms_per_iter",
+                    timing["gpu_residency_ms_per_iter"],
+                )
+                measured.setdefault(
+                    "mapped_event_count", timing["mapped_event_count"]
+                )
                 continue
             model_node = model_nodes.get(target)
             runtime = (

@@ -103,7 +103,8 @@ python3 scripts/audit_timeline_stream_modes.py docs/*/arch_data.json \
 # M0 full release gate: static checks plus real-browser Viewer acceptance
 python3 scripts/release_audit.py --all --level release \
   --base-url http://127.0.0.1:8765 \
-  --output /tmp/llm-arch-reviewer-release-audit
+  --output /tmp/llm-arch-reviewer-release-audit \
+  --publish-summary docs/release-acceptance.json
 
 # server lifecycle (without VIEWER_PORT it defaults to 127.0.0.1:8766)
 scripts/viewer_server.sh
@@ -118,6 +119,9 @@ open 'http://localhost:8765/viewer.html?model=glm53_flash_v2' # IR-first GLM-5.3
 open 'http://localhost:8765/viewer.html?model=kimi_k3_v2' # IR-first Kimi K3 V2
 open 'http://localhost:8765/viewer.html?model=deepseek_v4_pro_v2' # IR-first DeepSeek V4 Pro V2
 ```
+
+The current content-addressed release ledger is published at
+[docs/release-acceptance.json](docs/release-acceptance.json).
 
 For a viewer-only session, `python3 -m http.server -d docs 8765` still works.
 For a foreground server with the exact Perfetto handoff endpoint, run

@@ -10,11 +10,45 @@ from models.common.profile_rollup import (
 )
 from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
 from scripts.materialize_profile_rollups import (
+    drop_derived_fusion_members,
     drop_stale_structural_compute_states,
     drop_derived_parent_targets,
     materialize_typed_fusion_states,
     merge_rollup_metrics,
 )
+
+
+def test_rematerialization_removes_derived_parents_from_fusion_groups() -> None:
+    groups = {
+        "fusion:detail.owner": {
+            "owner": "detail.owner",
+            "ir_nodes": [
+                "detail.owner",
+                "detail.member",
+                "stack.rollup",
+                "stack.scoped",
+            ],
+            "evidence_scope": {
+                "member_event_ids": {
+                    "detail.member": ["event-1"],
+                    "stack.rollup": ["event-1"],
+                    "stack.scoped": ["event-1"],
+                }
+            },
+        }
+    }
+
+    drop_derived_fusion_members(
+        groups,
+        rollup_targets={"stack.rollup"},
+        scoped_targets={"stack.scoped"},
+    )
+
+    group = groups["fusion:detail.owner"]
+    assert group["ir_nodes"] == ["detail.owner", "detail.member"]
+    assert group["evidence_scope"]["member_event_ids"] == {
+        "detail.member": ["event-1"]
+    }
 
 
 def test_rollup_refresh_preserves_existing_evidence_details() -> None:

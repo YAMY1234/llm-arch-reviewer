@@ -128,6 +128,7 @@ def _validate_leaf_equation_coverage(
 
     if int(model_ir.get("semantic_revision") or 0) < 6:
         return
+    operations = (model_ir.get("semantic_contract") or {}).get("operations") or {}
     for view_id, view in (model_ir.get("views") or {}).items():
         for node in view.get("nodes", []) or []:
             if node.get("drill") or _inferred_semantic_kind(node) != "compute":
@@ -138,6 +139,10 @@ def _validate_leaf_equation_coverage(
             has_signature = bool(
                 (node.get("operator_signature") or {}).get("symbolic")
             )
+            operation = operations.get(str(node.get("semantic_op") or "")) or {}
+            has_contract_equation = bool(
+                isinstance(operation, dict) and str(operation.get("equation") or "").strip()
+            )
             exemption = semantic_details.get("equation_exempt_reason")
             if exemption is not None and (
                 not isinstance(exemption, str) or not exemption.strip()
@@ -146,10 +151,11 @@ def _validate_leaf_equation_coverage(
                     f"{source}: compute leaf {target} has an empty "
                     "semantic_details.equation_exempt_reason"
                 )
-            if not (has_math or has_signature or exemption):
+            if not (has_math or has_signature or has_contract_equation or exemption):
                 raise CatalogError(
                     f"{source}: compute leaf {target} requires semantic_details.math, "
-                    "operator_signature, or an explicit equation_exempt_reason"
+                    "a semantic_contract operation equation, operator_signature, "
+                    "or an explicit equation_exempt_reason"
                 )
 
 

@@ -1168,12 +1168,20 @@ function irNodeInViews(views, target) {
 
 function irTargetExistsForNavigation(target, executionVariantId = CURRENT_EXECUTION) {
   if (irTargetExists(target)) return true;
-  if (!isV2Bundle() || CURRENT_IR_LAYER !== "model") return false;
-  if (comparisonModeActive() && !comparisonExecutionIrCompatible()) return false;
-  return Boolean(irNodeInViews(
+  if (!isV2Bundle()) return false;
+  // A comparison can contain distinct, framework-specific Execution IRs.
+  // An explicitly scoped fusion-owner link is still navigable in the
+  // selected framework's topology even though a shared Execution-IR overlay
+  // would be invalid.  Check that concrete topology before applying the
+  // shared-comparison restriction.
+  const executionTarget = irNodeInViews(
     RAW_DATA?.execution_variants?.[executionVariantId]?.views,
     target,
-  ));
+  );
+  if (executionTarget) return true;
+  if (CURRENT_IR_LAYER !== "model") return false;
+  if (comparisonModeActive() && !comparisonExecutionIrCompatible()) return false;
+  return false;
 }
 
 function fusionOwnerForTarget(target, cell = null) {
@@ -4351,6 +4359,23 @@ async function showComparisonFusionOwnerInArchitecture(implementationId, sourceT
   const group = comparisonFusionGroupForTarget(context, sourceTarget)?.[1];
   const owner = group?.architecture_owner || group?.owner || "";
   if (!owner || !irTargetExistsForNavigation(owner, context?.execution_variant_id)) return false;
+  // Execution-only owners (for example a TP collective) belong to one
+  // framework topology.  Select that exact framework/profile/fingerprint
+  // before resolving the route; otherwise the current Model IR cannot see the
+  // node and the link appears inert in a heterogeneous comparison.
+  const [ownerView, ownerNodeId] = owner.split(".", 2);
+  const modelHasOwner = (RAW_DATA?.model_ir?.views?.[ownerView]?.nodes || [])
+    .some(candidate => candidate.id === ownerNodeId);
+  if (!modelHasOwner) {
+    CURRENT_IMPLEMENTATION = context.implementation_id;
+    CURRENT_PROFILE = context.profile_id;
+    CURRENT_EXECUTION = context.execution_variant_id;
+    CURRENT_IR_LAYER = "execution";
+    const layerSelect = document.getElementById("ir-layer-select");
+    if (layerSelect) layerSelect.value = CURRENT_IR_LAYER;
+    activateV2Selection(CURRENT_EXECUTION, CURRENT_IMPLEMENTATION);
+    syncV2SelectionQuery();
+  }
   await showTimelineEventInArchitecture({
     event: {
       _irNode: owner,

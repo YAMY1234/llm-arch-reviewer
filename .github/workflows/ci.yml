@@ -37,7 +37,7 @@ jobs:
         run: python -m playwright install --with-deps chromium
       - name: Rebuild every audited catalog
         run: python scripts/build_v2.py --all
-      - name: Audit compact and physical Timeline modes
+      - name: Run the unified M0 release gate
         run: |
           python scripts/serve_viewer.py --host 127.0.0.1 --port 8765 > /tmp/viewer.log 2>&1 &
           server_pid=$!
@@ -49,6 +49,8 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:8765/viewer.html > /dev/null
-          python scripts/audit_timeline_stream_modes.py docs/*/arch_data.json \
+          python scripts/release_audit.py --all --level release \
             --base-url http://127.0.0.1:8765 \
-            --output /tmp/timeline-stream-audit.json
+            --output /tmp/llm-arch-reviewer-release-audit \
+            --publish-summary docs/release-acceptance.json
+          git diff --exit-code -- docs

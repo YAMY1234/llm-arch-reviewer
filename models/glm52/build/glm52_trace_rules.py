@@ -102,6 +102,7 @@ def classify_glm52_node(
         kernel,
         "routingindiceshistogramscoreskernel",
         "routingindicesblockkernel",
+        "routingindicesdynblockkernel",
     ):
         return "moe.topk", "high"
     if _has_any(
@@ -110,7 +111,11 @@ def classify_glm52_node(
         "moe::dev::routing::routingindicescoopkernel",
     ):
         return "moe.dispatch", "high"
-    if "nvfp4quantizetmakernel" in kernel and _has_any(
+    if _has_any(
+        kernel,
+        "nvfp4quantizetmakernel",
+        "nvfp4quantizelinearkernel",
+    ) and _has_any(
         lowered, "fusedmoe", "forward_normal", "dsa_indexer.py"
     ):
         return "moe.dispatch", "high"
@@ -132,6 +137,7 @@ def classify_glm52_node(
         "rmsnormrmsnormkernel" in kernel
         and "oi646144" in kernel
         and "deepseekv2decoderlayer" not in lowered
+        and _has_any(lowered, "deepseekv2model", "logitsprocessor", "lm_head")
     ):
         return "top.final_norm", "high"
     if (

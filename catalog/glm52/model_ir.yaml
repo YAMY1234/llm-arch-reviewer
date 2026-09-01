@@ -2,12 +2,14 @@ schema_version: model-ir.v2
 model_id: glm52
 model_label: GLM-5.2 NVFP4
 ir_version: 1
+semantic_revision: 6
 default_view: top
 default_execution_path: tp8
 
 dimensions:
   B: request batch
   T: token count
+  S: cached sequence length
   H: 6144 hidden width
   V: 154880 vocabulary entries
   N: 64 attention heads
@@ -21,6 +23,8 @@ dimensions:
   Ki: 2048 selected KV positions
   E: 256 routed experts
   K: 8 selected experts per token
+  Q_latent: 2048 query latent width
+  F_dense: 12288 dense MLP intermediate width
 
 facts:
   checkpoint: nvidia/GLM-5.2-NVFP4
@@ -41,6 +45,124 @@ facts:
   max_position_embeddings: 1048576
   model_weight_precision: mixed NVFP4 and BF16 per checkpoint quantization exclusions
   kv_cache_precision: FP8
+
+# Reused only as YAML authoring anchors.  Every compiled edge resolves to the
+# complete identity/shape/layout/dtype/state contract required by Model IR v2.
+edge_contract_templates:
+  ephemeral: &ephemeral_edge {layout: logical, state: ephemeral}
+  persistent: &persistent_edge {layout: logical, state: persistent}
+
+# Framework-independent mathematical semantics.  Runtime fusion and kernel
+# ownership remain in bindings/profiles; these equations describe the stable
+# model data flow shown in the Architecture view.
+semantic_contract:
+  version: 1
+  require_explicit_equations: true
+  operations:
+    model.input_ids: {kind: boundary, equation: 'token_ids := request token ids with shape [B,T]'}
+    model.embedding: {kind: embedding, equation: 'X = Embedding[token_ids], Embedding in R^(V x H)'}
+    model.decoder_stack: {kind: module, equation: 'Y = DecoderStack_78(X; dense layers 0..2, MoE layers 3..77)'}
+    model.final_norm: {kind: normalization, equation: 'Y_norm = RMSNorm(Y; gamma_final, epsilon)'}
+    model.lm_head: {kind: projection, equation: 'logits = Y_norm W_vocab^T'}
+    model.logits: {kind: boundary, equation: 'response_logits := logits with shape [B,T,V]'}
+    model.optional_nextn_extension: {kind: module, equation: 'draft_logits = NextN(candidate_token_ids, target_hidden_state) when speculative generation is enabled'}
+
+    stack.input: {kind: boundary, equation: 'X_0 := decoder input hidden states [B,T,H]'}
+    stack.layer_schedule: {kind: control, equation: 'for l in 0..77: apply DenseMLP when l < 3; otherwise apply RoutedSharedMoE'}
+    decoder.input_norm: {kind: normalization, equation: 'X_attn = RMSNorm(X_l; gamma_attn_l, epsilon)'}
+    decoder.dsa_attention: {kind: module, equation: 'Delta_attn, cache_next, topk_state_next = DSA_MLA(X_attn, cache_prev, topk_state_prev)'}
+    decoder.attention_residual: {kind: composition, equation: 'A_l = X_l + Delta_attn'}
+    decoder.post_attention_norm: {kind: normalization, equation: 'X_ffn = RMSNorm(A_l; gamma_ffn_l, epsilon)'}
+    decoder.feed_forward_schedule: {kind: control, equation: 'Delta_ffn = DenseMLP(X_ffn) if l < 3 else RoutedSharedMoE(X_ffn)'}
+    decoder.dense_mlp: {kind: module, equation: 'Delta_ffn = W_down(SiLU(W_gate X_ffn) elementwise_mul (W_up X_ffn))'}
+    decoder.moe: {kind: module, equation: 'Delta_ffn = RoutedSharedMoE(X_ffn; E=256, K=8, shared=1)'}
+    decoder.feed_forward_residual: {kind: composition, equation: 'X_(l+1) = A_l + Delta_ffn'}
+    stack.output: {kind: boundary, equation: 'Y := X_78 with shape [B,T,H]'}
+
+    dsa_attention.input: {kind: boundary, equation: 'X := normalized attention input [B,T,H]'}
+    dsa_attention.q_a_projection: {kind: projection, equation: 'Q_latent = X W_qa^T in R^(B x T x 2048)'}
+    dsa_attention.kv_a_projection: {kind: projection, equation: '[C_kv,K_rope] = X W_kva^T with widths Ckv and Drope'}
+    dsa_attention.q_a_norm: {kind: normalization, equation: 'Qn_latent = RMSNorm(Q_latent; gamma_qa, epsilon)'}
+    dsa_attention.q_b_projection: {kind: projection, equation: 'Q_raw = Qn_latent W_qb^T, reshaped to [B,T,N,Dqk]'}
+    dsa_attention.q_split_rope: {kind: transform, equation: 'Q = Concat(Q_nope, RoPE(Q_rope)) along the head channel axis'}
+    dsa_attention.kv_latent_split: {kind: transform, equation: 'C_kv,K_rope = Split(KV_latent_rope, [Ckv,Drope])'}
+    dsa_attention.kv_a_norm: {kind: normalization, equation: 'C_kv_norm = RMSNorm(C_kv; gamma_kv, epsilon)'}
+    dsa_attention.latent_kv_cache: {kind: state, equation: 'KV_cache_next = Append(KV_cache_prev, QuantizeFP8(C_kv_norm), K_rope)'}
+    dsa_attention.latent_kv_reconstruction: {kind: projection, equation: 'K_nope = C_kv_norm W_kc^T; V = C_kv_norm W_vc^T'}
+    dsa_attention.indexer_schedule: {kind: control, equation: 'compute index top-k on 21 owner layers; reuse the latest top-k state on 57 shared layers'}
+    dsa_attention.index_q_projection: {kind: projection, equation: 'Q_index = Reshape(Q_latent W_iq^T, [B,T,Qi,Di])'}
+    dsa_attention.index_k_gate_projection: {kind: projection, equation: '[K_index_raw,G_index] = X W_ikg^T'}
+    dsa_attention.index_k_norm_rope: {kind: transform, equation: 'K_index = RoPE(RMSNorm(K_index_raw)); gate = sigmoid(G_index)'}
+    dsa_attention.index_k_cache: {kind: state, equation: 'IndexK_cache_next = Append(IndexK_cache_prev, QuantizeFP8(K_index))'}
+    dsa_attention.index_logits: {kind: attention, equation: 'index_scores[b,t,s] = sum_i(gate[b,t,i] * dot(Q_index[b,t,i], K_index_cache[b,s,i]))'}
+    dsa_attention.index_topk: {kind: routing, equation: 'selected_positions = TopK(index_scores, Ki=2048)'}
+    dsa_attention.index_topk_state: {kind: state, equation: 'topk_state_next := selected_positions on owner layers; shared layers read topk_state_prev'}
+    dsa_attention.sparse_mla_core: {kind: attention, equation: 'C = Softmax(Q K_selected^T / sqrt(Dqk)) V_selected'}
+    dsa_attention.output_projection: {kind: projection, equation: 'Delta_attn = Reshape(C) W_o^T in R^(B x T x H)'}
+    dsa_attention.output: {kind: boundary, equation: 'Delta_attn := sparse attention output [B,T,H]'}
+
+    dense_mlp.input: {kind: boundary, equation: 'X := normalized dense-MLP input [B,T,H]'}
+    dense_mlp.gate_up_projection: {kind: projection, equation: '[G,U] = X W_gate_up^T with G,U width 12288'}
+    dense_mlp.swiglu: {kind: activation, equation: 'M = SiLU(G) elementwise_mul U'}
+    dense_mlp.down_projection: {kind: projection, equation: 'Delta_ffn = M W_down^T in R^(B x T x H)'}
+    dense_mlp.output: {kind: boundary, equation: 'Delta_ffn := dense MLP output [B,T,H]'}
+
+    moe.input: {kind: boundary, equation: 'X := normalized MoE input [B,T,H]'}
+    moe.router: {kind: projection, equation: 'router_logits = X W_router^T in R^(B x T x E)'}
+    moe.topk: {kind: routing, equation: 'expert_ids = TopK(sigmoid(router_logits), K=8); weights = 2.5 * Renormalize(selected_scores)'}
+    moe.dispatch: {kind: routing, equation: 'X_e = Dispatch(X, expert_ids) grouped by routed expert'}
+    moe.routed_experts: {kind: module, equation: 'Y_e = W_down_e(SiLU(W_gate_e X_e) elementwise_mul (W_up_e X_e)) for e in 0..255'}
+    moe.routed_weighted_combine: {kind: reduction, equation: 'Y_routed = sum_(j=1..8)(weights_j * Gather(Y_expert_j))'}
+    moe.shared_expert_up: {kind: projection, equation: '[G_s,U_s] = X W_shared_gate_up^T'}
+    moe.shared_expert_activation: {kind: activation, equation: 'M_s = SiLU(G_s) elementwise_mul U_s'}
+    moe.shared_expert_down: {kind: projection, equation: 'Y_shared = M_s W_shared_down^T'}
+    moe.combine: {kind: composition, equation: 'Delta_ffn = Y_routed + Y_shared'}
+    moe.output: {kind: boundary, equation: 'Delta_ffn := routed-plus-shared MoE output [B,T,H]'}
+
+    mtp.candidate_token_ids: {kind: boundary, equation: 'candidate_token_ids := speculative candidate sequence'}
+    mtp.candidate_embedding: {kind: embedding, equation: 'E = Embedding[candidate_token_ids]'}
+    mtp.target_hidden_state: {kind: state, equation: 'H_target := captured target-model hidden state'}
+    mtp.embedding_norm: {kind: normalization, equation: 'En = RMSNorm(E; gamma_e, epsilon)'}
+    mtp.hidden_norm: {kind: normalization, equation: 'Hn = RMSNorm(H_target; gamma_h, epsilon)'}
+    mtp.concatenate: {kind: composition, equation: 'EH = Concat(En,Hn,axis=hidden)'}
+    mtp.eh_projection: {kind: projection, equation: 'X_draft = EH W_eh^T, mapping 2H to H'}
+    mtp.nextn_decoder: {kind: module, equation: 'Y_draft = OneLayerDSAMoEDecoder(X_draft, target_topk_state)'}
+    mtp.shared_head_norm: {kind: normalization, equation: 'Yn = RMSNorm(Y_draft; gamma_final, epsilon)'}
+    mtp.lm_head: {kind: projection, equation: 'draft_logits = Yn W_vocab^T'}
+    mtp.draft_logits: {kind: boundary, equation: 'draft_logits := speculative logits [B,T,V]'}
+
+semantic_coverage:
+  operator_dataflow_closure: complete_for_checkpoint_declared_target_and_optional_nextn_paths
+  parameter_closure: all_parameterized_embedding_attention_dense_moe_norm_and_head_operations_declared
+  state_closure: latent_kv_index_k_topk_and_optional_nextn_state_boundaries_declared
+  layer_variant_closure: all_78_decoder_21_index_owner_57_index_reuse_dense_and_moe_variants_declared
+  config_field_disposition:
+    model_ir:
+      - architectures
+      - hidden_size
+      - vocabulary_size
+      - attention_and_index_dimensions
+      - dense_and_moe_layer_schedule
+      - expert_counts_and_topk
+      - nextn_layers
+    execution_ir:
+      - tensor_data_pipeline_context_and_expert_parallel_topology
+      - collectives
+      - rank_local_tensor_layouts
+    binding_profile:
+      - checkpoint_quantization_and_runtime_backend
+      - activation_and_cache_dtypes
+      - kernel_fusion_and_timing_ownership
+    excluded:
+      - initializer_range_training_only_metadata
+      - serialization_version_hints
+
+boundary_contracts:
+  - {parent_node: top.decoder_stack, boundary_mode: exact_node, child_view: stack, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: top.mtp_extension, boundary_mode: external_entry, child_view: mtp_extension, input_shape: "candidate ids [B,T] + target hidden [B,T,H]", output_shape: "[B,T,V]"}
+  - {parent_node: stack.dsa_attention, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: stack.dense_mlp, boundary_mode: exact_node, child_view: dense_mlp, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: stack.moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
 
 views:
   top:
@@ -77,12 +199,12 @@ views:
         semantic_op: model.optional_nextn_extension
         drill: mtp_extension
     edges:
-      - {from: token_ids, to: embedding, shape: "[B,T]", dtype: int32}
-      - {from: embedding, to: decoder_stack, shape: "[B,T,H]", dtype: bf16}
-      - {from: decoder_stack, to: final_norm, shape: "[B,T,H]", dtype: bf16}
-      - {from: final_norm, to: lm_head, shape: "[B,T,H]", dtype: bf16}
-      - {from: lm_head, to: logits, shape: "[B,T,V]", dtype: fp32}
-      - {from: decoder_stack, to: mtp_extension, kind: dashed, label: "optional generation_mode=eagle_mtp"}
+      - {<<: *ephemeral_edge, from: token_ids, to: embedding, identity: token_ids, shape: "[B,T]", dtype: int32}
+      - {<<: *ephemeral_edge, from: embedding, to: decoder_stack, identity: hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: decoder_stack, to: final_norm, identity: decoder_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: final_norm, to: lm_head, identity: normalized_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: lm_head, to: logits, identity: logits, shape: "[B,T,V]", dtype: fp32}
+      - {<<: *ephemeral_edge, from: decoder_stack, to: mtp_extension, kind: conditional, label: "optional generation_mode=eagle_mtp", identity: target_hidden_state, shape: "[B,T,H]", dtype: bf16}
 
   stack:
     title: GLM-5.2 target decoder schedule
@@ -91,6 +213,7 @@ views:
         label: "hidden states\n[B,T,H]"
         shape: io
         semantic_op: stack.input
+        boundary_direction: input
       - id: schedule
         label: "repeat 78 layers\ndense 0–2; MoE 3–77"
         shape: elem
@@ -134,20 +257,21 @@ views:
         label: "hidden states\n[B,T,H]"
         shape: io
         semantic_op: stack.output
+        boundary_direction: output
     edges:
-      - {from: stack_in, to: schedule, shape: "[B,T,H]", dtype: bf16}
-      - {from: schedule, to: input_norm, shape: "[B,T,H]", dtype: bf16}
-      - {from: input_norm, to: dsa_attention, shape: "[B,T,H]", dtype: bf16}
-      - {from: dsa_attention, to: attention_residual, shape: "[B,T,H]", dtype: bf16}
-      - {from: stack_in, to: attention_residual, kind: residual}
-      - {from: attention_residual, to: post_attention_norm, shape: "[B,T,H]", dtype: bf16}
-      - {from: post_attention_norm, to: feed_forward_schedule, shape: "[B,T,H]", dtype: bf16}
-      - {from: feed_forward_schedule, to: dense_mlp, kind: conditional, label: "layers 0–2"}
-      - {from: feed_forward_schedule, to: moe, kind: conditional, label: "layers 3–77"}
-      - {from: dense_mlp, to: feed_forward_residual, shape: "[B,T,H]", dtype: bf16}
-      - {from: moe, to: feed_forward_residual, shape: "[B,T,H]", dtype: bf16}
-      - {from: attention_residual, to: feed_forward_residual, kind: residual}
-      - {from: feed_forward_residual, to: stack_out, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: stack_in, to: schedule, identity: layer_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: schedule, to: input_norm, identity: layer_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: input_norm, to: dsa_attention, identity: normalized_attention_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: dsa_attention, to: attention_residual, identity: attention_delta, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: stack_in, to: attention_residual, kind: residual, identity: attention_residual, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attention_residual, to: post_attention_norm, identity: post_attention_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: post_attention_norm, to: feed_forward_schedule, identity: normalized_ffn_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: feed_forward_schedule, to: dense_mlp, kind: conditional, label: "layers 0–2", identity: dense_ffn_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: feed_forward_schedule, to: moe, kind: conditional, label: "layers 3–77", identity: moe_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: dense_mlp, to: feed_forward_residual, identity: dense_ffn_delta, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: moe, to: feed_forward_residual, identity: moe_delta, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attention_residual, to: feed_forward_residual, kind: residual, identity: ffn_residual, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: feed_forward_residual, to: stack_out, identity: next_layer_hidden_states, shape: "[B,T,H]", dtype: bf16}
 
   dsa_attention:
     title: Multi-head latent attention with DSA index selection
@@ -156,10 +280,12 @@ views:
         label: "normalized hidden states\n[B,T,H]"
         shape: io
         semantic_op: dsa_attention.input
+        boundary_direction: input
       - id: q_a_projection
-        label: "query latent projection\nH → 2048"
+        label: query latent projection
         shape: gemm
         semantic_op: dsa_attention.q_a_projection
+        operator_signature: {symbolic: 'H → Q_latent', concrete: '6144 → 2048'}
       - id: kv_a_projection
         label: "KV latent + k-rope projection\nH → (512+64)"
         shape: gemm
@@ -229,40 +355,42 @@ views:
         shape: attn
         semantic_op: dsa_attention.sparse_mla_core
       - id: output_projection
-        label: "attention output projection\n64×256 → H"
+        label: attention output projection
         shape: gemm
         semantic_op: dsa_attention.output_projection
+        operator_signature: {symbolic: 'N × Dv → H', concrete: '64 × 256 → 6144'}
       - id: attn_out
         label: "attention output\n[B,T,H]"
         shape: io
         semantic_op: dsa_attention.output
+        boundary_direction: output
     edges:
-      - {from: attn_in, to: q_a_projection, shape: "[B,T,H]", dtype: bf16}
-      - {from: q_a_projection, to: q_a_norm, shape: "[B,T,2048]", dtype: bf16}
-      - {from: q_a_norm, to: q_b_projection, dtype: bf16}
-      - {from: q_b_projection, to: q_split_rope, shape: "[B,T,N,Dqk]", dtype: bf16}
-      - {from: attn_in, to: kv_a_projection, shape: "[B,T,H]", dtype: bf16}
-      - {from: kv_a_projection, to: kv_latent_split, shape: "[B,T,Ckv+Drope]", dtype: bf16}
-      - {from: kv_latent_split, to: kv_a_norm, shape: "[B,T,Ckv]", dtype: bf16}
-      - {from: kv_latent_split, to: latent_kv_cache, kind: cache_write, label: k-rope}
-      - {from: kv_a_norm, to: latent_kv_cache, kind: cache_write, shape: "[B,T,Ckv]", dtype: fp8}
-      - {from: latent_kv_cache, to: latent_kv_reconstruction, kind: cache_read, dtype: fp8}
-      - {from: q_a_projection, to: index_q_projection, shape: "[B,T,2048]", dtype: bf16}
-      - {from: attn_in, to: index_k_gate_projection, shape: "[B,T,H]", dtype: bf16}
-      - {from: index_k_gate_projection, to: index_k_norm_rope, dtype: bf16}
-      - {from: index_k_norm_rope, to: index_k_cache, kind: cache_write, dtype: fp8}
-      - {from: index_k_cache, to: index_logits, kind: cache_read, dtype: fp8}
-      - {from: index_q_projection, to: index_logits, dtype: fp8}
-      - {from: index_k_gate_projection, to: index_logits, kind: dashed, label: per-head gates}
-      - {from: indexer_mode, to: index_logits, kind: conditional, label: owner layers}
-      - {from: index_logits, to: index_topk, shape: "[B,T,S]", dtype: fp32}
-      - {from: index_topk, to: index_topk_state, kind: cache_write, shape: "[B,T,Ki]", dtype: int32}
-      - {from: indexer_mode, to: index_topk_state, kind: conditional, label: shared-layer reuse}
-      - {from: q_split_rope, to: sparse_mla_core, dtype: bf16}
-      - {from: latent_kv_reconstruction, to: sparse_mla_core, dtype: bf16}
-      - {from: index_topk_state, to: sparse_mla_core, kind: cache_read, dtype: int32}
-      - {from: sparse_mla_core, to: output_projection, shape: "[B,T,N,Dv]", dtype: bf16}
-      - {from: output_projection, to: attn_out, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attn_in, to: q_a_projection, identity: normalized_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: q_a_projection, to: q_a_norm, identity: query_latent, shape: "[B,T,Q_latent]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: q_a_norm, to: q_b_projection, identity: normalized_query_latent, shape: "[B,T,Q_latent]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: q_b_projection, to: q_split_rope, identity: raw_queries, shape: "[B,T,N,Dqk]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attn_in, to: kv_a_projection, identity: normalized_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: kv_a_projection, to: kv_latent_split, identity: latent_kv_and_rope_key, shape: "[B,T,Ckv+Drope]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: kv_latent_split, to: kv_a_norm, identity: latent_kv, shape: "[B,T,Ckv]", dtype: bf16}
+      - {<<: *persistent_edge, from: kv_latent_split, to: latent_kv_cache, kind: cache_write, label: k-rope, identity: rope_key_state, shape: "[B,T,Drope]", dtype: bf16}
+      - {<<: *persistent_edge, from: kv_a_norm, to: latent_kv_cache, kind: cache_write, identity: quantized_latent_kv_state, shape: "[B,T,Ckv]", dtype: fp8}
+      - {<<: *persistent_edge, from: latent_kv_cache, to: latent_kv_reconstruction, kind: cache_read, identity: cached_latent_kv, shape: "[B,S,Ckv]", dtype: fp8}
+      - {<<: *ephemeral_edge, from: q_a_projection, to: index_q_projection, identity: query_latent, shape: "[B,T,Q_latent]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attn_in, to: index_k_gate_projection, identity: normalized_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: index_k_gate_projection, to: index_k_norm_rope, identity: raw_index_keys, shape: "[B,T,Qi,Di]", dtype: bf16}
+      - {<<: *persistent_edge, from: index_k_norm_rope, to: index_k_cache, kind: cache_write, identity: quantized_index_keys, shape: "[B,T,Qi,Di]", dtype: fp8}
+      - {<<: *persistent_edge, from: index_k_cache, to: index_logits, kind: cache_read, identity: cached_index_keys, shape: "[B,S,Qi,Di]", dtype: fp8}
+      - {<<: *ephemeral_edge, from: index_q_projection, to: index_logits, identity: index_queries, shape: "[B,T,Qi,Di]", dtype: fp8}
+      - {<<: *ephemeral_edge, from: index_k_gate_projection, to: index_logits, kind: dashed, label: per-head gates, identity: index_head_gates, shape: "[B,T,Qi]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: indexer_mode, to: index_logits, kind: conditional, label: owner layers, identity: index_owner_selection, shape: "[1]", dtype: bool}
+      - {<<: *ephemeral_edge, from: index_logits, to: index_topk, identity: index_scores, shape: "[B,T,S]", dtype: fp32}
+      - {<<: *persistent_edge, from: index_topk, to: index_topk_state, kind: cache_write, identity: selected_kv_positions, shape: "[B,T,Ki]", dtype: int32}
+      - {<<: *persistent_edge, from: indexer_mode, to: index_topk_state, kind: conditional, label: shared-layer reuse, identity: reused_selected_positions, shape: "[B,T,Ki]", dtype: int32}
+      - {<<: *ephemeral_edge, from: q_split_rope, to: sparse_mla_core, identity: rotated_queries, shape: "[B,T,N,Dqk]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: latent_kv_reconstruction, to: sparse_mla_core, identity: reconstructed_keys_values, shape: "K:[B,S,N,Dnope]+V:[B,S,N,Dv]", dtype: bf16}
+      - {<<: *persistent_edge, from: index_topk_state, to: sparse_mla_core, kind: cache_read, identity: selected_kv_positions, shape: "[B,T,Ki]", dtype: int32}
+      - {<<: *ephemeral_edge, from: sparse_mla_core, to: output_projection, identity: attention_context, shape: "[B,T,N,Dv]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: output_projection, to: attn_out, identity: attention_delta, shape: "[B,T,H]", dtype: bf16}
 
   dense_mlp:
     title: Dense SwiGLU feed-forward semantics
@@ -271,27 +399,31 @@ views:
         label: "hidden states\n[B,T,H]"
         shape: io
         semantic_op: dense_mlp.input
+        boundary_direction: input
       - id: gate_up_projection
-        label: "gate/up projection\nH → 2×12288"
+        label: gate/up projection
         shape: gemm
         semantic_op: dense_mlp.gate_up_projection
+        operator_signature: {symbolic: 'H → 2 × F_dense', concrete: '6144 → 2 × 12288'}
       - id: swiglu
         label: SiLU(gate) × up
         shape: elem
         semantic_op: dense_mlp.swiglu
       - id: down_projection
-        label: "down projection\n12288 → H"
+        label: down projection
         shape: gemm
         semantic_op: dense_mlp.down_projection
+        operator_signature: {symbolic: 'F_dense → H', concrete: '12288 → 6144'}
       - id: mlp_out
         label: "dense MLP output\n[B,T,H]"
         shape: io
         semantic_op: dense_mlp.output
+        boundary_direction: output
     edges:
-      - {from: mlp_in, to: gate_up_projection, shape: "[B,T,H]", dtype: bf16}
-      - {from: gate_up_projection, to: swiglu, dtype: bf16}
-      - {from: swiglu, to: down_projection, dtype: bf16}
-      - {from: down_projection, to: mlp_out, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: mlp_in, to: gate_up_projection, identity: normalized_ffn_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: gate_up_projection, to: swiglu, identity: gate_and_up_values, shape: "[B,T,2*F_dense]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: swiglu, to: down_projection, identity: activated_intermediate, shape: "[B,T,F_dense]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: down_projection, to: mlp_out, identity: dense_ffn_delta, shape: "[B,T,H]", dtype: bf16}
 
   moe:
     title: Routed plus shared-expert MoE semantics
@@ -300,10 +432,12 @@ views:
         label: "hidden states\n[B,T,H]"
         shape: io
         semantic_op: moe.input
+        boundary_direction: input
       - id: router
-        label: "sigmoid router projection\nH → 256"
+        label: sigmoid router projection
         shape: gemm
         semantic_op: moe.router
+        operator_signature: {symbolic: 'H → E', concrete: '6144 → 256'}
       - id: topk
         label: "renormalized top-8 routing\nscale=2.5"
         shape: elem
@@ -340,20 +474,21 @@ views:
         label: "MoE output\n[B,T,H]"
         shape: io
         semantic_op: moe.output
+        boundary_direction: output
     edges:
-      - {from: moe_in, to: router, shape: "[B,T,H]", dtype: bf16}
-      - {from: router, to: topk, shape: "[B,T,E]", dtype: fp32}
-      - {from: topk, to: dispatch, shape: "expert ids + weights", dtype: fp32}
-      - {from: moe_in, to: dispatch, shape: "[B,T,H]", dtype: bf16}
-      - {from: dispatch, to: routed_experts, dtype: bf16}
-      - {from: routed_experts, to: routed_weighted_combine, dtype: bf16}
-      - {from: topk, to: routed_weighted_combine, kind: dashed, label: routing weights}
-      - {from: moe_in, to: shared_expert_up, shape: "[B,T,H]", dtype: bf16}
-      - {from: shared_expert_up, to: shared_expert_activation, dtype: bf16}
-      - {from: shared_expert_activation, to: shared_expert_down, dtype: bf16}
-      - {from: routed_weighted_combine, to: combine, shape: "[B,T,H]", dtype: bf16}
-      - {from: shared_expert_down, to: combine, shape: "[B,T,H]", dtype: bf16}
-      - {from: combine, to: moe_out, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: moe_in, to: router, identity: normalized_moe_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: router, to: topk, identity: router_logits, shape: "[B,T,E]", dtype: fp32}
+      - {<<: *ephemeral_edge, from: topk, to: dispatch, identity: expert_ids_and_weights, shape: "ids:[B,T,K]+weights:[B,T,K]", dtype: fp32}
+      - {<<: *ephemeral_edge, from: moe_in, to: dispatch, identity: normalized_moe_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: dispatch, to: routed_experts, identity: expert_grouped_tokens, shape: "[tokens_per_expert,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: routed_experts, to: routed_weighted_combine, identity: routed_expert_outputs, shape: "[tokens_per_expert,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: topk, to: routed_weighted_combine, kind: dashed, label: routing weights, identity: selected_expert_weights, shape: "[B,T,K]", dtype: fp32}
+      - {<<: *ephemeral_edge, from: moe_in, to: shared_expert_up, identity: normalized_moe_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: shared_expert_up, to: shared_expert_activation, identity: shared_gate_and_up_values, shape: "[B,T,2*2048]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: shared_expert_activation, to: shared_expert_down, identity: shared_activated_intermediate, shape: "[B,T,2048]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: routed_weighted_combine, to: combine, identity: weighted_routed_output, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: shared_expert_down, to: combine, identity: shared_expert_output, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: combine, to: moe_out, identity: moe_delta, shape: "[B,T,H]", dtype: bf16}
 
   mtp_extension:
     title: Optional checkpoint NextN extension
@@ -362,6 +497,7 @@ views:
         label: candidate token ids
         shape: io
         semantic_op: mtp.candidate_token_ids
+        boundary_direction: input
       - id: candidate_embedding
         label: candidate token embedding
         shape: gemm
@@ -370,6 +506,7 @@ views:
         label: captured target hidden state
         shape: cache
         semantic_op: mtp.target_hidden_state
+        boundary_direction: input
       - id: embedding_norm
         label: candidate embedding RMSNorm
         shape: norm
@@ -383,9 +520,10 @@ views:
         shape: elem
         semantic_op: mtp.concatenate
       - id: eh_projection
-        label: "embedding-hidden projection\n2H → H"
+        label: embedding-hidden projection
         shape: gemm
         semantic_op: mtp.eh_projection
+        operator_signature: {symbolic: '2 × H → H', concrete: '12288 → 6144'}
       - id: nextn_decoder
         label: "one NextN DSA + MoE decoder\nreuses target index top-k state"
         shape: block
@@ -402,14 +540,15 @@ views:
         label: draft logits
         shape: io
         semantic_op: mtp.draft_logits
+        boundary_direction: output
     edges:
-      - {from: candidate_token_ids, to: candidate_embedding, dtype: int32}
-      - {from: candidate_embedding, to: embedding_norm, dtype: bf16}
-      - {from: target_hidden_state, to: hidden_norm, dtype: bf16}
-      - {from: embedding_norm, to: concatenate, dtype: bf16}
-      - {from: hidden_norm, to: concatenate, dtype: bf16}
-      - {from: concatenate, to: eh_projection, shape: "[B,T,2H]", dtype: bf16}
-      - {from: eh_projection, to: nextn_decoder, shape: "[B,T,H]", dtype: bf16}
-      - {from: nextn_decoder, to: shared_head_norm, shape: "[B,T,H]", dtype: bf16}
-      - {from: shared_head_norm, to: nextn_lm_head, shape: "[B,T,H]", dtype: bf16}
-      - {from: nextn_lm_head, to: draft_logits, shape: "[B,T,V]", dtype: fp32}
+      - {<<: *ephemeral_edge, from: candidate_token_ids, to: candidate_embedding, identity: candidate_token_ids, shape: "[B,T]", dtype: int32}
+      - {<<: *ephemeral_edge, from: candidate_embedding, to: embedding_norm, identity: candidate_embeddings, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *persistent_edge, from: target_hidden_state, to: hidden_norm, identity: target_hidden_state, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: embedding_norm, to: concatenate, identity: normalized_candidate_embeddings, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: hidden_norm, to: concatenate, identity: normalized_target_hidden_state, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: concatenate, to: eh_projection, identity: concatenated_embedding_hidden, shape: "[B,T,2*H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: eh_projection, to: nextn_decoder, identity: draft_decoder_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: nextn_decoder, to: shared_head_norm, identity: draft_decoder_output, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: shared_head_norm, to: nextn_lm_head, identity: normalized_draft_hidden_states, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: nextn_lm_head, to: draft_logits, identity: draft_logits, shape: "[B,T,V]", dtype: fp32}
