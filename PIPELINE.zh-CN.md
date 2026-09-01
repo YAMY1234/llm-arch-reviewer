@@ -685,12 +685,10 @@ framework 的 architecture owner。
 
 ## 10. 当前迁移状态
 
-Qwen 4.0 catalog 是目前的完整功能 reference；Qwen3.5 V2 保留为较小的跨模型 structural fixture。Repository 已经具备五类 V2 document 和 catalog compiler，但还需要完成以下工作才能完全符合本 pipeline：
+Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六个 catalog：Qwen 4.0、Qwen3.5、GLM-5.2、GLM-5.3-Flash、Kimi K3 和 DeepSeek V4 Pro。Catalog 已经包含 Model IR、Execution Plan、Implementation Binding、accepted Profile，以及在对应 framework 支持时来自 SGLang、vLLM 和 TensorRT-LLM 的 immutable Timeline evidence。Shared execution fingerprint、eager-validation attestation、fusion ownership、semantic closure、Timeline attribution、同步 comparison 和 real-browser audit primitives 都已经实现。
 
-1. 实现 manifest-driven `run_pipeline_v2.py` orchestrator；
-2. 将 Qwen-specific extraction logic 移入 model/framework/backend adapter；
-3. 用编译后的 navigation metadata 替换 Viewer 中剩余的 Qwen/MTP navigation heuristic；
-4. 增加 eager-validation attestation contract，并在 build 中强制执行 JSON Schema、cross-document validation 和 acceptance report；
-5. 增加一个共享 execution fingerprint 的 vLLM Binding/Profile fixture。
+M0 新增 `scripts/release_audit.py` 作为 model-neutral 的 release 入口。Static level 会重新编译 catalog、比较 published bundle 的精确内容、验证公开 model inventory 和 content-addressed Timeline artifact，并对无法解释的 production kernel fail closed。Release level 会进一步执行真实 browser audit。仅通过 static gate 不会被标记为 release-ready。
+
+剩余工作统一记录在 [ROADMAP.md](ROADMAP.md)。当前 M0 debt 不会被隐藏：统一 static audit 已经接受 Qwen 4.0、Qwen3.5、Kimi K3 和 DeepSeek V4 Pro；GLM-5.2 与 GLM-5.3-Flash 仍需修复 Timeline attribution，之后该 gate 才能成为 CI mandatory gate。随后还需要完成 full browser gate、published acceptance summary、generic adapter boundary 和 release identity。Manifest-driven `run_pipeline_v2.py` orchestrator 属于 M1，而不是当前已经可用的命令。
 
 已经移除的 Qwen3.5 trace-first/manual pipeline 不再是第二条受支持路径。旧实现中有价值的部分已经保留在本规范中，包括：冻结输入、可复用 trace parsing、source/callsite validation、artifact provenance、config-driven validation 和单一 orchestration command。旧流程中“由 runtime skeleton 定义 architecture”的行为不再保留。

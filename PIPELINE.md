@@ -1051,18 +1051,28 @@ does not require architecture review.
 
 ## 10. Migration state
 
-The Qwen 4.0 catalog is the current feature reference, and Qwen3.5 V2 remains a
-small cross-model structural fixture. The repository already has the five V2
-documents and a catalog compiler, but the following work is still required to
-fully satisfy this pipeline:
+The repository now publishes six catalogs through one V2 compiler and one
+shared Viewer: Qwen 4.0, Qwen3.5, GLM-5.2, GLM-5.3-Flash, Kimi K3, and DeepSeek
+V4 Pro. The catalog contains Model IR, Execution Plans, implementation
+Bindings, accepted Profiles, and immutable Timeline evidence across SGLang,
+vLLM, and TensorRT-LLM where supported. Shared execution fingerprints,
+eager-validation attestations, fusion ownership, semantic closure, Timeline
+attribution, synchronized comparison, and real-browser audit primitives are
+implemented.
 
-1. implement the manifest-driven `run_pipeline_v2.py` orchestrator;
-2. move Qwen-specific extraction logic behind model/framework/backend adapters;
-3. replace remaining Qwen/MTP navigation heuristics in the viewer with compiled
-   navigation metadata;
-4. add the eager-validation attestation contract, then make JSON Schema,
-   cross-document validation, and acceptance reports mandatory in the build;
-5. add a vLLM binding/profile fixture against a shared execution fingerprint.
+M0 adds `scripts/release_audit.py` as the model-neutral release entry point. Its
+static level recompiles catalogs, compares exact published bundles, verifies
+public inventory and content-addressed Timeline artifacts, and fails closed on
+unexplained production kernels. Its release level additionally runs the actual
+browser audits. A static pass is intentionally not reported as release-ready.
+
+The remaining work is tracked in [ROADMAP.md](ROADMAP.md). Immediate M0 debt is
+not hidden: the unified static audit currently accepts Qwen 4.0, Qwen3.5, Kimi
+K3, and DeepSeek V4 Pro, while GLM-5.2 and GLM-5.3-Flash still require Timeline
+attribution repair before the gate can become mandatory in CI. After that, the
+full browser gate, published acceptance summaries, generic adapter boundaries,
+and release identity must be completed. The manifest-driven
+`run_pipeline_v2.py` orchestrator is M1, not an already working command.
 
 The removed Qwen3.5 trace-first/manual pipeline is not a second supported path.
 Its useful ideas survive here as frozen inputs, reusable trace parsing,

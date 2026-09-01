@@ -38,6 +38,7 @@ This tool makes the mapping clickable:
 
 ```
 llm-arch-reviewer/
+├── ROADMAP.md                  # product milestones and evidence-based exit gates
 ├── PIPELINE.md                 # one canonical IR-first workflow
 ├── catalog/                    # source of truth
 │   └── <model>/
@@ -50,6 +51,7 @@ llm-arch-reviewer/
 ├── schema/v2/                  # persisted contracts
 ├── src/llm_arch_v2/            # compiler, validation, fingerprinting
 ├── scripts/build_v2.py         # static-bundle compiler
+├── scripts/release_audit.py    # unified M0 static/browser release gate
 ├── docs/                       # GitHub Pages root
 │   ├── index.html              # landing page (model list)
 │   ├── viewer.html             # shared Architecture/Timeline viewer
@@ -59,6 +61,7 @@ llm-arch-reviewer/
 └── README.md                   # this file
 ```
 
+The product direction and milestone exit criteria are in [ROADMAP.md](ROADMAP.md).
 The canonical workflow is specified in [PIPELINE.md](PIPELINE.md) and its
 [Chinese version](PIPELINE.zh-CN.md). New models
 must use `catalog/<model>/`; trace data may attach implementation and timing
@@ -85,15 +88,24 @@ python3 scripts/build_v2.py --all
 python3 -m pytest -q
 git diff --exit-code -- docs
 
+# M0 static release gate: exact bundle/timeline hashes + fail-closed attribution
+python3 scripts/release_audit.py --all --level static \
+  --output /tmp/llm-arch-reviewer-release-audit
+
+# start the shared Viewer before browser acceptance (persistent/background)
+VIEWER_PORT=8765 scripts/viewer_server.sh restart
+
 # real-browser stream-mode acceptance for every compiled profile
 python3 scripts/audit_timeline_stream_modes.py docs/*/arch_data.json \
   --base-url http://127.0.0.1:8765 \
   --output /tmp/llm-arch-reviewer-stream-audit.json
 
-# serve docs/ locally; the allowlisted trace endpoint enables exact Perfetto jumps
-python3 scripts/serve_viewer.py --port 8765
+# M0 full release gate: static checks plus real-browser Viewer acceptance
+python3 scripts/release_audit.py --all --level release \
+  --base-url http://127.0.0.1:8765 \
+  --output /tmp/llm-arch-reviewer-release-audit
 
-# persistent background server (defaults to 127.0.0.1:8766)
+# server lifecycle (without VIEWER_PORT it defaults to 127.0.0.1:8766)
 scripts/viewer_server.sh
 scripts/viewer_server.sh status
 scripts/viewer_server.sh restart
@@ -108,6 +120,8 @@ open 'http://localhost:8765/viewer.html?model=deepseek_v4_pro_v2' # IR-first Dee
 ```
 
 For a viewer-only session, `python3 -m http.server -d docs 8765` still works.
+For a foreground server with the exact Perfetto handoff endpoint, run
+`python3 scripts/serve_viewer.py --port 8765` in a separate terminal.
 `scripts/serve_viewer.py` additionally exposes only exact
 `*.trace.json.gz` filename+SHA256 matches under its allowlisted `--trace-root`
 directories passed with repeatable `--trace-root` arguments. With no trace root,
