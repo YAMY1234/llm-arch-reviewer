@@ -918,6 +918,68 @@ function comparisonCellForTarget(context, target) {
   return currentVariantCell(variants);
 }
 
+function drillParentTargets(viewName) {
+  const index = VIEW_STACK.lastIndexOf(viewName);
+  if (index <= 0) return [];
+  const targets = [];
+  for (let childIndex = index; childIndex > 0; childIndex -= 1) {
+    const parentView = VIEW_STACK[childIndex - 1];
+    const parentNodeId = DRILL_FROM[childIndex];
+    if (parentNodeId) targets.push(`${parentView}.${parentNodeId}`);
+  }
+  return targets;
+}
+
+function independentActiveMs(cell) {
+  if (!cell || ["fused", "fused_by_occurrence", "structural", "out_of_scope"].includes(cell.status)) {
+    return null;
+  }
+  const value = cell.active_gpu_ms ?? cell.ms_per_iter;
+  if (value == null || !Number.isFinite(Number(value)) || Number(value) < 0) return null;
+  return Number(value);
+}
+
+function parentActiveShare(cell, parentCell) {
+  const childActive = independentActiveMs(cell);
+  const parentActive = independentActiveMs(parentCell);
+  if (childActive == null || parentActive == null || parentActive <= 0) return null;
+  return 100 * childActive / parentActive;
+}
+
+function nodeParentActiveShare(n, viewName) {
+  const childCell = nodeCell(n, viewName);
+  for (const target of drillParentTargets(viewName)) {
+    const dot = target.indexOf(".");
+    const parentCell = rawNodeCell(target.slice(0, dot), target.slice(dot + 1));
+    const share = parentActiveShare(childCell, parentCell);
+    if (share != null) return share;
+  }
+  return null;
+}
+
+function comparisonParentActiveShare(context, target) {
+  const dot = String(target || "").indexOf(".");
+  const viewName = dot > 0 ? target.slice(0, dot) : "";
+  const childCell = comparisonCellForTarget(context, target);
+  for (const parentTarget of drillParentTargets(viewName)) {
+    const share = parentActiveShare(
+      childCell,
+      comparisonCellForTarget(context, parentTarget),
+    );
+    if (share != null) return share;
+  }
+  return null;
+}
+
+function activeSharePercentText(share) {
+  if (share == null) return "";
+  return share > 0 && share < 0.1 ? "<0.1%" : `${share.toFixed(1)}%`;
+}
+
+function activeShareText(share) {
+  return share == null ? "" : `active share ${activeSharePercentText(share)} of parent`;
+}
+
 function comparisonFusionGroupForTarget(context, target) {
   const groups = DATA?.profiles?.[context?.profile_id]?.fusion_groups || {};
   return Object.entries(groups).find(([, group]) => (group.ir_nodes || []).includes(target)) || null;
@@ -939,7 +1001,11 @@ function comparisonEvidenceText(context, target) {
   const value = cellMetricValue(cell, CURRENT_METRIC, target);
   if (value != null) {
     const provenance = cell.attribution_status === "inclusive_rollup" ? "∪ " : "";
-    return `${prefix}: ${provenance}${metricLabel(CURRENT_METRIC)} ${formatMetricValue(value, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}`;
+    const share = CURRENT_METRIC === "active"
+      ? comparisonParentActiveShare(context, target)
+      : null;
+    const shareSuffix = share == null ? "" : ` · ${activeSharePercentText(share)} parent`;
+    return `${prefix}: ${provenance}${metricLabel(CURRENT_METRIC)} ${formatMetricValue(value, CURRENT_METRIC)}${metricSuffix(CURRENT_METRIC)}${shareSuffix}`;
   }
   return `${prefix}: ${nodeStateSummary(cell, target) || "unmapped"}`;
 }
@@ -2046,6 +2112,7 @@ function nodeWidth(n, viewName) {
   const lines = lbl.split("\n");
   const target = `${viewName}.${n.id}`;
   const cell = nodeCell(n, viewName);
+  const activeShare = nodeParentActiveShare(n, viewName);
   const visibleRows = [...lines];
   const currentValue = cellMetricValue(cell, CURRENT_METRIC, target);
   if (comparisonModeActive()) {
@@ -2067,6 +2134,9 @@ function nodeWidth(n, viewName) {
     visibleRows.push(nodeStateSummary(cell, target));
   } else if (n.note) {
     visibleRows.push(n.note);
+  }
+  if (!comparisonModeActive() && activeShare != null) {
+    visibleRows.push(activeShareText(activeShare));
   }
   const longest = Math.max(...visibleRows.map(line => String(line).length));
   let w = Math.min(460, Math.max(120, longest * 7.5 + 18));
@@ -2090,12 +2160,15 @@ function nodeHeight(n, viewName) {
   // second metric collides with the title on compact structural and IO nodes.
   if (n.stage_keys && n.stage_keys.length) h += 10;
   const cell = nodeCell(n, viewName);
+  const activeShare = nodeParentActiveShare(n, viewName);
   const measuredMetric = ["active", "elapsed", "gap", "idle", "residency"].includes(CURRENT_METRIC);
   const timingLineCount = comparisonModeActive()
     ? comparisonContextList().length
     : (CURRENT_COMPARE_METRIC
-      ? 2
-      : (cell?.gpu_elapsed_ms != null && measuredMetric ? 2 : 1));
+      ? 2 + (activeShare != null && [CURRENT_METRIC, CURRENT_COMPARE_METRIC].includes("active") ? 1 : 0)
+      : (cell?.gpu_elapsed_ms != null && measuredMetric
+        ? 2 + (activeShare != null ? 1 : 0)
+        : 1 + (activeShare != null ? 1 : 0)));
   h += timingLineCount * 12;
   if (n.shape === "io") h = Math.max(h, 18 + lineCount * 12 + timingLineCount * 12);
   return h;
@@ -2385,6 +2458,7 @@ function drawNode(root, n, c, viewName) {
   // heatmap
   const ms = nodeMs(n, viewName);
   const cell = nodeCell(n, viewName);
+  const activeShare = nodeParentActiveShare(n, viewName);
   // A shared parent interval is useful provenance, but duplicating its heat
   // color across every fused semantic leaf falsely looks like independent
   // leaf-level measurements.
@@ -2440,12 +2514,13 @@ function drawNode(root, n, c, viewName) {
   } else if (CURRENT_COMPARE_METRIC) {
     const target = `${viewName}.${n.id}`;
     const metrics = [CURRENT_METRIC, CURRENT_COMPARE_METRIC];
+    const hasActiveShareRow = activeShare != null && metrics.includes("active");
     metrics.forEach((metric, index) => {
       const value = cellMetricValue(cell, metric, target);
       const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
       t.setAttribute("class", value == null ? "node-note" : "node-ms");
       t.setAttribute("x", c.width / 2);
-      t.setAttribute("y", c.height - 17 + index * 11);
+      t.setAttribute("y", c.height - (hasActiveShareRow ? 28 : 17) + index * 11);
       t.setAttribute("text-anchor", "middle");
       t.textContent = metricDisplayText(value, metric, target, cell);
       g.appendChild(t);
@@ -2454,7 +2529,7 @@ function drawNode(root, n, c, viewName) {
     const first = document.createElementNS("http://www.w3.org/2000/svg", "text");
     first.setAttribute("class", "node-ms");
     first.setAttribute("x", c.width / 2);
-    first.setAttribute("y", c.height - 17);
+    first.setAttribute("y", c.height - (activeShare != null ? 28 : 17));
     first.setAttribute("text-anchor", "middle");
     const provenance = cell?.attribution_status === "inclusive_rollup" ? "∪ " : "";
     first.textContent = `${provenance}elapsed ${formatMs(cell.gpu_elapsed_ms)} · active ${formatMs(cell.active_gpu_ms)} ms`;
@@ -2463,7 +2538,7 @@ function drawNode(root, n, c, viewName) {
     const second = document.createElementNS("http://www.w3.org/2000/svg", "text");
     second.setAttribute("class", "node-ms");
     second.setAttribute("x", c.width / 2);
-    second.setAttribute("y", c.height - 6);
+    second.setAttribute("y", c.height - (activeShare != null ? 17 : 6));
     second.setAttribute("text-anchor", "middle");
     second.textContent = `idle ${formatMs(cell.device_idle_ms)} · other GPU ${formatMs(cell.other_gpu_work_ms)} ms`;
     g.appendChild(second);
@@ -2471,7 +2546,7 @@ function drawNode(root, n, c, viewName) {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
     t.setAttribute("class", "node-ms");
     t.setAttribute("x", c.width / 2);
-    t.setAttribute("y", c.height - 6);
+    t.setAttribute("y", c.height - (activeShare != null ? 17 : 6));
     t.setAttribute("text-anchor", "middle");
     t.textContent = metricDisplayText(
       ms,
@@ -2510,6 +2585,19 @@ function drawNode(root, n, c, viewName) {
     t.setAttribute("text-anchor", "middle");
     t.textContent = n.note;
     g.appendChild(t);
+  }
+
+  const showActiveShare = !comparisonModeActive() && activeShare != null && (
+    !CURRENT_COMPARE_METRIC || [CURRENT_METRIC, CURRENT_COMPARE_METRIC].includes("active")
+  );
+  if (showActiveShare) {
+    const share = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    share.setAttribute("class", "node-ms");
+    share.setAttribute("x", c.width / 2);
+    share.setAttribute("y", c.height - 6);
+    share.setAttribute("text-anchor", "middle");
+    share.textContent = activeShareText(activeShare);
+    g.appendChild(share);
   }
 
   // drill 角标 (右上)
@@ -5373,6 +5461,7 @@ function showDetail(n, viewName) {
   const blockActiveMs = cell?.active_gpu_ms != null
     ? Number(cell.active_gpu_ms)
     : (cell?.ms_per_iter != null ? Number(cell.ms_per_iter) : (ms || 0));
+  const parentActiveSharePct = nodeParentActiveShare(n, viewName);
 
   let provenanceHtml = "";
   if (cell) {
@@ -5393,6 +5482,7 @@ function showDetail(n, viewName) {
         ${cell.required_occurrence_count != null ? `<div class="k">required occurrences</div><div>${escapeHtml(cell.required_occurrence_count)} validated intervals</div>` : ""}
         ${cell.gpu_elapsed_ms != null ? `<div class="k">elapsed</div><div>${formatMs(cell.gpu_elapsed_ms)} ms (${escapeHtml(cell.elapsed_scope || "invocation envelope")})</div>` : ""}
         ${cell.active_gpu_ms != null ? `<div class="k">active GPU</div><div>${formatMs(cell.active_gpu_ms)} ms (overlap once)</div>` : ""}
+        ${parentActiveSharePct != null ? `<div class="k">parent active share</div><div>${activeSharePercentText(parentActiveSharePct)} of the nearest timed parent module · non-additive across overlapping children</div>` : ""}
         ${cell.module_gap_ms != null ? `<div class="k">module gap</div><div>${formatMs(cell.module_gap_ms)} ms = other GPU work + device idle</div>` : ""}
         ${cell.other_gpu_work_ms != null ? `<div class="k">other GPU work</div><div>${formatMs(cell.other_gpu_work_ms)} ms inside this module's envelope</div>` : ""}
         ${cell.device_idle_ms != null ? `<div class="k">device idle</div><div>${formatMs(cell.device_idle_ms)} ms inside this module's envelope · cause unclassified</div>` : ""}

@@ -99,6 +99,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         "runtime_support_details": 0,
         "typed_unresolved_details": 0,
         "double_click_drills": 0,
+        "parent_active_share_cards": 0,
         "fusion_owner_card_links": 0,
         "fusion_owner_detail_links": 0,
         "fusion_owner_navigations": 0,
@@ -373,6 +374,7 @@ def main(args: argparse.Namespace | None = None) -> int:
                       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                       const issues = [];
                       let fusionLinks = 0;
+                      let activeShareCards = 0;
                       for (const group of document.querySelectorAll('g.view-group')) {
                         const view = group.dataset.view;
                         const nodes = [...group.querySelectorAll('g.node')];
@@ -380,6 +382,29 @@ def main(args: argparse.Namespace | None = None) -> int:
                         for (const node of nodes) {
                           const target = `${view}.${node.dataset.id}`;
                           const cell = profileCellForTarget(target);
+                          const authoredNode = (DATA.views[view]?.nodes || []).find(
+                            candidate => candidate.id === node.dataset.id
+                          );
+                          const expectedShare = authoredNode == null
+                            ? null : nodeParentActiveShare(authoredNode, view);
+                          const shareRows = [...node.querySelectorAll('text.node-ms')]
+                            .filter(text => text.textContent.startsWith('active share '));
+                          if (expectedShare == null && shareRows.length) {
+                            issues.push({type: 'unexpected_parent_active_share', view, node: node.dataset.id});
+                          } else if (expectedShare != null) {
+                            const expectedText = activeShareText(expectedShare);
+                            if (shareRows.length !== 1 || shareRows[0].textContent !== expectedText) {
+                              issues.push({
+                                type: 'parent_active_share_mismatch',
+                                view,
+                                node: node.dataset.id,
+                                expected: expectedText,
+                                actual: shareRows.map(text => text.textContent),
+                              });
+                            } else {
+                              activeShareCards += 1;
+                            }
+                          }
                           if (cell?.status === 'fused') {
                             const owner = fusionOwnerForTarget(target, cell);
                             const architectureOwner = fusionArchitectureOwnerForTarget(target, owner);
@@ -414,7 +439,8 @@ def main(args: argparse.Namespace | None = None) -> int:
                           }
                         }
                       }
-                      return {issues, groups: document.querySelectorAll('g.view-group').length, fusionLinks};
+                      return {issues, groups: document.querySelectorAll('g.view-group').length,
+                        fusionLinks, activeShareCards};
                     }""",
                     {"path": path, "origins": origins},
                 )
@@ -427,6 +453,7 @@ def main(args: argparse.Namespace | None = None) -> int:
                         actual=render["groups"],
                     )
                 checks["fusion_owner_card_links"] += int(render["fusionLinks"])
+                checks["parent_active_share_cards"] += int(render["activeShareCards"])
                 for issue in render["issues"]:
                     fail("geometry", profile=profile_id, path=path, **issue)
 

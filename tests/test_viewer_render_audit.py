@@ -67,6 +67,25 @@ def test_fused_owner_audit_is_navigation_aware_and_fail_closed() -> None:
     assert "fusion_owner_dom_clicks" in script
 
 
+def test_viewer_reports_independent_active_share_of_timed_parent() -> None:
+    """Node percentages must use independent active timing, never copied fusion time."""
+
+    viewer = (Path(__file__).parents[1] / "docs" / "viewer.html").read_text()
+    assert 'function independentActiveMs(cell)' in viewer
+    assert '["fused", "fused_by_occurrence", "structural", "out_of_scope"]' in viewer
+    assert 'function parentActiveShare(cell, parentCell)' in viewer
+    assert 'return share > 0 && share < 0.1 ? "<0.1%"' in viewer
+    assert 'active share ${activeSharePercentText(share)} of parent' in viewer
+    assert 'comparisonParentActiveShare(context, target)' in viewer
+    assert 'of the nearest timed parent module · non-additive across overlapping children' in viewer
+    audit = (
+        Path(__file__).parents[1] / "scripts" / "audit_viewer_render.py"
+    ).read_text()
+    assert '"parent_active_share_cards": 0' in audit
+    assert "type: 'parent_active_share_mismatch'" in audit
+    assert "type: 'unexpected_parent_active_share'" in audit
+
+
 def test_viewer_audit_writes_structured_failure_on_exception(tmp_path) -> None:
     output = tmp_path / "audit"
     args = Namespace(bundle=tmp_path / "qwen35_v2" / "arch_data.json", output=output)
