@@ -22,7 +22,10 @@ from models.common.profile_rollup import (
     unique_drill_ancestors,
 )
 from models.common.timeline_artifact import write_timeline_artifact
-from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
+from llm_arch_v2.profile_acceptance import (
+    validate_executable_drill_rollups,
+    validate_profile_timing_closure,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,14 +93,83 @@ def merge_rollup_metrics(
     profile_metrics: dict[str, dict[str, Any]],
     rollups: dict[str, dict[str, Any]],
 ) -> None:
-    """Refresh derived timing without deleting richer node evidence."""
+    """Refresh derived timing without retaining an incompatible envelope.
+
+    Kernel/attribution evidence remains valid because it is normalized over the
+    same selected steps.  An older invocation envelope is not retained unless
+    the new roll-up explicitly reconstructs it from the same window: otherwise
+    active and elapsed would again describe different samples.
+    """
+
+    envelope_fields = {
+        "gpu_elapsed_ms",
+        "module_gap_ms",
+        "other_gpu_work_ms",
+        "device_idle_ms",
+        "module_active_pct",
+        "device_busy_pct",
+        "elapsed_scope",
+        "gap_semantics",
+    }
 
     for target, metric in rollups.items():
         existing_metric = profile_metrics.get(target)
         if isinstance(existing_metric, dict):
+            for field in envelope_fields - metric.keys():
+                existing_metric.pop(field, None)
             existing_metric.update(metric)
+            try:
+                refresh_timing_closure(existing_metric)
+            except RuntimeError as exc:
+                raise RuntimeError(f"{target}: {exc}") from exc
         else:
             profile_metrics[target] = metric
+
+
+def refresh_timing_closure(metric: dict[str, Any]) -> None:
+    """Recompute every scalar derived from a refreshed active interval union.
+
+    When a roll-up explicitly reconstructs an invocation envelope from the same
+    selected steps, derive all dependent values from that one unit.  Callers
+    must remove an older, differently sampled envelope before reaching here.
+    """
+
+    active = metric.get("active_gpu_ms")
+    residency = metric.get("gpu_residency_ms")
+    if isinstance(active, (int, float)) and isinstance(residency, (int, float)):
+        metric["gpu_overlap_ms"] = round(max(0.0, residency - active), 6)
+
+    elapsed = metric.get("gpu_elapsed_ms")
+    if not isinstance(active, (int, float)) or not isinstance(
+        elapsed, (int, float)
+    ):
+        return
+    if active > elapsed + 1e-5:
+        raise RuntimeError(
+            "refreshed per-iteration active time exceeds its invocation "
+            f"envelope: active={active} ms elapsed={elapsed} ms"
+        )
+
+    gap = max(0.0, elapsed - active)
+    metric["module_gap_ms"] = round(gap, 6)
+    metric["module_active_pct"] = round(
+        100.0 * active / elapsed if elapsed > 0.0 else 0.0,
+        2,
+    )
+
+    busy_pct = metric.get("device_busy_pct")
+    if isinstance(busy_pct, (int, float)) and elapsed > 0.0:
+        busy = min(elapsed, max(active, elapsed * busy_pct / 100.0))
+        metric["other_gpu_work_ms"] = round(max(0.0, busy - active), 6)
+        metric["device_idle_ms"] = round(max(0.0, elapsed - busy), 6)
+        metric["device_busy_pct"] = round(100.0 * busy / elapsed, 2)
+        return
+
+    idle = metric.get("device_idle_ms")
+    if isinstance(idle, (int, float)):
+        idle = min(gap, max(0.0, idle))
+        metric["device_idle_ms"] = round(idle, 6)
+        metric["other_gpu_work_ms"] = round(max(0.0, gap - idle), 6)
 
 
 def drop_stale_structural_compute_states(
@@ -578,16 +650,29 @@ def main() -> int:
             if measured is not None:
                 timing = direct_metrics[target]
                 measured.setdefault("active_gpu_ms", timing["active_gpu_ms"])
-                measured.setdefault(
-                    "gpu_residency_ms", timing["gpu_residency_ms"]
-                )
+                measured.setdefault("gpu_residency_ms", timing["gpu_residency_ms"])
+                # These two names are schema aliases for the same per-iteration
+                # value.  Do not combine an accepted rich metric with a compact
+                # timeline re-attribution that may use a newer direct-owner
+                # boundary; preserve the accepted metric's own value.
                 measured.setdefault(
                     "gpu_residency_ms_per_iter",
-                    timing["gpu_residency_ms_per_iter"],
+                    measured["gpu_residency_ms"],
                 )
-                measured.setdefault(
-                    "mapped_event_count", timing["mapped_event_count"]
+                method_rows = (
+                    (measured.get("attribution") or {}).get("methods") or {}
                 )
+                method_count = sum(
+                    int(row.get("kernel_count") or 0)
+                    for row in method_rows.values()
+                    if isinstance(row, dict)
+                )
+                if method_count:
+                    measured["mapped_event_count"] = method_count
+                else:
+                    measured.setdefault(
+                        "mapped_event_count", timing["mapped_event_count"]
+                    )
                 continue
             model_node = model_nodes.get(target)
             runtime = (
@@ -636,6 +721,7 @@ def main() -> int:
         for target in rollups:
             profile.get("node_states", {}).pop(target, None)
 
+        validate_profile_timing_closure(profile)
         validate_executable_drill_rollups(model_ir, profile)
 
         timeline_sha = write_timeline_artifact(timeline_path, timeline)

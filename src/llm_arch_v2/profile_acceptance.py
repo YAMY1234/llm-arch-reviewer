@@ -20,6 +20,138 @@ _EXPLICIT_BOUNDARY_KINDS = {
     "state_boundary",
 }
 
+_TIMING_EPSILON_MS = 1e-5
+_TIMING_DERIVED_EPSILON_MS = 2e-5
+_PERCENT_EPSILON = 0.06
+
+
+def _numeric(cell: dict[str, Any], field: str) -> float | None:
+    value = cell.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _profile_metric_cells(
+    profile: dict[str, Any],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return top-level and scoped drill metrics with stable diagnostic paths."""
+
+    result: list[tuple[str, dict[str, Any]]] = []
+
+    def visit(path: str, metric: dict[str, Any]) -> None:
+        result.append((path, metric))
+        for child_id, child in (metric.get("drill_metrics") or {}).items():
+            if isinstance(child, dict):
+                visit(f"{path}.drill_metrics.{child_id}", child)
+
+    for target, metric in (profile.get("node_metrics") or {}).items():
+        if isinstance(metric, dict):
+            visit(str(target), metric)
+    return result
+
+
+def validate_profile_timing_closure(profile: dict[str, Any]) -> None:
+    """Reject mixed-unit or arithmetically inconsistent profile timing.
+
+    The checks are deliberately model-independent.  They do not assert what a
+    model *should* cost; they only require every published metric cell to use
+    one coherent unit and satisfy the definitions of active, elapsed,
+    residency, overlap, gap, and percentages.
+    """
+
+    errors: list[str] = []
+    for target, metric in _profile_metric_cells(profile):
+        numeric_fields = (
+            "ms_per_iter",
+            "active_gpu_ms",
+            "gpu_residency_ms",
+            "gpu_residency_ms_per_iter",
+            "gpu_overlap_ms",
+            "gpu_elapsed_ms",
+            "module_gap_ms",
+            "other_gpu_work_ms",
+            "device_idle_ms",
+            "module_active_pct",
+            "device_busy_pct",
+        )
+        for field in numeric_fields:
+            value = _numeric(metric, field)
+            if value is not None and value < -_TIMING_EPSILON_MS:
+                errors.append(f"{target}.{field} is negative: {value}")
+
+        active = _numeric(metric, "active_gpu_ms")
+        elapsed = _numeric(metric, "gpu_elapsed_ms")
+        residency = _numeric(metric, "gpu_residency_ms")
+        residency_per_iter = _numeric(metric, "gpu_residency_ms_per_iter")
+        gap = _numeric(metric, "module_gap_ms")
+        overlap = _numeric(metric, "gpu_overlap_ms")
+        active_pct = _numeric(metric, "module_active_pct")
+        other = _numeric(metric, "other_gpu_work_ms")
+        idle = _numeric(metric, "device_idle_ms")
+
+        if (
+            residency is not None
+            and residency_per_iter is not None
+            and abs(residency - residency_per_iter) > _TIMING_EPSILON_MS
+        ):
+            errors.append(
+                f"{target}: gpu_residency_ms {residency} != "
+                f"gpu_residency_ms_per_iter {residency_per_iter}"
+            )
+        if active is not None and elapsed is not None:
+            if active > elapsed + _TIMING_EPSILON_MS:
+                errors.append(
+                    f"{target}: active_gpu_ms {active} exceeds "
+                    f"gpu_elapsed_ms {elapsed}"
+                )
+            expected_gap = max(0.0, elapsed - active)
+            if (
+                gap is not None
+                and abs(gap - expected_gap) > _TIMING_DERIVED_EPSILON_MS
+            ):
+                errors.append(
+                    f"{target}: module_gap_ms {gap} != elapsed-active "
+                    f"{expected_gap}"
+                )
+            expected_pct = 100.0 * active / elapsed if elapsed > 0.0 else 0.0
+            if (
+                active_pct is not None
+                and abs(active_pct - expected_pct) > _PERCENT_EPSILON
+            ):
+                errors.append(
+                    f"{target}: module_active_pct {active_pct} != "
+                    f"100*active/elapsed {expected_pct}"
+                )
+        if active is not None and residency is not None:
+            if active > residency + _TIMING_EPSILON_MS:
+                errors.append(
+                    f"{target}: active_gpu_ms {active} exceeds "
+                    f"gpu_residency_ms {residency}"
+                )
+            expected_overlap = max(0.0, residency - active)
+            if (
+                overlap is not None
+                and abs(overlap - expected_overlap) > _TIMING_DERIVED_EPSILON_MS
+            ):
+                errors.append(
+                    f"{target}: gpu_overlap_ms {overlap} != "
+                    f"residency-active {expected_overlap}"
+                )
+        if gap is not None and other is not None and idle is not None:
+            if abs(gap - other - idle) > _TIMING_DERIVED_EPSILON_MS:
+                errors.append(
+                    f"{target}: module_gap_ms {gap} != other_gpu_work_ms "
+                    f"{other} + device_idle_ms {idle}"
+                )
+
+    if errors:
+        profile_id = profile.get("profile_id") or "<unknown profile>"
+        raise ValueError(
+            f"{profile_id}: profile timing closure failed:\n- "
+            + "\n- ".join(errors)
+        )
+
 
 def _node_semantic_kind(
     node: dict[str, Any], *, operations: dict[str, Any]

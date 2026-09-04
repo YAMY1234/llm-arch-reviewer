@@ -375,6 +375,35 @@ Multi-rank profile 保留每个 rank 的独立 measurement，绝不能把不同 
 
 Parent/child rollup 必须显式携带 `exclusive` 或 `inclusive` semantics；当 interval 存在重叠时，绝不能机械相加。
 
+所有声明为 per-iteration 的字段必须使用同一个归一化基准。对于包含多个
+formal step 的 production window，`active_gpu_ms` 是每个已选 step 的区间并集
+再取均值，`gpu_residency_ms` 是每个 step 的 duration 总和再取均值；某个已选
+step 中该节点没有执行时，必须以 0 计入两者的分母。绝不能把多 step 的累计
+rollup 和 representative-step 的 elapsed envelope 混在同一个 metric cell。
+Inclusive rollup 只有在 `gpu_elapsed_ms`、gap、idle、busy 和 active percentage
+均由同一批 selected steps、同一 scope 重建时才可以发布这些字段；否则必须
+省略，不能猜测或复制旧值。
+
+Catalog 编译对所有模型强制执行以下模型无关的 timing closure：
+
+```text
+0 <= active_gpu_ms <= gpu_elapsed_ms              （存在 elapsed 时）
+active_gpu_ms <= gpu_residency_ms
+gpu_overlap_ms = gpu_residency_ms - active_gpu_ms
+module_gap_ms = gpu_elapsed_ms - active_gpu_ms
+module_gap_ms = other_gpu_work_ms + device_idle_ms
+module_active_pct = 100 * active_gpu_ms / gpu_elapsed_ms
+gpu_residency_ms_per_iter = gpu_residency_ms
+```
+
+该 gate 会递归检查顶层 `node_metrics` 以及每一个 scoped `drill_metrics`
+cell，因此不能通过把错误值移到展开视图来绕过验收。
+
+Viewer 的 child percentage 是允许重叠的比值
+`child.active_gpu_ms / parent.active_gpu_ms`。Sibling 不是互斥分区；当物理区间
+重叠时，总和可以超过 100%，不能强制凑成 100%，也不能用一个无法解释的
+remainder 补齐。
+
 Compiler 必须从 Model IR 的 `drill` 关系推导 rollup ancestry，而不能依赖 framework 名字。任何拥有 measured descendants 的可执行 drill node，都必须物化一个 `inclusive_rollup`：`active_gpu` 对底层 production event 做区间并集，residency 才做 duration 求和。每个已选中的 runtime-bearing primitive leaf 同样必须拥有正数 direct timing 或 typed fusion ownership；绝不能把映射缺失的计算 leaf 降级成 `structural`。repeat、conditional selection 等纯控制节点可以继续保持 `structural`。标记为 `module_boundary` 的 Execution IR 节点（例如 TP output collective）不得计入紧邻的 Model IR 模块 roll-up，但必须计入外层 decoder／scheduler roll-up。如果同一个 detail view 被多个 parent 复用，Compiler 不得猜测归属；必须由 occurrence scope 或显式 fusion/event-set binding 消除歧义。Fused semantic node 只显示 `fused into <timing owner>` 及其 fusion/evidence 链接，不能复制 owner 的标量时间；只有 timing owner 显示 measured value。Composite parent 可以单独显示明确标记的 `inclusive_rollup`，其含义是 descendant production event 的并集，不能与 descendant 相加。
 
 凡是被 repeat 或多个上下文复用的模块边界，都必须声明

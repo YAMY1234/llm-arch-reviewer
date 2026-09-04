@@ -22,7 +22,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .sol import SolError, attach_sol_to_profile, build_sol_artifacts
-from .profile_acceptance import validate_executable_drill_rollups
+from .profile_acceptance import (
+    validate_executable_drill_rollups,
+    validate_profile_timing_closure,
+)
 
 try:
     import yaml
@@ -1784,6 +1787,10 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         )
         if profile["model_id"] != model_ir["model_id"]:
             raise CatalogError(f"{path}: model_id does not match {model_ir['model_id']}")
+        try:
+            validate_profile_timing_closure(profile)
+        except ValueError as exc:
+            raise CatalogError(f"{path}: {exc}") from exc
         if require_executable_drill_rollups:
             try:
                 validate_executable_drill_rollups(model_ir, profile)

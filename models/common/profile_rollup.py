@@ -203,13 +203,19 @@ def rollup_metrics_from_events(
 
     Events must expose ``start_us``, ``duration_us``, decoded ``ir_node`` and a
     decoded ``ir_targets`` list.  Active time is an interval union per formal
-    step, then summed across formal steps.  It is never a sum of child metrics.
+    step and then averaged over *all* selected formal steps, including steps
+    where the target has no events.  Residency uses the same denominator after
+    summing event durations.  It is never a sum of child metrics.
     """
+
+    step_list = list(steps)
+    step_count = len(step_list)
+    if step_count == 0:
+        return {}
 
     selected: dict[str, list[list[dict[str, Any]]]] = {
         target: [] for target in rollup_targets
     }
-    step_list = list(steps)
     for target in rollup_targets:
         for step in step_list:
             rows = [
@@ -224,7 +230,7 @@ def rollup_metrics_from_events(
         rows = [event for step_rows in per_step for event in step_rows]
         if not rows:
             continue
-        active_us = sum(
+        active_us_total = sum(
             _union_duration_us(
                 (
                     float(event["start_us"]),
@@ -234,7 +240,9 @@ def rollup_metrics_from_events(
             )
             for step_rows in per_step
         )
-        residency_us = sum(float(event["duration_us"]) for event in rows)
+        residency_us_total = sum(float(event["duration_us"]) for event in rows)
+        active_us = active_us_total / step_count
+        residency_us = residency_us_total / step_count
         direct_nodes = sorted(
             {str(event["ir_node"]) for event in rows if event.get("ir_node")}
         )
@@ -243,11 +251,20 @@ def rollup_metrics_from_events(
             "active_gpu_ms": round(active_us / 1000.0, 6),
             "gpu_residency_ms": round(residency_us / 1000.0, 6),
             "gpu_residency_ms_per_iter": round(residency_us / 1000.0, 6),
+            "gpu_overlap_ms": round(
+                max(0.0, residency_us - active_us) / 1000.0, 6
+            ),
             "attribution_status": "inclusive_rollup",
             "metric_kind": "inclusive_rollup",
+            "aggregation": (
+                "mean of per-step interval unions on one reference rank"
+            ),
+            "normalization_basis": "all selected formal timeline steps",
+            "selected_step_count": step_count,
             "timing_semantics": (
-                "union of validated descendant production-kernel intervals; "
-                "overlap counted once"
+                "mean over selected formal steps of the union of validated "
+                "descendant production-kernel intervals; overlap counted once; "
+                "steps without target events contribute zero"
             ),
             "mapped_event_count": len(rows),
             "rollup_sources": direct_nodes,

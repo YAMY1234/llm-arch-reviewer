@@ -606,6 +606,37 @@ critical/tail rank, and stores the chosen rank plus the cross-rank distribution.
 Parent and child rollups carry `exclusive` or `inclusive` semantics explicitly
 and are never mechanically summed when their intervals overlap.
 
+Every field advertised as per-iteration must use one normalization basis.  For
+a multi-step production window, `active_gpu_ms` is the mean of each selected
+formal step's interval union and `gpu_residency_ms` is the mean of each step's
+duration sum.  A selected step in which the node does not execute contributes
+zero to both means.  A cumulative multi-step roll-up must never be combined
+with a representative-step elapsed envelope.  An inclusive roll-up may publish
+`gpu_elapsed_ms`, gap, idle, busy, or active percentage only when that envelope
+was reconstructed from the same selected steps and scope; otherwise those
+fields are omitted rather than inferred or copied.
+
+Catalog compilation enforces the model-independent timing closure:
+
+```text
+0 <= active_gpu_ms <= gpu_elapsed_ms              (when elapsed is present)
+active_gpu_ms <= gpu_residency_ms
+gpu_overlap_ms = gpu_residency_ms - active_gpu_ms
+module_gap_ms = gpu_elapsed_ms - active_gpu_ms
+module_gap_ms = other_gpu_work_ms + device_idle_ms
+module_active_pct = 100 * active_gpu_ms / gpu_elapsed_ms
+gpu_residency_ms_per_iter = gpu_residency_ms
+```
+
+The gate recursively checks both top-level `node_metrics` and every scoped
+`drill_metrics` cell, so moving a broken value into an expanded view cannot
+bypass acceptance.
+
+The Viewer child percentage is an overlap-aware ratio
+`child.active_gpu_ms / parent.active_gpu_ms`.  Sibling percentages are not a
+partition and may sum above 100% when their physical intervals overlap; they
+must not be expected to sum to 100% or be filled with an unexplained remainder.
+
 The compiler derives roll-up ancestry from Model IR `drill` relationships, not
 from framework names. Every executable drill node with measured descendants
 must materialize an `inclusive_rollup`: `active_gpu` is the union of the

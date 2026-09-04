@@ -75,7 +75,10 @@ def test_viewer_reports_independent_active_share_of_timed_parent() -> None:
     assert '["fused", "fused_by_occurrence", "structural", "out_of_scope"]' in viewer
     assert 'function parentActiveShare(cell, parentCell)' in viewer
     assert 'return share > 0 && share < 0.1 ? "<0.1%"' in viewer
-    assert 'active share ${activeSharePercentText(share)} of parent' in viewer
+    assert (
+        'active share ${activeSharePercentText(share)} of parent · overlap-aware'
+        in viewer
+    )
     assert 'comparisonParentActiveShare(context, target)' in viewer
     assert 'of the nearest timed parent module · non-additive across overlapping children' in viewer
     audit = (

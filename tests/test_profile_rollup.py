@@ -8,13 +8,17 @@ from models.common.profile_rollup import (
     scoped_rollup_metric_from_events,
     unique_drill_ancestors,
 )
-from llm_arch_v2.profile_acceptance import validate_executable_drill_rollups
+from llm_arch_v2.profile_acceptance import (
+    validate_executable_drill_rollups,
+    validate_profile_timing_closure,
+)
 from scripts.materialize_profile_rollups import (
     drop_derived_fusion_members,
     drop_stale_structural_compute_states,
     drop_derived_parent_targets,
     materialize_typed_fusion_states,
     merge_rollup_metrics,
+    refresh_timing_closure,
 )
 
 
@@ -55,6 +59,8 @@ def test_rollup_refresh_preserves_existing_evidence_details() -> None:
     metrics = {
         "stack.module": {
             "active_gpu_ms": 1.0,
+            "gpu_elapsed_ms": 1.2,
+            "module_active_pct": 83.33,
             "kernels": [{"name": "existing-kernel"}],
             "attribution": {"methods": {"python_stack": {"kernel_count": 1}}},
         }
@@ -72,12 +78,108 @@ def test_rollup_refresh_preserves_existing_evidence_details() -> None:
 
     assert metrics["stack.module"]["active_gpu_ms"] == 2.0
     assert metrics["stack.module"]["metric_kind"] == "inclusive_rollup"
+    assert "gpu_elapsed_ms" not in metrics["stack.module"]
+    assert "module_active_pct" not in metrics["stack.module"]
     assert metrics["stack.module"]["kernels"] == [
         {"name": "existing-kernel"}
     ]
     assert metrics["stack.module"]["attribution"]["methods"][
         "python_stack"
     ]["kernel_count"] == 1
+
+
+def test_rollup_refresh_recomputes_every_dependent_timing_field() -> None:
+    metric = {
+        "active_gpu_ms": 4.0,
+        "gpu_residency_ms": 5.0,
+        "gpu_elapsed_ms": 1.0,
+        "module_gap_ms": 0.1,
+        "module_active_pct": 90.0,
+        "device_busy_pct": 90.0,
+        "other_gpu_work_ms": 0.0,
+        "device_idle_ms": 0.1,
+        "gpu_overlap_ms": 1.0,
+    }
+    metric.update(
+        {
+            "active_gpu_ms": 0.6,
+            "gpu_residency_ms": 0.8,
+        }
+    )
+
+    refresh_timing_closure(metric)
+
+    assert metric["module_gap_ms"] == 0.4
+    assert metric["module_active_pct"] == 60.0
+    assert metric["other_gpu_work_ms"] == 0.3
+    assert metric["device_idle_ms"] == 0.1
+    assert metric["gpu_overlap_ms"] == 0.2
+
+
+def test_profile_timing_closure_rejects_mixed_units() -> None:
+    profile = {
+        "profile_id": "bad-units",
+        "node_metrics": {
+            "top.module": {
+                "ms_per_iter": 5.0,
+                "active_gpu_ms": 5.0,
+                "gpu_residency_ms": 6.0,
+                "gpu_residency_ms_per_iter": 6.0,
+                "gpu_overlap_ms": 1.0,
+                "gpu_elapsed_ms": 1.2,
+                "module_gap_ms": 0.1,
+                "module_active_pct": 90.0,
+                "other_gpu_work_ms": 0.0,
+                "device_idle_ms": 0.1,
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="profile timing closure failed"):
+        validate_profile_timing_closure(profile)
+
+
+def test_profile_timing_closure_checks_scoped_drill_metrics() -> None:
+    profile = {
+        "profile_id": "bad-scoped-units",
+        "node_metrics": {
+            "top.module": {
+                "active_gpu_ms": 1.0,
+                "gpu_residency_ms": 1.0,
+                "drill_metrics": {
+                    "child": {
+                        "active_gpu_ms": 2.0,
+                        "gpu_elapsed_ms": 1.0,
+                    }
+                },
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match=r"drill_metrics\.child"):
+        validate_profile_timing_closure(profile)
+
+
+def test_profile_timing_closure_accepts_coherent_overlap() -> None:
+    validate_profile_timing_closure(
+        {
+            "profile_id": "coherent",
+            "node_metrics": {
+                "top.module": {
+                    "ms_per_iter": 0.6,
+                    "active_gpu_ms": 0.6,
+                    "gpu_residency_ms": 0.8,
+                    "gpu_residency_ms_per_iter": 0.8,
+                    "gpu_overlap_ms": 0.2,
+                    "gpu_elapsed_ms": 1.0,
+                    "module_gap_ms": 0.4,
+                    "module_active_pct": 60.0,
+                    "other_gpu_work_ms": 0.3,
+                    "device_idle_ms": 0.1,
+                }
+            },
+        }
+    )
 
 
 def test_materializer_drops_only_stale_structural_compute_overrides() -> None:
@@ -286,6 +388,38 @@ def test_rollup_uses_interval_union_and_profile_selected_drill_parent() -> None:
     assert metrics["stack.core"]["active_gpu_ms"] == 0.015
     assert metrics["stack.core"]["gpu_residency_ms"] == 0.02
     assert metrics["stack.core"]["attribution_status"] == "inclusive_rollup"
+
+
+def test_rollup_averages_all_selected_steps_including_zero_event_steps() -> None:
+    metrics = rollup_metrics_from_events(
+        [
+            {
+                "events": [
+                    {
+                        "start_us": 0.0,
+                        "duration_us": 10.0,
+                        "ir_node": "detail.a",
+                        "ir_targets": ["top.module"],
+                    },
+                    {
+                        "start_us": 5.0,
+                        "duration_us": 10.0,
+                        "ir_node": "detail.b",
+                        "ir_targets": ["top.module"],
+                    },
+                ]
+            },
+            {"events": []},
+        ],
+        rollup_targets={"top.module"},
+    )
+
+    metric = metrics["top.module"]
+    assert metric["active_gpu_ms"] == 0.0075
+    assert metric["gpu_residency_ms"] == 0.01
+    assert metric["gpu_overlap_ms"] == 0.0025
+    assert metric["selected_step_count"] == 2
+    assert metric["normalization_basis"] == "all selected formal timeline steps"
 
 
 def test_expand_rollup_targets_respects_shared_event_coverage_membership() -> None:
