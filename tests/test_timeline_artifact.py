@@ -512,9 +512,9 @@ def test_gzip_artifact_is_deterministic(tmp_path: Path) -> None:
     assert json.loads(gzip.decompress(first.read_bytes())) == artifact
 
 
-def test_qwen40_profile_timelines_match_profile_timing_and_ir() -> None:
+def test_qwen38_flash_next_profile_timelines_match_profile_timing_and_ir() -> None:
     profile_paths = sorted(
-        (REPO_ROOT / "catalog" / "qwen40" / "profiles").glob("*/*/*.yaml")
+        (REPO_ROOT / "catalog" / "qwen38_flash_next" / "profiles").glob("*/*/*.yaml")
     )
     assert profile_paths
     for profile_path in profile_paths:

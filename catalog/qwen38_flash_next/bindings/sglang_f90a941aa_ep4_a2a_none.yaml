@@ -1,0 +1,29 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_f90a941aa_ep4_a2a_none
+label: SGLang f90a941aa · EP4 all-reduce MoE
+model_id: qwen38_flash_next
+execution_path_id: moe_ep_a2a_none
+source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+container: lmsysorg/sglang:nightly-dev-cu13-20260818-c0b6474b
+backend: sglang
+extends: sglang_f90a941aa
+
+node_bindings:
+  moe.routed_experts:
+    symbols: [Qwen2MoeSparseMoeBlock.experts, FusedMoE, StandardDispatcher]
+    links:
+      - {file: python/sglang/srt/layers/moe/token_dispatcher/standard.py, symbol: StandardDispatcher.dispatch, display: standard.py — EP local-expert mapping}
+      - {file: python/sglang/srt/models/qwen2_moe.py, symbol: Qwen2MoeSparseMoeBlock.experts, display: qwen2_moe.py — EP-sharded expert compute}
+
+  linear_layer.ep_moe_output_collective:
+    symbols: [FusedMoE, tensor_model_parallel_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/moe/fused_moe_triton/layer.py, symbol: FusedMoE.forward, display: fused_moe_triton/layer.py — EP output reduction}
+
+  full_layer.ep_moe_output_collective:
+    symbols: [FusedMoE, tensor_model_parallel_all_reduce]
+    kernel_signatures: [trtllm_allreduce_fusion, ncclDevKernel_AllReduce, ncclSymkDevKernel_AllReduce]
+    links:
+      - {file: python/sglang/srt/layers/moe/fused_moe_triton/layer.py, symbol: FusedMoE.forward, display: fused_moe_triton/layer.py — EP output reduction}

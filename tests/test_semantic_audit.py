@@ -14,18 +14,18 @@ if str(SRC_ROOT) not in sys.path:
 from llm_arch_v2.semantic_audit import audit_semantic_closure  # noqa: E402
 
 
-QWEN40_ROOT = REPO_ROOT / "catalog" / "qwen40"
+QWEN38_FLASH_NEXT_ROOT = REPO_ROOT / "catalog" / "qwen38_flash_next"
 SOURCE_REPO = REPO_ROOT.parent / "sglang-qwen-next"
 pytestmark = pytest.mark.skipif(
     not (SOURCE_REPO / ".git").exists(),
-    reason="Qwen40 pinned-source audit requires the sibling source checkout",
+    reason="Qwen38FlashNext pinned-source audit requires the sibling source checkout",
 )
 
 
-def test_qwen40_source_ledger_is_pinned_and_complete() -> None:
+def test_qwen38_flash_next_source_ledger_is_pinned_and_complete() -> None:
     report = audit_semantic_closure(
-        model_ir_path=QWEN40_ROOT / "model_ir.yaml",
-        ledger_path=QWEN40_ROOT / "semantic_source_ledger.yaml",
+        model_ir_path=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml",
+        ledger_path=QWEN38_FLASH_NEXT_ROOT / "semantic_source_ledger.yaml",
         source_repo=SOURCE_REPO,
     )
 
@@ -42,16 +42,16 @@ def test_qwen40_source_ledger_is_pinned_and_complete() -> None:
     assert report["counts"]["compound_primitive_targets"] == 0
     assert report["errors"] == []
     checked_in_report = (
-        REPO_ROOT / "docs" / "qwen40-model-ir-enrichment-audit.zh-CN.md"
+        REPO_ROOT / "docs" / "qwen38_flash_next-model-ir-enrichment-audit.zh-CN.md"
     ).read_text()
     assert f"Audit fingerprint: `{report['audit_fingerprint']}`" in checked_in_report
     assert "Status: **COMPLETE**" in checked_in_report
 
 
-def test_qwen40_primitive_leaves_have_single_source_owners() -> None:
+def test_qwen38_flash_next_primitive_leaves_have_single_source_owners() -> None:
     report = audit_semantic_closure(
-        model_ir_path=QWEN40_ROOT / "model_ir.yaml",
-        ledger_path=QWEN40_ROOT / "semantic_source_ledger.yaml",
+        model_ir_path=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml",
+        ledger_path=QWEN38_FLASH_NEXT_ROOT / "semantic_source_ledger.yaml",
         source_repo=SOURCE_REPO,
     )
     assert report["compound_primitive_targets"] == {}

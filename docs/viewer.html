@@ -661,7 +661,12 @@ let PARENT = {};
 // ============================================================
 // load — model-aware
 // ============================================================
-function getModelId() {
+const MODEL_ID_ALIASES = Object.freeze({
+  // Keep pre-rename bookmarks working while publishing the official model name.
+  qwen40_v2: "qwen38_flash_next_v2",
+});
+
+function getRequestedModelId() {
   const embedded = window.__LLM_ARCH_EMBEDDED_MODEL_ID__;
   if (embedded && /^[a-zA-Z0-9_-]+$/.test(embedded)) return embedded;
   const qs = new URLSearchParams(location.search);
@@ -669,10 +674,16 @@ function getModelId() {
   if (m && /^[a-zA-Z0-9_-]+$/.test(m)) return m;
   return "";
 }
-const MODEL_ID = getModelId();
+const REQUESTED_MODEL_ID = getRequestedModelId();
+const MODEL_ID = MODEL_ID_ALIASES[REQUESTED_MODEL_ID] || REQUESTED_MODEL_ID;
 if (!MODEL_ID) {
   location.replace(new URL("./", location.href).href);
 } else {
+if (MODEL_ID !== REQUESTED_MODEL_ID && !window.__LLM_ARCH_EMBEDDED_MODEL_ID__) {
+  const canonicalUrl = new URL(location.href);
+  canonicalUrl.searchParams.set("model", MODEL_ID);
+  history.replaceState(history.state, "", canonicalUrl);
+}
 const DATA_URL = `${MODEL_ID}/arch_data.json?t=${Date.now()}`;
 
 fetch(DATA_URL, {cache: "no-store"}).then(r => {
@@ -707,13 +718,13 @@ Load failed: ${e}
   tried: ${DATA_URL}
 
 Usage:
-  ${location.origin}${location.pathname}?model=qwen40_v2
+  ${location.origin}${location.pathname}?model=qwen38_flash_next_v2
 
 Local development:
   git clone git@github.com:YAMY1234/llm-arch-reviewer.git
   cd llm-arch-reviewer
   python3 -m http.server -d docs 8765
-  open http://localhost:8765/viewer.html?model=qwen40_v2
+  open http://localhost:8765/viewer.html?model=qwen38_flash_next_v2
 </pre>`;
 });
 }

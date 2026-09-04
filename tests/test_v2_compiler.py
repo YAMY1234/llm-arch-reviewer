@@ -27,8 +27,8 @@ from llm_arch_v2.compiler import (  # noqa: E402
 )
 
 
-MODEL_ROOT = REPO_ROOT / "catalog" / "qwen40"
-QWEN40_ROOT = MODEL_ROOT
+MODEL_ROOT = REPO_ROOT / "catalog" / "qwen38_flash_next"
+QWEN38_FLASH_NEXT_ROOT = MODEL_ROOT
 QWEN35_ROOT = REPO_ROOT / "catalog" / "qwen35"
 AUDITED_MODEL_ROOTS = sorted(
     path
@@ -171,19 +171,19 @@ def test_glm52_comparison_matches_distinct_execution_ir_without_collapsing() -> 
     assert len(set(contract["execution_variants_by_implementation"].values())) == 2
 
 
-def test_compile_qwen40_catalog() -> None:
+def test_compile_qwen38_flash_next_catalog() -> None:
     bundle = compile_catalog(MODEL_ROOT)
 
     assert bundle["schema_version"] == "2.0"
-    assert bundle["meta"]["catalog"] == "catalog/qwen40"
+    assert bundle["meta"]["catalog"] == "catalog/qwen38_flash_next"
     assert len(bundle["execution_variants"]) == 4
     assert bundle["default_execution_variant"].startswith("exec_")
     assert bundle["default_implementation"] == "sglang_f90a941aa"
-    assert bundle["default_profile"] == "qwen40_tp4_cg_decode_bs1_8k1k"
+    assert bundle["default_profile"] == "qwen38_flash_next_tp4_cg_decode_bs1_8k1k"
     timeline = bundle["profiles"][bundle["default_profile"]]["meta"]["timeline"]
     assert timeline["schema_version"] == "timeline.v1"
     assert timeline["url"] == (
-        "timelines/qwen40_tp4_cg_decode_bs1_8k1k.timeline.json.gz"
+        "timelines/qwen38_flash_next_tp4_cg_decode_bs1_8k1k.timeline.json.gz"
     )
     assert timeline["event_count"] > 0
     disabled_mtp = bundle["profiles"][bundle["default_profile"]]["data"][
@@ -241,7 +241,7 @@ def test_compile_qwen40_catalog() -> None:
 
 
 def test_model_ir_and_execution_ir_are_separate_graphs() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     model_views = bundle["model_ir"]["views"]
 
     assert "tp_moe_output_collective" not in [
@@ -263,8 +263,8 @@ def test_model_ir_and_execution_ir_are_separate_graphs() -> None:
     assert collective["boundary_role"] == "module_boundary"
 
 
-def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_model_ir_has_semantic_closure_ledgers() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     model_ir = bundle["model_ir"]
 
     assert model_ir["semantic_revision"] == 6
@@ -335,13 +335,13 @@ def test_qwen40_model_ir_has_semantic_closure_ledgers() -> None:
     assert moe["semantic_details"]["parameters"]["total"] == 2522810880
 
 
-def test_checked_in_qwen40_bundle_matches_canonical_catalog() -> None:
+def test_checked_in_qwen38_flash_next_bundle_matches_canonical_catalog() -> None:
     """Prevent an enriched catalog from being published with a stale bundle."""
 
     generated = json.loads(
-        (REPO_ROOT / "docs" / "qwen40_v2" / "arch_data.json").read_text()
+        (REPO_ROOT / "docs" / "qwen38_flash_next_v2" / "arch_data.json").read_text()
     )
-    compiled = compile_catalog(QWEN40_ROOT)
+    compiled = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
 
     assert generated == compiled
     assert generated["meta"]["model_semantic_revision"] == 6
@@ -360,22 +360,22 @@ def test_checked_in_qwen40_bundle_matches_canonical_catalog() -> None:
 
 
 def test_notation_contract_rejects_undeclared_symbols_and_untyped_edges() -> None:
-    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+    model_ir = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
     broken = copy.deepcopy(model_ir)
     broken["views"]["moe"]["nodes"][1]["operator_signature"]["symbolic"] = (
         "H → UNKNOWN"
     )
     with pytest.raises(CatalogError, match="undeclared dimension symbols"):
-        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+        _validate_notation_contract(broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
 
     broken = copy.deepcopy(model_ir)
     del broken["views"]["moe"]["edges"][0]["dtype"]
     with pytest.raises(CatalogError, match="tensor-carrying edge"):
-        _validate_notation_contract(broken, source=QWEN40_ROOT / "model_ir.yaml")
+        _validate_notation_contract(broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
 
 
-def test_qwen40_compute_leaf_requires_authored_equation_or_exemption() -> None:
-    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
+def test_qwen38_flash_next_compute_leaf_requires_authored_equation_or_exemption() -> None:
+    model_ir = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
     broken = copy.deepcopy(model_ir)
     target = next(
         node
@@ -385,7 +385,7 @@ def test_qwen40_compute_leaf_requires_authored_equation_or_exemption() -> None:
     target["semantic_details"].pop("math")
     with pytest.raises(CatalogError, match="compute leaf moe_routed_expert.silu"):
         _validate_leaf_equation_coverage(
-            broken, source=QWEN40_ROOT / "model_ir.yaml"
+            broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml"
         )
 
 
@@ -420,21 +420,21 @@ def test_semantic_contract_operation_equation_satisfies_leaf_coverage() -> None:
 
 
 def test_operator_signature_does_not_change_execution_fingerprint() -> None:
-    model_ir = load_yaml(QWEN40_ROOT / "model_ir.yaml")
-    plan = load_yaml(QWEN40_ROOT / "execution_paths" / "tp_only.yaml")
-    baseline_views = apply_execution_plan(model_ir, plan, source=QWEN40_ROOT)
+    model_ir = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
+    plan = load_yaml(QWEN38_FLASH_NEXT_ROOT / "execution_paths" / "tp_only.yaml")
+    baseline_views = apply_execution_plan(model_ir, plan, source=QWEN38_FLASH_NEXT_ROOT)
     baseline = execution_fingerprint(model_ir, plan, baseline_views)
 
     relabeled = copy.deepcopy(model_ir)
     relabeled["views"]["moe"]["nodes"][1]["operator_signature"]["concrete"] = (
         "resolved elsewhere"
     )
-    relabeled_views = apply_execution_plan(relabeled, plan, source=QWEN40_ROOT)
+    relabeled_views = apply_execution_plan(relabeled, plan, source=QWEN38_FLASH_NEXT_ROOT)
     assert execution_fingerprint(relabeled, plan, relabeled_views) == baseline
 
 
-def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_compound_math_drills_to_primitive_model_ir_nodes() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     model_views = bundle["model_ir"]["views"]
 
     # Revision 6 closes previously missing tensor-edge contracts. Its new
@@ -443,7 +443,7 @@ def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
     # The canonical MTP generation graph now includes the explicit
     # proposal-update boundary retained from main, so the structural
     # execution fingerprint differs from the pre-merge enrichment branch.
-    assert bundle["default_execution_variant"] == "exec_2ae15643d6883b58"
+    assert bundle["default_execution_variant"] == "exec_36fa30ea441f7045"
 
     mix_gate = next(
         node
@@ -478,8 +478,8 @@ def test_qwen40_compound_math_drills_to_primitive_model_ir_nodes() -> None:
 
 
 def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    profile = bundle["profiles"]["qwen38_flash_next_tp4_cg_decode_bs1_8k1k"]
     group = profile["fusion_groups"]["fusion:hyperconnection_mix.mix"]
 
     assert group["owner"] == "hyperconnection_mix.mix"
@@ -521,10 +521,10 @@ def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting
 
 
 def test_hidden_timing_aggregate_declares_reachable_architecture_owner() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     for profile_id in (
-        "qwen40_tp4_cg_decode_bs1_8k1k",
-        "qwen40_tp4_mtp_cg_decode_gbs001_8k1k",
+        "qwen38_flash_next_tp4_cg_decode_bs1_8k1k",
+        "qwen38_flash_next_tp4_mtp_cg_decode_gbs001_8k1k",
     ):
         profile = bundle["profiles"][profile_id]
         group = profile["fusion_groups"]["fusion:hyperconnection.mix"]
@@ -533,8 +533,8 @@ def test_hidden_timing_aggregate_declares_reachable_architecture_owner() -> None
 
 
 def test_profile_rejects_unreachable_fusion_architecture_owner() -> None:
-    model = load_yaml(QWEN40_ROOT / "model_ir.yaml")
-    plan_path = QWEN40_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
+    plan_path = QWEN38_FLASH_NEXT_ROOT / "execution_paths" / "tp_only.yaml"
     plan = load_yaml(plan_path)
     views = apply_execution_plan(model, plan, source=plan_path)
     node_index = {
@@ -547,7 +547,7 @@ def test_profile_rejects_unreachable_fusion_architecture_owner() -> None:
     # architecture destination must therefore fail closed.
     node_index["hyperconnection.mix"].pop("architecture_target")
     profile = load_yaml(
-        QWEN40_ROOT
+        QWEN38_FLASH_NEXT_ROOT
         / "profiles"
         / "tp_only"
         / "sglang_f90a941aa"
@@ -566,8 +566,8 @@ def test_profile_rejects_unreachable_fusion_architecture_owner() -> None:
         )
 
 
-def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     implementation = bundle["implementations"]["sglang_f90a941aa"]
     for target in (
         "qsa_indexer.qk_projection",
@@ -579,7 +579,7 @@ def test_qwen40_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
     ):
         assert target in implementation["node_bindings"]
 
-    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    profile = bundle["profiles"]["qwen38_flash_next_tp4_cg_decode_bs1_8k1k"]
     cell = profile["data"]["qsa_attention.indexer"]["tp4_cg_decode_bs1_8k1k"]
     assert cell["drill_view"] == "qsa_indexer"
     assert cell["drill_mapping_coverage_pct"] == 100.0
@@ -657,8 +657,8 @@ def test_profile_data_order_is_canonical_and_complete() -> None:
 
 
 def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    profile = bundle["profiles"]["qwen40_tp4_cg_decode_bs1_8k1k"]
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    profile = bundle["profiles"]["qwen38_flash_next_tp4_cg_decode_bs1_8k1k"]
     group = profile["fusion_groups"]["fusion:linear_attention.qkvz_projection"]
 
     assert group == {
@@ -679,8 +679,8 @@ def test_fused_profile_states_compile_to_shared_interval_groups() -> None:
 
 
 def test_shared_event_coverage_requires_explicit_member_subsets() -> None:
-    model = load_yaml(QWEN40_ROOT / "model_ir.yaml")
-    plan_path = QWEN40_ROOT / "execution_paths" / "tp_only.yaml"
+    model = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
+    plan_path = QWEN38_FLASH_NEXT_ROOT / "execution_paths" / "tp_only.yaml"
     plan = load_yaml(plan_path)
     views = apply_execution_plan(model, plan, source=plan_path)
     node_index = {
@@ -689,7 +689,7 @@ def test_shared_event_coverage_requires_explicit_member_subsets() -> None:
         for node in view["nodes"]
     }
     profile = load_yaml(
-        QWEN40_ROOT
+        QWEN38_FLASH_NEXT_ROOT
         / "profiles"
         / "tp_only"
         / "sglang_f90a941aa"
@@ -814,11 +814,11 @@ def test_qwen35_collective_adapters_live_on_layer_boundaries() -> None:
     assert "tp_moe_output_collective" in _node_ids(bundle, "full_attention_moe_block")
 
 
-def test_compile_qwen40_pure_tp_layout() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_compile_qwen38_flash_next_pure_tp_layout() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
 
     assert bundle["default_implementation"] == "sglang_f90a941aa"
-    assert "qwen40_tp4_cg_decode_bs1_8k1k" in bundle["profiles"]
+    assert "qwen38_flash_next_tp4_cg_decode_bs1_8k1k" in bundle["profiles"]
     assert "tp_embedding_collective" in _node_ids(bundle, "top")
     assert "tp_logits_collective" in _node_ids(bundle, "top")
     assert "tp_embedding_collective" in _node_ids(bundle, "ple")
@@ -837,8 +837,8 @@ def test_compile_qwen40_pure_tp_layout() -> None:
     assert indexer["execution"]["tensor_layout"] == "replicated"
 
 
-def test_qwen40_topology_binding_inherits_common_source_mapping() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_topology_binding_inherits_common_source_mapping() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     binding = bundle["implementations"]["sglang_f90a941aa_dp_attention"]
 
     assert binding["extends"] == "sglang_f90a941aa"
@@ -847,10 +847,10 @@ def test_qwen40_topology_binding_inherits_common_source_mapping() -> None:
     assert "linear_layer.tp_attention_collective" not in binding["node_bindings"]
 
 
-def test_qwen40_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     binding = bundle["implementations"][
-        "sglang_qwen4_main_32e9cb5_qsa_hardening_flashinfer_gdn"
+        "sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn"
     ]
 
     assert binding["source_commit"] == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
@@ -871,10 +871,10 @@ def test_qwen40_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
 def test_binding_validation_attestation_is_preserved_and_fingerprint_checked(
     tmp_path: Path,
 ) -> None:
-    model_root = tmp_path / "qwen40"
+    model_root = tmp_path / "qwen38_flash_next"
     import shutil
 
-    shutil.copytree(QWEN40_ROOT, model_root)
+    shutil.copytree(QWEN38_FLASH_NEXT_ROOT, model_root)
     binding_path = model_root / "bindings" / "sglang_f90a941aa.yaml"
     binding = load_yaml(binding_path)
     plan_path = model_root / "execution_paths" / "tp_only.yaml"

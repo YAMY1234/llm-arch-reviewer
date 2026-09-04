@@ -1049,6 +1049,12 @@ link to that framework's architecture owner in both the graph and detail pane.
 
 ### Reproducibility
 
+- Canonical `model_id` and `model_label` are grounded in the model publisher's
+  official repository or checkpoint metadata. A product rename atomically
+  migrates catalog/tool/bundle IDs, generated Timeline profile IDs, public
+  links, and tests. Backward-compatible aliases exist only at the shared Viewer
+  URL boundary; pinned source symbols, source paths, revisions, and raw evidence
+  filenames remain immutable provenance.
 - Source/config/run/baseline-log/window-selection/trace hashes and producer
   version are recorded.
 - Rebuilding the same catalog is deterministic.
@@ -1083,7 +1089,7 @@ does not require architecture review.
 ## 10. Migration state
 
 The repository now publishes six catalogs through one V2 compiler and one
-shared Viewer: Qwen 4.0, Qwen3.5, GLM-5.2, GLM-5.3-Flash, Kimi K3, and DeepSeek
+shared Viewer: Qwen3.8-Flash-Next, Qwen3.5, GLM-5.2, GLM-5.3-Flash, Kimi K3, and DeepSeek
 V4 Pro. The catalog contains Model IR, Execution Plans, implementation
 Bindings, accepted Profiles, and immutable Timeline evidence across SGLang,
 vLLM, and TensorRT-LLM where supported. Shared execution fingerprints,

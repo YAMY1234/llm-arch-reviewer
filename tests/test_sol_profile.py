@@ -24,20 +24,20 @@ from llm_arch_v2.sol import (  # noqa: E402
 )
 
 
-QWEN40_ROOT = REPO_ROOT / "catalog" / "qwen40"
+QWEN38_FLASH_NEXT_ROOT = REPO_ROOT / "catalog" / "qwen38_flash_next"
 HARDWARE_PATH = REPO_ROOT / "catalog" / "hardware" / "gb300_nvl72.yaml"
 MANIFEST_PATH = (
-    QWEN40_ROOT / "sol_manifests" / "tp4_gb300_decode_gbs1_8k1k.yaml"
+    QWEN38_FLASH_NEXT_ROOT / "sol_manifests" / "tp4_gb300_decode_gbs1_8k1k.yaml"
 )
 
 
-def test_qwen40_sol_profile_is_separate_fail_closed_overlay() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+def test_qwen38_flash_next_sol_profile_is_separate_fail_closed_overlay() -> None:
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
 
     assert bundle["meta"]["sol_profile_count"] == 1
     assert bundle["meta"]["gap_report_count"] == 1
-    sol = bundle["sol_profiles"]["qwen40_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
-    gap = bundle["gap_reports"]["qwen40_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
+    sol = bundle["sol_profiles"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
+    gap = bundle["gap_reports"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
 
     assert sol["status"] == "partial"
     assert gap["status"] == "partial_calibration"
@@ -88,9 +88,9 @@ def test_qwen40_sol_profile_is_separate_fail_closed_overlay() -> None:
 
 
 def test_fused_semantic_leaf_inherits_non_additive_parent_sol_assignment() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    sol = bundle["sol_profiles"]["qwen40_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
-    gap = bundle["gap_reports"]["qwen40_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    sol = bundle["sol_profiles"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
+    gap = bundle["gap_reports"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
     sol = copy.deepcopy(sol)
     gap = copy.deepcopy(gap)
     profile = copy.deepcopy(bundle["profiles"][sol["measured_profile_id"]])
@@ -122,12 +122,12 @@ def test_fused_semantic_leaf_inherits_non_additive_parent_sol_assignment() -> No
 
 
 def test_nested_drill_metrics_receive_fail_closed_sol_ownership() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     sol = copy.deepcopy(
-        bundle["sol_profiles"]["qwen40_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
+        bundle["sol_profiles"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
     )
     gap = copy.deepcopy(
-        bundle["gap_reports"]["qwen40_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
+        bundle["gap_reports"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
     )
     profile = {
         "data": {
@@ -168,12 +168,12 @@ def test_nested_drill_metrics_receive_fail_closed_sol_ownership() -> None:
 
 
 def test_fused_direct_structural_estimate_resolves_to_timing_owner() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     sol = copy.deepcopy(
-        bundle["sol_profiles"]["qwen40_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
+        bundle["sol_profiles"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_ideal_v1"]
     )
     gap = copy.deepcopy(
-        bundle["gap_reports"]["qwen40_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
+        bundle["gap_reports"]["qwen38_flash_next_tp4_gb300_decode_gbs1_8k1k_gap_v1"]
     )
     profile = {
         "data": {
@@ -197,8 +197,8 @@ def test_fused_direct_structural_estimate_resolves_to_timing_owner() -> None:
 
 
 def test_measured_faster_than_ideal_invalidates_sol_model() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    model_ir = yaml.safe_load((QWEN40_ROOT / "model_ir.yaml").read_text())
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    model_ir = yaml.safe_load((QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml").read_text())
     hardware = yaml.safe_load(HARDWARE_PATH.read_text())
     manifest = yaml.safe_load(MANIFEST_PATH.read_text())
 
@@ -225,8 +225,8 @@ def test_measured_faster_than_ideal_invalidates_sol_model() -> None:
 
 
 def test_sol_provenance_is_checkout_independent() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    model_ir = yaml.safe_load((QWEN40_ROOT / "model_ir.yaml").read_text())
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    model_ir = yaml.safe_load((QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml").read_text())
     hardware = yaml.safe_load(HARDWARE_PATH.read_text())
     manifest = yaml.safe_load(MANIFEST_PATH.read_text())
     sol, _ = build_sol_artifacts(
@@ -245,8 +245,8 @@ def test_sol_provenance_is_checkout_independent() -> None:
 
 
 def test_methodology_role_order_is_fail_closed() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    model_ir = yaml.safe_load((QWEN40_ROOT / "model_ir.yaml").read_text())
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    model_ir = yaml.safe_load((QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml").read_text())
     hardware = yaml.safe_load(HARDWARE_PATH.read_text())
     manifest = yaml.safe_load(MANIFEST_PATH.read_text())
     hardware = copy.deepcopy(hardware)
@@ -284,8 +284,8 @@ def test_methodology_role_order_is_fail_closed() -> None:
 
 
 def test_collective_startup_and_wire_transfer_are_serial_transitions() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    model_ir = yaml.safe_load((QWEN40_ROOT / "model_ir.yaml").read_text())
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    model_ir = yaml.safe_load((QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml").read_text())
     hardware = yaml.safe_load(HARDWARE_PATH.read_text())
     manifest = yaml.safe_load(MANIFEST_PATH.read_text())
     hardware = copy.deepcopy(hardware)
@@ -315,8 +315,8 @@ def test_collective_startup_and_wire_transfer_are_serial_transitions() -> None:
 
 
 def test_attainable_projection_requires_exact_kernel_plan_identity() -> None:
-    bundle = compile_catalog(QWEN40_ROOT)
-    model_ir = yaml.safe_load((QWEN40_ROOT / "model_ir.yaml").read_text())
+    bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
+    model_ir = yaml.safe_load((QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml").read_text())
     hardware = yaml.safe_load(HARDWARE_PATH.read_text())
     manifest = yaml.safe_load(MANIFEST_PATH.read_text())
     hardware = copy.deepcopy(hardware)

@@ -635,9 +635,9 @@ def main(args: argparse.Namespace | None = None) -> int:
         page.goto(
             viewer_url(
                 args.base_url,
-                model="qwen40_v2",
-                profile="qwen40_tp4_mtp_cg_decode_gbs001_8k1k",
-                implementation="sglang_qwen4_main_32e9cb5_qsa_hardening_flashinfer_gdn",
+                model="qwen38_flash_next_v2",
+                profile="qwen38_flash_next_tp4_mtp_cg_decode_gbs001_8k1k",
+                implementation="sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn",
                 generation="eagle_mtp",
                 phase="decode",
                 viewMode="architecture",
@@ -647,7 +647,7 @@ def main(args: argparse.Namespace | None = None) -> int:
             timeout=60_000,
         )
         page.wait_for_function(
-            "CURRENT_PROFILE === 'qwen40_tp4_mtp_cg_decode_gbs001_8k1k'",
+            "CURRENT_PROFILE === 'qwen38_flash_next_tp4_mtp_cg_decode_gbs001_8k1k'",
             timeout=60_000,
         )
         draft_resolution = page.evaluate(

@@ -1,0 +1,589 @@
+schema_version: semantic-source-ledger.v1
+model_id: qwen38_flash_next
+scope_id: target_text_model_plus_eagle_mtp
+
+# Pinned source is semantic evidence, not a framework-shaped Model IR.  Stable
+# math/tensor/state contracts are mapped below; dispatch, packing, collectives,
+# fusion, and scheduler helpers are explicitly excluded into Execution IR or
+# Binding/Timeline evidence.
+source_snapshot:
+  repository: git@github.com:Qiaolin-Yu/sglang-qwen-next.git
+  revision: 089f8ac
+  files:
+    - {path: python/sglang/srt/configs/qwen4_exp.py, git_blob_oid: 2a8d7892ec0ffa1c0b8a732db4ee8b682b169aa2, role: architecture configuration}
+    - {path: python/sglang/srt/models/qwen4_exp.py, git_blob_oid: 7182e338483ef21ecdbdf03e3f0d51475f59b28e, role: target model PLE QSA and layer orchestration}
+    - {path: python/sglang/srt/models/qwen4_exp_mtp.py, git_blob_oid: 6bb09f75f5469f586b3462e744acfe22c7d5f945, role: EAGLE auxiliary head}
+    - {path: python/sglang/srt/models/qwen3_5.py, git_blob_oid: dfcc30f5c36ab949217a54591dc2a73089f9c88e, role: inherited GatedDeltaNet and decoder semantics}
+    - {path: python/sglang/srt/models/qwen3_vl.py, git_blob_oid: ee41022dca27bb6e4681ffa4d265e6827d98dd64, role: inherited LM head and logits path}
+    - {path: python/sglang/srt/models/qwen2_moe.py, git_blob_oid: f10d82ba3ab7aea1f2958c6df7a11bb646a90bd4, role: routed and shared MoE semantics}
+    - {path: python/sglang/srt/layers/hyperconnection.py, git_blob_oid: c9fec3146339ce1bc536398bb21647e6238ff8ca, role: HC read and update equations}
+    - {path: python/sglang/srt/layers/attention/qsa/qsa_indexer.py, git_blob_oid: 9b117c68b436fabbc8f81015b943e36508030558, role: QSA index construction and state}
+    - {path: python/sglang/srt/layers/attention/qsa/mqa.py, git_blob_oid: f0401a58985b899c238a1c6edc184ff959c255a8, role: QSA score reference}
+    - {path: python/sglang/srt/layers/attention/fla/fused_gdn_gating.py, git_blob_oid: 16cdf8f7b8b20fad8b19887087defe514cbdd317, role: GDN beta and decay formula}
+    - {path: python/sglang/srt/layers/attention/fla/layernorm_gated.py, git_blob_oid: b30cdacdb3732347e2e5edaeebf6f61efbf9c03d, role: GDN output norm and Z gate}
+    - {path: python/sglang/srt/layers/attention/fla/fused_recurrent.py, git_blob_oid: f110770c02238c5a2cf85122be50ec4a3f376dfa, role: GDN recurrent delta rule}
+    - {path: python/sglang/srt/layers/moe/topk.py, git_blob_oid: 2db5db43d36c3801263e8e179d6b8a7afdea3fc6, role: MoE TopK probability contract}
+    - {path: python/sglang/srt/speculative/eagle_worker.py, git_blob_oid: 983e550f76034d173b0deb3144e2bc393a21712f, role: EAGLE generation flow}
+    - {path: python/sglang/srt/speculative/eagle_info.py, git_blob_oid: 819af16cdf804bd8bbd67720a5b0d4733603f1b4, role: EAGLE candidate and proposal state}
+
+audit_views:
+  [top, mtp_generation, mtp_head, mtp_layer, mtp_qsa_attention, mtp_moe,
+   stack, linear_layer, full_layer, ple, final_hyperconnection_read,
+   mtp_embedding_projection, mtp_hidden_projection, ple_key_value_projection,
+   ple_grouped_norm_gate, ple_short_conv, ple_residual_flow,
+   hyperconnection_mix, hyperconnection_combine, hyperconnection_read,
+   hyperconnection_update, hyperconnection, linear_attention,
+   linear_causal_conv, linear_beta_decay_gate, linear_output_gate_norm,
+   qsa_attention, qsa_qk_norm_rope, qsa_output_gate, qsa_indexer,
+   qsa_index_query_transform, qsa_index_compress, qsa_index_score,
+   qsa_index_expand, moe, moe_router_selection, moe_routed_expert,
+   moe_shared_expert, moe_combine]
+
+entrypoints:
+  - id: qwen4_config
+    component: architecture and layer schedule
+    source_file: python/sglang/srt/configs/qwen4_exp.py
+    symbol: Qwen4ExpTextConfig
+    anchor: "class Qwen4ExpTextConfig"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: layers_block_type, disposition: reviewed}
+      - {name: short_conv_layer_ids, disposition: reviewed}
+      - {name: short_conv_state_shape, disposition: reviewed}
+      - {name: ngram_context_len, disposition: reviewed}
+    expected_ir_views: [stack, ple, linear_attention, qsa_attention, moe]
+    obligations:
+      - {id: repeated_schedule, kind: model_ir_primitive, source_anchor: "def layers_block_type", disposition: mapped, ir_targets: [stack.schedule]}
+      - {id: dimensions, kind: shape_only_omitted, source_anchor: "def short_conv_state_shape", disposition: excluded, reason: dimensions parameterize mapped tensors and are not extra runtime operators}
+
+  - id: target_model
+    component: target model outer data flow
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpModel
+    anchor: "class Qwen4ExpModel"
+    review_status: verified
+    member_dispositions:
+      - {name: _build_embed_tokens, disposition: reviewed}
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [top, stack]
+    obligations:
+      - {id: token_embedding, kind: model_ir_primitive, source_anchor: "hidden_states = self.embed_tokens(input_ids)", disposition: mapped, ir_targets: [top.embedding]}
+      - {id: outer_boundaries, kind: tensor_boundary, source_anchor: "input_ids: torch.Tensor", disposition: mapped, ir_targets: [top.token_ids, stack.stack_in, stack.stack_out]}
+
+  - id: target_language_head
+    component: target LM head and logits
+    source_file: python/sglang/srt/models/qwen3_vl.py
+    symbol: Qwen3VLForConditionalGeneration
+    anchor: "class Qwen3VLForConditionalGeneration"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: separate_deepstack_embeds, disposition: excluded, reason: multimodal input preparation outside selected text scope}
+      - {name: start_layer, disposition: reviewed}
+      - {name: end_layer, disposition: reviewed}
+      - {name: pad_input_ids, disposition: excluded, reason: physical serving layout}
+      - {name: get_image_feature, disposition: excluded, reason: vision encoder outside selected scope}
+      - {name: get_video_feature, disposition: excluded, reason: vision encoder outside selected scope}
+      - {name: get_input_embeddings, disposition: reviewed}
+      - {name: should_apply_lora, disposition: excluded, reason: optional adapter dispatch}
+      - {name: forward, disposition: reviewed}
+      - {name: set_dflash_layers_to_capture, disposition: excluded, reason: capture instrumentation}
+      - {name: load_weights, disposition: excluded, reason: checkpoint loading}
+      - {name: get_embed_and_head, disposition: reviewed}
+      - {name: set_eagle3_layers_to_capture, disposition: excluded, reason: capture instrumentation}
+    expected_ir_views: [top]
+    obligations:
+      - {id: vocabulary_projection, kind: model_ir_primitive, source_anchor: "self.lm_head = ParallelLMHead(", disposition: mapped, ir_targets: [top.lm_head]}
+      - {id: logits, kind: tensor_boundary, source_anchor: "return self.logits_processor(", disposition: mapped, ir_targets: [top.logits]}
+
+  - id: ple_batch
+    component: PLE context state
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: _prepare_ple_batch
+    anchor: "def _prepare_ple_batch("
+    review_status: verified
+    member_dispositions: [{name: _prepare_ple_batch, disposition: reviewed}]
+    expected_ir_views: [ple]
+    obligations:
+      - {id: token_history, kind: state_read, source_anchor: "history = forward_batch.req_to_token_pool.get_ngram_context(state_indices)", disposition: mapped, ir_targets: [ple.token_history]}
+      - {id: layout, kind: implementation_only, source_anchor: "physical_tokens", disposition: excluded, reason: request slots and padding masks are execution layout}
+
+  - id: ple_context_commit
+    component: PLE N-gram context state commit
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: _commit_ple_batch
+    anchor: "def _commit_ple_batch("
+    review_status: verified
+    member_dispositions: [{name: _commit_ple_batch, disposition: reviewed}]
+    expected_ir_views: [ple]
+    obligations:
+      - {id: context_commit, kind: state_update, source_anchor: "pool.set_ngram_context(batch.state_indices, next_context)", disposition: mapped, ir_targets: [ple.context_commit]}
+
+  - id: ple_ngram_embedding
+    component: PLE hashing and embedding
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpNGramEmbedding
+    anchor: "class Qwen4ExpNGramEmbedding"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: _splitmix64, disposition: reviewed}
+      - {name: _build_layer_multipliers, disposition: reviewed}
+      - {name: _find_nth_prime_after, disposition: reviewed}
+      - {name: _build_head_vocab_and_offsets, disposition: reviewed}
+      - {name: _embed_ngram_ids, disposition: reviewed}
+      - {name: _hash_contexts, disposition: reviewed}
+      - {name: _shift_right_ignore_eos, disposition: reviewed}
+      - {name: forward_idle, disposition: excluded, reason: zero-work idle path}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [ple]
+    obligations:
+      - {id: hash, kind: model_ir_primitive, source_anchor: "def _hash_contexts(", disposition: mapped, ir_targets: [ple.ngram_hash]}
+      - {id: embedding, kind: model_ir_primitive, source_anchor: "def _embed_ngram_ids(", disposition: mapped, ir_targets: [ple.ngram_embedding]}
+
+  - id: ple_grouped_norm
+    component: PLE independent query key and convolution RMSNorms
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLEGroupedNorm
+    anchor: "class Qwen4ExpPLEGroupedNorm"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [ple_grouped_norm_gate]
+    obligations:
+      - {id: three_norm_calls, kind: model_ir_primitive, source_anchor: "x_norm = x_float * torch.rsqrt(variance + self.eps)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.query_norm, ple_grouped_norm_gate.key_norm, ple_grouped_norm_gate.conv_input_norm]}
+
+  - id: ple_forward
+    component: PLE projections gate and residual
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer.forward
+    anchor: "class Qwen4ExpPLELayer"
+    review_status: verified
+    member_dispositions: [{name: forward, disposition: reviewed}]
+    expected_ir_views: [ple_key_value_projection, ple_grouped_norm_gate, ple_residual_flow]
+    obligations:
+      - {id: key_projection, kind: model_ir_primitive, source_anchor: "key, _ = self.key_proj(embeddings)", disposition: mapped, ir_targets: [ple_key_value_projection.key_projection]}
+      - {id: value_projection, kind: model_ir_primitive, source_anchor: "value, _ = self.value_proj(embeddings)", disposition: mapped, ir_targets: [ple_key_value_projection.value_projection]}
+      - {id: projection_boundaries, kind: tensor_boundary, source_anchor: "key = key.reshape(token_count, hc_count, hidden_size)", disposition: mapped, ir_targets: [ple_key_value_projection.ngram_embedding, ple_key_value_projection.projected_key, ple_key_value_projection.projected_value, ple_grouped_norm_gate.key, ple_grouped_norm_gate.value]}
+      - {id: query_boundary, kind: tensor_boundary, source_anchor: "query = hidden_states.reshape(token_count, hc_count, hidden_size)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.query]}
+      - {id: dot_reduce, kind: model_ir_primitive, source_anchor: "gate = (key_normed * query_normed).sum(dim=-1, keepdim=True)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.dot_reduce]}
+      - {id: dimension_scale, kind: model_ir_primitive, source_anchor: "gate = gate / math.sqrt(hidden_size)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.dimension_scale]}
+      - {id: signed_sqrt, kind: model_ir_primitive, source_anchor: "gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()", disposition: mapped, ir_targets: [ple_grouped_norm_gate.signed_sqrt]}
+      - {id: sigmoid, kind: model_ir_primitive, source_anchor: "gate = torch.sigmoid(gate)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.sigmoid]}
+      - {id: value_multiply, kind: model_ir_primitive, source_anchor: "gated_value = gate * value.unsqueeze(-2)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.value_multiply]}
+      - {id: gated_value_boundaries, kind: tensor_boundary, source_anchor: "gated_value = gate * value.unsqueeze(-2)", disposition: mapped, ir_targets: [ple_grouped_norm_gate.gated_value, ple_residual_flow.gated_value]}
+      - {id: inner_residual, kind: model_ir_primitive, source_anchor: "output = gated_value + conv_output", disposition: mapped, ir_targets: [ple_residual_flow.inner_add]}
+      - {id: conv_output_boundary, kind: tensor_boundary, source_anchor: "output = gated_value + conv_output", disposition: mapped, ir_targets: [ple_residual_flow.short_conv_output]}
+      - {id: padding, kind: implementation_only, source_anchor: "return _pad_token_rows(output, batch.physical_tokens)", disposition: excluded, reason: physical padding does not alter valid-token semantics}
+
+  - id: ple_short_conv
+    component: PLE depthwise convolution and state
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer._short_conv
+    anchor: "def _short_conv("
+    review_status: verified
+    member_dispositions: [{name: _short_conv, disposition: reviewed}]
+    expected_ir_views: [ple, ple_short_conv]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: "padded_seq.transpose(1, 2)", disposition: mapped, ir_targets: [ple_short_conv.normalized_input]}
+      - {id: depthwise_conv, kind: model_ir_primitive, source_anchor: "conv_output = F.conv1d(", disposition: mapped, ir_targets: [ple_short_conv.depthwise_conv]}
+      - {id: conv_output, kind: tensor_boundary, source_anchor: "conv_output = F.conv1d(", disposition: mapped, ir_targets: [ple_short_conv.conv_output]}
+      - {id: silu, kind: model_ir_primitive, source_anchor: "return F.silu(conv_output[batch.req_indices, batch.token_offsets])", disposition: mapped, ir_targets: [ple_short_conv.silu]}
+      - {id: state, kind: state_update, source_anchor: "conv_state[batch.state_indices] = next_state.to(dtype=conv_state.dtype)", disposition: mapped, ir_targets: [ple.conv_state]}
+
+  - id: ple_construction
+    component: PLE parameter and shape construction
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpPLELayer.__init__
+    anchor: "class Qwen4ExpPLELayer"
+    review_status: verified
+    member_dispositions: [{name: __init__, disposition: reviewed}]
+    expected_ir_views: [ple, ple_grouped_norm_gate, ple_short_conv]
+    obligations:
+      - {id: parameters, kind: shape_only_omitted, source_anchor: "self.norm_query = Qwen4ExpPLEGroupedNorm", disposition: excluded, reason: construction proves independent norms and convolution geometry already attached to mapped leaves}
+
+  - id: layer_extension
+    component: PLE placement HC boundaries and execution topology forks
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpLayerExtensionMixin
+    anchor: "class Qwen4ExpLayerExtensionMixin"
+    review_status: verified
+    member_dispositions:
+      - {name: _init_qwen4_exp_layer_extensions, disposition: reviewed}
+      - {name: _prepare_qwen4_exp_attn, disposition: reviewed}
+      - {name: _prepare_qwen4_exp_mlp, disposition: reviewed}
+      - {name: _qwen4_exp_use_dp_moe_gather, disposition: excluded, reason: Execution IR topology selection}
+      - {name: _qwen4_exp_use_attn_tp_a2a_scatter, disposition: excluded, reason: Execution IR topology selection}
+      - {name: _run_qwen4_exp_mlp, disposition: reviewed}
+      - {name: _postprocess_qwen4_exp_layer, disposition: reviewed}
+    expected_ir_views: [linear_layer, full_layer, ple_residual_flow]
+    obligations:
+      - {id: outer_ple_residual, kind: model_ir_primitive, source_anchor: "hidden_states = hidden_states + self.ple(", disposition: mapped, ir_targets: [ple_residual_flow.outer_add]}
+      - {id: outer_ple_boundaries, kind: tensor_boundary, source_anchor: "hidden_states = hidden_states + self.ple(", disposition: mapped, ir_targets: [ple.hc_state, ple_residual_flow.hc_state, ple_residual_flow.updated_hc_state]}
+      - {id: layer_boundaries, kind: tensor_boundary, source_anchor: "def _prepare_qwen4_exp_attn", disposition: mapped, ir_targets: [linear_layer.layer_in, linear_layer.layer_out, full_layer.layer_in, full_layer.layer_out]}
+      - {id: initial_hc_expand, kind: model_ir_primitive, source_anchor: "hidden_states = torch.cat(", disposition: mapped, ir_targets: [stack.hc_expand]}
+      - {id: collectives, kind: execution_ir, source_anchor: "def _qwen4_exp_use_dp_moe_gather", disposition: excluded, reason: TP DP and EP collectives belong to Execution IR}
+
+  - id: hyperconnection
+    component: Hyper-Connection read and update equations
+    source_file: python/sglang/srt/layers/hyperconnection.py
+    symbol: GatedResidualSimple
+    anchor: "class GatedResidualSimple"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: mix, disposition: reviewed}
+      - {name: combine, disposition: reviewed}
+    expected_ir_views: [hyperconnection_mix, hyperconnection_combine, hyperconnection_read, hyperconnection_update, final_hyperconnection_read]
+    obligations:
+      - {id: branch_inputs, kind: tensor_boundary, source_anchor: "def mix(", disposition: mapped, ir_targets: [hyperconnection_mix.branch_states, hyperconnection_combine.branch_states, hyperconnection_read.normalized_branches, hyperconnection_update.branch_states, hyperconnection_update.normalized_branches, final_hyperconnection_read.branch_states]}
+      - {id: branch_norm, kind: model_ir_primitive, source_anchor: "hyper_input_normed = self.hc_norm(hyper_input)", disposition: mapped, ir_targets: [hyperconnection_mix.branch_norm, final_hyperconnection_read.branch_norm]}
+      - {id: read_down, kind: model_ir_primitive, source_anchor: "F.linear(hyper_input_normed, input_mix_weight_down) / hc", disposition: mapped, ir_targets: [hyperconnection_read.down_projection, final_hyperconnection_read.down_projection]}
+      - {id: read_scaled_silu, kind: model_ir_primitive, source_anchor: "F.silu(", disposition: mapped, ir_targets: [hyperconnection_read.scaled_silu, final_hyperconnection_read.scaled_silu]}
+      - {id: read_up, kind: model_ir_primitive, source_anchor: "F.linear(input_mix_weight, input_mix_weight_up)", disposition: mapped, ir_targets: [hyperconnection_read.up_projection, final_hyperconnection_read.up_projection]}
+      - {id: read_sigmoid, kind: model_ir_primitive, source_anchor: "torch.sigmoid", disposition: mapped, ir_targets: [hyperconnection_read.sigmoid_view, final_hyperconnection_read.sigmoid_view]}
+      - {id: weighted_apply, kind: model_ir_primitive, source_anchor: "input_mix_weight * hyper_input_normed.unflatten", disposition: mapped, ir_targets: [hyperconnection_read.weighted_apply, final_hyperconnection_read.weighted_apply]}
+      - {id: branch_mean, kind: model_ir_primitive, source_anchor: ".mean(dim=-2)", disposition: mapped, ir_targets: [hyperconnection_read.branch_mean, final_hyperconnection_read.branch_mean]}
+      - {id: read_outputs, kind: tensor_boundary, source_anchor: "return mixed_input, (hyper_input, hyper_input_normed)", disposition: mapped, ir_targets: [hyperconnection_mix.module_input, hyperconnection_read.module_input, final_hyperconnection_read.hidden_states]}
+      - {id: mix_aggregate, kind: tensor_boundary, source_anchor: "def mix(", disposition: mapped, ir_targets: [hyperconnection_mix.mix]}
+      - {id: module_outputs, kind: tensor_boundary, source_anchor: "block_output: torch.Tensor", disposition: mapped, ir_targets: [hyperconnection_combine.module_output, hyperconnection_update.module_output]}
+      - {id: inject_projection, kind: model_ir_primitive, source_anchor: "F.linear(normed_residual, block_inject_weight) / hc", disposition: mapped, ir_targets: [hyperconnection_update.inject_projection]}
+      - {id: inject_gate, kind: model_ir_primitive, source_anchor: "2 * torch.sigmoid", disposition: mapped, ir_targets: [hyperconnection_update.inject_gate]}
+      - {id: broadcast_injection, kind: model_ir_primitive, source_anchor: "block_output.unsqueeze(-2) * block_inject_weight_out.unsqueeze", disposition: mapped, ir_targets: [hyperconnection_update.broadcast_injection]}
+      - {id: residual_add, kind: model_ir_primitive, source_anchor: "return (R + injection).flatten(-2)", disposition: mapped, ir_targets: [hyperconnection_update.residual_add]}
+      - {id: combine_outputs, kind: tensor_boundary, source_anchor: "return updated_residuals", disposition: mapped, ir_targets: [hyperconnection_combine.updated_branch_states, hyperconnection_update.updated_branches]}
+      - {id: combine_aggregate, kind: tensor_boundary, source_anchor: "def combine(", disposition: mapped, ir_targets: [hyperconnection_combine.combine]}
+
+  - id: gated_deltanet
+    component: GatedDeltaNet projections convolution state and output
+    source_file: python/sglang/srt/models/qwen3_5.py
+    symbol: Qwen3_5GatedDeltaNet
+    anchor: "class Qwen3_5GatedDeltaNet"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: _override_weight_loader, disposition: excluded, reason: checkpoint loading}
+      - {name: _bind_packed_weight_loaders, disposition: excluded, reason: checkpoint loading}
+      - {name: _get_split_sizes_for_param, disposition: excluded, reason: checkpoint loading}
+      - {name: _make_packed_weight_loader, disposition: excluded, reason: checkpoint loading}
+      - {name: create_qkvz_proj, disposition: reviewed}
+      - {name: create_ba_proj, disposition: reviewed}
+      - {name: fix_query_key_value_ordering, disposition: excluded, reason: packed execution layout}
+      - {name: _forward_input_proj, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [linear_attention, linear_causal_conv]
+    obligations:
+      - {id: boundaries, kind: tensor_boundary, source_anchor: "def forward(", disposition: mapped, ir_targets: [linear_attention.attn_in, linear_attention.attn_out]}
+      - {id: qkvz_projection, kind: model_ir_primitive, source_anchor: "self.in_proj_qkvz", disposition: mapped, ir_targets: [linear_attention.qkvz_projection]}
+      - {id: ba_projection, kind: model_ir_primitive, source_anchor: "self.in_proj_ba", disposition: mapped, ir_targets: [linear_attention.ba_projection]}
+      - {id: conv_boundaries, kind: tensor_boundary, source_anchor: "self.conv1d", disposition: mapped, ir_targets: [linear_causal_conv.packed_qkv, linear_causal_conv.activated_qkv]}
+      - {id: depthwise_conv, kind: model_ir_primitive, source_anchor: "self.conv1d", disposition: mapped, ir_targets: [linear_causal_conv.depthwise_conv]}
+      - {id: conv_silu, kind: model_ir_primitive, source_anchor: "activation=self.activation", disposition: mapped, ir_targets: [linear_causal_conv.silu]}
+      - {id: recurrent_state, kind: state_update, source_anchor: "self.attn = RadixLinearAttention(", disposition: mapped, ir_targets: [linear_attention.recurrent_state]}
+      - {id: output_projection, kind: model_ir_primitive, source_anchor: "self.out_proj", disposition: mapped, ir_targets: [linear_attention.output_projection]}
+
+  - id: gdn_gate_formula
+    component: GDN beta and decay formula
+    source_file: python/sglang/srt/layers/attention/fla/fused_gdn_gating.py
+    symbol: fused_gdn_gating
+    anchor: "def fused_gdn_gating("
+    review_status: verified
+    member_dispositions: [{name: fused_gdn_gating, disposition: reviewed}]
+    expected_ir_views: [linear_beta_decay_gate]
+    obligations:
+      - {id: inputs, kind: tensor_boundary, source_anchor: "def fused_gdn_gating(", disposition: mapped, ir_targets: [linear_beta_decay_gate.projected_beta_alpha, linear_beta_decay_gate.decay_parameters]}
+      - {id: beta_sigmoid, kind: model_ir_primitive, source_anchor: "blk_beta_output = tl.sigmoid", disposition: mapped, ir_targets: [linear_beta_decay_gate.beta_sigmoid]}
+      - {id: dt_bias, kind: model_ir_primitive, source_anchor: "x = blk_a.to(tl.float32) + blk_bias.to(tl.float32)", disposition: mapped, ir_targets: [linear_beta_decay_gate.decay_softplus]}
+      - {id: dt_softplus, kind: model_ir_primitive, source_anchor: "softplus_x = tl.where", disposition: mapped, ir_targets: [linear_beta_decay_gate.dt_softplus]}
+      - {id: negative_decay, kind: model_ir_primitive, source_anchor: "blk_g = -tl.exp", disposition: mapped, ir_targets: [linear_beta_decay_gate.negative_decay]}
+      - {id: output, kind: tensor_boundary, source_anchor: "return g, beta", disposition: mapped, ir_targets: [linear_beta_decay_gate.beta_decay]}
+
+  - id: gdn_recurrence_formula
+    component: recurrent gated delta rule
+    source_file: python/sglang/srt/layers/attention/fla/fused_recurrent.py
+    symbol: fused_recurrent_gated_delta_rule_fwd_kernel
+    anchor: "def fused_recurrent_gated_delta_rule_fwd_kernel("
+    review_status: verified
+    member_dispositions: [{name: fused_recurrent_gated_delta_rule_fwd_kernel, disposition: reviewed}]
+    expected_ir_views: [linear_attention]
+    obligations:
+      - {id: recurrence, kind: model_ir_primitive, source_anchor: "b_h += b_v[:, None] * b_k[None, :]", disposition: mapped, ir_targets: [linear_attention.delta_rule]}
+
+  - id: gdn_output_gate_formula
+    component: GDN RMSNorm and Z gate
+    source_file: python/sglang/srt/layers/attention/fla/layernorm_gated.py
+    symbol: rms_norm_ref
+    anchor: "def rms_norm_ref("
+    review_status: verified
+    member_dispositions: [{name: rms_norm_ref, disposition: reviewed}]
+    expected_ir_views: [linear_output_gate_norm]
+    obligations:
+      - {id: inputs, kind: tensor_boundary, source_anchor: "def rms_norm_ref(", disposition: mapped, ir_targets: [linear_output_gate_norm.recurrence_output, linear_output_gate_norm.z]}
+      - {id: core_norm, kind: model_ir_primitive, source_anchor: "rstd = 1 / torch.sqrt", disposition: mapped, ir_targets: [linear_output_gate_norm.core_rms_norm]}
+      - {id: z_silu, kind: model_ir_primitive, source_anchor: "out *= F.silu(z)", disposition: mapped, ir_targets: [linear_output_gate_norm.z_silu]}
+      - {id: multiply, kind: model_ir_primitive, source_anchor: "out *= F.silu(z)", disposition: mapped, ir_targets: [linear_output_gate_norm.gated_multiply]}
+      - {id: output, kind: tensor_boundary, source_anchor: "return out.to(dtype)", disposition: mapped, ir_targets: [linear_output_gate_norm.normalized_output]}
+
+  - id: linear_decoder_layer
+    component: inherited linear decoder wrapper
+    source_file: python/sglang/srt/models/qwen3_5.py
+    symbol: Qwen3_5LinearDecoderLayer
+    anchor: "class Qwen3_5LinearDecoderLayer"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [linear_layer]
+    obligations:
+      - {id: wrapper, kind: implementation_only, source_anchor: "def forward(", disposition: excluded, reason: stable layer boundaries are mapped from the Qwen3.8-Flash-Next extension that defines actual HC data flow}
+
+  - id: full_attention
+    component: QSA full-attention data flow
+    source_file: python/sglang/srt/models/qwen4_exp.py
+    symbol: Qwen4ExpAttentionDecoderLayer
+    anchor: "class Qwen4ExpAttentionDecoderLayer"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: self_attention, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [qsa_attention, qsa_qk_norm_rope, qsa_output_gate]
+    obligations:
+      - {id: boundaries, kind: tensor_boundary, source_anchor: "def self_attention(", disposition: mapped, ir_targets: [qsa_attention.attn_in, qsa_attention.attn_out]}
+      - {id: qkv_gate_projection, kind: model_ir_primitive, source_anchor: "qkv, _ = self.qkv_proj(hidden_states)", disposition: mapped, ir_targets: [qsa_attention.qkv_gate_projection]}
+      - {id: qk_inputs, kind: tensor_boundary, source_anchor: "q, k = self._apply_qk_norm(q, k)", disposition: mapped, ir_targets: [qsa_qk_norm_rope.projected_qk]}
+      - {id: q_norm, kind: model_ir_primitive, source_anchor: "q, k = self._apply_qk_norm(q, k)", disposition: mapped, ir_targets: [qsa_qk_norm_rope.q_norm]}
+      - {id: k_norm, kind: model_ir_primitive, source_anchor: "q, k = self._apply_qk_norm(q, k)", disposition: mapped, ir_targets: [qsa_qk_norm_rope.k_norm]}
+      - {id: mrope, kind: model_ir_primitive, source_anchor: "q, k = self.rotary_emb(positions, q, k)", disposition: mapped, ir_targets: [qsa_qk_norm_rope.mrope]}
+      - {id: qk_output, kind: tensor_boundary, source_anchor: "q, k = self.rotary_emb(positions, q, k)", disposition: mapped, ir_targets: [qsa_qk_norm_rope.positioned_qk]}
+      - {id: kv_state, kind: state_update, source_anchor: "self.attn(", disposition: mapped, ir_targets: [qsa_attention.kv_cache]}
+      - {id: indexed_attention, kind: model_ir_primitive, source_anchor: "attn_output = self.attn(", disposition: mapped, ir_targets: [qsa_attention.attention_core]}
+      - {id: gate_inputs, kind: tensor_boundary, source_anchor: "attn_output = attn_output * torch.sigmoid(gate)", disposition: mapped, ir_targets: [qsa_output_gate.attention_output, qsa_output_gate.projected_gate]}
+      - {id: gate_sigmoid, kind: model_ir_primitive, source_anchor: "torch.sigmoid(gate)", disposition: mapped, ir_targets: [qsa_output_gate.gate_sigmoid]}
+      - {id: gate_multiply, kind: model_ir_primitive, source_anchor: "attn_output = attn_output * torch.sigmoid(gate)", disposition: mapped, ir_targets: [qsa_output_gate.gated_multiply]}
+      - {id: gate_output, kind: tensor_boundary, source_anchor: "attn_output = attn_output * torch.sigmoid(gate)", disposition: mapped, ir_targets: [qsa_output_gate.gated_output]}
+      - {id: output_projection, kind: model_ir_primitive, source_anchor: "output, _ = self.o_proj", disposition: mapped, ir_targets: [qsa_attention.output_projection]}
+
+  - id: qsa_indexer
+    component: QSA projection compression selection and state
+    source_file: python/sglang/srt/layers/attention/qsa/qsa_indexer.py
+    symbol: QSAIndexer
+    anchor: "class QSAIndexer"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: _validate_config, disposition: reviewed}
+      - {name: project_qk, disposition: reviewed}
+      - {name: normalize_compressed_keys, disposition: reviewed}
+      - {name: update_key_state_and_compress, disposition: reviewed}
+      - {name: _compress_decode_cuda_graph, disposition: excluded, reason: CUDA Graph layout implementation of the same compression contract}
+      - {name: _get_group_rope_positions, disposition: reviewed}
+      - {name: apply_rope, disposition: reviewed}
+      - {name: select_prefill_tokens, disposition: reviewed}
+      - {name: select_decode_tokens, disposition: reviewed}
+      - {name: forward_cuda, disposition: reviewed}
+    expected_ir_views: [qsa_indexer, qsa_index_query_transform, qsa_index_compress, qsa_index_expand]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: "def forward_cuda(", disposition: mapped, ir_targets: [qsa_indexer.index_in]}
+      - {id: projection, kind: model_ir_primitive, source_anchor: "def project_qk(", disposition: mapped, ir_targets: [qsa_indexer.qk_projection]}
+      - {id: query_input, kind: tensor_boundary, source_anchor: "def apply_rope(", disposition: mapped, ir_targets: [qsa_index_query_transform.projected_query]}
+      - {id: query_norm, kind: model_ir_primitive, source_anchor: "q = self.q_layernorm(q_raw.reshape", disposition: mapped, ir_targets: [qsa_index_query_transform.q_norm]}
+      - {id: query_mrope, kind: model_ir_primitive, source_anchor: "q = self.apply_rope(positions, q)", disposition: mapped, ir_targets: [qsa_index_query_transform.mrope]}
+      - {id: query_output, kind: tensor_boundary, source_anchor: "return q, token_k.reshape", disposition: mapped, ir_targets: [qsa_index_query_transform.positioned_query]}
+      - {id: raw_key_state, kind: state_update, source_anchor: "pool.set_qsa_key_state_buffer(", disposition: mapped, ir_targets: [qsa_indexer.raw_k_cache]}
+      - {id: compressed_key_state, kind: state_update, source_anchor: "pool.set_qsa_compressed_k_buffer(", disposition: mapped, ir_targets: [qsa_indexer.compressed_k_cache]}
+      - {id: compression_input, kind: tensor_boundary, source_anchor: "def normalize_compressed_keys(", disposition: mapped, ir_targets: [qsa_index_compress.raw_keys]}
+      - {id: average_pool, kind: model_ir_primitive, source_anchor: "pooled = average_pool_qsa_keys(key_groups)", disposition: mapped, ir_targets: [qsa_index_compress.average_pool]}
+      - {id: key_norm, kind: model_ir_primitive, source_anchor: "normalized = self.k_layernorm(", disposition: mapped, ir_targets: [qsa_index_compress.key_norm]}
+      - {id: key_mrope, kind: model_ir_primitive, source_anchor: "return self.apply_rope(block_positions, normalized)", disposition: mapped, ir_targets: [qsa_index_compress.key_mrope]}
+      - {id: compressed_key, kind: tensor_boundary, source_anchor: "return self.apply_rope(block_positions, normalized)", disposition: mapped, ir_targets: [qsa_index_compress.compressed_key]}
+      - {id: topk, kind: model_ir_primitive, source_anchor: "block_indices = qsa_fast_topk(", disposition: mapped, ir_targets: [qsa_indexer.block_topk]}
+      - {id: block_expand, kind: model_ir_primitive, source_anchor: "selected = expand_qsa_block_indices(", disposition: mapped, ir_targets: [qsa_index_expand.block_expand]}
+      - {id: causal_tail, kind: model_ir_primitive, source_anchor: "return expand_qsa_block_indices(", disposition: mapped, ir_targets: [qsa_index_expand.causal_tail]}
+      - {id: expand_boundaries, kind: tensor_boundary, source_anchor: "return expand_qsa_block_indices(", disposition: mapped, ir_targets: [qsa_index_expand.selected_blocks, qsa_index_expand.selected_tokens, qsa_indexer.selected_indices]}
+
+  - id: qsa_score_formula
+    component: QSA compressed block score
+    source_file: python/sglang/srt/layers/attention/qsa/mqa.py
+    symbol: torch_qsa_mqa_prefill
+    anchor: "def torch_qsa_mqa_prefill("
+    review_status: verified
+    member_dispositions: [{name: torch_qsa_mqa_prefill, disposition: reviewed}]
+    expected_ir_views: [qsa_index_score]
+    obligations:
+      - {id: inputs, kind: tensor_boundary, source_anchor: "def torch_qsa_mqa_prefill(", disposition: mapped, ir_targets: [qsa_index_score.index_query, qsa_index_score.compressed_keys]}
+      - {id: dot, kind: model_ir_primitive, source_anchor: "scores = torch.einsum", disposition: mapped, ir_targets: [qsa_index_score.mqa_dot]}
+      - {id: relu, kind: model_ir_primitive, source_anchor: "torch.relu(scores)", disposition: mapped, ir_targets: [qsa_index_score.relu]}
+      - {id: reduce_scale, kind: model_ir_primitive, source_anchor: ".sum(dim=-1) /", disposition: mapped, ir_targets: [qsa_index_score.head_reduce]}
+      - {id: output, kind: tensor_boundary, source_anchor: "return logits", disposition: mapped, ir_targets: [qsa_index_score.block_scores]}
+
+  - id: moe_expert_mlp
+    component: routed and shared SwiGLU primitives
+    source_file: python/sglang/srt/models/qwen2_moe.py
+    symbol: Qwen2MoeMLP
+    anchor: "class Qwen2MoeMLP"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [moe_routed_expert, moe_shared_expert]
+    obligations:
+      - {id: inputs, kind: tensor_boundary, source_anchor: "def forward(", disposition: mapped, ir_targets: [moe_routed_expert.expert_input, moe_shared_expert.shared_input]}
+      - {id: gate_projection, kind: model_ir_primitive, source_anchor: "gate_up, _ = self.gate_up_proj(x)", disposition: mapped, ir_targets: [moe_routed_expert.gate_projection, moe_shared_expert.gate_projection]}
+      - {id: up_projection, kind: model_ir_primitive, source_anchor: "gate_up, _ = self.gate_up_proj(x)", disposition: mapped, ir_targets: [moe_routed_expert.up_projection, moe_shared_expert.up_projection]}
+      - {id: silu, kind: model_ir_primitive, source_anchor: "x = self.act_fn(gate_up)", disposition: mapped, ir_targets: [moe_routed_expert.silu, moe_shared_expert.silu]}
+      - {id: product, kind: model_ir_primitive, source_anchor: "x = self.act_fn(gate_up)", disposition: mapped, ir_targets: [moe_routed_expert.gated_product, moe_shared_expert.gated_product]}
+      - {id: down_projection, kind: model_ir_primitive, source_anchor: "self.down_proj", disposition: mapped, ir_targets: [moe_routed_expert.down_projection, moe_shared_expert.down_projection]}
+      - {id: outputs, kind: tensor_boundary, source_anchor: "return x", disposition: mapped, ir_targets: [moe_routed_expert.expert_output, moe_shared_expert.shared_output]}
+
+  - id: moe_topk
+    component: router probability and Top-10 selection
+    source_file: python/sglang/srt/layers/moe/topk.py
+    symbol: fused_topk_torch_native
+    anchor: "def fused_topk_torch_native("
+    review_status: verified
+    member_dispositions: [{name: fused_topk_torch_native, disposition: reviewed}]
+    expected_ir_views: [moe_router_selection]
+    obligations:
+      - {id: input, kind: tensor_boundary, source_anchor: "def fused_topk_torch_native(", disposition: mapped, ir_targets: [moe_router_selection.router_logits]}
+      - {id: softmax, kind: model_ir_primitive, source_anchor: "torch.softmax(gating_output, dim=-1", disposition: mapped, ir_targets: [moe_router_selection.selected_softmax]}
+      - {id: topk, kind: model_ir_primitive, source_anchor: "torch.topk(", disposition: mapped, ir_targets: [moe_router_selection.topk]}
+      - {id: renormalize, kind: model_ir_primitive, source_anchor: "topk_weights = topk_weights /", disposition: mapped, ir_targets: [moe_router_selection.renormalize]}
+      - {id: output, kind: tensor_boundary, source_anchor: "return topk_weights, topk_ids", disposition: mapped, ir_targets: [moe_router_selection.selected_routes]}
+
+  - id: sparse_moe
+    component: router shared gate weighting and combine
+    source_file: python/sglang/srt/models/qwen2_moe.py
+    symbol: Qwen2MoeSparseMoeBlock
+    anchor: "class Qwen2MoeSparseMoeBlock"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: get_moe_weights, disposition: excluded, reason: checkpoint loading}
+      - {name: _get_shared_expert_weights, disposition: excluded, reason: checkpoint loading}
+      - {name: _append_shared_to_topk_output, disposition: excluded, reason: fused execution packing}
+      - {name: _forward_shared_experts, disposition: reviewed}
+      - {name: _forward_deepep, disposition: excluded, reason: EP backend execution path}
+      - {name: _forward_router_experts, disposition: reviewed}
+      - {name: forward_normal_dual_stream, disposition: excluded, reason: stream scheduling of identical model semantics}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [moe, moe_shared_expert, moe_combine]
+    obligations:
+      - {id: boundaries, kind: tensor_boundary, source_anchor: "def forward(", disposition: mapped, ir_targets: [moe.moe_in, moe.moe_out]}
+      - {id: router, kind: model_ir_primitive, source_anchor: "router_logits, _ = self.gate(hidden_states.to(torch.float32))", disposition: mapped, ir_targets: [moe.router]}
+      - {id: shared_scalar_projection, kind: model_ir_primitive, source_anchor: "self.shared_expert_gate(hidden_states)", disposition: mapped, ir_targets: [moe_shared_expert.scalar_gate_projection]}
+      - {id: shared_sigmoid, kind: model_ir_primitive, source_anchor: "F.sigmoid(self.shared_expert_gate(hidden_states))", disposition: mapped, ir_targets: [moe_shared_expert.scalar_sigmoid]}
+      - {id: shared_gate_apply, kind: model_ir_primitive, source_anchor: "* shared_output", disposition: mapped, ir_targets: [moe_shared_expert.gated_shared_output]}
+      - {id: combine_inputs, kind: tensor_boundary, source_anchor: "final_hidden_states", disposition: mapped, ir_targets: [moe_combine.routed_outputs, moe_combine.route_weights, moe_combine.shared_output]}
+      - {id: weighted_sum, kind: model_ir_primitive, source_anchor: "final_hidden_states", disposition: mapped, ir_targets: [moe_combine.weighted_sum]}
+      - {id: shared_add, kind: model_ir_primitive, source_anchor: "final_hidden_states += shared_output", disposition: mapped, ir_targets: [moe_combine.shared_add]}
+      - {id: output, kind: tensor_boundary, source_anchor: "return final_hidden_states", disposition: mapped, ir_targets: [moe_combine.moe_output]}
+
+  - id: mtp_head
+    component: Qwen3.8-Flash-Next one-layer EAGLE auxiliary model
+    source_file: python/sglang/srt/models/qwen4_exp_mtp.py
+    symbol: Qwen4ExpForCausalLMMTP
+    anchor: "class Qwen4ExpForCausalLMMTP"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: _init_pre_fc_norms, disposition: reviewed}
+      - {name: _init_linear_projections, disposition: reviewed}
+      - {name: _init_standard_fusion, disposition: reviewed}
+      - {name: _init_mtp_input_fusion, disposition: reviewed}
+      - {name: _fuse_residual_linear_shared, disposition: reviewed}
+      - {name: _fuse_standard, disposition: reviewed}
+      - {name: _npu_quant_context, disposition: excluded, reason: NPU execution policy outside CUDA scope}
+      - {name: _prepare_input_embeds, disposition: reviewed}
+      - {name: _set_hc_logits_hidden_states, disposition: reviewed}
+      - {name: forward, disposition: reviewed}
+    expected_ir_views: [mtp_head, mtp_embedding_projection, mtp_hidden_projection, mtp_layer, mtp_qsa_attention, mtp_moe]
+    obligations:
+      - {id: candidate_input, kind: tensor_boundary, source_anchor: "input_ids: torch.Tensor", disposition: mapped, ir_targets: [mtp_head.candidate_ids]}
+      - {id: embedding, kind: model_ir_primitive, source_anchor: "self.model.embed_tokens(input_ids)", disposition: mapped, ir_targets: [mtp_head.embedding, mtp_embedding_projection.embedding]}
+      - {id: target_hc_state, kind: state_read, source_anchor: "hidden_states = forward_batch.spec_info.hidden_states", disposition: mapped, ir_targets: [mtp_head.target_hc_states, mtp_hidden_projection.branch_states]}
+      - {id: embedding_norm, kind: model_ir_primitive, source_anchor: "self.pre_fc_norm_embedding(input_embeds)", disposition: mapped, ir_targets: [mtp_embedding_projection.rms_norm]}
+      - {id: embedding_projection, kind: model_ir_primitive, source_anchor: "self.fc_embedding", disposition: mapped, ir_targets: [mtp_embedding_projection.projection]}
+      - {id: embedding_output, kind: tensor_boundary, source_anchor: "input_embeds = self.fc_embedding", disposition: mapped, ir_targets: [mtp_embedding_projection.output]}
+      - {id: hidden_norm, kind: model_ir_primitive, source_anchor: "self.pre_fc_norm_hidden(hidden_states)", disposition: mapped, ir_targets: [mtp_hidden_projection.grouped_norm]}
+      - {id: hidden_projection, kind: model_ir_primitive, source_anchor: "encoder_inputs = self.fc_hidden(decoder_view)", disposition: mapped, ir_targets: [mtp_hidden_projection.shared_projection]}
+      - {id: residual_fusion, kind: model_ir_primitive, source_anchor: "input_embeds.unsqueeze(-2) + encoder_inputs", disposition: mapped, ir_targets: [mtp_head.residual_fusion]}
+      - {id: hidden_output, kind: tensor_boundary, source_anchor: "return (input_embeds.unsqueeze(-2) + encoder_inputs).view(orig_shape)", disposition: mapped, ir_targets: [mtp_hidden_projection.output]}
+      - {id: layer_boundaries, kind: tensor_boundary, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_layer.layer_in, mtp_layer.layer_out]}
+      - {id: qsa_boundaries, kind: tensor_boundary, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_qsa_attention.attn_in, mtp_qsa_attention.attn_out, mtp_qsa_attention.kv_cache]}
+      - {id: qsa_projection, kind: model_ir_primitive, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_qsa_attention.qkv_gate_projection, mtp_qsa_attention.output_projection]}
+      - {id: qsa_core, kind: model_ir_primitive, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_qsa_attention.attention_core]}
+      - {id: moe_boundaries, kind: tensor_boundary, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_moe.moe_in, mtp_moe.moe_out]}
+      - {id: moe_router, kind: model_ir_primitive, source_anchor: "model_output = self.model(", disposition: mapped, ir_targets: [mtp_moe.router]}
+      - {id: lm_head, kind: model_ir_primitive, source_anchor: "self.lm_head = ParallelLMHead(", disposition: mapped, ir_targets: [mtp_head.lm_head]}
+      - {id: draft_logits, kind: tensor_boundary, source_anchor: "logits_output = self.logits_processor(", disposition: mapped, ir_targets: [mtp_head.draft_logits]}
+
+  - id: eagle_generation
+    component: EAGLE target verify accept and draft extend
+    source_file: python/sglang/srt/speculative/eagle_worker.py
+    symbol: EAGLEWorker
+    anchor: "class EAGLEWorker"
+    review_status: verified
+    member_dispositions:
+      - {name: __init__, disposition: reviewed}
+      - {name: init_attention_backend, disposition: excluded, reason: backend construction}
+      - {name: init_cuda_graphs, disposition: excluded, reason: capture construction}
+      - {name: apply_runtime_state, disposition: excluded, reason: runtime scheduler state}
+      - {name: build_adaptive_runtime_state, disposition: excluded, reason: runtime scheduler state}
+      - {name: _override_worker_state, disposition: excluded, reason: runtime scheduler state}
+      - {name: draft_model_runner, disposition: excluded, reason: runner accessor}
+      - {name: forward_batch_generation, disposition: reviewed}
+      - {name: check_forward_draft_extend_after_decode, disposition: excluded, reason: scheduler guard}
+      - {name: forward_target_extend, disposition: reviewed}
+      - {name: _draft_preprocess_decode, disposition: reviewed}
+      - {name: _draft_preprocess_idle, disposition: excluded, reason: zero-work idle path}
+      - {name: draft, disposition: reviewed}
+      - {name: draft_forward, disposition: reviewed}
+      - {name: clear_cache_pool, disposition: excluded, reason: memory management}
+      - {name: verify, disposition: reviewed}
+      - {name: _mamba_verify_update, disposition: excluded, reason: model-specific runtime helper outside Qwen3.8-Flash-Next}
+      - {name: forward_draft_extend, disposition: reviewed}
+      - {name: forward_draft_extend_after_decode, disposition: reviewed}
+      - {name: capture_for_decode, disposition: reviewed}
+      - {name: update_weights_from_distributed, disposition: excluded, reason: online weight update}
+      - {name: update_weights_from_tensor, disposition: excluded, reason: online weight update}
+    expected_ir_views: [mtp_generation]
+    obligations:
+      - {id: prompt, kind: tensor_boundary, source_anchor: "def forward_target_extend", disposition: mapped, ir_targets: [mtp_generation.prompt]}
+      - {id: proposal_cache, kind: state_read, source_anchor: "def _draft_preprocess_decode", disposition: mapped, ir_targets: [mtp_generation.proposal_cache]}
+      - {id: proposal_select, kind: model_ir_primitive, source_anchor: "def draft(", disposition: mapped, ir_targets: [mtp_generation.draft_select]}
+      - {id: accept_commit, kind: state_update, source_anchor: "def verify(", disposition: mapped, ir_targets: [mtp_generation.accept_commit]}
+      - {id: proposal_update, kind: state_update, source_anchor: "def capture_for_decode(", disposition: mapped, ir_targets: [mtp_generation.proposal_update]}
+      - {id: emitted_tokens, kind: tensor_boundary, source_anchor: "def verify(", disposition: mapped, ir_targets: [mtp_generation.emitted_tokens]}
+
+  - id: eagle_state_contract
+    component: EAGLE candidate tree and proposal lifecycle
+    source_file: python/sglang/srt/speculative/eagle_info.py
+    symbol: EagleVerifyInput
+    anchor: "class EagleVerifyInput("
+    review_status: verified
+    member_dispositions:
+      - {name: __post_init__, disposition: reviewed}
+      - {name: get_spec_adjust_token_coefficient, disposition: excluded, reason: scheduler accounting}
+      - {name: create_idle_input, disposition: excluded, reason: zero-work idle path}
+      - {name: prepare_for_verify, disposition: reviewed}
+      - {name: generate_attn_arg_prefill, disposition: excluded, reason: backend attention layout}
+      - {name: verify, disposition: reviewed}
+    expected_ir_views: [mtp_generation]
+    obligations:
+      - {id: state_contract, kind: implementation_only, source_anchor: "def prepare_for_verify(", disposition: excluded, reason: candidate and accepted-path leaves are mapped from the worker operations that consume and update this state}
+
+reverse_exclusions:
+  - {target: top.runtime_support, reason: execution metadata and cache preparation}
+  - {target: linear_attention.split_pack, reason: shape-only split reshape and packing boundary}
+  - {target: qsa_attention.metadata, reason: backend layout and valid-count execution support}
+  - {target: mtp_qsa_attention.metadata, reason: backend layout and valid-count execution support}
+  - {target: hyperconnection.hc_in, reason: compatibility aggregate view; detailed HC views are authoritative}
+  - {target: hyperconnection.branch_norm, reason: compatibility runtime aggregate; detailed HC views are authoritative}
+  - {target: hyperconnection.low_rank_gate, reason: compatibility runtime aggregate; detailed HC read view is authoritative}
+  - {target: hyperconnection.mix, reason: measured runtime owner retained for existing profiles}
+  - {target: hyperconnection.combine, reason: measured runtime owner retained for existing profiles}
+  - {target: hyperconnection.hc_out, reason: compatibility aggregate view; detailed HC views are authoritative}

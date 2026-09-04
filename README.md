@@ -27,7 +27,7 @@ This tool makes the mapping clickable:
 
 | model | status | notes |
 |-------|--------|-------|
-| [Qwen 4.0 Air Example IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen40_v2) | ✅ local/profiled | stable 48-layer Model IR + pure TP4, Attention DP4, and DP4/EP4 DeepEP execution paths + pinned SGLang bindings + GB300 CUDA Graph BS1/16/64/256 overlays |
+| [Qwen3.8-Flash-Next IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen38_flash_next_v2) | ✅ local/profiled | stable 48-layer Model IR + pure TP4, Attention DP4, and DP4/EP4 DeepEP execution paths + pinned SGLang bindings + GB300 CUDA Graph BS1/16/64/256 overlays |
 | [Qwen3.5 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=qwen35_v2) | ✅ local/profiled | framework-independent 60-layer hybrid Model IR + validated pure TP8 SGLang/vLLM bindings + 10 CMH GB300 production profiles (prefill BS1 and CUDA Graph decode BS1/16/64/256) |
 | [GLM-5.2 NVFP4 IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm52_v2) | ✅ local/profiled | pure TP8 SGLang/TRT-LLM bindings on CMH GB300; 7 accepted profiles, with TRT-LLM prefill/BS1/BS16 explicitly unsupported under the fixed production capture contract |
 | [GLM-5.3-Flash IR-first V2](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=glm53_flash_v2) | ✅ local/profiled | one stable multimodal Model IR; pure TP8 SGLang/vLLM bindings; 10 accepted CMH GB300 profiles covering prefill BS1 and CUDA Graph decode BS1/16/64/256 |
@@ -77,7 +77,7 @@ python3 -m pip install -e '.[dev]'
 
 # rebuild catalog data for one model
 python3 scripts/build_v2.py --model qwen35
-python3 scripts/build_v2.py --model qwen40
+python3 scripts/build_v2.py --model qwen38_flash_next
 python3 scripts/build_v2.py --model kimi_k3
 python3 scripts/build_v2.py --model deepseek_v4_pro
 
@@ -113,7 +113,7 @@ scripts/viewer_server.sh restart
 scripts/viewer_server.sh stop
 open http://localhost:8765/                              # landing
 open 'http://localhost:8765/viewer.html?model=qwen35_v2' # IR-first Qwen3.5 V2
-open 'http://localhost:8765/viewer.html?model=qwen40_v2' # IR-first Qwen 4.0 V2
+open 'http://localhost:8765/viewer.html?model=qwen38_flash_next_v2' # IR-first Qwen3.8-Flash-Next V2
 open 'http://localhost:8765/viewer.html?model=glm52_v2'  # IR-first GLM-5.2 V2
 open 'http://localhost:8765/viewer.html?model=glm53_flash_v2' # IR-first GLM-5.3-Flash V2
 open 'http://localhost:8765/viewer.html?model=kimi_k3_v2' # IR-first Kimi K3 V2

@@ -693,6 +693,11 @@ framework 的 architecture owner。
 
 ### Reproducibility
 
+- Canonical `model_id` 和 `model_label` 必须来自模型发布方的官方 repository
+  或 checkpoint metadata。产品重命名必须原子化迁移 catalog/tool/bundle ID、
+  generated Timeline profile ID、公开链接和测试。向后兼容 alias 只能存在于共享
+  Viewer 的 URL 边界；固定的 source symbol、source path、revision 和 raw evidence
+  文件名属于 immutable provenance，不得随产品展示名称一起改写。
 - 记录 source/config/run/baseline-log/window-selection/trace hash 和 producer version。
 - 对同一个 catalog 的 rebuild 必须是 deterministic 的。
 - 在认定 adapter 或 viewer change 具有通用性之前，至少使用第二个 framework 或第二个 model fixture 验证 generic path。
@@ -714,7 +719,7 @@ framework 的 architecture owner。
 
 ## 10. 当前迁移状态
 
-Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六个 catalog：Qwen 4.0、Qwen3.5、GLM-5.2、GLM-5.3-Flash、Kimi K3 和 DeepSeek V4 Pro。Catalog 已经包含 Model IR、Execution Plan、Implementation Binding、accepted Profile，以及在对应 framework 支持时来自 SGLang、vLLM 和 TensorRT-LLM 的 immutable Timeline evidence。Shared execution fingerprint、eager-validation attestation、fusion ownership、semantic closure、Timeline attribution、同步 comparison 和 real-browser audit primitives 都已经实现。
+Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六个 catalog：Qwen3.8-Flash-Next、Qwen3.5、GLM-5.2、GLM-5.3-Flash、Kimi K3 和 DeepSeek V4 Pro。Catalog 已经包含 Model IR、Execution Plan、Implementation Binding、accepted Profile，以及在对应 framework 支持时来自 SGLang、vLLM 和 TensorRT-LLM 的 immutable Timeline evidence。Shared execution fingerprint、eager-validation attestation、fusion ownership、semantic closure、Timeline attribution、同步 comparison 和 real-browser audit primitives 都已经实现。
 
 M0 新增 `scripts/release_audit.py` 作为 model-neutral 的 release 入口。Static level 会重新编译 catalog、比较 published bundle 的精确内容、验证公开 model inventory 和 content-addressed Timeline artifact，并对无法解释的 production kernel fail closed。Release level 会进一步执行真实 browser audit。仅通过 static gate 不会被标记为 release-ready。
 

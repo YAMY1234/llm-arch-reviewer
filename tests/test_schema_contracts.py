@@ -51,7 +51,7 @@ def test_semantic_source_ledgers_match_json_schema(ledger_path: Path) -> None:
 
 
 def test_dimension_symbol_contracts_are_complete_and_fail_closed() -> None:
-    for model in ("qwen40", "qwen35"):
+    for model in ("qwen38_flash_next", "qwen35"):
         bundle = compile_catalog(CATALOG_ROOT / model)
         dimensions = bundle["model_ir"]["dimensions"]
         symbols = bundle["model_ir"]["dimension_symbols"]
@@ -63,8 +63,8 @@ def test_dimension_symbol_contracts_are_complete_and_fail_closed() -> None:
             "provenance": "validated profile workload.batch_size",
         }
 
-    qwen40 = compile_catalog(CATALOG_ROOT / "qwen40")
-    draft = qwen40["model_ir"]["dimension_symbols"]["D"]
+    qwen38_flash_next = compile_catalog(CATALOG_ROOT / "qwen38_flash_next")
+    draft = qwen38_flash_next["model_ir"]["dimension_symbols"]["D"]
     assert draft["value_class"] == "stage_dependent"
     assert draft["stage_resolutions"] == [
         {
@@ -81,11 +81,11 @@ def test_dimension_symbol_contracts_are_complete_and_fail_closed() -> None:
 def test_dimension_symbol_schema_rejects_unscoped_or_unknown_stage_resolution(
     tmp_path: Path,
 ) -> None:
-    source = yaml.safe_load((CATALOG_ROOT / "qwen40" / "model_ir.yaml").read_text())
+    source = yaml.safe_load((CATALOG_ROOT / "qwen38_flash_next" / "model_ir.yaml").read_text())
     source["dimension_symbols"]["D"]["stage_resolutions"][0]["scope_targets"] = [
         "missing.stage"
     ]
-    model_root = tmp_path / "qwen40"
+    model_root = tmp_path / "qwen38_flash_next"
     model_root.mkdir()
     (model_root / "model_ir.yaml").write_text(yaml.safe_dump(source, sort_keys=False))
     # Copying a complete catalog is unnecessary: dimension validation happens
