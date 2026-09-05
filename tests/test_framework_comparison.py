@@ -26,6 +26,21 @@ def test_comparison_compiler_indexes_only_explicit_framework_ids() -> None:
             )
 
 
+def test_qwen38_current_and_previous_traces_are_exact_same_execution_candidates() -> None:
+    bundle = compile_catalog(REPO_ROOT / "catalog" / "qwen38_flash_next")
+    profile_ids = (
+        "qwen38_flash_next_tp4_mtp_cg_decode_gbs001_8k1k_bind_ba79b6e52262fede",
+        "qwen38_flash_next_tp4_mtp_cg_decode_gbs001_8k1k",
+    )
+    profiles = [bundle["profiles"][profile_id] for profile_id in profile_ids]
+    assert len({profile["execution_variant"] for profile in profiles}) == 1
+    assert len({profile["meta"]["comparison_contract_id"] for profile in profiles}) == 1
+    assert {profile["meta"]["trace_time"]["basis"] for profile in profiles} == {
+        "cataloged"
+    }
+    assert all(profile["meta"]["timeline"] for profile in profiles)
+
+
 def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     viewer = (REPO_ROOT / "docs" / "viewer.html").read_text()
     assert 'const requestedProfile = d.profiles?.[qs.get("profile") || ""]' in viewer
@@ -38,7 +53,13 @@ def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     assert "comparisonExecutionIrCompatible" in viewer
     assert "MAX_COMPARISON_IMPLEMENTATIONS = 3" in viewer
     assert "comparisonContractDifference" in viewer
-    assert "shared Model IR with separate validated Execution IR fingerprints" in viewer
+    assert "profilesForImplementationInExecution" in viewer
+    assert 'shortReason: "Different Execution IR"' in viewer
+    assert 'badge.textContent = "Exact workload"' in viewer
+    assert "Different workload" in viewer
+    assert "traceTimeForProfile" in viewer
+    assert "positionImplementationOptions" in viewer
+    assert "Comparable · same Execution IR" in viewer
     assert "execution?.enriched?.[viewName]" in viewer
     assert "appendComparisonFusionOwnerNodeLink" in viewer
     assert "renderComparisonDetails" in viewer
@@ -137,8 +158,9 @@ def test_real_browser_comparison_audit_covers_release_contract() -> None:
         "relative_range_transform_sync",
         "url_history_reload",
         "glm53_real_sglang_vllm",
-        "distinct_execution_ir",
-        "missing_exact_match",
+        "different_execution_ir_disabled",
+        "same_execution_different_workload_allowed",
+        "compact_trace_picker",
         "synthetic_three_frameworks",
     ):
         assert required in audit

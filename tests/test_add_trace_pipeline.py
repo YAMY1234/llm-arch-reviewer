@@ -505,6 +505,7 @@ def _accepted_fixture() -> tuple[dict, dict, dict, dict, dict]:
         "plan_sha256": plan["plan_sha256"],
         "status": "pass",
         "phase": "decode",
+        "captured_at": "2026-09-05T14:00:01Z",
         "cuda_graph_enabled": True,
         "protocol_artifact": {
             "path": "production-protocol.json",
@@ -562,10 +563,33 @@ def test_eager_and_production_evidence_accept_only_with_full_closure() -> None:
         fixture[2]["runtime_evidence_artifacts"]
     )
     assert accepted["window_selection_sha256"] == HEX
+    assert accepted["production_captured_at"] == "2026-09-05T14:00:01Z"
     assert accepted["manifest_sha256"] == fixture[1]["manifest_sha256"]
     assert accepted["plan_sha256"] == fixture[1]["plan_sha256"]
     assert "model_ir" not in accepted
     assert "execution_ir" not in accepted
+
+
+def test_production_capture_time_is_required_and_timezone_qualified() -> None:
+    missing = list(_accepted_fixture())
+    missing[4].pop("captured_at")
+    with pytest.raises(AddTraceError, match="captured_at"):
+        accept_evidence(
+            *missing,
+            model_root=MODEL_ROOT,
+            source=Path("fixture.yaml"),
+            verify_files=False,
+        )
+
+    naive = list(_accepted_fixture())
+    naive[4]["captured_at"] = "2026-09-05T14:00:01"
+    with pytest.raises(AddTraceError, match="explicit timezone"):
+        accept_evidence(
+            *naive,
+            model_root=MODEL_ROOT,
+            source=Path("fixture.yaml"),
+            verify_files=False,
+        )
 
 
 def test_binding_materialization_drops_incompatible_template_inheritance() -> None:

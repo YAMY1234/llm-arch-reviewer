@@ -83,13 +83,37 @@
   .implementation-multi > summary::-webkit-details-marker { display: none; }
   .implementation-multi > summary::after { content: "▾"; position: absolute; right: 7px; }
   .implementation-options {
-    position: fixed; z-index: 80; min-width: 330px; max-width: 520px; padding: 8px;
+    position: fixed; z-index: 80; width: min(620px, calc(100vw - 24px)); padding: 6px;
+    max-height: min(430px, calc(100vh - 72px)); overflow-y: auto; overflow-x: hidden;
     border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
     box-shadow: 0 8px 28px rgba(31,35,40,.18);
   }
-  .implementation-option { display: grid; grid-template-columns: 20px 1fr; gap: 3px 6px; padding: 6px; }
+  .implementation-group-label {
+    position: sticky; top: -6px; z-index: 1; margin: 0 -6px; padding: 5px 8px;
+    color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--border);
+    font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  }
+  .implementation-group-label.unavailable { margin-top: 4px; border-top: 1px solid var(--border); }
+  .implementation-option {
+    display: flex; align-items: center; gap: 7px; min-height: 32px; padding: 4px 6px;
+    white-space: nowrap; overflow: hidden; cursor: pointer;
+  }
   .implementation-option + .implementation-option { border-top: 1px solid var(--border); }
-  .implementation-option .reason { grid-column: 2; color: var(--muted); font-size: 10px; }
+  .implementation-option.unavailable { opacity: .54; cursor: not-allowed; }
+  .implementation-option input { flex: 0 0 auto; margin: 0; }
+  .implementation-option .framework { flex: 0 0 78px; font-weight: 700; }
+  .implementation-option .implementation-label {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    color: var(--muted); font-size: 10px;
+  }
+  .implementation-option .comparison-badge,
+  .implementation-option .trace-time {
+    flex: 0 0 auto; border-radius: 999px; padding: 2px 6px; font-size: 9px;
+  }
+  .implementation-option .comparison-badge { color: var(--link); background: var(--select); }
+  .implementation-option .comparison-badge.warning { color: #8a5200; background: #fff1c2; }
+  .implementation-option .comparison-badge.blocked { color: var(--muted); background: var(--bg); }
+  .implementation-option .trace-time { color: var(--muted); background: var(--bg); }
   #profile-select { max-width: 330px; }
   #sol-select { max-width: 300px; }
   #variant-select { max-width: 190px; }
@@ -823,29 +847,66 @@ function comparisonContractDifference(left, right) {
     .sort();
 }
 
-function unavailableComparisonReason(implementationId, anchor) {
-  const candidates = Object.entries(DATA?.profiles || {})
-    .filter(([, profile]) => profile.implementation_id === implementationId)
-    .map(([profileId, profile]) => ({
+function profilesForImplementationInExecution(implementationId, executionId) {
+  return Object.entries(DATA?.profiles || {})
+    .filter(([, profile]) =>
+      profile.implementation_id === implementationId
+      && profile.execution_variant === executionId
+    )
+    .map(([profileId, profile]) => ({profileId, profile}));
+}
+
+function closestComparisonProfile(implementationId, executionId, anchor, exactMatches) {
+  const candidates = profilesForImplementationInExecution(implementationId, executionId)
+    .map(({profileId, profile}) => ({
       profileId,
+      profile,
+      exact: exactMatches?.[implementationId] === profileId,
       differences: comparisonContractDifference(
         anchor?.meta?.comparison_contract,
         profile?.meta?.comparison_contract,
       ),
     }))
     .sort((left, right) =>
-      left.differences.length - right.differences.length
+      Number(right.exact) - Number(left.exact)
+      || left.differences.length - right.differences.length
       || left.profileId.localeCompare(right.profileId)
     );
-  if (!candidates.length) {
-    return "No validated production profile is available for this implementation";
+  return candidates[0] || null;
+}
+
+function traceTimeForProfile(profileId) {
+  const meta = DATA?.profiles?.[profileId]?.meta || {};
+  const explicit = meta.trace_time || {};
+  if (explicit.timestamp) {
+    return {
+      timestamp: explicit.timestamp,
+      basis: explicit.basis || "recorded",
+      provenance: explicit.provenance || "profile.trace_time",
+    };
   }
-  const closest = candidates[0];
-  const dimensions = closest.differences.slice(0, 4).join(", ");
-  const extra = closest.differences.length > 4 ? ` +${closest.differences.length - 4} more` : "";
-  return dimensions
-    ? `No exact comparison contract; closest profile differs in ${dimensions}${extra}`
-    : "No unique production profile with the exact comparison contract";
+  return null;
+}
+
+function formatTraceTime(traceTime) {
+  if (!traceTime?.timestamp) return "Time unavailable";
+  const parsed = new Date(traceTime.timestamp);
+  if (!Number.isFinite(parsed.getTime())) return "Time unavailable";
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  }).format(parsed);
+  const basis = traceTime.basis.charAt(0).toUpperCase() + traceTime.basis.slice(1);
+  return `${basis} ${formatted}`;
+}
+
+function compactImplementationIdentity(implementationId) {
+  const implementation = RAW_DATA?.implementations?.[implementationId] || {};
+  const label = String(implementation.label || implementationId);
+  const pr = label.match(/PR\s*#(\d+)/i)?.[1];
+  const commit = String(implementation.source_commit || "").slice(0, 8);
+  if (pr && commit) return `PR #${pr} · ${commit}`;
+  if (commit) return commit;
+  return label;
 }
 
 function comparisonExecutionIrCompatible(contexts = comparisonContextList()) {
@@ -859,7 +920,7 @@ function enforceComparisonIrLayer() {
   if (executionOption) executionOption.disabled = incompatible;
   if (select) {
     select.title = incompatible
-      ? "Selected implementations have distinct validated Execution IR fingerprints; comparison is shown on shared Model IR."
+      ? "Comparison is restricted to one validated Execution IR."
       : "";
   }
   if (incompatible && CURRENT_IR_LAYER !== "model") {
@@ -873,8 +934,12 @@ function enforceComparisonIrLayer() {
 function rebuildComparisonContexts(requested = SELECTED_IMPLEMENTATIONS) {
   const anchor = DATA?.profiles?.[CURRENT_PROFILE];
   const contractId = anchor?.meta?.comparison_contract_id || "";
-  const matches = profilesForComparisonContract(contractId);
-  const available = Object.keys(matches).filter(id => matches[id]).sort(compareImplementations);
+  const {rows} = comparisonAvailability();
+  const selectableRows = rows.filter(row => !row.unavailableReason && row.profileId);
+  const rowsByImplementation = Object.fromEntries(
+    selectableRows.map(row => [row.implementationId, row])
+  );
+  const available = selectableRows.map(row => row.implementationId);
   let selected = [...new Set(requested || [])].filter(id => available.includes(id));
   if (!selected.length && CURRENT_IMPLEMENTATION && available.includes(CURRENT_IMPLEMENTATION)) {
     selected = [CURRENT_IMPLEMENTATION];
@@ -884,7 +949,7 @@ function rebuildComparisonContexts(requested = SELECTED_IMPLEMENTATIONS) {
   selected = selected.slice(0, MAX_COMPARISON_IMPLEMENTATIONS);
   if (selected.length) {
     const primaryImplementation = selected[0];
-    const primaryProfile = matches[primaryImplementation];
+    const primaryProfile = rowsByImplementation[primaryImplementation].profileId;
     const primaryExecution = DATA.profiles[primaryProfile]?.execution_variant || "";
     if (CURRENT_IMPLEMENTATION !== primaryImplementation || CURRENT_EXECUTION !== primaryExecution) {
       CURRENT_IMPLEMENTATION = primaryImplementation;
@@ -899,13 +964,14 @@ function rebuildComparisonContexts(requested = SELECTED_IMPLEMENTATIONS) {
     {
       implementation_id: implementationId,
       framework: implementationFramework(implementationId),
-      profile_id: matches[implementationId],
-      execution_variant_id: DATA.profiles[matches[implementationId]]?.execution_variant || "",
-      comparison_contract_id: contractId,
+      profile_id: rowsByImplementation[implementationId].profileId,
+      execution_variant_id: DATA.profiles[rowsByImplementation[implementationId].profileId]?.execution_variant || "",
+      comparison_contract_id: comparisonContractForProfile(rowsByImplementation[implementationId].profileId),
+      comparison_differences: rowsByImplementation[implementationId].differences,
     },
   ]));
   enforceComparisonIrLayer();
-  return {matches, available};
+  return {rowsByImplementation, available};
 }
 
 function comparisonContextList() {
@@ -1572,37 +1638,112 @@ function refreshImplementationOptions(preferred = "") {
 function updateImplementationSummary() {
   const summary = document.getElementById("implementation-summary");
   const contexts = comparisonContextList();
+  const repeatedFrameworks = new Set(
+    contexts
+      .filter((context, index) => contexts.findIndex(item => item.framework === context.framework) !== index)
+      .map(context => context.framework)
+  );
   summary.textContent = contexts.length
-    ? contexts.map(context => context.framework).join(" + ")
+    ? contexts.map(context => repeatedFrameworks.has(context.framework)
+      ? `${context.framework} ${compactImplementationIdentity(context.implementation_id)}`
+      : context.framework
+    ).join(" + ")
     : "—";
   summary.title = contexts.map(context =>
-    `${context.framework}: ${context.implementation_id} / ${context.profile_id}`
+    `${context.framework}: ${context.implementation_id} / ${context.profile_id} / ${formatTraceTime(traceTimeForProfile(context.profile_id))}`
   ).join("\n");
 }
 
 function comparisonAvailability() {
   const anchor = DATA?.profiles?.[CURRENT_PROFILE];
+  const anchorExecution = anchor?.execution_variant || CURRENT_EXECUTION || "";
   const contractId = anchor?.meta?.comparison_contract_id || "";
-  const matches = profilesForComparisonContract(contractId);
+  const exactMatches = profilesForComparisonContract(contractId);
   const rows = [];
   for (const implementationId of Object.keys(RAW_DATA?.implementations || {}).sort(compareImplementations)) {
-    let unavailableReason = "";
-    if (!matches[implementationId]) {
-      unavailableReason = unavailableComparisonReason(implementationId, anchor);
+    const implementation = RAW_DATA.implementations[implementationId] || {};
+    const implementationExecution = implementation.execution_variant || "";
+    if (implementationExecution !== anchorExecution) {
+      rows.push({
+        implementationId,
+        profileId: "",
+        exact: false,
+        differences: [],
+        unavailableReason: `Different Execution IR: ${implementationExecution || "unbound"}; selected ${anchorExecution}`,
+        shortReason: "Different Execution IR",
+      });
+      continue;
     }
-    rows.push({implementationId, profileId: matches[implementationId] || "", unavailableReason});
+    const closest = closestComparisonProfile(
+      implementationId, anchorExecution, anchor, exactMatches
+    );
+    if (!closest) {
+      rows.push({
+        implementationId,
+        profileId: "",
+        exact: false,
+        differences: [],
+        unavailableReason: "No validated production profile exists for this implementation in the selected Execution IR",
+        shortReason: "No production trace",
+      });
+      continue;
+    }
+    rows.push({
+      implementationId,
+      profileId: closest.profileId,
+      exact: closest.exact || closest.differences.length === 0,
+      differences: closest.differences,
+      unavailableReason: "",
+      shortReason: "",
+    });
   }
-  return {contractId, matches, rows};
+  rows.sort((left, right) =>
+    Number(!!left.unavailableReason) - Number(!!right.unavailableReason)
+    || Number(!left.exact) - Number(!right.exact)
+    || compareImplementations(left.implementationId, right.implementationId)
+  );
+  return {contractId, exactMatches, rows};
+}
+
+function positionImplementationOptions() {
+  const multi = document.getElementById("implementation-multi");
+  const summary = document.getElementById("implementation-summary");
+  const options = document.getElementById("implementation-options");
+  if (!multi?.open || !summary || !options) return;
+  const rect = summary.getBoundingClientRect();
+  const margin = 8;
+  const width = Math.min(620, window.innerWidth - margin * 2);
+  options.style.width = `${width}px`;
+  options.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))}px`;
+  const below = window.innerHeight - rect.bottom - margin;
+  const above = rect.top - margin;
+  const openAbove = below < 220 && above > below;
+  const availableHeight = Math.max(140, Math.min(430, openAbove ? above : below));
+  options.style.maxHeight = `${availableHeight}px`;
+  options.style.top = openAbove ? "auto" : `${rect.bottom + 4}px`;
+  options.style.bottom = openAbove ? `${window.innerHeight - rect.top + 4}px` : "auto";
 }
 
 function refreshComparisonImplementationOptions() {
   if (!isV2Bundle() || EMBEDDED_TIMELINE || EMBEDDED_DETAIL) return;
-  const {matches, rows} = comparisonAvailability();
+  const {rows} = comparisonAvailability();
   const options = document.getElementById("implementation-options");
   options.innerHTML = "";
+  let unavailableGroupStarted = false;
+  const appendGroup = (text, unavailable = false) => {
+    const group = document.createElement("div");
+    group.className = `implementation-group-label${unavailable ? " unavailable" : ""}`;
+    group.textContent = text;
+    options.appendChild(group);
+  };
+  appendGroup("Comparable · same Execution IR");
   for (const row of rows) {
+    if (row.unavailableReason && !unavailableGroupStarted) {
+      unavailableGroupStarted = true;
+      appendGroup("Unavailable · other Execution IRs", true);
+    }
     const label = document.createElement("label");
-    label.className = "implementation-option";
+    label.className = `implementation-option${row.unavailableReason ? " unavailable" : ""}`;
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = row.implementationId;
@@ -1640,13 +1781,52 @@ function refreshComparisonImplementationOptions() {
       }
     });
     const name = document.createElement("span");
+    name.className = "framework";
     name.textContent = implementationFramework(row.implementationId);
-    const detail = document.createElement("small");
-    detail.textContent = row.unavailableReason || RAW_DATA.implementations[row.implementationId]?.label || row.implementationId;
-    if (row.unavailableReason) label.title = row.unavailableReason;
-    label.append(checkbox, name, detail);
+    const detail = document.createElement("span");
+    detail.className = "implementation-label";
+    detail.textContent = compactImplementationIdentity(row.implementationId);
+    const badge = document.createElement("span");
+    badge.className = "comparison-badge";
+    if (row.unavailableReason) {
+      badge.classList.add("blocked");
+      badge.textContent = row.shortReason;
+    } else if (row.exact) {
+      badge.textContent = "Exact workload";
+    } else {
+      badge.classList.add("warning");
+      badge.textContent = `Different workload · ${row.differences.length}`;
+    }
+    const traceTime = row.profileId ? traceTimeForProfile(row.profileId) : null;
+    const time = document.createElement("span");
+    time.className = "trace-time";
+    time.textContent = formatTraceTime(traceTime);
+    const implementation = RAW_DATA.implementations[row.implementationId] || {};
+    const profile = row.profileId ? DATA.profiles[row.profileId] : null;
+    label.title = [
+      `${implementationFramework(row.implementationId)} · ${implementation.label || row.implementationId}`,
+      `Implementation: ${row.implementationId}`,
+      `Execution IR: ${implementation.execution_variant || "unbound"}`,
+      row.profileId ? `Profile: ${row.profileId} · ${profile?.meta?.label || ""}` : "",
+      row.exact ? "Workload contract: exact match" : "",
+      row.differences?.length ? `Workload differences: ${row.differences.join(", ")}` : "",
+      traceTime ? `Trace time: ${traceTime.timestamp} (${traceTime.basis})` : "Trace time: unavailable in accepted provenance",
+      traceTime?.provenance ? `Time provenance: ${traceTime.provenance}` : "",
+      row.unavailableReason,
+    ].filter(Boolean).join("\n");
+    label.append(checkbox, name, detail, badge, time);
     options.appendChild(label);
   }
+  const multi = document.getElementById("implementation-multi");
+  if (!multi.dataset.positionBound) {
+    multi.dataset.positionBound = "true";
+    multi.addEventListener("toggle", positionImplementationOptions);
+    window.addEventListener("resize", positionImplementationOptions);
+    document.querySelector("header .controls")?.addEventListener(
+      "scroll", positionImplementationOptions, {passive: true}
+    );
+  }
+  requestAnimationFrame(positionImplementationOptions);
   updateImplementationSummary();
 }
 
@@ -2758,7 +2938,7 @@ function renderComparisonTimelines() {
     } else {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "No production timeline in this exact comparison contract.";
+      empty.textContent = "No production timeline is attached to this selected profile.";
       card.appendChild(empty);
     }
     container.appendChild(card);
@@ -5420,8 +5600,8 @@ function showDetail(n, viewName) {
       <td class="name" title="${escapeHtml(proof)}">${escapeHtml(shorten(proof || "no binding evidence", 36))}</td>
     </tr>`;
   }).join("") : "";
-  const comparisonHtml = comparisonRows ? `<h3>Framework comparison</h3>
-    <div style="color:var(--muted); font-size:11px; margin-bottom:6px">Exact compiler-generated contract: <code>${escapeHtml(CURRENT_COMPARISON_CONTRACT)}</code> · ${comparisonExecutionIrCompatible() ? "shared validated Execution IR" : "shared Model IR with separate validated Execution IR fingerprints"}</div>
+  const comparisonHtml = comparisonRows ? `<h3>Implementation comparison</h3>
+    <div style="color:var(--muted); font-size:11px; margin-bottom:6px">Hard boundary: shared validated Execution IR <code>${escapeHtml(CURRENT_EXECUTION)}</code>. Workload-contract differences remain explicit per selected profile.</div>
     <table class="kernels comparison-evidence-table"><thead><tr><th class="name">framework</th><th class="name">production profile</th><th class="name">Execution IR</th><th>mapping / timing</th><th class="name">binding proof</th></tr></thead><tbody>${comparisonRows}</tbody></table>` : "";
 
   const visibleVariants = context ? {[CURRENT_VARIANT || "ALL"]: scopedCell} : profCur;

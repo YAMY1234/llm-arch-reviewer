@@ -1098,6 +1098,45 @@ def test_profile_rejects_fused_state_with_independent_timing() -> None:
         )
 
 
+def test_profile_trace_time_is_preserved_and_requires_a_timezone() -> None:
+    model_path = MODEL_ROOT / "model_ir.yaml"
+    plan_path = MODEL_ROOT / "execution_paths" / "tp_only_eagle_mtp.yaml"
+    model = load_yaml(model_path)
+    plan = load_yaml(plan_path)
+    views = apply_execution_plan(model, plan, source=plan_path)
+    fingerprint = execution_fingerprint(model, plan, views)
+    profile = load_yaml(
+        MODEL_ROOT
+        / "profiles"
+        / "tp_only_eagle_mtp"
+        / "sglang_25ee2b56_pr37500_tp4_eagle_mtp"
+        / "cg_mtp_decode_gbs001_8k1k_bind_ba79b6e52262fede.yaml"
+    )
+    node_targets = {
+        f"{view_id}.{node['id']}"
+        for view_id, view in views.items()
+        for node in view["nodes"]
+    }
+    compiled = compile_profile(
+        profile,
+        plan=plan,
+        fingerprint=fingerprint,
+        node_targets=node_targets,
+        source=Path("profile.yaml"),
+    )
+    assert compiled["meta"]["trace_time"] == profile["trace_time"]
+
+    profile["trace_time"]["timestamp"] = "2026-09-05T14:00:01"
+    with pytest.raises(CatalogError, match="explicit timezone"):
+        compile_profile(
+            profile,
+            plan=plan,
+            fingerprint=fingerprint,
+            node_targets=node_targets,
+            source=Path("profile.yaml"),
+        )
+
+
 def test_profile_cannot_create_architecture_nodes() -> None:
     model_path = MODEL_ROOT / "model_ir.yaml"
     plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"

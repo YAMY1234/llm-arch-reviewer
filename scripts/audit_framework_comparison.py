@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Real-browser acceptance audit for generic multi-framework comparison.
+"""Real-browser acceptance audit for Execution-scoped implementation comparison.
 
-The fixtures deliberately cover a shared Execution IR (Qwen3.5), distinct
-Execution IR fingerprints for one exact workload (GLM-5.2), an unavailable
-exact match, and a synthetic three-framework UI state.  No viewer behavior is
+The fixtures cover exact and workload-different profiles inside one Execution
+IR, a disabled implementation from a different Execution IR, compact trace-time
+rows, and a synthetic three-framework UI state. No viewer behavior is
 special-cased for these model ids; they are acceptance data only.
 """
 
@@ -26,6 +26,8 @@ GLM53_PROFILE = "glm53_flash_tp8_sglang_cg_decode_bs64_8k1k"
 GLM_SGLANG = "sglang_fdebc938_dsa"
 GLM_TRT = "trtllm_4358fb5d_dsa"
 GLM_PROFILE = "glm52_tp8_sglang_cg_decode_bs64_8k1k"
+QWEN38_OLD = "sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn"
+QWEN38_NEW = "sglang_25ee2b56_pr37500_tp4_eagle_mtp"
 
 
 def parse_args() -> argparse.Namespace:
@@ -671,6 +673,67 @@ def main(args: argparse.Namespace | None = None) -> int:
         )
         checks["mtp_stage_scoped_dimension"] = 1
 
+        # Current and historical SGLang MTP traces share one Execution IR and
+        # one exact workload contract. Both must be selectable even though the
+        # framework name is the same. Rows stay single-line and bounded, while
+        # full identity/time provenance remains available on hover.
+        page.locator("#implementation-multi > summary").click()
+        compact_picker = page.evaluate(
+            f"""() => {{
+              const options = document.getElementById('implementation-options');
+              const rows = ['{QWEN38_OLD}', '{QWEN38_NEW}'].map(id => {{
+                const input = options.querySelector(`input[value="${{id}}"]`);
+                const label = input?.closest('label');
+                return {{
+                  id,
+                  disabled: input?.disabled,
+                  height: label?.getBoundingClientRect().height,
+                  whiteSpace: label ? getComputedStyle(label).whiteSpace : '',
+                  text: label?.textContent || '',
+                  title: label?.title || '',
+                }};
+              }});
+              return {{
+                rows,
+                optionsHeight: options.getBoundingClientRect().height,
+                viewportHeight: innerHeight,
+                groupLabels: [...options.querySelectorAll('.implementation-group-label')].map(node => node.textContent),
+              }};
+            }}"""
+        )
+        require(
+            all(
+                row["disabled"] is False
+                and row["height"] <= 42
+                and row["whiteSpace"] == "nowrap"
+                and "Time unavailable" not in row["text"]
+                and "Trace time:" in row["title"]
+                for row in compact_picker["rows"]
+            )
+            and compact_picker["optionsHeight"] <= 432
+            and compact_picker["optionsHeight"] < compact_picker["viewportHeight"]
+            and compact_picker["groupLabels"][0] == "Comparable · same Execution IR",
+            "compact_trace_picker",
+            actual=compact_picker,
+        )
+        page.locator(f'#implementation-options input[value="{QWEN38_NEW}"]').click()
+        comparison_frames(page, 2)
+        qwen38_compare = page.evaluate(
+            """() => ({
+              selected: SELECTED_IMPLEMENTATIONS,
+              executions: comparisonContextList().map(context => context.execution_variant_id),
+              exact: comparisonContextList().map(context => context.comparison_differences.length),
+            })"""
+        )
+        require(
+            qwen38_compare["selected"] == [QWEN38_NEW, QWEN38_OLD]
+            and len(set(qwen38_compare["executions"])) == 1
+            and qwen38_compare["exact"] == [0, 0],
+            "qwen38_current_previous_same_execution",
+            actual=qwen38_compare,
+        )
+        checks["compact_trace_picker"] = 2
+
         # GLM-5.3-Flash is the second real SGLang/vLLM acceptance model. It
         # must resolve to two decode traces under one exact contract rather
         # than accidentally reusing the historical vLLM prefill window.
@@ -709,8 +772,7 @@ def main(args: argparse.Namespace | None = None) -> int:
         )
         checks["glm53_real_sglang_vllm"] = 2
 
-        # Distinct exact Execution IR fingerprints remain separate. The viewer
-        # shares Model IR only and disables the misleading collapsed layer.
+        # A distinct Execution IR is visible but cannot enter the comparison.
         page.goto(
             viewer_url(
                 args.base_url,
@@ -724,45 +786,85 @@ def main(args: argparse.Namespace | None = None) -> int:
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        comparison_frames(page, 2)
+        page.wait_for_function(f"CURRENT_PROFILE === '{GLM_PROFILE}'", timeout=60_000)
         distinct = page.evaluate(
-            """() => ({
+            f"""() => {{
+              const input = document.querySelector('#implementation-options input[value="{GLM_TRT}"]');
+              return {{
               selected: SELECTED_IMPLEMENTATIONS,
               compatible: comparisonExecutionIrCompatible(),
               layer: CURRENT_IR_LAYER,
               disabled: document.querySelector('#ir-layer-select option[value="execution"]').disabled,
               fingerprints: comparisonContextList().map(context => context.execution_variant_id),
-            })"""
+              candidateDisabled: input?.disabled,
+              candidateReason: input?.closest('label')?.title || '',
+              candidateBadge: input?.closest('label')?.querySelector('.comparison-badge')?.textContent || '',
+              }};
+            }}"""
         )
-        require(distinct["selected"] == [GLM_SGLANG, GLM_TRT], "glm_fixed_framework_order", actual=distinct)
-        require(distinct["compatible"] is False, "distinct_execution_ir_collapsed", actual=distinct)
-        require(distinct["layer"] == "model" and distinct["disabled"], "distinct_execution_ir_not_forced_to_model", actual=distinct)
-        require(len(set(distinct["fingerprints"])) == 2, "distinct_fingerprint_missing", actual=distinct)
-        checks["distinct_execution_ir"] = 2
+        require(distinct["selected"] == [GLM_SGLANG], "cross_execution_url_not_filtered", actual=distinct)
+        require(distinct["compatible"] is True, "remaining_execution_ir_invalid", actual=distinct)
+        require(distinct["layer"] == "execution" and distinct["disabled"] is False, "valid_execution_ir_hidden", actual=distinct)
+        require(
+            distinct["candidateDisabled"] is True
+            and "Different Execution IR:" in distinct["candidateReason"]
+            and distinct["candidateBadge"] == "Different Execution IR",
+            "different_execution_ir_not_disabled",
+            actual=distinct,
+        )
+        checks["different_execution_ir_disabled"] = 1
 
-        # A contract with no exact peer is visible but disabled with a reason.
+        # A different workload inside the same Execution IR is selectable, but
+        # it is never mislabeled as an exact apples-to-apples comparison.
         page.goto(
             viewer_url(
                 args.base_url,
-                model="glm52_v2",
-                profile="glm52_tp8_sglang_prefill_bs1_8k",
-                implementation=GLM_SGLANG,
-                phase="prefill",
+                model="qwen35_v2",
+                profile=QWEN_PROFILE,
+                implementation=QWEN_SGLANG,
                 viewMode="architecture",
                 irLayer="model",
             ),
             wait_until="domcontentloaded",
             timeout=60_000,
         )
-        page.wait_for_function("CURRENT_PROFILE === 'glm52_tp8_sglang_prefill_bs1_8k'")
-        unavailable = page.evaluate(
+        page.wait_for_function(f"CURRENT_PROFILE === '{QWEN_PROFILE}'")
+        workload_difference = page.evaluate(
             f"""() => {{
-              const input = document.querySelector('#implementation-options input[value="{GLM_TRT}"]');
-              return {{disabled: input?.disabled, reason: input?.closest('label')?.title || ''}};
+              const implementationId = 'synthetic_vllm_bs1';
+              const profileId = 'synthetic_vllm_bs1_profile';
+              RAW_DATA.implementations[implementationId] = {{
+                ...cloneJson(RAW_DATA.implementations['{QWEN_VLLM}']),
+                implementation_id: implementationId,
+                label: 'synthetic same-Execution BS1 fixture',
+              }};
+              const profile = cloneJson(RAW_DATA.profiles['qwen35_tp8_vllm_cg_decode_bs1_8k1k']);
+              profile.implementation_id = implementationId;
+              RAW_DATA.profiles[profileId] = profile;
+              DATA.profiles[profileId] = profile;
+              refreshComparisonImplementationOptions();
+              const input = document.querySelector(`#implementation-options input[value="${{implementationId}}"]`);
+              const label = input?.closest('label');
+              const row = comparisonAvailability().rows.find(item => item.implementationId === implementationId);
+              return {{
+                disabled: input?.disabled,
+                badge: label?.querySelector('.comparison-badge')?.textContent || '',
+                reason: label?.title || '',
+                profile: row?.profileId,
+                differences: row?.differences || [],
+              }};
             }}"""
         )
-        require(unavailable["disabled"] is True and "exact comparison contract" in unavailable["reason"], "missing_exact_match_reason", actual=unavailable)
-        checks["missing_exact_match"] = 1
+        require(
+            workload_difference["disabled"] is False
+            and workload_difference["badge"].startswith("Different workload")
+            and workload_difference["profile"] == "synthetic_vllm_bs1_profile"
+            and "workload.batch_size" in workload_difference["differences"]
+            and "Workload differences:" in workload_difference["reason"],
+            "same_execution_workload_difference_not_explicit",
+            actual=workload_difference,
+        )
+        checks["same_execution_different_workload_allowed"] = 1
 
         # Generic 3-framework UI fixture. The third implementation intentionally
         # has no timeline artifact, proving the comparison remains explicit

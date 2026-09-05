@@ -15,6 +15,7 @@ existing static viewer.
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -1721,6 +1722,39 @@ def compile_profile(
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
+    trace_time = profile.get("trace_time")
+    if trace_time is not None:
+        if not isinstance(trace_time, dict):
+            raise CatalogError(f"{source}: trace_time must be a mapping")
+        required_trace_time = {"timestamp", "basis", "provenance"}
+        missing_trace_time = sorted(required_trace_time - set(trace_time))
+        if missing_trace_time:
+            raise CatalogError(
+                f"{source}: trace_time is missing {missing_trace_time}"
+            )
+        timestamp = str(trace_time["timestamp"])
+        try:
+            parsed_trace_time = datetime.fromisoformat(
+                timestamp.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise CatalogError(
+                f"{source}: trace_time.timestamp must be RFC3339"
+            ) from exc
+        if parsed_trace_time.tzinfo is None:
+            raise CatalogError(
+                f"{source}: trace_time.timestamp requires an explicit timezone"
+            )
+        if not isinstance(trace_time["basis"], str) or trace_time["basis"] not in {
+            "captured",
+            "uploaded",
+            "cataloged",
+        }:
+            raise CatalogError(
+                f"{source}: trace_time.basis must be captured, uploaded, or cataloged"
+            )
+        if not str(trace_time["provenance"]).strip():
+            raise CatalogError(f"{source}: trace_time.provenance must be non-empty")
     generation_condition = (
         (plan.get("selector") or {}).get("match") or {}
     ).get("generation.mode") or {}
@@ -2120,6 +2154,7 @@ def compile_profile(
             "workload",
             "profiler",
             "evidence",
+            "trace_time",
             "profile_summary",
         )
         if key in profile

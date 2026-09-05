@@ -9,6 +9,7 @@ identity and rank boundary.
 
 from __future__ import annotations
 
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -707,6 +708,19 @@ def accept_evidence(
     validate_schema(binding_revision, "binding-revision.schema.json", source=source)
     validate_schema(reconciliation, "binding-reconciliation.schema.json", source=source)
     validate_schema(attribution, "trace-attribution.schema.json", source=source)
+    captured_at = str(attribution["captured_at"])
+    try:
+        parsed_capture_time = datetime.fromisoformat(
+            captured_at.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise AddTraceError(
+            "production captured_at must be a timezone-qualified RFC3339 timestamp"
+        ) from exc
+    if parsed_capture_time.tzinfo is None:
+        raise AddTraceError(
+            "production captured_at must include an explicit timezone"
+        )
     if sha256_json(manifest) != plan["manifest_sha256"]:
         raise AddTraceError("plan manifest digest does not match the supplied manifest")
     plan_payload = dict(plan)
@@ -1103,6 +1117,7 @@ def accept_evidence(
         "eager_protocol_sha256": eager_protocol_sha,
         "production_protocol_sha256": production_protocol_sha,
         "window_selection_sha256": window_sha,
+        "production_captured_at": captured_at,
         "rank_count": tp_size,
         "eager_rule_count": len(rule_ids),
         "eager_event_count": eager_event_count,

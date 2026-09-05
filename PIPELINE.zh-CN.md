@@ -276,6 +276,10 @@ Stage 4 会生成三个可以直接 review 的 artifact：
 - 默认 decode sweep：global BS 1、16、64、256；
 - 显式记录 ISL/OSL，例如 8K/1K；
 - MTP profile 必须使用真实 CUDA Graph path，同时捕获 target verification 和 auxiliary/draft work。
+- 必须从 capture authority 记录带时区的 RFC3339 capture start。
+  `trace-attribution.v1.captured_at` 为必填字段，并原样进入
+  `add-trace-acceptance.v1.production_captured_at`；profile 只能展示由该证据导出的
+  `trace_time`，或者带明确 basis 与 provenance 的 upload/catalog 时间。
 
 `random_range_ratio` 不是可以跨 framework native CLI 直接照搬的 contract。上面的 canonical manifest value 对我们共同使用的 sa-bench workflow 是确定的；adapter 不能把它不加验证地转发给 framework-native benchmark client。例如当前 vLLM native benchmark code 使用 `0.0` 表示精确 target length。应优先使用共同 workload generator；如果必须使用 native client，adapter 需要翻译规范化后的 `fixed_lengths: true` 意图，保留 manifest 中用户指定的值，并通过每个 request 实际生成的 ISL/OSL 证明二者相等。
 
@@ -630,10 +634,14 @@ Identity；这些确定性规则由 `mapping_rules_sha256` 封存，规则发生
 
 每条不同 code path 都必须独立 profile。即使不同路径中的 Model IR node 名称相同，也不能复制测量结果。
 
-### 7.1 跨 Framework 的精确 Comparison Contract
+### 7.1 Execution 范围内比较与精确 Workload Contract
 
-哪些 profile 可以比较，必须由 Compiler 决定，不能由 Viewer 猜测。Compiler
-对规范化、framework-neutral 的 `comparison-contract.v1` 做 hash，内容包括：
+比较身份必须由 Compiler 决定，不能由 Viewer 猜测。比较包含两个独立 gate。
+硬性可选边界是同一个 validated Execution IR fingerprint：其他 Execution IR 的
+profile 仍显示在选择器中，但必须置灰且不可选择，因为把不同 topology、placement
+或 state plan 当成同一个 execution 比较会产生错误结论。在同一个 Execution IR
+内部，Compiler 对规范化、framework-neutral 的 `comparison-contract.v1` 做 hash，
+内容包括：
 
 - Model IR identity、generation mode、phase、formal-step semantics，以及显式
   authored 的 `comparison_variant`；
@@ -646,13 +654,18 @@ commit 和 timing value 属于 profiling procedure/provenance，不进入 worklo
 identity。凡是会改变实际执行问题的字段都必须先规范化进入 contract；绝不能从
 profile id、label 或 framework name 推断。一个 comparison contract 下，每个
 implementation 最多只能有一个 profile；出现歧义时 Compiler 必须 fail closed。
-没有 exact profile 的 implementation 仍可见，但必须禁用并显示缺失维度/原因。
+Exact contract 标记为 `Exact workload`。同一 Execution IR 内 workload 不同的
+profile 仍可选择，但必须标记为 `Different workload`，并在 hover/detail 中列出所有
+差异维度；其 timing 绝不能被描述为 apples-to-apples。不同 Execution IR 的 profile
+一律不可选择。
 
-Execution fingerprint 存放在 comparison contract 的**旁边**，而不是 hash
-进 workload identity。若选中的 framework 共享同一个 validated fingerprint，
-Viewer 可以同时在 Model IR 和 Execution IR 上比较；若 fingerprint 不同，Viewer
-只能共享 Model IR，并为每个 framework 保留独立 Execution IR overlay，必须禁用
-任何会把这些 plan 合并成虚假“共享 Execution IR”的呈现。
+Execution fingerprint 存放在 workload contract 的**旁边**，而不是 hash 进
+workload identity。这个分层让 Viewer 用 Execution IR 作为硬边界、用 workload
+contract 作为精确的可比性等级。选择器必须把同 Execution 候选放在前面，每个候选
+只占一行并限制面板高度，完整 identity 与差异放到 hover/detail，同时显示可审计的
+capture/upload/catalog 时间。新的 graph-on attribution 必须记录带时区的
+`captured_at`；materialized profile 用带 basis 与 provenance 的 `trace_time` 承载。
+旧 profile 缺时间时只能显示 `Time unavailable`，禁止静默猜测。
 
 每个 Binding 都必须编译出 canonical `framework_id`（`sglang`、`vllm` 或
 `tensorrt_llm`）。Viewer 只能读取 Compiler 生成的 contract/profile index 和该

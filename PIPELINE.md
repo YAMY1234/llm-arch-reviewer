@@ -435,6 +435,11 @@ Use the actual intended serving mode:
 - record ISL/OSL explicitly, such as 8K/1K;
 - MTP profiles must capture both target verification and auxiliary/draft work
   using their real CUDA Graph path.
+- record the capture start as a timezone-qualified RFC3339 timestamp from the
+  capture authority. `trace-attribution.v1.captured_at` is required and the
+  accepted value is copied to `add-trace-acceptance.v1.production_captured_at`;
+  a profile may display only a `trace_time` derived from that evidence (or an
+  explicitly labeled upload/catalog timestamp with provenance).
 
 `random_range_ratio` is not a portable native-CLI contract. The canonical
 manifest value above is exact for our common sa-bench workflow; adapters must
@@ -923,10 +928,14 @@ Recommended progression:
 Every distinct code path is profiled independently. Results from one path are
 never copied into another merely because their Model IR nodes share names.
 
-### 7.1 Exact cross-framework comparison contract
+### 7.1 Execution-scoped comparison and exact workload contract
 
-The compiler, not the Viewer, decides which profiles are comparable. It hashes
-a normalized, framework-neutral `comparison-contract.v1` containing:
+The compiler, not the Viewer, decides comparison identity. Comparison has two
+separate gates. The hard eligibility boundary is one validated Execution IR
+fingerprint: profiles from another Execution IR remain visible in the picker
+but are disabled, because comparing different topology/placement/state plans as
+one execution would be false. Within that Execution IR, the compiler hashes a
+normalized, framework-neutral `comparison-contract.v1` containing:
 
 - Model IR identity, generation mode, phase, formal-step semantics, and an
   explicitly authored `comparison_variant`;
@@ -940,15 +949,21 @@ values are evidence provenance and do not enter this workload identity. A
 field that changes the executed problem must be normalized into the contract;
 it may never be inferred from a profile id, label, or framework name. The
 compiler allows at most one profile per implementation for one contract and
-fails closed on ambiguity. An implementation without an exact profile remains
-visible but disabled with the missing dimension/reason.
+fails closed on ambiguity. An exact contract match is labeled `Exact workload`.
+A profile in the same Execution IR with a different workload remains selectable
+but is labeled `Different workload` with every differing dimension available in
+hover/details; its timing must never be presented as apples-to-apples. A profile
+from a different Execution IR is never selectable.
 
-Execution fingerprints are indexed **beside** the comparison contract, not
-inside it. If all selected implementations share one validated fingerprint,
-the Viewer may compare them on both Model and Execution IR. If fingerprints
-differ, the Viewer must show shared Model IR plus one separate Execution IR
-overlay per framework; it must disable any presentation that would collapse
-those plans into a fictitious shared Execution IR.
+Execution fingerprints are indexed **beside** the workload contract, not
+inside it. This separation lets the Viewer enforce Execution IR as the hard
+boundary while using the workload contract as a precise comparability grade.
+The picker must show same-Execution candidates first, render every candidate as
+one bounded single-line row, expose complete identity and mismatch details on
+hover, and show an auditable capture/upload/catalog time. New accepted graph-on
+attribution requires a timezone-qualified `captured_at`; materialized profiles
+carry it as `trace_time` with an explicit basis and provenance. Missing legacy
+time remains `Time unavailable` and is never inferred silently.
 
 Every binding compiles an explicit canonical `framework_id` (`sglang`, `vllm`,
 or `tensorrt_llm`). The Viewer uses only compiler-produced contract/profile

@@ -219,12 +219,16 @@ Architecture/Timeline/Split selectors. Architecture-node selection filters every
 kernel occurrence on the timeline; a timeline kernel restores its precise
 architecture drill path and source/stack evidence.
 
-The implementation selector supports one, two, or three exact-contract
-profiles. Architecture comparison shares Model IR geometry and shows one
-mapping/timing row per framework; Timeline comparison stacks the untouched
-production traces in SGLang, vLLM, TensorRT-LLM order with synchronized ranges
-and bidirectional selection. If validated Execution IR fingerprints differ,
-only Model IR is shared and each framework keeps a separate execution overlay.
+The implementation selector supports one, two, or three profiles from the same
+validated Execution IR. Exact workload matches are labeled explicitly; a
+different workload in that Execution IR remains selectable with a visible
+warning and complete hover details. Profiles from another Execution IR remain
+visible but disabled. The compact, bounded picker also shows an auditable trace
+capture/upload/catalog time. Architecture comparison shares Model IR geometry
+and shows one mapping/timing row per framework; Timeline comparison stacks the
+untouched production traces in SGLang, vLLM, TensorRT-LLM order with synchronized
+ranges and bidirectional selection. Both Model IR and the one shared validated
+Execution IR remain available; each profile keeps its own Binding and timeline.
 Selecting one Architecture node independently centers each framework's nearest
 matching event and updates one framework-specific detail pane per timeline.
 Tensor symbols remain symbolic in Model IR, with profile/stage-resolved values

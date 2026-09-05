@@ -36,14 +36,17 @@ The M0.5 add-trace workflow persists six additional stage contracts:
   the exact add-trace plan digest;
 - `trace-attribution.v1` accounts for every production event and duration as an
   IR event or typed support event, with explicit fusion ownership and a hashed
-  window-selection artifact; acceptance additionally resolves every authored
+  window-selection artifact, and records the authoritative timezone-qualified
+  `captured_at`; acceptance additionally resolves every authored
   target against the current compiled Execution IR, while its plan digest and
   rule-level fusion IDs prevent cross-run or same-target rule substitution;
 - `add-trace-acceptance.v1` is emitted only after cross-document identity,
   compiled Model IR identity, all-rank, mapping-predicate, transfer-signature,
   fusion, capture-protocol, runtime-evidence, artifact-hash, and
   coverage closure passes; it content-addresses all five accepted input
-  documents so an evidence mutation cannot preserve the same attestation.
+  documents so an evidence mutation cannot preserve the same attestation. The
+  accepted production timestamp is copied to `production_captured_at` and is
+  the canonical source for a materialized profile's displayed `trace_time`.
 
 `scripts/materialize_binding_revision.py` consumes both the Binding revision and
 its exact acceptance artifact. It verifies their content-addressed identities,

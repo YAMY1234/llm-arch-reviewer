@@ -110,6 +110,8 @@ M0 exit criteria:
   production transfer, compiled Model IR identity and target existence, explicit fusion ownership,
   controlled typed support work, selected-window hashing, complete event/duration
   accounting, and content-addressed final input-document closure.
+- [x] Require an authoritative production capture timestamp, carry it through
+  acceptance, and render trace time/provenance in the bounded comparison picker.
 - [x] Provide `scripts/run_pipeline_v2.py plan|accept` as the working interface.
   Require `materialize_binding_revision.py` to verify the exact accepted
   revision before emitting a schema-valid catalog Binding, without stale
