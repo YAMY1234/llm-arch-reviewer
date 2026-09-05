@@ -71,10 +71,17 @@ Work in this milestone:
   viewer, each catalog/bundle/evidence set, and the complete published model
   set. Model-specific browser fixtures remain explicit acceptance scenarios,
   not runtime dispatch logic.
+- [x] Add a model-discovered, four-gate independent-evidence contract. Semantic
+  IR, Execution Contract, eager Binding reconciliation, and graph-on production
+  evidence now declare disjoint authority classes; CI rejects circular
+  authority/subject reuse, uncovered artifacts, unlocked binding revisions, and
+  model-specific assertions without their immutable provenance.
 
 M0 exit criteria:
 
 - every public catalog compiles deterministically and matches its bundle;
+- every public catalog passes its independent-evidence and anti-self-validation
+  contract, with machine-resolved and externally attested claims distinguished;
 - every selected semantic GPU event is mapped or explicitly typed runtime work;
 - all Model IR views close mathematically over shape, dtype, state, and ports;
 - every non-leaf rollup has valid ownership and no fused timing is copied;
@@ -95,6 +102,11 @@ editing generated JSON or viewer code.
 - Automate source/config extraction, semantic-ledger creation, candidate
   Execution Plan generation, eager reconciliation, production trace capture,
   bundle compilation, and browser QA.
+- Replace every eligible `immutable_external_attestation` with an
+  adapter-produced, content-addressed evidence extract whose source locator and
+  value are machine compared with the assertion. Retain manual attestation only
+  for an upstream source that cannot be ingested in CI, and keep that weaker
+  assurance visible rather than presenting it as machine verification.
 - Generate a review packet that isolates semantic changes, execution-contract
   changes, unresolved evidence, and rendering screenshots.
 - Prove the generic path with at least two model families and two frameworks.

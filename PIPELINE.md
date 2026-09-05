@@ -908,6 +908,41 @@ link to that framework's architecture owner in both the graph and detail pane.
 
 ## 8. Acceptance gates
 
+### Independent evidence and anti-self-validation
+
+Every catalog must contain a `validation_evidence.yaml` contract conforming to
+`validation-evidence.v1`. The contract names the subject artifacts, independent
+authorities, verification mode, and executable assertions for four gates:
+
+1. `semantic_ir`: publisher checkpoint, canonical model source, or technical
+   specification -> `model_ir.yaml`. Runtime traces are forbidden authorities.
+2. `execution_contract`: pinned framework source plus independently authored
+   runtime/topology configuration -> `execution_paths/*.yaml`. Profile timing
+   is not an Execution IR expectation.
+3. `binding_reconciliation`: pinned source plus graph-off eager reconciliation
+   -> `bindings/*.yaml`. Every binding source revision must occur in the
+   independent source lock.
+4. `production_evidence`: graph-off reconciliation plus graph-on production
+   trace -> `profiles/*/*/*.yaml`. Timeline artifacts and their hashes remain
+   the timing authority; a Profile cannot attest itself.
+
+The gate fails when an authority has the wrong evidence kind, a locally
+resolved authority overlaps its own subject, an assertion cites an authority
+outside the gate, a new canonical subject is uncovered, a binding revision is
+absent from the source lock, or a declared assertion does not match the
+artifact. `machine_resolved` means CI opened the named local artifact and
+resolved its selector. `immutable_external_attestation` means the source was
+reviewed at the recorded immutable revision and digest; it does **not** claim
+that offline CI re-downloaded or re-extracted that source. This distinction is
+preserved in `docs/release-acceptance.json`.
+
+Model-specific values such as layer schedules are permitted only as assertions
+whose authority is an immutable upstream semantic source. Trace-derived facts
+such as occurrence counts, graph invocation counts, and kernel order belong to
+binding or production reconciliation and may not be copied back into the
+semantic expectation. This prevents a wrong IR or trace from manufacturing the
+test that declares itself correct.
+
 ### Structural
 
 - All documents pass their JSON schema and cross-document reference checks.
@@ -1108,8 +1143,11 @@ pass fail-closed Timeline attribution and the full real-browser gate. The same
 command deterministically publishes `docs/release-acceptance.json`, which
 records compiler/Viewer/catalog/bundle/evidence identities, source revisions,
 Execution fingerprints, exact profile contracts, mapping coverage, and browser
-acceptance. The manifest-driven `run_pipeline_v2.py` orchestrator remains M1,
-not an already working command.
+acceptance. It also validates and publishes the four-gate independent-evidence
+report for every discovered catalog; adding a model without that contract, or
+using a downstream artifact as its own authority, blocks release. The
+manifest-driven `run_pipeline_v2.py` orchestrator remains M1, not an already
+working command.
 
 The removed Qwen3.5 trace-first/manual pipeline is not a second supported path.
 Its useful ideas survive here as frozen inputs, reusable trace parsing,

@@ -4,7 +4,10 @@
 The static gate proves that every audited catalog compiles, the checked-in
 bundle is exactly the compiler output, every published Timeline is the exact
 content-addressed artifact declared by its Profile, and every Timeline kernel
-is either bound to IR or explicitly classified as runtime/support work.
+is either bound to IR or explicitly classified as runtime/support work. It also
+proves that the Model IR, Execution Contract, eager Binding reconciliation, and
+production Profile each cite an independent, layer-appropriate authority rather
+than using a downstream artifact as its own expectation.
 
 The release gate adds the real-browser audits. A static pass is useful during
 development, but is deliberately reported as not release ready until the
@@ -32,7 +35,7 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from llm_arch_v2 import compile_catalog  # noqa: E402
+from llm_arch_v2 import compile_catalog, validate_validation_evidence  # noqa: E402
 from scripts.audit_timeline_attribution import audit_timeline  # noqa: E402
 
 
@@ -157,6 +160,7 @@ def build_acceptance_summary(
             {
                 "model": model,
                 "status": report.get("status"),
+                "validation_evidence": report.get("validation_evidence"),
                 "model_ir_version": (bundle.get("meta") or {}).get(
                     "model_ir_version"
                 ),
@@ -325,13 +329,24 @@ def audit_model(
 ) -> dict[str, Any]:
     model_root = catalog_root / model_name
     failures: list[dict[str, Any]] = []
+    validation_evidence = validate_validation_evidence(model_root)
+    if validation_evidence.get("status") != "pass":
+        failures.extend(
+            {
+                "kind": "validation_evidence_failure",
+                "error": error,
+            }
+            for error in validation_evidence.get("errors") or []
+        )
     try:
         compiled = compile_catalog(model_root)
     except Exception as error:
         return {
             "model": model_name,
             "status": "fail",
-            "failures": [
+            "validation_evidence": validation_evidence,
+            "failures": failures
+            + [
                 {
                     "kind": "catalog_compile_failure",
                     "exception_type": type(error).__name__,
@@ -449,6 +464,7 @@ def audit_model(
     return {
         "model": model_name,
         "status": "pass" if not failures else "fail",
+        "validation_evidence": validation_evidence,
         "bundle": bundle_report,
         "public_inventory": inventory_checks,
         "timeline_count": len(timeline_reports),

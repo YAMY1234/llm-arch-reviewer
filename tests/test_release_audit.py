@@ -137,6 +137,20 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
         {
             "model": "toy",
             "status": "pass",
+            "validation_evidence": {
+                "schema_version": "validation-evidence-report.v1",
+                "status": "pass",
+                "anti_self_validation": "pass",
+                "gates": {
+                    gate: {"status": "pass"}
+                    for gate in (
+                        "semantic_ir",
+                        "execution_contract",
+                        "binding_reconciliation",
+                        "production_evidence",
+                    )
+                },
+            },
             "bundle": {"published_sha256": "bundle-sha"},
             "timelines": [
                 {
@@ -172,6 +186,7 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
     assert first["release_ready"] is True
     assert first["release_identity"]["compiler_sha256"]
     assert first["models"][0]["catalog_manifest_sha256"]
+    assert first["models"][0]["validation_evidence"]["anti_self_validation"] == "pass"
     profile = first["models"][0]["profiles"][0]
     assert profile["execution_fingerprint"] == "exec_123"
     assert profile["timeline_sha256"] == "trace-sha"

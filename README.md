@@ -178,6 +178,16 @@ candidate Execution IR + eager semantic trace -> validated fingerprint + Binding
 validated Execution IR + Binding + Profile -> static viewer bundle
 ```
 
+Every catalog also carries `validation_evidence.yaml`. The unified release
+audit uses it to enforce four independent authority layers: upstream semantic
+source for Model IR, source/config lock for Execution IR, graph-off eager
+evidence for Bindings, and graph-on Timeline evidence for Profiles. A trace
+cannot define its own semantic expectation, a Binding commit must appear in the
+independent source lock, and new uncovered artifacts fail closed. The published
+acceptance report distinguishes values that CI resolved from checked-in files
+from immutable external-source attestations that were reviewed but are not
+re-downloaded by offline CI.
+
 The execution fingerprint hashes the normalized, framework-independent
 contract—not Python symbols or kernel sequences. A CUDA-Graph-disabled eager
 trace must validate that contract for each exact Binding before production

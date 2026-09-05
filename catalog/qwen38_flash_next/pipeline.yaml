@@ -1,0 +1,55 @@
+schema_version: ir-pipeline-manifest.v1
+model_id: qwen38_flash_next
+target: multi_topology_profile_set
+evidence_root: task_evidence_only
+
+source_lock:
+  model_id: Qwen/Qwen3.8-Flash-Next
+  model_revision: b151fd157ff99b63198ab8558432f0bf43e14d58
+  canonical_semantics_source:
+    repository: https://github.com/Qiaolin-Yu/sglang-qwen-next
+    revision: 089f8ac
+    file_git_blob_sha1: 2a8d7892ec0ffa1c0b8a732db4ee8b682b169aa2
+  framework_targets:
+    - framework: sglang
+      source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+      source_commit: f90a941aa6ff71ac3bd7d40b8daccdf5bd914af0
+    - framework: sglang
+      source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+      source_commit: c26cd416a9a28346934c9275755e90df01f11a2a
+    - framework: sglang
+      source_repo: https://github.com/Qiaolin-Yu/sglang-qwen-next
+      source_commit: 32e9cb5b95104dc3a10b96bafae7afa50052d94d
+
+execution:
+  default_execution_path: tp_only
+  execution_paths:
+    - id: tp_only
+      default_parameters: {tp_size: 4, dp_size: 1, cp_size: 1, ep_size: 1}
+    - id: dp_attention
+      default_parameters: {tp_size: 4, dp_size: 4, cp_size: 1, ep_size: 1}
+    - id: dp_attention_moe_ep_deepep_deepgemm
+      default_parameters: {tp_size: 4, dp_size: 4, cp_size: 1, ep_size: 4}
+    - id: moe_ep_a2a_none
+      default_parameters: {tp_size: 4, dp_size: 1, cp_size: 1, ep_size: 4}
+
+capture_policy:
+  eager_semantic:
+    cuda_graph_enabled: false
+    collect: [python_stack, shapes, dtypes, ranks, streams, state_transitions, invocation_scope]
+  production:
+    require_exact_execution_path: true
+    require_graph_mode_match: true
+    require_timeline_artifact_sha256: true
+  post_capture_validation:
+    require_eager_to_production_reconciliation: true
+    require_fusion_ownership_closure: true
+    forbid_copied_fused_timing: true
+
+acceptance:
+  expected_execution_paths: 4
+  expected_binding_documents: 7
+  expected_profile_points: 33
+  raw_artifact_policy: task_evidence_only_with_sha256_manifest
+  viewer_special_cases_allowed: false
+  deterministic_build_repetitions: 2

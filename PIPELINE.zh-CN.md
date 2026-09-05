@@ -615,6 +615,38 @@ framework 的 architecture owner。
 
 ## 8. Acceptance Gate
 
+### 独立证据与 anti-self-validation
+
+每个 catalog 必须包含符合 `validation-evidence.v1` 的
+`validation_evidence.yaml`。该 contract 分别为四道 gate 声明待验证 artifact、
+独立 authority、verification mode 和可执行 assertion：
+
+1. `semantic_ir`：由发布方 checkpoint、canonical model source 或技术规范验证
+   `model_ir.yaml`；runtime trace 禁止作为这一层的 authority。
+2. `execution_contract`：由 pinned framework source 加上独立编写的
+   runtime/topology configuration 验证 `execution_paths/*.yaml`；Profile timing
+   不能反过来成为 Execution IR 的期望值。
+3. `binding_reconciliation`：由 pinned source 加上 graph-off eager
+   reconciliation 验证 `bindings/*.yaml`；每个 binding 的 source revision 都必须
+   出现在独立 source lock 中。
+4. `production_evidence`：由 graph-off reconciliation 加上 graph-on production
+   trace 验证 `profiles/*/*/*.yaml`；Timeline artifact 及其 hash 才是 timing
+   authority，Profile 不能证明自身正确。
+
+以下情况都会 fail closed：authority 类型不属于对应层；本地 authority artifact
+与待验证 subject 重叠；assertion 引用了 gate 之外的 authority；新增 canonical
+subject 未被覆盖；binding revision 不在 source lock 中；或者 assertion 与实际
+artifact 不匹配。`machine_resolved` 表示 CI 确实打开了该本地 artifact 并解析了
+指定 selector；`immutable_external_attestation` 表示人工已按记录的 immutable
+revision 和 digest 审阅外部来源，并不冒充 offline CI 已经重新下载或重新提取了
+它。这个证据强度差异会原样写入 `docs/release-acceptance.json`。
+
+Layer schedule 等 model-specific 值只能作为由 immutable upstream semantic
+source 支持的 assertion。Occurrence 数、CUDA Graph invocation 数和 kernel 顺序
+等 trace-derived 事实属于 binding 或 production reconciliation，不能倒灌成
+semantic expectation。这样可以阻止错误的 IR 或 trace 同时生成一条“证明自己
+正确”的测试。
+
 ### Structural
 
 - 所有 document 通过 JSON Schema 和 cross-document reference check。
@@ -723,6 +755,6 @@ Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六
 
 M0 新增 `scripts/release_audit.py` 作为 model-neutral 的 release 入口。Static level 会重新编译 catalog、比较 published bundle 的精确内容、验证公开 model inventory 和 content-addressed Timeline artifact，并对无法解释的 production kernel fail closed。Release level 会进一步执行真实 browser audit。仅通过 static gate 不会被标记为 release-ready。
 
-M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。Manifest-driven `run_pipeline_v2.py` orchestrator 仍属于 M1，并不是当前已经可用的命令。
+M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。它还会验证并发布每个自动发现 catalog 的四层独立证据报告；缺少 contract，或把下游 artifact 当成自己的 authority，都会阻止发布。Manifest-driven `run_pipeline_v2.py` orchestrator 仍属于 M1，并不是当前已经可用的命令。
 
 已经移除的 Qwen3.5 trace-first/manual pipeline 不再是第二条受支持路径。旧实现中有价值的部分已经保留在本规范中，包括：冻结输入、可复用 trace parsing、source/callsite validation、artifact provenance、config-driven validation 和单一 orchestration command。旧流程中“由 runtime skeleton 定义 architecture”的行为不再保留。

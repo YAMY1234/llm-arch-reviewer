@@ -16,6 +16,9 @@ MODEL_IR_SCHEMA = REPO_ROOT / "schema" / "v2" / "model-ir.schema.json"
 SEMANTIC_LEDGER_SCHEMA = (
     REPO_ROOT / "schema" / "v2" / "semantic-source-ledger.schema.json"
 )
+VALIDATION_EVIDENCE_SCHEMA = (
+    REPO_ROOT / "schema" / "v2" / "validation-evidence.schema.json"
+)
 
 
 def _validate_yaml(data_path: Path, schema_path: Path) -> None:
@@ -48,6 +51,25 @@ def test_model_ir_documents_match_json_schema(model_ir_path: Path) -> None:
 )
 def test_semantic_source_ledgers_match_json_schema(ledger_path: Path) -> None:
     _validate_yaml(ledger_path, SEMANTIC_LEDGER_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "evidence_path",
+    sorted(CATALOG_ROOT.glob("*/validation_evidence.yaml")),
+    ids=lambda path: path.parent.name,
+)
+def test_validation_evidence_contracts_match_json_schema(evidence_path: Path) -> None:
+    _validate_yaml(evidence_path, VALIDATION_EVIDENCE_SCHEMA)
+
+
+def test_every_catalog_has_a_validation_evidence_contract() -> None:
+    catalogs = {
+        path.parent for path in CATALOG_ROOT.glob("*/model_ir.yaml")
+    }
+    contracted = {
+        path.parent for path in CATALOG_ROOT.glob("*/validation_evidence.yaml")
+    }
+    assert contracted == catalogs
 
 
 def test_dimension_symbol_contracts_are_complete_and_fail_closed() -> None:

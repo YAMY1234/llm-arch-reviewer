@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "validation-evidence.schema.json",
+  "title": "llm-arch-reviewer validation evidence contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "model_id",
+    "contract_revision",
+    "authorities",
+    "gates"
+  ],
+  "properties": {
+    "schema_version": {"const": "validation-evidence.v1"},
+    "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "contract_revision": {"type": "integer", "minimum": 1},
+    "authorities": {
+      "type": "array",
+      "minItems": 4,
+      "items": {"$ref": "#/$defs/authority"}
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "semantic_ir",
+        "execution_contract",
+        "binding_reconciliation",
+        "production_evidence"
+      ],
+      "properties": {
+        "semantic_ir": {"$ref": "#/$defs/gate"},
+        "execution_contract": {"$ref": "#/$defs/gate"},
+        "binding_reconciliation": {"$ref": "#/$defs/gate"},
+        "production_evidence": {"$ref": "#/$defs/gate"}
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": {
+          "enum": ["sha256", "git_blob_sha1", "git_commit"]
+        },
+        "value": {"type": "string", "pattern": "^[0-9a-f]{7,64}$"}
+      }
+    },
+    "localResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {"type": "string", "minLength": 1},
+        "artifact_glob": {"type": "string", "minLength": 1},
+        "selector": {"type": "string", "minLength": 1},
+        "required_fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "minimum_matches": {"type": "integer", "minimum": 1}
+      },
+      "oneOf": [
+        {"required": ["artifact"], "not": {"required": ["artifact_glob"]}},
+        {"required": ["artifact_glob"], "not": {"required": ["artifact"]}}
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "assurance", "source"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_.-]+$"},
+        "kind": {
+          "enum": [
+            "publisher_checkpoint",
+            "canonical_model_source",
+            "technical_specification",
+            "pinned_framework_source",
+            "runtime_configuration",
+            "topology_manifest",
+            "eager_reconciliation",
+            "capture_manifest",
+            "production_trace"
+          ]
+        },
+        "assurance": {
+          "enum": ["machine_resolved", "immutable_external_attestation"]
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri"],
+          "properties": {
+            "uri": {"type": "string", "minLength": 1},
+            "revision": {"type": "string", "minLength": 1},
+            "digest": {"$ref": "#/$defs/digest"},
+            "locator": {"type": "string", "minLength": 1},
+            "local_resolution": {"$ref": "#/$defs/localResolution"}
+          }
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {"type": "string", "minLength": 1},
+        "artifact_glob": {"type": "string", "minLength": 1},
+        "minimum_matches": {"type": "integer", "minimum": 1}
+      },
+      "oneOf": [
+        {"required": ["artifact"], "not": {"required": ["artifact_glob"]}},
+        {"required": ["artifact_glob"], "not": {"required": ["artifact"]}}
+      ]
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operator", "subject", "authority_refs"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_.-]+$"},
+        "operator": {
+          "enum": [
+            "field_equals",
+            "length_equals",
+            "collection_count_equals",
+            "all_documents_have_fields",
+            "all_values_in_authority"
+          ]
+        },
+        "subject": {"$ref": "#/$defs/subject"},
+        "selector": {"type": "string", "minLength": 1},
+        "required_fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "authority_ref": {"type": "string", "minLength": 1},
+        "authority_selector": {"type": "string", "minLength": 1},
+        "authority_value_selectors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "expected": {},
+        "authority_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"operator": {"enum": ["field_equals", "length_equals"]}}},
+          "then": {"required": ["selector", "expected"]}
+        },
+        {
+          "if": {"properties": {"operator": {"const": "collection_count_equals"}}},
+          "then": {"required": ["expected"]}
+        },
+        {
+          "if": {"properties": {"operator": {"const": "all_documents_have_fields"}}},
+          "then": {"required": ["required_fields"]}
+        },
+        {
+          "if": {"properties": {"operator": {"const": "all_values_in_authority"}}},
+          "then": {
+            "required": [
+              "selector",
+              "authority_ref",
+              "authority_selector",
+              "authority_value_selectors"
+            ]
+          }
+        }
+      ]
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "verification_mode",
+        "subjects",
+        "authority_refs",
+        "assertions"
+      ],
+      "properties": {
+        "status": {"const": "verified"},
+        "verification_mode": {
+          "enum": [
+            "reviewed_external_semantics",
+            "source_and_config_contract",
+            "graph_off_eager_reconciliation",
+            "graph_on_production_reconciliation"
+          ]
+        },
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/subject"}
+        },
+        "authority_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/assertion"}
+        }
+      }
+    }
+  }
+}

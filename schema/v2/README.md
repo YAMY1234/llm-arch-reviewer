@@ -11,9 +11,13 @@ or implementation:
 4. `profile.v2` attaches measured values to existing execution nodes.
 5. `timeline.v1` stores exact events, streams, idle intervals, and attribution
    provenance for one profile.
+6. `validation-evidence.v1` records the independent authorities and executable
+   assertions behind the Semantic IR, Execution Contract, eager Binding, and
+   production-evidence gates. It prevents a downstream IR, Profile, Timeline,
+   or generated bundle from being reused as its own upstream expectation.
 
-Optional optimization-analysis derivatives do not change these five runtime
-contracts:
+Optional optimization-analysis derivatives do not change the first five
+runtime contracts or the sixth validation contract:
 
 - `hardware-spec.v1` stores sourced per-GPU ceilings and optional exact-shape,
   kernel-plan-identified calibration surfaces shared by models;

@@ -1,0 +1,74 @@
+schema_version: validation-evidence.v1
+model_id: qwen38_flash_next
+contract_revision: 1
+authorities:
+  - id: official_model
+    kind: publisher_checkpoint
+    assurance: immutable_external_attestation
+    source:
+      uri: https://huggingface.co/Qwen/Qwen3.8-Flash-Next
+      revision: b151fd157ff99b63198ab8558432f0bf43e14d58
+      digest: {algorithm: git_commit, value: b151fd157ff99b63198ab8558432f0bf43e14d58}
+  - id: framework_source_lock
+    kind: pinned_framework_source
+    assurance: machine_resolved
+    source:
+      uri: catalog://qwen38_flash_next/pipeline/source_lock/framework_targets
+      local_resolution:
+        artifact: pipeline.yaml
+        selector: source_lock.framework_targets
+        required_fields: [source_lock.model_revision, source_lock.framework_targets]
+  - id: runtime_contract
+    kind: runtime_configuration
+    assurance: machine_resolved
+    source:
+      uri: catalog://qwen38_flash_next/pipeline/execution
+      local_resolution: {artifact: pipeline.yaml, selector: execution}
+  - id: eager_reconciliation
+    kind: eager_reconciliation
+    assurance: immutable_external_attestation
+    source:
+      uri: evidence://qwen38_flash_next/graph-off-eager-reconciliation-set
+      revision: catalog-contract-2026-08-30
+      digest: {algorithm: sha256, value: bbc353295ab8ccd52159405fd2bc88c14eb2774a8efeee76ab836e3551427c11}
+  - id: production_timelines
+    kind: production_trace
+    assurance: machine_resolved
+    source:
+      uri: catalog://qwen38_flash_next/production-timelines
+      local_resolution: {artifact_glob: profiles/*/*/*.timeline.json.gz, minimum_matches: 33}
+gates:
+  semantic_ir:
+    status: verified
+    verification_mode: reviewed_external_semantics
+    subjects: [{artifact: model_ir.yaml}]
+    authority_refs: [official_model]
+    assertions:
+      - {id: text_layers, operator: field_equals, subject: {artifact: model_ir.yaml}, selector: facts.text_layers, expected: 48, authority_refs: [official_model]}
+      - {id: linear_layers, operator: field_equals, subject: {artifact: model_ir.yaml}, selector: facts.linear_attention_layers, expected: 36, authority_refs: [official_model]}
+      - {id: full_layers, operator: field_equals, subject: {artifact: model_ir.yaml}, selector: facts.full_attention_layers, expected: 12, authority_refs: [official_model]}
+  execution_contract:
+    status: verified
+    verification_mode: source_and_config_contract
+    subjects: [{artifact_glob: execution_paths/*.yaml, minimum_matches: 4}]
+    authority_refs: [framework_source_lock, runtime_contract]
+    assertions:
+      - {id: default_path, operator: field_equals, subject: {artifact: model_ir.yaml}, selector: default_execution_path, expected: tp_only, authority_refs: [runtime_contract]}
+      - {id: path_count, operator: collection_count_equals, subject: {artifact_glob: execution_paths/*.yaml}, expected: 4, authority_refs: [framework_source_lock, runtime_contract]}
+  binding_reconciliation:
+    status: verified
+    verification_mode: graph_off_eager_reconciliation
+    subjects: [{artifact_glob: bindings/*.yaml, minimum_matches: 7}]
+    authority_refs: [framework_source_lock, eager_reconciliation]
+    assertions:
+      - {id: binding_count, operator: collection_count_equals, subject: {artifact_glob: bindings/*.yaml}, expected: 7, authority_refs: [framework_source_lock, eager_reconciliation]}
+      - {id: binding_identity, operator: all_documents_have_fields, subject: {artifact_glob: bindings/*.yaml}, required_fields: [source_repo, source_commit, execution_path_id, implementation_id], authority_refs: [framework_source_lock, eager_reconciliation]}
+      - {id: binding_source_lock, operator: all_values_in_authority, subject: {artifact_glob: bindings/*.yaml}, selector: source_commit, authority_ref: framework_source_lock, authority_selector: source_lock.framework_targets, authority_value_selectors: [source_commit, expected_source_commit], authority_refs: [framework_source_lock]}
+  production_evidence:
+    status: verified
+    verification_mode: graph_on_production_reconciliation
+    subjects: [{artifact_glob: profiles/*/*/*.yaml, minimum_matches: 33}]
+    authority_refs: [eager_reconciliation, production_timelines]
+    assertions:
+      - {id: profile_count, operator: collection_count_equals, subject: {artifact_glob: profiles/*/*/*.yaml}, expected: 33, authority_refs: [eager_reconciliation, production_timelines]}
+      - {id: profile_evidence, operator: all_documents_have_fields, subject: {artifact_glob: profiles/*/*/*.yaml}, required_fields: [timeline.artifact, timeline.sha256, phase, execution_path_id, implementation_id], authority_refs: [eager_reconciliation, production_timelines]}
