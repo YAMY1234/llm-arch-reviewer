@@ -90,9 +90,7 @@ def build_acceptance_summary(
     reports = {report["model"]: report for report in model_reports}
     model_summaries: list[dict[str, Any]] = []
     for model in models:
-        bundle = json.loads(
-            (docs_root / f"{model}_v2" / "arch_data.json").read_text()
-        )
+        bundle = json.loads((docs_root / f"{model}_v2" / "arch_data.json").read_text())
         report = reports[model]
         timeline_reports = {
             item["profile"]: item for item in report.get("timelines") or []
@@ -133,9 +131,7 @@ def build_acceptance_summary(
                     "mapped_kernel_count_ratio": timeline.get(
                         "mapped_kernel_count_ratio"
                     ),
-                    "mapped_residency_ratio": timeline.get(
-                        "mapped_residency_ratio"
-                    ),
+                    "mapped_residency_ratio": timeline.get("mapped_residency_ratio"),
                     "attribution_passed": timeline.get("attribution_passed"),
                 }
             )
@@ -148,6 +144,15 @@ def build_acceptance_summary(
                 "source_commit": implementation.get("source_commit"),
                 "binding_status": implementation.get("binding_status"),
                 "execution_fingerprint": implementation.get("execution_variant"),
+                "binding_revision_id": implementation.get("binding_revision_id"),
+                "add_trace_acceptance_sha256": implementation.get(
+                    "add_trace_acceptance_sha256"
+                ),
+                "runtime_identity_sha256": implementation.get(
+                    "runtime_identity_sha256"
+                ),
+                "mapping_rules_sha256": implementation.get("mapping_rules_sha256"),
+                "mapping_rule_count": len(implementation.get("mapping_rules") or []),
             }
             for implementation_id, implementation in sorted(implementations.items())
         ]
@@ -161,15 +166,11 @@ def build_acceptance_summary(
                 "model": model,
                 "status": report.get("status"),
                 "validation_evidence": report.get("validation_evidence"),
-                "model_ir_version": (bundle.get("meta") or {}).get(
-                    "model_ir_version"
-                ),
+                "model_ir_version": (bundle.get("meta") or {}).get("model_ir_version"),
                 "model_semantic_revision": (bundle.get("meta") or {}).get(
                     "model_semantic_revision"
                 ),
-                "catalog_manifest_sha256": tree_manifest_sha256(
-                    catalog_root / model
-                ),
+                "catalog_manifest_sha256": tree_manifest_sha256(catalog_root / model),
                 "published_bundle_sha256": (report.get("bundle") or {}).get(
                     "published_sha256"
                 ),
@@ -178,9 +179,9 @@ def build_acceptance_summary(
                     {
                         "execution_fingerprint": fingerprint,
                         "execution_path_id": variant.get("execution_path_id"),
-                        "execution_plan_version": variant.get(
-                            "execution_plan_version"
-                        ),
+                        "execution_plan_version": variant.get("execution_plan_version"),
+                        "selector": variant.get("selector"),
+                        "selector_sha256": object_sha256(variant.get("selector") or {}),
                     }
                     for fingerprint, variant in sorted(
                         (bundle.get("execution_variants") or {}).items()
@@ -212,12 +213,8 @@ def build_acceptance_summary(
                 [
                     {
                         "model": item["model"],
-                        "catalog_manifest_sha256": item[
-                            "catalog_manifest_sha256"
-                        ],
-                        "published_bundle_sha256": item[
-                            "published_bundle_sha256"
-                        ],
+                        "catalog_manifest_sha256": item["catalog_manifest_sha256"],
+                        "published_bundle_sha256": item["published_bundle_sha256"],
                         "evidence_set_sha256": item["evidence_set_sha256"],
                     }
                     for item in model_summaries
@@ -440,12 +437,8 @@ def audit_model(
                 "source_sha256": source_sha256,
                 "published_sha256": published_sha256 or None,
                 "kernel_count": attribution["total_kernel_count"],
-                "mapped_kernel_count_ratio": attribution[
-                    "mapped_kernel_count_ratio"
-                ],
-                "mapped_residency_ratio": attribution[
-                    "mapped_residency_ratio"
-                ],
+                "mapped_kernel_count_ratio": attribution["mapped_kernel_count_ratio"],
+                "mapped_residency_ratio": attribution["mapped_residency_ratio"],
                 "support_counts": attribution["support_counts"],
                 "attribution_passed": attribution["passed"],
                 "attribution_failure_count": attribution["failure_count"],
@@ -504,10 +497,7 @@ def run_browser_gates(
     stream_command = [
         sys.executable,
         str(repo_root / "scripts" / "audit_timeline_stream_modes.py"),
-        *[
-            str(docs_root / f"{model}_v2" / "arch_data.json")
-            for model in models
-        ],
+        *[str(docs_root / f"{model}_v2" / "arch_data.json") for model in models],
         "--base-url",
         base_url,
         "--output",

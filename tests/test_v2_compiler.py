@@ -16,6 +16,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from llm_arch_v2.compiler import (  # noqa: E402
     CatalogError,
+    _validate_binding_revision_contract,
     _validate_leaf_equation_coverage,
     _validate_notation_contract,
     apply_execution_plan,
@@ -24,6 +25,11 @@ from llm_arch_v2.compiler import (  # noqa: E402
     compile_profile,
     execution_fingerprint,
     load_yaml,
+)
+from llm_arch_v2.add_trace import (  # noqa: E402
+    binding_revision_id,
+    mapping_rules_sha256,
+    runtime_identity_sha256,
 )
 
 
@@ -39,6 +45,67 @@ AUDITED_MODEL_ROOTS = sorted(
 
 def _node_ids(bundle: dict, view_id: str) -> list[str]:
     return [node["id"] for node in bundle["views"][view_id]["nodes"]]
+
+
+def test_catalog_binding_revision_seals_mapping_rule_content() -> None:
+    execution_id = "exec_" + "1" * 16
+    identity = {
+        "framework_id": "sglang",
+        "source_repo": "https://github.com/sgl-project/sglang",
+        "source_commit": "2" * 40,
+        "container_digest": "sha256:" + "3" * 64,
+        "package_lock_sha256": "4" * 64,
+        "extension_artifacts": [],
+        "backend_selections": {},
+        "build_flags": {},
+    }
+    rule = {
+        "rule_id": "rule.one",
+        "ir_target": "top.node",
+        "eager_match": {"python_stack_digest": "5" * 64},
+        "production_transfer": {
+            "method": "exact_sequence",
+            "signature_digest": "6" * 64,
+        },
+        "scope": {"phase": "decode", "generation_mode": "autoregressive"},
+    }
+    identity_digest = runtime_identity_sha256(identity, source=Path("fixture.yaml"))
+    binding = {
+        "source_repo": identity["source_repo"],
+        "source_commit": identity["source_commit"],
+        "framework_id": "sglang",
+        "binding_revision_id": binding_revision_id(identity_digest, execution_id),
+        "add_trace_acceptance_sha256": "8" * 64,
+        "runtime_identity": identity,
+        "runtime_identity_sha256": identity_digest,
+        "mapping_rules": [rule],
+        "mapping_rules_sha256": mapping_rules_sha256([rule]),
+    }
+    _validate_binding_revision_contract(
+        binding,
+        execution_fingerprint_value=execution_id,
+        node_targets={"top.node"},
+        source=Path("fixture.yaml"),
+    )
+    binding["mapping_rules"][0]["production_transfer"]["signature_digest"] = "7" * 64
+    with pytest.raises(CatalogError, match="mapping_rules_sha256"):
+        _validate_binding_revision_contract(
+            binding,
+            execution_fingerprint_value=execution_id,
+            node_targets={"top.node"},
+            source=Path("fixture.yaml"),
+        )
+    binding["mapping_rules"][0]["production_transfer"].update(
+        method="kernel_name_guess", signature_digest="7" * 64
+    )
+    binding["mapping_rules_sha256"] = mapping_rules_sha256(binding["mapping_rules"])
+    with pytest.raises(CatalogError, match="invalid production transfer"):
+        _validate_binding_revision_contract(
+            binding,
+            execution_fingerprint_value=execution_id,
+            node_targets={"top.node"},
+            source=Path("fixture.yaml"),
+        )
 
 
 @pytest.mark.parametrize("model_root", AUDITED_MODEL_ROOTS, ids=lambda path: path.name)
@@ -103,20 +170,23 @@ def test_all_audited_catalogs_compile_without_placeholder_equations(
 
 def test_comparison_contract_matches_equivalent_framework_profiles() -> None:
     bundle = compile_catalog(QWEN35_ROOT)
-    assert bundle["implementations"][
-        "sglang_f609d677b_qwen35_033446bb_tp8"
-    ]["framework_id"] == "sglang"
-    assert bundle["implementations"][
-        "vllm_487ecf187_qwen35_native_tp8"
-    ]["framework_id"] == "vllm"
+    assert (
+        bundle["implementations"]["sglang_f609d677b_qwen35_033446bb_tp8"][
+            "framework_id"
+        ]
+        == "sglang"
+    )
+    assert (
+        bundle["implementations"]["vllm_487ecf187_qwen35_native_tp8"]["framework_id"]
+        == "vllm"
+    )
     sglang = bundle["profiles"]["qwen35_tp8_sglang_cg_decode_bs64_8k1k"]
     vllm = bundle["profiles"]["qwen35_tp8_vllm_cg_decode_bs64_8k1k"]
-    assert sglang["meta"]["comparison_contract_id"] == vllm["meta"][
-        "comparison_contract_id"
-    ]
-    assert sglang["meta"]["comparison_contract"] == vllm["meta"][
-        "comparison_contract"
-    ]
+    assert (
+        sglang["meta"]["comparison_contract_id"]
+        == vllm["meta"]["comparison_contract_id"]
+    )
+    assert sglang["meta"]["comparison_contract"] == vllm["meta"]["comparison_contract"]
     contract_id = sglang["meta"]["comparison_contract_id"]
     assert bundle["comparison_contracts"][contract_id][
         "profiles_by_implementation"
@@ -176,7 +246,17 @@ def test_compile_qwen38_flash_next_catalog() -> None:
 
     assert bundle["schema_version"] == "2.0"
     assert bundle["meta"]["catalog"] == "catalog/qwen38_flash_next"
-    assert len(bundle["execution_variants"]) == 4
+    assert len(bundle["execution_variants"]) == 5
+    assert {
+        variant["execution_path_id"]
+        for variant in bundle["execution_variants"].values()
+    } == {
+        "tp_only",
+        "tp_only_eagle_mtp",
+        "dp_attention",
+        "dp_attention_moe_ep_deepep_deepgemm",
+        "moe_ep_a2a_none",
+    }
     assert bundle["default_execution_variant"].startswith("exec_")
     assert bundle["default_implementation"] == "sglang_f90a941aa"
     assert bundle["default_profile"] == "qwen38_flash_next_tp4_cg_decode_bs1_8k1k"
@@ -199,13 +279,17 @@ def test_compile_qwen38_flash_next_catalog() -> None:
     assert "mtp_generation" in bundle["model_ir"]["views"]
     assert "mtp_head" in bundle["model_ir"]["views"]
     mtp_root_nodes = {
-        node["id"]: node for node in bundle["model_ir"]["views"]["mtp_generation"]["nodes"]
+        node["id"]: node
+        for node in bundle["model_ir"]["views"]["mtp_generation"]["nodes"]
     }
     assert mtp_root_nodes["target_prefill"]["drill"] == "top"
     assert mtp_root_nodes["target_verify"]["drill"] == "top"
     assert mtp_root_nodes["mtp_prefill"]["drill"] == "mtp_head"
     assert mtp_root_nodes["mtp_draft_extend"]["drill"] == "mtp_head"
-    assert "initialize MTP state + first proposal" in mtp_root_nodes["mtp_prefill"]["label"]
+    assert (
+        "initialize MTP state + first proposal"
+        in mtp_root_nodes["mtp_prefill"]["label"]
+    )
     assert "one-layer MTP draft forward" in mtp_root_nodes["mtp_draft_extend"]["label"]
     assert "finalize next MTP proposal" in mtp_root_nodes["proposal_update"]["label"]
     mtp_edges = bundle["model_ir"]["views"]["mtp_generation"]["edges"]
@@ -276,19 +360,19 @@ def test_qwen38_flash_next_model_ir_has_semantic_closure_ledgers() -> None:
     )
     ledger = model_ir["facts"]["parameter_ledger"]
     assert ledger["target_unique_total"] == 177392830576
-    assert ledger["target_text_total"] + ledger["vision_total"] == ledger[
-        "target_unique_total"
-    ]
-    assert ledger["target_unique_total"] + ledger["mtp_additional_unique"] == ledger[
-        "target_plus_mtp_unique_total"
-    ]
+    assert (
+        ledger["target_text_total"] + ledger["vision_total"]
+        == ledger["target_unique_total"]
+    )
+    assert (
+        ledger["target_unique_total"] + ledger["mtp_additional_unique"]
+        == ledger["target_plus_mtp_unique_total"]
+    )
     assert ledger["moe_per_layer"] * 48 == ledger["moe_all_48_layers"]
     assert ledger["gdn_core_per_layer"] * 36 == ledger["gdn_core_all_36_layers"]
     assert ledger["qsa_core_per_layer"] * 12 == ledger["qsa_core_all_12_layers"]
     assert 51200245760 + 32768000 + 30720 + 40960 == ledger["ple_module_total"]
-    assert (10240 + 6553600 + 40960) * 2 == ledger[
-        "hyperconnection_per_layer"
-    ]
+    assert (10240 + 6553600 + 40960) * 2 == ledger["hyperconnection_per_layer"]
     assert model_ir["facts"]["state_ledger"]["gdn_per_layer"]["growth"] == (
         "fixed_per_request"
     )
@@ -324,13 +408,9 @@ def test_qwen38_flash_next_model_ir_has_semantic_closure_ledgers() -> None:
         for node in model_ir["views"]["linear_attention"]["nodes"]
         if node["id"] == "recurrent_state"
     )
-    assert gdn_state["semantic_details"]["state"][0]["shape"] == (
-        "[B,48,128,128]"
-    )
+    assert gdn_state["semantic_details"]["state"][0]["shape"] == ("[B,48,128,128]")
     moe = next(
-        node
-        for node in model_ir["views"]["full_layer"]["nodes"]
-        if node["id"] == "moe"
+        node for node in model_ir["views"]["full_layer"]["nodes"] if node["id"] == "moe"
     )
     assert moe["semantic_details"]["parameters"]["total"] == 2522810880
 
@@ -362,19 +442,23 @@ def test_checked_in_qwen38_flash_next_bundle_matches_canonical_catalog() -> None
 def test_notation_contract_rejects_undeclared_symbols_and_untyped_edges() -> None:
     model_ir = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
     broken = copy.deepcopy(model_ir)
-    broken["views"]["moe"]["nodes"][1]["operator_signature"]["symbolic"] = (
-        "H → UNKNOWN"
-    )
+    broken["views"]["moe"]["nodes"][1]["operator_signature"]["symbolic"] = "H → UNKNOWN"
     with pytest.raises(CatalogError, match="undeclared dimension symbols"):
-        _validate_notation_contract(broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
+        _validate_notation_contract(
+            broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml"
+        )
 
     broken = copy.deepcopy(model_ir)
     del broken["views"]["moe"]["edges"][0]["dtype"]
     with pytest.raises(CatalogError, match="tensor-carrying edge"):
-        _validate_notation_contract(broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
+        _validate_notation_contract(
+            broken, source=QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml"
+        )
 
 
-def test_qwen38_flash_next_compute_leaf_requires_authored_equation_or_exemption() -> None:
+def test_qwen38_flash_next_compute_leaf_requires_authored_equation_or_exemption() -> (
+    None
+):
     model_ir = load_yaml(QWEN38_FLASH_NEXT_ROOT / "model_ir.yaml")
     broken = copy.deepcopy(model_ir)
     target = next(
@@ -426,10 +510,12 @@ def test_operator_signature_does_not_change_execution_fingerprint() -> None:
     baseline = execution_fingerprint(model_ir, plan, baseline_views)
 
     relabeled = copy.deepcopy(model_ir)
-    relabeled["views"]["moe"]["nodes"][1]["operator_signature"]["concrete"] = (
-        "resolved elsewhere"
+    relabeled["views"]["moe"]["nodes"][1]["operator_signature"][
+        "concrete"
+    ] = "resolved elsewhere"
+    relabeled_views = apply_execution_plan(
+        relabeled, plan, source=QWEN38_FLASH_NEXT_ROOT
     )
-    relabeled_views = apply_execution_plan(relabeled, plan, source=QWEN38_FLASH_NEXT_ROOT)
     assert execution_fingerprint(relabeled, plan, relabeled_views) == baseline
 
 
@@ -443,7 +529,7 @@ def test_qwen38_flash_next_compound_math_drills_to_primitive_model_ir_nodes() ->
     # The canonical MTP generation graph now includes the explicit
     # proposal-update boundary retained from main, so the structural
     # execution fingerprint differs from the pre-merge enrichment branch.
-    assert bundle["default_execution_variant"] == "exec_36fa30ea441f7045"
+    assert bundle["default_execution_variant"] == "exec_8f4c4d6b423803ed"
 
     mix_gate = next(
         node
@@ -463,9 +549,7 @@ def test_qwen38_flash_next_compound_math_drills_to_primitive_model_ir_nodes() ->
     ]
 
     routed = next(
-        node
-        for node in model_views["moe"]["nodes"]
-        if node["id"] == "routed_experts"
+        node for node in model_views["moe"]["nodes"] if node["id"] == "routed_experts"
     )
     assert routed["drill"] == "moe_routed_expert"
     assert _node_ids(bundle["model_ir"], "moe_routed_expert")[1:-1] == [
@@ -477,7 +561,9 @@ def test_qwen38_flash_next_compound_math_drills_to_primitive_model_ir_nodes() ->
     ]
 
 
-def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting() -> None:
+def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting() -> (
+    None
+):
     bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     profile = bundle["profiles"]["qwen38_flash_next_tp4_cg_decode_bs1_8k1k"]
     group = profile["fusion_groups"]["fusion:hyperconnection_mix.mix"]
@@ -504,9 +590,7 @@ def test_fine_model_ir_nodes_share_measured_fusion_owner_without_double_counting
     ):
         assert field not in cell
 
-    owner = profile["data"]["hyperconnection_mix.mix"][
-        "tp4_cg_decode_bs1_8k1k"
-    ]
+    owner = profile["data"]["hyperconnection_mix.mix"]["tp4_cg_decode_bs1_8k1k"]
     assert owner["timing_role"] == "fusion_owner"
     assert owner["active_gpu_ms"] > 0
 
@@ -566,7 +650,9 @@ def test_profile_rejects_unreachable_fusion_architecture_owner() -> None:
         )
 
 
-def test_qwen38_flash_next_qsa_indexer_drill_has_reconciled_binding_and_profile() -> None:
+def test_qwen38_flash_next_qsa_indexer_drill_has_reconciled_binding_and_profile() -> (
+    None
+):
     bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     implementation = bundle["implementations"]["sglang_f90a941aa"]
     for target in (
@@ -589,7 +675,7 @@ def test_qwen38_flash_next_qsa_indexer_drill_has_reconciled_binding_and_profile(
     )
 
 
-def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> None:
+def test_generation_mode_must_match_execution_contract() -> None:
     model_path = MODEL_ROOT / "model_ir.yaml"
     plan_path = MODEL_ROOT / "execution_paths" / "tp_only.yaml"
     model = load_yaml(model_path)
@@ -605,22 +691,18 @@ def test_generation_mode_is_profile_overlay_not_execution_cross_product() -> Non
     )
     raw["generation_mode"] = "eagle_mtp"
     raw["entry_view"] = "mtp_generation"
-    compiled = compile_profile(
-        raw,
-        plan=plan,
-        fingerprint=fingerprint,
-        node_targets={
-            f"{view_id}.{node['id']}"
-            for view_id, view in views.items()
-            for node in view["nodes"]
-        },
-        source=Path("mtp_profile.yaml"),
-    )
-
-    assert compiled["execution_variant"] == fingerprint
-    assert compiled["meta"]["generation_mode"] == "eagle_mtp"
-    assert compiled["meta"]["entry_view"] == "mtp_generation"
-    assert list(compiled["data"]) == sorted(compiled["data"])
+    with pytest.raises(CatalogError, match="does not match Execution IR requirement"):
+        compile_profile(
+            raw,
+            plan=plan,
+            fingerprint=fingerprint,
+            node_targets={
+                f"{view_id}.{node['id']}"
+                for view_id, view in views.items()
+                for node in view["nodes"]
+            },
+            source=Path("mtp_profile.yaml"),
+        )
 
 
 def test_profile_data_order_is_canonical_and_complete() -> None:
@@ -726,16 +808,14 @@ def test_shared_event_coverage_requires_explicit_member_subsets() -> None:
         views=views,
         source=Path("coverage-profile.yaml"),
     )
-    member = compiled["data"]["linear_attention.ba_projection"][
-        profile["variant_id"]
-    ]
+    member = compiled["data"]["linear_attention.ba_projection"][profile["variant_id"]]
     assert member["timing_role"] == "fused_member"
     assert member["fusion_timing_semantics"] == "shared_event_coverage"
     assert "active_gpu_ms" not in member
 
-    profile["fusion_groups"][group_id]["evidence_scope"][
-        "member_event_ids"
-    ]["linear_attention.ba_projection"] = ["rank0:not-owned"]
+    profile["fusion_groups"][group_id]["evidence_scope"]["member_event_ids"][
+        "linear_attention.ba_projection"
+    ] = ["rank0:not-owned"]
     with pytest.raises(CatalogError, match="outside the owner's physical event set"):
         compile_profile(
             profile,
@@ -785,6 +865,11 @@ def test_occurrence_partitioned_fusion_compiles_without_copied_timing() -> None:
     compiled = compile_profile(
         profile,
         plan={
+            "selector": {
+                "match": {
+                    "generation.mode": {"equals": "autoregressive"},
+                }
+            },
             "parallelism_axes": {
                 "tp_size": 1,
                 "dp_size": 1,
@@ -810,7 +895,9 @@ def test_qwen35_collective_adapters_live_on_layer_boundaries() -> None:
     assert "tp_moe_output_collective" not in _node_ids(bundle, "moe_block")
     assert "tp_attention_output_collective" in _node_ids(bundle, "gdn_moe_block")
     assert "tp_moe_output_collective" in _node_ids(bundle, "gdn_moe_block")
-    assert "tp_attention_output_collective" in _node_ids(bundle, "full_attention_moe_block")
+    assert "tp_attention_output_collective" in _node_ids(
+        bundle, "full_attention_moe_block"
+    )
     assert "tp_moe_output_collective" in _node_ids(bundle, "full_attention_moe_block")
 
 
@@ -847,7 +934,9 @@ def test_qwen38_flash_next_topology_binding_inherits_common_source_mapping() -> 
     assert "linear_layer.tp_attention_collective" not in binding["node_bindings"]
 
 
-def test_qwen38_flash_next_qwen4_main_binding_explicitly_reuses_base_semantics() -> None:
+def test_qwen38_flash_next_qwen4_main_binding_explicitly_reuses_base_semantics() -> (
+    None
+):
     bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     binding = bundle["implementations"][
         "sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn"
@@ -863,9 +952,12 @@ def test_qwen38_flash_next_qwen4_main_binding_explicitly_reuses_base_semantics()
     )
     assert "mtp_generation.target_verify" in binding["node_bindings"]
     assert "linear_attention.delta_rule" in binding["node_bindings"]
-    assert "/blob/32e9cb5" in binding["node_bindings"][
-        "mtp_generation.target_verify"
-    ]["code_links"][0]["url"]
+    assert (
+        "/blob/32e9cb5"
+        in binding["node_bindings"]["mtp_generation.target_verify"]["code_links"][0][
+            "url"
+        ]
+    )
 
 
 def test_binding_validation_attestation_is_preserved_and_fingerprint_checked(
@@ -915,8 +1007,7 @@ def test_insert_after_redirects_existing_output_edge() -> None:
         "dtype": "bf16",
     } in edges
     assert any(
-        edge["from"] == "tp_attention_collective"
-        and edge["to"] == "attn_hc_combine"
+        edge["from"] == "tp_attention_collective" and edge["to"] == "attn_hc_combine"
         for edge in edges
     )
     assert not any(
@@ -929,13 +1020,11 @@ def test_insert_after_redirects_existing_output_edge() -> None:
         for edge in edges
     )
     assert any(
-        edge["from"] == "tp_moe_output_collective"
-        and edge["to"] == "mlp_hc_combine"
+        edge["from"] == "tp_moe_output_collective" and edge["to"] == "mlp_hc_combine"
         for edge in edges
     )
     assert not any(
-        edge["from"] == "moe" and edge["to"] == "mlp_hc_combine"
-        for edge in edges
+        edge["from"] == "moe" and edge["to"] == "mlp_hc_combine" for edge in edges
     )
 
 
@@ -1045,7 +1134,9 @@ def test_execution_communication_requires_payload_and_result() -> None:
     model = load_yaml(model_path)
     plan = load_yaml(plan_path)
     inserted = next(
-        transform for transform in plan["transforms"] if transform["op"] == "insert_after"
+        transform
+        for transform in plan["transforms"]
+        if transform["op"] == "insert_after"
     )
     del inserted["node"]["execution"]["payload"]
 

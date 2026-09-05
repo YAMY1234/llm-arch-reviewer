@@ -4,11 +4,24 @@ label: TP attention with all-reduce expert parallel MoE
 model_id: qwen38_flash_next
 plan_version: 1
 
+selector:
+  framework_ids: [sglang]
+  match:
+    parallelism.tp_size: {equals: 4}
+    parallelism.dp_size: {equals: 1}
+    parallelism.cp_size: {equals: 1}
+    parallelism.ep_size: {equals: 4}
+    parallelism.pp_size: {equals: 1}
+    generation.mode: {equals: autoregressive}
+    attention.mode: {equals: tensor_parallel}
+    moe.mode: {equals: expert_parallel}
+    moe.dispatch_backend: {equals: all_reduce}
+
 parallelism_axes:
   dp_size: 1
   cp_size: 1
-  ep_size: parameterized
-  tp_size: parameterized
+  ep_size: 4
+  tp_size: 4
 
 default_parameters: {tp_size: 4, dp_size: 1, cp_size: 1, ep_size: 4}
 

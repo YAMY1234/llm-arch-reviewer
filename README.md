@@ -189,9 +189,10 @@ from immutable external-source attestations that were reviewed but are not
 re-downloaded by offline CI.
 
 The execution fingerprint hashes the normalized, framework-independent
-contract—not Python symbols or kernel sequences. A CUDA-Graph-disabled eager
-trace must validate that contract for each exact Binding before production
-timing can be attached.
+contract, including exact parallelism and generation/control selectors—not
+Python symbols or kernel sequences. A CUDA-Graph-disabled eager trace must
+validate that contract for each exact Binding before production timing can be
+attached.
 
 The Architecture pane has an explicit IR-layer selector. **Model semantics**
 shows the framework-independent graph from `model_ir.yaml`; **Executed
@@ -232,7 +233,46 @@ The full comparison selection is URL-persistent (`comparison`,
 `implementations`, and `profiles`) while existing single-profile links remain
 backward compatible.
 
-To add a profile, place an immutable `profile.v2` YAML under the matching
+To add trace evidence, first run the deterministic M0.5 gates:
+
+```bash
+python3 scripts/run_pipeline_v2.py plan \
+  --manifest current/<run>/run.yaml --output current/<run>/plan.json
+python3 scripts/run_pipeline_v2.py accept \
+  --manifest current/<run>/run.yaml --plan current/<run>/plan.json \
+  --binding-revision current/<run>/binding-revision.yaml \
+  --eager-reconciliation current/<run>/eager-reconciliation.json \
+  --trace-attribution current/<run>/trace-attribution.json \
+  --output current/<run>/acceptance.json
+python3 scripts/materialize_binding_revision.py \
+  --template catalog/<model>/bindings/<compatible-template>.yaml \
+  --binding-revision current/<run>/binding-revision.json \
+  --acceptance current/<run>/acceptance.json \
+  --implementation-id <implementation-id> --label '<label>' \
+  --container '<immutable-image-digest>' \
+  --eager-evidence evidence://<eager-authority> \
+  --production-evidence evidence://<production-authority> \
+  --output catalog/<model>/bindings/<implementation-id>.yaml
+```
+
+The normalized config must first match the catalog's checkpoint artifact and
+revision, then select exactly one Execution IR. Runtime source,
+container, package, extension, backend, or build changes create a new Binding
+revision; workload/capture changes create a new Profile; exact parallelism or
+generation-contract changes require a new Execution Plan. The acceptance gate
+reopens and hashes all rank traces, eager/production protocols, selected-window
+evidence, and the artifacts that prove Runtime Identity; it proves the observed eager predicates and
+production transfer signatures equal the authored Binding rules, rejects any
+Binding target absent from the current compiled Execution IR, rejects Model IR
+drift after planning, seals every input
+document digest in the final attestation, and has no production bypass.
+
+The materializer refuses an acceptance digest or identity that does not match
+the exact Binding revision, removes incompatible template inheritance, replaces
+stale node bindings with source links derived from the accepted eager rules,
+persists the acceptance digest on the Binding, and schema-checks the result.
+After that gate,
+place the immutable `profile.v2` YAML under the matching
 `catalog/<model>/profiles/<execution_path>/<implementation>/` directory and
 rebuild. If the trace has the same execution fingerprint, no diagram changes.
 Create a new execution plan only when operator flow, sharding, placement, or

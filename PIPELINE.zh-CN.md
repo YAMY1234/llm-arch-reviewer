@@ -126,6 +126,11 @@ Timeline 数据不能重新定义任何一层 IR。
 
 Generation mode 是 Profile/Binding 的一个维度，**不是第六层 IR**。例如 EAGLE MTP 使用稳定的 MTP Model IR view，在 target verification 时复用 target-model graph，并选择 MTP 专用 entry view；不存在单独的“Generation IR”。
 
+它只有在规范化后的 operator、state、placement 与 communication contract
+已经被同一 Execution Plan 完整表达时，才可以与 autoregressive path 共享该
+plan。不同的 draft 数学结构或生成控制流必须建立新的 Execution Plan。精确的
+TP/DP/CP/EP/PP 数值也属于 Execution identity，而不是 Profile 维度。
+
 ### 2.6 可选的 SoL 与 Gap Analysis 派生物
 
 SoL 不增加新的 canonical IR 层，而是使用既有 Model/Execution IR node ID 的理论 overlay：
@@ -544,19 +549,74 @@ docs/<model>_v2/                        # 只存放生成后的 static bundle
 
 Raw trace 和 intermediate task material 不放进 repository。Catalog document 记录它们的 content hash 和可解析的 local/artifact reference。
 
-最终计划只保留一个入口命令：
+M0.5 已提供两个 fail-closed、可执行的已有 catalog 加 trace 入口：
 
 ```bash
 python3 scripts/run_pipeline_v2.py \
-  --manifest catalog/<model>/pipeline.yaml \
-  --target deliverable
+  plan --manifest current/<run>/run.yaml --output current/<run>/plan.json
+
+python3 scripts/run_pipeline_v2.py \
+  accept --manifest current/<run>/run.yaml \
+  --plan current/<run>/plan.json \
+  --binding-revision current/<run>/binding-revision.yaml \
+  --eager-reconciliation current/<run>/eager-reconciliation.json \
+  --trace-attribution current/<run>/trace-attribution.json \
+  --output current/<run>/acceptance.json
+
+python3 scripts/materialize_binding_revision.py \
+  --template catalog/<model>/bindings/<compatible-template>.yaml \
+  --binding-revision current/<run>/binding-revision.json \
+  --acceptance current/<run>/acceptance.json \
+  --implementation-id <implementation-id> --label '<label>' \
+  --container '<immutable-image-digest>' \
+  --eager-evidence evidence://<eager-authority> \
+  --production-evidence evidence://<production-authority> \
+  --output catalog/<model>/bindings/<implementation-id>.yaml
 ```
 
-`scripts/build_v2.py` 继续作为 prepared catalog data 的 compiler。上面的 orchestrator 是本规范 review 通过后的下一项实现工作；它会调用 capture、attribution、validation 和 compilation stage，但不会形成第二套 pipeline。
+`plan` 要求每个 raw config 字段都有唯一 disposition，并同时记录 observed raw value、
+normalized value 与提取证据（路径／flag 的归一化转换不能隐式发生），再把 checkpoint artifact
+及 revision 与 catalog 中独立编写的 Model IR source lock 精确匹配，再按 authored selector
+唯一解析到一个 Execution IR，并根据 Execution fingerprint 与
+source/container/package/backend Runtime Identity digest 生成 capture 前可确定的
+Binding revision ID。解析会对完整 normalized Execution contract fail closed：其中
+每一个叶字段都必须有 authored selector predicate；新增或未知执行字段不能静默继承
+已有 Execution IR。`accept` 再用 `mapping_rules_sha256` 独立封存实际生成的
+Binding 规则内容，并重新打开、hash 全 TP rank trace、两份不同的 capture protocol、
+selected-window 以及证明 Runtime Identity 的 source/checkpoint/container/package/extension/build/effective-config artifact，验证 manifest/plan identity、全 TP rank eager rule closure、
+eager window 中 rule-owned kernel 与明确分类的 typed support kernel 的 event/duration 全量闭合、
+每条 authored eager predicate 与 observed match evidence 完全相等、每条 authored
+transfer signature 与 production event 完全相等、当前编译 Model IR identity 不变、
+每个 Binding target 都存在于当前编译出的 Execution IR、受控分类的 typed support event、
+逐 rank/逐 rule 的 fusion ownership、稳定窗口 identity，以及 event count/duration
+全量闭合。最终 attestation 还会对五份输入文档、两份 capture protocol 与
+Runtime Identity evidence set 分别做 content addressing；
+正式 CLI 不提供跳过 hash 的选项。
+
+Catalog materializer 只接受由这份 content-addressed acceptance 精确授权的
+Binding revision；它会删除模板继承身份，并用已验收 eager rule 中的 source symbol
+确定性重建 `node_bindings` 与源码链接，再对新的 implementation Binding 做 schema
+校验，并在 Binding 中保存 `add_trace_acceptance_sha256`。因此发布阶段不能绕过
+验收，也不会误继承旧 Binding 的规则。
+
+M0.5 中 capture 与 attribution 仍是显式 producer；M1 才会将这些 producer
+组织成可恢复 stage DAG。`scripts/build_v2.py` 继续作为 accepted catalog data
+的唯一 compiler，因此不会形成第二套发布 pipeline。
 
 ## 7. Profile Matrix 与扩展策略
 
-首先以 pure TP 作为默认 reference。当仅 hardware、workload、backend implementation 或 measurement 变化时，在已有 execution fingerprint 下增加 Profile；当 framework/source/backend code 变化时增加 Binding；当分布式执行 contract 变化时增加 Execution Plan。
+首先以 pure TP 作为默认 reference。Execution IR 由规范化 run config 自动
+选择，不由 agent 判断，也不要求用户填写 path ID。只有 workload、hardware、
+capture procedure 或测量值变化时，才在既有 Execution 下增加 Profile；
+source/container/package/backend artifact 改变但 Execution contract 不变时，
+建立新的 Runtime Binding revision；精确 parallelism、placement、communication、
+state 或 generation/control contract 改变时，建立新的 Execution Plan。每个
+Execution selector 必须绑定唯一且精确的 `generation.mode`，禁止用 `one_of`
+把 autoregressive 与 MTP 执行图合并在一起，并且必须约束 normalized Execution
+contract 的每个叶字段。函数名、
+Python stack 和 kernel name 属于 Binding 内容，不进入 Runtime Implementation
+Identity；这些确定性规则由 `mapping_rules_sha256` 封存，规则发生变化而未重新
+生成并验收 Binding 时必须 fail closed。
 
 推荐扩展顺序：
 
@@ -565,7 +625,8 @@ python3 scripts/run_pipeline_v2.py \
 3. MoE EP 以及选定的 communication/GEMM backend；
 4. Attention DP + MoE EP 等有实际价值的组合；
 5. 绑定到相同 Model/Execution IR 的其他 framework；
-6. MTP 等 optional generation mode，继续使用相同 contract，只增加独立 profile dimension。
+6. MTP 等 optional generation mode：只有 exact contract 等价时才复用 Execution
+   Plan，否则建立新的 Execution Plan。
 
 每条不同 code path 都必须独立 profile。即使不同路径中的 Model IR node 名称相同，也不能复制测量结果。
 
@@ -755,6 +816,6 @@ Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六
 
 M0 新增 `scripts/release_audit.py` 作为 model-neutral 的 release 入口。Static level 会重新编译 catalog、比较 published bundle 的精确内容、验证公开 model inventory 和 content-addressed Timeline artifact，并对无法解释的 production kernel fail closed。Release level 会进一步执行真实 browser audit。仅通过 static gate 不会被标记为 release-ready。
 
-M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。它还会验证并发布每个自动发现 catalog 的四层独立证据报告；缺少 contract，或把下游 artifact 当成自己的 authority，都会阻止发布。Manifest-driven `run_pipeline_v2.py` orchestrator 仍属于 M1，并不是当前已经可用的命令。
+M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。它还会验证并发布每个自动发现 catalog 的四层独立证据报告；缺少 contract，或把下游 artifact 当成自己的 authority，都会阻止发布。M0.5 已提供可用的 `run_pipeline_v2.py plan|accept`；自动 capture/parse/map/materialize 的可恢复 stage DAG 仍属于 M1，并且必须复用这些 artifact 与 gate。
 
 已经移除的 Qwen3.5 trace-first/manual pipeline 不再是第二条受支持路径。旧实现中有价值的部分已经保留在本规范中，包括：冻结输入、可复用 trace parsing、source/callsite validation、artifact provenance、config-driven validation 和单一 orchestration command。旧流程中“由 runtime skeleton 定义 architecture”的行为不再保留。

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "binding-revision.schema.json",
+  "title": "llm-arch-reviewer runtime binding revision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "binding_revision_id",
+    "model_id",
+    "execution_path_id",
+    "execution_fingerprint",
+    "runtime_identity",
+    "runtime_identity_sha256",
+    "runtime_evidence_artifacts",
+    "mapping_rules_sha256",
+    "mapping_rules"
+  ],
+  "properties": {
+    "schema_version": {"const": "binding-revision.v1"},
+    "binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+    "model_id": {"type": "string"},
+    "execution_path_id": {"type": "string"},
+    "execution_fingerprint": {"type": "string", "pattern": "^exec_[0-9a-f]{16}$"},
+    "runtime_identity": {"$ref": "#/$defs/runtime_identity"},
+    "runtime_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runtime_evidence_artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "trace-attribution.schema.json#/$defs/artifact"}
+    },
+    "mapping_rules_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "mapping_rules": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/mapping_rule"}
+    },
+    "extends_binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+    "inheritance_proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "unchanged_rule_ids", "changed_rule_ids", "evidence_sha256"],
+      "properties": {
+        "status": {"const": "pass"},
+        "unchanged_rule_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "changed_rule_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runtime_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "framework_id",
+        "source_repo",
+        "source_commit",
+        "container_digest",
+        "package_lock_sha256",
+        "extension_artifacts",
+        "backend_selections",
+        "build_flags"
+      ],
+      "properties": {
+        "framework_id": {"enum": ["sglang", "vllm", "tensorrt_llm"]},
+        "source_repo": {"type": "string", "format": "uri"},
+        "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "source_patch_sha256": {"$ref": "#/$defs/sha256"},
+        "container_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "package_lock_sha256": {"$ref": "#/$defs/sha256"},
+        "extension_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "sha256"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "sha256": {"$ref": "#/$defs/sha256"}
+            }
+          }
+        },
+        "backend_selections": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}},
+        "build_flags": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean"]}}
+      }
+    },
+    "mapping_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "ir_target", "eager_match", "production_transfer", "scope"],
+      "properties": {
+        "rule_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+        "ir_target": {"type": "string", "pattern": "^[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+$"},
+        "eager_match": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "python_stack_digest": {"$ref": "#/$defs/sha256"},
+            "source_symbol": {"type": "string", "minLength": 1},
+            "operator_sequence_digest": {"$ref": "#/$defs/sha256"},
+            "collective_signature": {"type": "string", "minLength": 1},
+            "state_transition": {"type": "string", "minLength": 1}
+          }
+        },
+        "production_transfer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "signature_digest"],
+          "properties": {
+            "method": {"enum": ["exact_sequence", "annotated_scope", "collective_order", "state_boundary", "reviewed_fusion"]},
+            "signature_digest": {"$ref": "#/$defs/sha256"}
+          }
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["phase", "generation_mode"],
+          "properties": {
+            "phase": {"enum": ["prefill", "decode"]},
+            "generation_mode": {"type": "string", "minLength": 1},
+            "layer_ids": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0}},
+            "substage": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

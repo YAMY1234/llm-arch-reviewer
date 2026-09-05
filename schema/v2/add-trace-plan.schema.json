@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "add-trace-plan.schema.json",
+  "title": "llm-arch-reviewer deterministic add-trace plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "model_id", "manifest_sha256", "model_resolution", "execution_resolution", "binding_resolution", "required_stages", "plan_sha256"],
+  "properties": {
+    "schema_version": {"const": "add-trace-plan.v1"},
+    "run_id": {"type": "string"},
+    "model_id": {"type": "string"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "model_resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "model_artifact_id", "model_revision", "semantic_revision", "model_ir_sha256"],
+      "properties": {
+        "state": {"const": "matched_existing_model_ir"},
+        "model_artifact_id": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "semantic_revision": {"type": ["integer", "string"]},
+        "model_ir_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "execution_resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "execution_path_id", "execution_fingerprint", "selector_diagnostics"],
+      "properties": {
+        "state": {"const": "matched_existing_execution"},
+        "execution_path_id": {"type": "string"},
+        "execution_fingerprint": {"type": "string", "pattern": "^exec_[0-9a-f]{16}$"},
+        "selector_diagnostics": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}}
+      }
+    },
+    "binding_resolution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "implementation_id", "binding_revision_id", "runtime_identity_sha256", "legacy_bindings_without_complete_identity"],
+      "properties": {
+        "state": {"enum": ["reuse_existing_binding", "new_binding_revision_required"]},
+        "implementation_id": {"type": ["string", "null"]},
+        "binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+        "runtime_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "legacy_bindings_without_complete_identity": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "required_stages": {"type": "array", "minItems": 4, "uniqueItems": true, "items": {"type": "string"}},
+    "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

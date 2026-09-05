@@ -1,0 +1,2211 @@
+schema_version: implementation-binding.v2
+implementation_id: sglang_25ee2b56_pr37500_tp4_eagle_mtp
+label: "SGLang PR #37500 head 25ee2b56 \xB7 clean upstream \xB7 pure TP4 \xB7 FlashInfer\
+  \ BF16 GDN \xB7 EAGLE MTP"
+model_id: qwen38_flash_next
+execution_path_id: tp_only_eagle_mtp
+source_repo: https://github.com/sgl-project/sglang
+source_commit: 25ee2b5657ec068a309767c219b24c78ca07cbd6
+container: lmsysorg/sglang:nightly-dev-cu13-20260901-07c8f729@sha256:65661b39307f724a5f698eff1d97642c0445e8c60d186d7759da569a7a6874e8
+backend: sglang
+node_bindings:
+  full_layer.tp_attention_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  full_layer.tp_moe_output_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  hyperconnection.branch_norm:
+    symbols:
+    - grouped_gemma_rmsnorm
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py
+      symbol: grouped_gemma_rmsnorm
+      display: "sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py \u2014 grouped_gemma_rmsnorm"
+  hyperconnection.combine:
+    symbols:
+    - hc_combine_split
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/hc_combine.py
+      symbol: hc_combine_split
+      display: "sglang/kernels/ops/elementwise/hc_combine.py \u2014 hc_combine_split"
+  hyperconnection.mix:
+    symbols:
+    - run_splitk_dense_gate
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense_gate
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense_gate"
+  linear_attention.causal_conv:
+    symbols:
+    - causal_conv1d_update
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/mamba/causal_conv1d_triton.py
+      symbol: causal_conv1d_update
+      display: "sglang/kernels/ops/mamba/causal_conv1d_triton.py \u2014 causal_conv1d_update"
+  linear_attention.delta_rule:
+    symbols:
+    - _mtp_bf16_adapted
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/attention/linear/kernels/gdn_flashinfer.py
+      symbol: _mtp_bf16_adapted
+      display: "sglang/srt/layers/attention/linear/kernels/gdn_flashinfer.py \u2014\
+        \ _mtp_bf16_adapted"
+  linear_attention.gated_norm:
+    symbols:
+    - layernorm_fn
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/attention/fla/layernorm_gated.py
+      symbol: layernorm_fn
+      display: "sglang/kernels/ops/attention/fla/layernorm_gated.py \u2014 layernorm_fn"
+  linear_attention.gating:
+    symbols:
+    - fused_qkv_split_gdn_prefill
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/attention/triton_gdn_fused_proj.py
+      symbol: fused_qkv_split_gdn_prefill
+      display: "sglang/kernels/ops/attention/triton_gdn_fused_proj.py \u2014 fused_qkv_split_gdn_prefill"
+  linear_attention.output_projection:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  linear_attention.qkvz_projection:
+    symbols:
+    - _forward_input_proj
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: _forward_input_proj
+      display: "sglang/srt/models/qwen3_5.py \u2014 _forward_input_proj"
+  linear_attention.split_pack:
+    symbols:
+    - forward
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen3_5.py
+      symbol: forward
+      display: "sglang/srt/models/qwen3_5.py \u2014 forward"
+  linear_layer.tp_attention_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  linear_layer.tp_moe_output_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  moe.combine:
+    symbols:
+    - _launch_fused_gate_sigmoid_mul
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/elementwise.py
+      symbol: _launch_fused_gate_sigmoid_mul
+      display: "sglang/kernels/ops/elementwise/elementwise.py \u2014 _launch_fused_gate_sigmoid_mul"
+  moe.routed_experts:
+    symbols:
+    - fused_experts_none_to_flashinfer_trtllm_bf16
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py
+      symbol: fused_experts_none_to_flashinfer_trtllm_bf16
+      display: "sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py \u2014 fused_experts_none_to_flashinfer_trtllm_bf16"
+  moe.router:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  moe.shared_expert:
+    symbols:
+    - _bf16_gemm_dispatch_impl
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/quantization/unquant.py
+      symbol: _bf16_gemm_dispatch_impl
+      display: "sglang/srt/layers/quantization/unquant.py \u2014 _bf16_gemm_dispatch_impl"
+  moe.topk:
+    symbols:
+    - fused_experts_none_to_flashinfer_trtllm_bf16
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py
+      symbol: fused_experts_none_to_flashinfer_trtllm_bf16
+      display: "sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py \u2014 fused_experts_none_to_flashinfer_trtllm_bf16"
+  mtp_generation.accept_commit:
+    symbols:
+    - eagle_sample
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/speculative/eagle_utils.py
+      symbol: eagle_sample
+      display: "sglang/srt/speculative/eagle_utils.py \u2014 eagle_sample"
+  mtp_generation.mtp_draft_extend:
+    symbols:
+    - build_group_ring_slots
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/attention/qsa/metadata.py
+      symbol: build_group_ring_slots
+      display: "sglang/srt/layers/attention/qsa/metadata.py \u2014 build_group_ring_slots"
+  mtp_generation.proposal_update:
+    symbols:
+    - _draft_extend_for_decode
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/speculative/eagle_worker_v2.py
+      symbol: _draft_extend_for_decode
+      display: "sglang/srt/speculative/eagle_worker_v2.py \u2014 _draft_extend_for_decode"
+  mtp_head.embedding:
+    symbols:
+    - vocab_parallel_embedding
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/embeddings/vocab_parallel_embedding.py
+      symbol: vocab_parallel_embedding
+      display: "sglang/kernels/ops/embeddings/vocab_parallel_embedding.py \u2014 vocab_parallel_embedding"
+  mtp_head.embedding_projection:
+    symbols:
+    - _fuse_residual_linear_shared
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp_mtp.py
+      symbol: _fuse_residual_linear_shared
+      display: "sglang/srt/models/qwen4_exp_mtp.py \u2014 _fuse_residual_linear_shared"
+  mtp_head.final_hc_mix:
+    symbols:
+    - grouped_gemma_rmsnorm
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py
+      symbol: grouped_gemma_rmsnorm
+      display: "sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py \u2014 grouped_gemma_rmsnorm"
+  mtp_head.hidden_projection:
+    symbols:
+    - _fuse_residual_linear_shared
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp_mtp.py
+      symbol: _fuse_residual_linear_shared
+      display: "sglang/srt/models/qwen4_exp_mtp.py \u2014 _fuse_residual_linear_shared"
+  mtp_head.lm_head:
+    symbols:
+    - _compute_lm_head
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: _compute_lm_head
+      display: "sglang/srt/layers/logits_processor.py \u2014 _compute_lm_head"
+  mtp_head.residual_fusion:
+    symbols:
+    - _fuse_residual_linear_shared
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp_mtp.py
+      symbol: _fuse_residual_linear_shared
+      display: "sglang/srt/models/qwen4_exp_mtp.py \u2014 _fuse_residual_linear_shared"
+  mtp_head.tp_embedding_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  mtp_head.tp_logits_collective:
+    symbols:
+    - _copy_logits_to_buffer
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: _copy_logits_to_buffer
+      display: "sglang/srt/layers/logits_processor.py \u2014 _copy_logits_to_buffer"
+  mtp_layer.tp_attention_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  mtp_layer.tp_moe_output_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  mtp_moe.combine:
+    symbols:
+    - fused_experts_none_to_flashinfer_trtllm_bf16
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py
+      symbol: fused_experts_none_to_flashinfer_trtllm_bf16
+      display: "sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py \u2014 fused_experts_none_to_flashinfer_trtllm_bf16"
+  mtp_moe.routed_experts:
+    symbols:
+    - forward
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: forward
+      display: "sglang/srt/models/qwen4_exp.py \u2014 forward"
+  mtp_moe.router:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  mtp_moe.shared_expert:
+    symbols:
+    - _bf16_gemm_dispatch_impl
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/quantization/unquant.py
+      symbol: _bf16_gemm_dispatch_impl
+      display: "sglang/srt/layers/quantization/unquant.py \u2014 _bf16_gemm_dispatch_impl"
+  mtp_moe.topk:
+    symbols:
+    - fused_experts_none_to_flashinfer_trtllm_bf16
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py
+      symbol: fused_experts_none_to_flashinfer_trtllm_bf16
+      display: "sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py \u2014 fused_experts_none_to_flashinfer_trtllm_bf16"
+  mtp_qsa_attention.attention_core:
+    symbols:
+    - qwen_sparse_kv_extraction_compact_triton
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/attention/qsa/sparse_attn.py
+      symbol: qwen_sparse_kv_extraction_compact_triton
+      display: "sglang/srt/layers/attention/qsa/sparse_attn.py \u2014 qwen_sparse_kv_extraction_compact_triton"
+  mtp_qsa_attention.indexer:
+    symbols:
+    - fast_topk
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/fast_topk.py
+      symbol: fast_topk
+      display: "sglang/kernels/ops/elementwise/fast_topk.py \u2014 fast_topk"
+  mtp_qsa_attention.kv_cache:
+    symbols:
+    - _set_kv_buffer_impl
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/mem_cache/memory_pool.py
+      symbol: _set_kv_buffer_impl
+      display: "sglang/srt/mem_cache/memory_pool.py \u2014 _set_kv_buffer_impl"
+  mtp_qsa_attention.output_gate:
+    symbols:
+    - fused_sigmoid_mul
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/elementwise.py
+      symbol: fused_sigmoid_mul
+      display: "sglang/kernels/ops/elementwise/elementwise.py \u2014 fused_sigmoid_mul"
+  mtp_qsa_attention.output_projection:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  mtp_qsa_attention.qk_norm_rope:
+    symbols:
+    - self_attention
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: self_attention
+      display: "sglang/srt/models/qwen4_exp.py \u2014 self_attention"
+  mtp_qsa_attention.qkv_gate_projection:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  ple.context_commit:
+    symbols:
+    - _commit_ple_batch
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: _commit_ple_batch
+      display: "sglang/srt/models/qwen4_exp.py \u2014 _commit_ple_batch"
+  ple.grouped_norm_gate:
+    symbols:
+    - forward
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: forward
+      display: "sglang/srt/models/qwen4_exp.py \u2014 forward"
+  ple.injection:
+    symbols:
+    - forward
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: forward
+      display: "sglang/srt/models/qwen4_exp.py \u2014 forward"
+  ple.key_value_projection:
+    symbols:
+    - _consume_prefetched_embeddings
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: _consume_prefetched_embeddings
+      display: "sglang/srt/models/qwen4_exp.py \u2014 _consume_prefetched_embeddings"
+  ple.ngram_embedding:
+    symbols:
+    - gather
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: gather
+      display: "sglang/srt/models/qwen4_exp.py \u2014 gather"
+  ple.ngram_hash:
+    symbols:
+    - fused_qwen4_ngram_hash
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/qwen4_ple.py
+      symbol: fused_qwen4_ngram_hash
+      display: "sglang/kernels/ops/qwen4_ple.py \u2014 fused_qwen4_ngram_hash"
+  ple.short_conv:
+    symbols:
+    - _short_conv
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: _short_conv
+      display: "sglang/srt/models/qwen4_exp.py \u2014 _short_conv"
+  ple.token_history:
+    symbols:
+    - compute_ngram_ids
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: compute_ngram_ids
+      display: "sglang/srt/models/qwen4_exp.py \u2014 compute_ngram_ids"
+  ple.tp_embedding_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  qsa_attention.attention_core:
+    symbols:
+    - qwen_sparse_valid_counts_triton
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/attention/qsa/sparse_attn.py
+      symbol: qwen_sparse_valid_counts_triton
+      display: "sglang/srt/layers/attention/qsa/sparse_attn.py \u2014 qwen_sparse_valid_counts_triton"
+  qsa_attention.indexer:
+    symbols:
+    - fast_topk
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/fast_topk.py
+      symbol: fast_topk
+      display: "sglang/kernels/ops/elementwise/fast_topk.py \u2014 fast_topk"
+  qsa_attention.kv_cache:
+    symbols:
+    - _set_kv_buffer_impl
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/mem_cache/memory_pool.py
+      symbol: _set_kv_buffer_impl
+      display: "sglang/srt/mem_cache/memory_pool.py \u2014 _set_kv_buffer_impl"
+  qsa_attention.output_gate:
+    symbols:
+    - fused_sigmoid_mul
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/elementwise/elementwise.py
+      symbol: fused_sigmoid_mul
+      display: "sglang/kernels/ops/elementwise/elementwise.py \u2014 fused_sigmoid_mul"
+  qsa_attention.output_projection:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  qsa_attention.qk_norm_rope:
+    symbols:
+    - self_attention
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: self_attention
+      display: "sglang/srt/models/qwen4_exp.py \u2014 self_attention"
+  qsa_attention.qkv_gate_projection:
+    symbols:
+    - run_splitk_dense
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py
+      symbol: run_splitk_dense
+      display: "sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py\
+        \ \u2014 run_splitk_dense"
+  stack.hc_expand:
+    symbols:
+    - _prepare_qwen4_exp_attn
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/models/qwen4_exp.py
+      symbol: _prepare_qwen4_exp_attn
+      display: "sglang/srt/models/qwen4_exp.py \u2014 _prepare_qwen4_exp_attn"
+  top.embedding:
+    symbols:
+    - vocab_parallel_embedding
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/embeddings/vocab_parallel_embedding.py
+      symbol: vocab_parallel_embedding
+      display: "sglang/kernels/ops/embeddings/vocab_parallel_embedding.py \u2014 vocab_parallel_embedding"
+  top.final_hc_mix:
+    symbols:
+    - grouped_gemma_rmsnorm
+    kernel_signatures: []
+    links:
+    - file: python/sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py
+      symbol: grouped_gemma_rmsnorm
+      display: "sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py \u2014 grouped_gemma_rmsnorm"
+  top.lm_head:
+    symbols:
+    - _compute_lm_head
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: _compute_lm_head
+      display: "sglang/srt/layers/logits_processor.py \u2014 _compute_lm_head"
+  top.logits:
+    symbols:
+    - _copy_logits_to_buffer
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/layers/logits_processor.py
+      symbol: _copy_logits_to_buffer
+      display: "sglang/srt/layers/logits_processor.py \u2014 _copy_logits_to_buffer"
+  top.tp_embedding_collective:
+    symbols:
+    - all_reduce
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/distributed/parallel_state.py
+      symbol: all_reduce
+      display: "sglang/srt/distributed/parallel_state.py \u2014 all_reduce"
+  top.tp_logits_collective:
+    symbols:
+    - run_eagle_verify
+    kernel_signatures: []
+    links:
+    - file: python/sglang/srt/speculative/eagle_worker_common.py
+      symbol: run_eagle_verify
+      display: "sglang/srt/speculative/eagle_worker_common.py \u2014 run_eagle_verify"
+framework_id: sglang
+binding_status: validated
+source_lock_status: runtime_verified
+execution_validation:
+  status: pass
+  execution_fingerprint: exec_e838dd81076c706d
+  required_phases:
+  - decode
+  cuda_graph_enabled: false
+  evidence:
+  - evidence://qwen38_flash_next/3566706/eager-full-rank-reconciliation
+  - evidence://qwen38_flash_next/3566707/production-full-rank-attribution
+  notes: All TP ranks passed graph-off stack reconciliation and stack-disabled production
+    attribution with exact event-count and duration closure.
+binding_revision_id: bind_ba79b6e52262fede
+add_trace_acceptance_sha256: a4b7678d0a52ed9756c8936fc88a0b0dd16f2db7365ffd45d0ca1bc0d3c8e2f2
+runtime_identity:
+  backend_selections:
+    attention: trtllm_mha
+    cuda_graph_decode: full
+    cuda_graph_prefill: disabled
+    linear_attention: flashinfer
+    mamba: triton
+    mtp_hidden_state_layout: hc_expanded
+    mtp_rmsnorm: torch_native
+    speculative_moe: flashinfer_trtllm
+  build_flags:
+    compute_capability: '10.3'
+    container_index_digest: sha256:eb090e39434085f713d39421cb2e5b6d342424aa95c3d9ecdfe8cadd4289e99b
+    cuda_runtime: '13.0'
+    python_abi: cp312
+  container_digest: sha256:65661b39307f724a5f698eff1d97642c0445e8c60d186d7759da569a7a6874e8
+  extension_artifacts:
+  - name: python-package-tree:flashinfer
+    sha256: 6a3adc3b4b8eeec6cd59de932af1aa1d6bad0a8df509398217254402a94d7f05
+  - name: python-package-tree:sgl_kernel
+    sha256: 411af09853907abd0af3e28c300d5ddfb195cac069b0cd86c798d0ea5f96ef3d
+  framework_id: sglang
+  package_lock_sha256: f3ead5fb6f0e4390ff0f877a5bc1495a29492888f5db4045eb714b0767a3d674
+  source_commit: 25ee2b5657ec068a309767c219b24c78ca07cbd6
+  source_repo: https://github.com/sgl-project/sglang
+runtime_identity_sha256: b73c416241669b9f71579c42a45b1bfc8f8f55a0f1eef8c49f8d274d558e08f5
+mapping_rules_sha256: 86cabf763987c6f231241497c839bb79c02f95966ac64eefb3eb9d51c74b823b
+mapping_rules:
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: full_layer.tp_attention_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: 84e6cd9dbabdbd6d0a8786e84bfdfbc8a01c2a9b75d15864d32a8af1d1e9ca10
+  rule_id: eagle_mtp_decode__full_layer__tp_attention_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: full_layer.tp_moe_output_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: df0e0e320cf8ccce2f2ce61f12753d14b009065347168c6c3ad8464e7a3b4d61
+  rule_id: eagle_mtp_decode__full_layer__tp_moe_output_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py::grouped_gemma_rmsnorm
+  ir_target: hyperconnection.branch_norm
+  production_transfer:
+    method: exact_sequence
+    signature_digest: a8e5c04e1ab35f22868fbec3e94f465acbc866dc9104ba28c2e0450e8ecac6cf
+  rule_id: eagle_mtp_decode__hyperconnection__branch_norm
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/hc_combine.py::hc_combine_split
+  ir_target: hyperconnection.combine
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 34f9939034d7c187308e3b99f894d1dff6560012a0af27fc69008118d1a43f78
+  rule_id: eagle_mtp_decode__hyperconnection__combine
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense_gate
+  ir_target: hyperconnection.mix
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 3df3f7b7568bf9266befc00a528051850ba0bbb0886db8564a5cac4a47c82f04
+  rule_id: eagle_mtp_decode__hyperconnection__mix
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+- eager_match:
+    source_symbol: sglang/kernels/ops/mamba/causal_conv1d_triton.py::causal_conv1d_update
+  ir_target: linear_attention.causal_conv
+  production_transfer:
+    method: exact_sequence
+    signature_digest: a25216f633474022239598db273132e64a4bc99c334c1a1436abfe010a5d78fa
+  rule_id: eagle_mtp_decode__linear_attention__causal_conv
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/layers/attention/linear/kernels/gdn_flashinfer.py::_mtp_bf16_adapted
+  ir_target: linear_attention.delta_rule
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 76b841b7adc8c1faf92777c8d81fa7f5573ee37460a0c2aba0aeec55e92a54ec
+  rule_id: eagle_mtp_decode__linear_attention__delta_rule
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/attention/fla/layernorm_gated.py::layernorm_fn
+  ir_target: linear_attention.gated_norm
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 6c7a1279b700a493764665183799803b0bdd79859487a3456923ffa76885e4c5
+  rule_id: eagle_mtp_decode__linear_attention__gated_norm
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/attention/triton_gdn_fused_proj.py::fused_qkv_split_gdn_prefill
+  ir_target: linear_attention.gating
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 36dd8b4666d707548bf29e4b44d5e479d385c19f8f667487bd8817be4427d5e1
+  rule_id: eagle_mtp_decode__linear_attention__gating
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: linear_attention.output_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 4a9cd8874aaab8acf9c48aaffcac33cc483c409a1187d0e62caba90c963eb0ab
+  rule_id: eagle_mtp_decode__linear_attention__output_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen3_5.py::_forward_input_proj
+  ir_target: linear_attention.qkvz_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: c4e60214d67578aea11c2bd0635cc2968247bccfacdf97cd8ca0c7bd63958d49
+  rule_id: eagle_mtp_decode__linear_attention__qkvz_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen3_5.py::forward
+  ir_target: linear_attention.split_pack
+  production_transfer:
+    method: exact_sequence
+    signature_digest: f975728dbc535a78d4fdcde2377a7a6ffd494cc73ce3930d863bcd2eb56b8c68
+  rule_id: eagle_mtp_decode__linear_attention__split_pack
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: linear_layer.tp_attention_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: f7d09c5acdecb42dac2369855da5e3a2749de494413f892f31780e1973ad446d
+  rule_id: eagle_mtp_decode__linear_layer__tp_attention_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: linear_layer.tp_moe_output_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: ea981b8c07ac6cd6e13e0803751374d17312a0f632842684f15e580ba7f19f9e
+  rule_id: eagle_mtp_decode__linear_layer__tp_moe_output_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 4
+    - 5
+    - 6
+    - 8
+    - 9
+    - 10
+    - 12
+    - 13
+    - 14
+    - 16
+    - 17
+    - 18
+    - 20
+    - 21
+    - 22
+    - 24
+    - 25
+    - 26
+    - 28
+    - 29
+    - 30
+    - 32
+    - 33
+    - 34
+    - 36
+    - 37
+    - 38
+    - 40
+    - 41
+    - 42
+    - 44
+    - 45
+    - 46
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/elementwise.py::_launch_fused_gate_sigmoid_mul
+  ir_target: moe.combine
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 503de5899f60117da4c227e1f0de8f97ce4724fb3bcc9a41359009444697e1e2
+  rule_id: eagle_mtp_decode__moe__combine
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py::fused_experts_none_to_flashinfer_trtllm_bf16
+  ir_target: moe.routed_experts
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 3258bf185b8062fe9f87e4a977ba132154687e11b109a1299b85bbcbe89b1741
+  rule_id: eagle_mtp_decode__moe__routed_experts
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: moe.router
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 1bc66622abc61be854ec2a60a545cb9c3beea4cf66fd0e45b350d84bed80d54d
+  rule_id: eagle_mtp_decode__moe__router
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/srt/layers/quantization/unquant.py::_bf16_gemm_dispatch_impl
+  ir_target: moe.shared_expert
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 5ec06af74e92f25851ba383747975c76d23d542140ed3fa939ffc798d9f9f2b8
+  rule_id: eagle_mtp_decode__moe__shared_expert
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py::fused_experts_none_to_flashinfer_trtllm_bf16
+  ir_target: moe.topk
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 9b9c63a8118073f0bdeb89a7195313e486c482bc589a613ba42f1bb00ca547e1
+  rule_id: eagle_mtp_decode__moe__topk
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    phase: decode
+    substage: moe
+- eager_match:
+    source_symbol: sglang/srt/speculative/eagle_utils.py::eagle_sample
+  ir_target: mtp_generation.accept_commit
+  production_transfer:
+    method: annotated_scope
+    signature_digest: 0ead16fd649d7e6bd9dcff05d8cb81f96739d66324b0876d00d68bbce45f82f8
+  rule_id: eagle_mtp_decode__mtp_generation__accept_commit
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: accept_commit
+- eager_match:
+    source_symbol: sglang/srt/layers/attention/qsa/metadata.py::build_group_ring_slots
+  ir_target: mtp_generation.mtp_draft_extend
+  production_transfer:
+    method: annotated_scope
+    signature_digest: ecaf7f251f834666c50a493dda75e6f377e5c0191dc47d165f287aecd95e3709
+  rule_id: eagle_mtp_decode__mtp_generation__mtp_draft_extend
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend_runtime
+- eager_match:
+    source_symbol: sglang/srt/speculative/eagle_worker_v2.py::_draft_extend_for_decode
+  ir_target: mtp_generation.proposal_update
+  production_transfer:
+    method: annotated_scope
+    signature_digest: a953c2aabb53ce59fb500cd0868899afd25ebb9f997b8a365cdbe6b27f3844ae
+  rule_id: eagle_mtp_decode__mtp_generation__proposal_update
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: proposal_update
+- eager_match:
+    source_symbol: sglang/kernels/ops/embeddings/vocab_parallel_embedding.py::vocab_parallel_embedding
+  ir_target: mtp_head.embedding
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 44f674e0b985e988dd09d558985ec27b509d7183ceccfa8b31d8d5127bf9f061
+  rule_id: eagle_mtp_decode__mtp_head__embedding
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp_mtp.py::_fuse_residual_linear_shared
+  ir_target: mtp_head.embedding_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 1db644e09e669a571db097ca0d450aa4c48905d44194393c7538f24303bf2662
+  rule_id: eagle_mtp_decode__mtp_head__embedding_projection
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py::grouped_gemma_rmsnorm
+  ir_target: mtp_head.final_hc_mix
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 299b78b81b60a21e3fe732a3a045215d3b905dcc7fdf8a0508e1dc180386801c
+  rule_id: eagle_mtp_decode__mtp_head__final_hc_mix
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp_mtp.py::_fuse_residual_linear_shared
+  ir_target: mtp_head.hidden_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 1db644e09e669a571db097ca0d450aa4c48905d44194393c7538f24303bf2662
+  rule_id: eagle_mtp_decode__mtp_head__hidden_projection
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/srt/layers/logits_processor.py::_compute_lm_head
+  ir_target: mtp_head.lm_head
+  production_transfer:
+    method: exact_sequence
+    signature_digest: ef0b22ea5d28a349ef3e13dd4b9910362bdef1d5dad9a59aff7e7d7149f766e6
+  rule_id: eagle_mtp_decode__mtp_head__lm_head
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp_mtp.py::_fuse_residual_linear_shared
+  ir_target: mtp_head.residual_fusion
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 44f674e0b985e988dd09d558985ec27b509d7183ceccfa8b31d8d5127bf9f061
+  rule_id: eagle_mtp_decode__mtp_head__residual_fusion
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: mtp_head.tp_embedding_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: c034a54a5d77df8577a85f632db882b26707770a01337879f6a1ac8cd5a72e0a
+  rule_id: eagle_mtp_decode__mtp_head__tp_embedding_collective
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+- eager_match:
+    source_symbol: sglang/srt/layers/logits_processor.py::_copy_logits_to_buffer
+  ir_target: mtp_head.tp_logits_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: 9da95b8385f5ad40af1b3417cffb4142f7ece2aab8ae6fef9dc4527a9a8e84d0
+  rule_id: eagle_mtp_decode__mtp_head__tp_logits_collective
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: mtp_draft_extend_vocab_resolution
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: mtp_layer.tp_attention_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: d7845ceda11ea8410160f5e9b746ead53e3e2fe6bc9e37c3c48df0b3b68b5bc4
+  rule_id: eagle_mtp_decode__mtp_layer__tp_attention_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: mtp_layer.tp_moe_output_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: 61ac662401f6ff0ff06228b56cda598c28f977837921874ee9469a341ff2e6d5
+  rule_id: eagle_mtp_decode__mtp_layer__tp_moe_output_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py::fused_experts_none_to_flashinfer_trtllm_bf16
+  ir_target: mtp_moe.combine
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 341c80206a64ccff72bb9f831452cf93a54f8d22eb31b1c1162e1b39beca73b5
+  rule_id: eagle_mtp_decode__mtp_moe__combine
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::forward
+  ir_target: mtp_moe.routed_experts
+  production_transfer:
+    method: exact_sequence
+    signature_digest: b3b3691c0ea9a72fe0bcbe28cf4bf33849db865038974d8e03ece21d98afefb3
+  rule_id: eagle_mtp_decode__mtp_moe__routed_experts
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: mtp_moe.router
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 6a9eac8cd82a85ada7694ed525b7d696105b45da8c10d1bae052034e20fdc78a
+  rule_id: eagle_mtp_decode__mtp_moe__router
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/srt/layers/quantization/unquant.py::_bf16_gemm_dispatch_impl
+  ir_target: mtp_moe.shared_expert
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 08ecae5f7686658cb0d5c497fda5990faf395915d6e319167430535168868815
+  rule_id: eagle_mtp_decode__mtp_moe__shared_expert
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/srt/layers/moe/moe_runner/flashinfer_trtllm.py::fused_experts_none_to_flashinfer_trtllm_bf16
+  ir_target: mtp_moe.topk
+  production_transfer:
+    method: exact_sequence
+    signature_digest: eae61c426c383c7adbc1e5378ac5aa214a1ff46466b9540da31b11046d09b4cc
+  rule_id: eagle_mtp_decode__mtp_moe__topk
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_moe
+- eager_match:
+    source_symbol: sglang/srt/layers/attention/qsa/sparse_attn.py::qwen_sparse_kv_extraction_compact_triton
+  ir_target: mtp_qsa_attention.attention_core
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 3c69f6b73b3ae33b21c66b5943922337c29ff82957edd59f20a7b518d5393dbc
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__attention_core
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/fast_topk.py::fast_topk
+  ir_target: mtp_qsa_attention.indexer
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 75eab43448d746dba11caf4375e041da4131ed00bc9c6848f5163e3a5a097e1b
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__indexer
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/srt/mem_cache/memory_pool.py::_set_kv_buffer_impl
+  ir_target: mtp_qsa_attention.kv_cache
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 4ffaf4b24f99940f9278316c669fa1edcc6712f4902dc2046601e6eaf28f3c46
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__kv_cache
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/elementwise.py::fused_sigmoid_mul
+  ir_target: mtp_qsa_attention.output_gate
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 1a556c7bab40f6e832e1f556a7665fa13bb464472b328caad649ed6b59acdc11
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__output_gate
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: mtp_qsa_attention.output_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: f931e0bdaa4eba56c74cc56bfa7390358acdbada281c058d5573288b980fff25
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__output_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::self_attention
+  ir_target: mtp_qsa_attention.qk_norm_rope
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 3ba805041ea1edb8221c5fc2a3fc51a4678185f6b3f7554609f8385e3518f3db
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__qk_norm_rope
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: mtp_qsa_attention.qkv_gate_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: f931e0bdaa4eba56c74cc56bfa7390358acdbada281c058d5573288b980fff25
+  rule_id: eagle_mtp_decode__mtp_qsa_attention__qkv_gate_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 0
+    phase: decode
+    substage: mtp_draft_extend_attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::_commit_ple_batch
+  ir_target: ple.context_commit
+  production_transfer:
+    method: state_boundary
+    signature_digest: 97b6a8244411edf0d2488d5df48dad7d485f49ef67499b1758d950cd1fd9171e
+  rule_id: eagle_mtp_decode__ple__context_commit
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_suffix
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::forward
+  ir_target: ple.grouped_norm_gate
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 7b23d0cdf4852ea68e67eb893c537a782921931c929cb3bc5831d2c18ba86837
+  rule_id: eagle_mtp_decode__ple__grouped_norm_gate
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 1
+    phase: decode
+    substage: ple
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::forward
+  ir_target: ple.injection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 02cee6221eb7efab6224ebc687866231fd391038fdc7af100d7747b197b081ad
+  rule_id: eagle_mtp_decode__ple__injection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 1
+    phase: decode
+    substage: ple
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::_consume_prefetched_embeddings
+  ir_target: ple.key_value_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: ced27329b5bfc7844c1eb5b30e52753942e091b045e0b70a154432c2de699e24
+  rule_id: eagle_mtp_decode__ple__key_value_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 1
+    phase: decode
+    substage: ple
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::gather
+  ir_target: ple.ngram_embedding
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 8f6bd9afbac8bd8a98fdebf3b7ab299f3c0fe4fed88b858f3bdd114e447fcc80
+  rule_id: eagle_mtp_decode__ple__ngram_embedding
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_prefix
+- eager_match:
+    source_symbol: sglang/kernels/ops/qwen4_ple.py::fused_qwen4_ngram_hash
+  ir_target: ple.ngram_hash
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 7a91d1c4220a01171076d1b2b84409715b2088645fdd81d0b73a4695c4649835
+  rule_id: eagle_mtp_decode__ple__ngram_hash
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_prefix
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::_short_conv
+  ir_target: ple.short_conv
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 5746ce747f7d4a275f5228585779603c42ef23850d02b1dd236314ba388accdf
+  rule_id: eagle_mtp_decode__ple__short_conv
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 1
+    phase: decode
+    substage: ple
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::compute_ngram_ids
+  ir_target: ple.token_history
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 2f7b92dc6a97e210c28522b5c4cf76fcfde3c3173eb9647063ab3771c0e8d73a
+  rule_id: eagle_mtp_decode__ple__token_history
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_prefix
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: ple.tp_embedding_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: d8078b0443e76f429f294491b2fc15e647fbc68790ab55501af2bce1d0aaf4d5
+  rule_id: eagle_mtp_decode__ple__tp_embedding_collective
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 1
+    phase: decode
+    substage: ple
+- eager_match:
+    source_symbol: sglang/srt/layers/attention/qsa/sparse_attn.py::qwen_sparse_valid_counts_triton
+  ir_target: qsa_attention.attention_core
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 9bddea23193ed60f699fde06dfbd151d0307f6fca6cf7b39866146228be6a3cb
+  rule_id: eagle_mtp_decode__qsa_attention__attention_core
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/fast_topk.py::fast_topk
+  ir_target: qsa_attention.indexer
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 81b6d569be40d795c60945988248befd1d67733156e186af7427ece3d39d2f0a
+  rule_id: eagle_mtp_decode__qsa_attention__indexer
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/mem_cache/memory_pool.py::_set_kv_buffer_impl
+  ir_target: qsa_attention.kv_cache
+  production_transfer:
+    method: exact_sequence
+    signature_digest: e68601e3ee85949efceb8f3fd33577a516bf8371937a2c450d7f321bc1fa13fa
+  rule_id: eagle_mtp_decode__qsa_attention__kv_cache
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/elementwise/elementwise.py::fused_sigmoid_mul
+  ir_target: qsa_attention.output_gate
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 04fbc3050f645f6ab133123d3f5a7ccb388c2f2146eed2e6c13c7a64e0b06188
+  rule_id: eagle_mtp_decode__qsa_attention__output_gate
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: qsa_attention.output_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 9e17b26c411cf9a91edcbbd59f5f4955c755f702792c250ec40d697badee2b3c
+  rule_id: eagle_mtp_decode__qsa_attention__output_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::self_attention
+  ir_target: qsa_attention.qk_norm_rope
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 27eafb682dc61b9bb7a1aa2e0df4df3f3b11561169b18cbe9ec8e809adbfd0e3
+  rule_id: eagle_mtp_decode__qsa_attention__qk_norm_rope
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/kernels/ops/gemm/flashinfer_pr4266_dense_bf16_gemm_sm100_splitk.py::run_splitk_dense
+  ir_target: qsa_attention.qkv_gate_projection
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 300883922e7b16a21e571b0062cd7068831559a16d297ecc63a36711a3d519b8
+  rule_id: eagle_mtp_decode__qsa_attention__qkv_gate_projection
+  scope:
+    generation_mode: eagle_mtp
+    layer_ids:
+    - 3
+    - 7
+    - 11
+    - 15
+    - 19
+    - 23
+    - 27
+    - 31
+    - 35
+    - 39
+    - 43
+    - 47
+    phase: decode
+    substage: attention
+- eager_match:
+    source_symbol: sglang/srt/models/qwen4_exp.py::_prepare_qwen4_exp_attn
+  ir_target: stack.hc_expand
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 8f6bd9afbac8bd8a98fdebf3b7ab299f3c0fe4fed88b858f3bdd114e447fcc80
+  rule_id: eagle_mtp_decode__stack__hc_expand
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_prefix
+- eager_match:
+    source_symbol: sglang/kernels/ops/embeddings/vocab_parallel_embedding.py::vocab_parallel_embedding
+  ir_target: top.embedding
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 8f6bd9afbac8bd8a98fdebf3b7ab299f3c0fe4fed88b858f3bdd114e447fcc80
+  rule_id: eagle_mtp_decode__top__embedding
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_prefix
+- eager_match:
+    source_symbol: sglang/kernels/ops/layernorm/grouped_gemma_rmsnorm.py::grouped_gemma_rmsnorm
+  ir_target: top.final_hc_mix
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 8891ee42de209ba5ae54cd9a7a617cf812ef97fe9ecaa220c2e9219add1957f7
+  rule_id: eagle_mtp_decode__top__final_hc_mix
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_suffix
+- eager_match:
+    source_symbol: sglang/srt/layers/logits_processor.py::_compute_lm_head
+  ir_target: top.lm_head
+  production_transfer:
+    method: exact_sequence
+    signature_digest: b83ff1e50f7a2165947a621c02bbe7839a2066a9934ef192f0fa0e90c7efffce
+  rule_id: eagle_mtp_decode__top__lm_head
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_suffix
+- eager_match:
+    source_symbol: sglang/srt/layers/logits_processor.py::_copy_logits_to_buffer
+  ir_target: top.logits
+  production_transfer:
+    method: exact_sequence
+    signature_digest: 3e384305b82b5fd99c6d1896c3ff700157338497271b1aca65dfc675d5098d78
+  rule_id: eagle_mtp_decode__top__logits
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+    substage: model_suffix
+- eager_match:
+    source_symbol: sglang/srt/distributed/parallel_state.py::all_reduce
+  ir_target: top.tp_embedding_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: c034a54a5d77df8577a85f632db882b26707770a01337879f6a1ac8cd5a72e0a
+  rule_id: eagle_mtp_decode__top__tp_embedding_collective
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode
+- eager_match:
+    source_symbol: sglang/srt/speculative/eagle_worker_common.py::run_eagle_verify
+  ir_target: top.tp_logits_collective
+  production_transfer:
+    method: collective_order
+    signature_digest: e333cdf3fad7661390b636885ceab3cf08c92582092999e840ec5e8057553d94
+  rule_id: eagle_mtp_decode__top__tp_logits_collective
+  scope:
+    generation_mode: eagle_mtp
+    phase: decode

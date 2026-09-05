@@ -28,6 +28,9 @@ def test_comparison_compiler_indexes_only_explicit_framework_ids() -> None:
 
 def test_viewer_comparison_is_metadata_driven_and_timeline_isolated() -> None:
     viewer = (REPO_ROOT / "docs" / "viewer.html").read_text()
+    assert 'const requestedProfile = d.profiles?.[qs.get("profile") || ""]' in viewer
+    assert "requestedProfile?.execution_variant" in viewer
+    assert "requestedProfile?.implementation_id" in viewer
     assert "RAW_DATA?.comparison_contracts?.[contractId]" in viewer
     assert "implementation.framework_id" in viewer
     assert "renderComparisonTimelines" in viewer

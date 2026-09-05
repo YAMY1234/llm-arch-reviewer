@@ -10,7 +10,7 @@ state boundaries.
 The accepted first-stage execution contract is text-only aggregated pure TP8:
 TP8/DP1/CP1/EP1/PP1, MTP off, prefix cache off, two nodes with four GB300 GPUs
 per node. It is represented once by `execution_paths/tp8.yaml`. Both framework
-bindings compile to execution fingerprint `exec_9772c24a3aa3f623`:
+bindings compile to execution fingerprint `exec_2ca0442bb646b1ff`:
 
 - SGLang package commit `f609d677b909ca46c64bb6803b69a85fedbf86bc`,
   with the runtime Qwen3.5/config/GDN/MoE modules byte-matched to commit

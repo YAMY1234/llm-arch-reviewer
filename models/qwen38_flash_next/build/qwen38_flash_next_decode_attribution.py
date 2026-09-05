@@ -78,6 +78,8 @@ def direct_kernel_mapping(name: str) -> tuple[str | None, str | None]:
         ("_layer_norm_fwd_1pass_kernel", "linear_attention.gated_norm", "GDN gated RMSNorm"),
         ("_hc_mix_persistent_kernel", "hyperconnection.mix", "hyper-connection fused gate + mix"),
         ("hc_combine_kernel", "hyperconnection.combine", "hyper-connection combine"),
+        ("hc_combine_gate_kernel", "hyperconnection.combine", "hyper-connection combine gate"),
+        ("hc_combine_apply_kernel", "hyperconnection.combine", "hyper-connection combine apply"),
         (
             "_fused_qk_rmsnorm_rope_gate_kernel",
             "qsa_attention.qk_norm_rope",
@@ -150,6 +152,15 @@ def _hc_mix_end(rows: list[dict[str, Any]], start: int, stop: int) -> int:
     )
     if fused is not None:
         return fused
+    # PR #37500's small-token HC path materializes the low-rank SiLU and gate
+    # projections as two dense GEMMs.  The following GEMM is already the
+    # attention/MoE consumer, so the exact two-GEMM prefix is the semantic
+    # endpoint for this implementation variant.
+    if stop - start >= 2 and all(
+        _is_gemm(str(rows[index]["kernel_name"]))
+        for index in (start, start + 1)
+    ):
+        return start + 1
     gate = next(
         (
             index
@@ -159,8 +170,59 @@ def _hc_mix_end(rows: list[dict[str, Any]], start: int, stop: int) -> int:
         None,
     )
     if gate is None:
-        raise ValueError("HC mix is missing both fused and expanded anchors")
+        preview = [
+            str(rows[index]["kernel_name"])[:96] for index in range(start, min(stop, start + 6))
+        ]
+        raise ValueError(
+            "HC mix is missing both fused and expanded anchors: "
+            f"range=[{start},{stop}) preview={preview}"
+        )
     return gate
+
+
+def _hc_combine_ranges(rows: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """Return inclusive logical HC-combine ranges for old and split kernels.
+
+    Older runtimes launch one ``hc_combine_kernel``.  PR #37500 launches a
+    ``hc_combine_gate_kernel`` + ``hc_combine_apply_kernel`` pair on the same
+    CUDA stream. CUDA Graph trace serialization may place nodes from another
+    captured stream between those two records, so same-stream adjacency is the
+    actual contract. A missing or reordered member is rejected instead of
+    being folded into the neighboring attention/MoE stage.
+    """
+
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(rows):
+        name = str(rows[index]["kernel_name"]).lower()
+        if "hc_combine_gate_kernel" in name:
+            stream = rows[index].get("stream")
+            apply_index = next(
+                (
+                    candidate
+                    for candidate in range(index + 1, len(rows))
+                    if rows[candidate].get("stream") == stream
+                ),
+                None,
+            )
+            if apply_index is None or "hc_combine_apply_kernel" not in str(
+                rows[apply_index]["kernel_name"]
+            ).lower():
+                raise ValueError(
+                    f"split HC combine gate at {index} lacks next-same-stream apply kernel"
+                )
+            ranges.append((index, apply_index))
+            index += 1
+            continue
+        if "hc_combine_apply_kernel" in name:
+            if not ranges or ranges[-1][1] != index:
+                raise ValueError(
+                    f"split HC combine apply at {index} lacks preceding same-stream gate"
+                )
+        if "hc_combine_kernel" in name:
+            ranges.append((index, index))
+        index += 1
+    return ranges
 
 
 def _assign(
@@ -543,8 +605,27 @@ def _map_ple(rows: list[dict[str, Any]], start: int, stop: int) -> None:
         ),
         None,
     )
-    if vocab is None or embed_collective is None or not norm_indices or conv is None:
-        raise ValueError("PLE decode segment is missing a semantic anchor")
+    prefetched_lookup = vocab is None and embed_collective == start
+    if (
+        (vocab is None and not prefetched_lookup)
+        or embed_collective is None
+        or not norm_indices
+        or conv is None
+    ):
+        preview = [
+            str(rows[index]["kernel_name"])[:80]
+            for index in range(start, min(stop, start + 12))
+        ]
+        raise ValueError(
+            "PLE decode segment is missing a semantic anchor: "
+            f"range=[{start},{stop}) vocab={vocab} collective={embed_collective} "
+            f"norms={norm_indices} conv={conv} preview={preview}"
+        )
+    if prefetched_lookup:
+        # The pinned-host lookup is launched before layer 0 on an auxiliary
+        # stream and only its TP reduction is consumed here at layer 1.
+        vocab = embed_collective
+    assert vocab is not None
     first_norm = norm_indices[0]
     last_norm = norm_indices[-1]
 
@@ -652,28 +733,24 @@ def map_decode_step(
                 overwrite=True,
             )
 
-    combines = [
-        index
-        for index, row in enumerate(rows)
-        if "hc_combine_kernel" in row["kernel_name"].lower()
-    ]
-    if len(combines) != 2 * LAYER_COUNT:
+    combine_ranges = _hc_combine_ranges(rows)
+    if len(combine_ranges) != 2 * LAYER_COUNT:
         raise ValueError(
             "hyper-connection layer delimiters changed: "
-            f"combine={len(combines)}"
+            f"combine={len(combine_ranges)}"
         )
 
-    previous_mlp_combine = -1
+    previous_mlp_combine_end = -1
     for layer_id in range(LAYER_COUNT):
         layer_kind = "full" if layer_id % 4 == 3 else "linear"
-        attn_combine = combines[2 * layer_id]
-        mlp_combine = combines[2 * layer_id + 1]
-        if not previous_mlp_combine < attn_combine < mlp_combine:
+        attn_combine, attn_combine_end = combine_ranges[2 * layer_id]
+        mlp_combine, mlp_combine_end = combine_ranges[2 * layer_id + 1]
+        if not previous_mlp_combine_end < attn_combine < mlp_combine:
             raise ValueError(
                 f"layer {layer_id} hyper-connection delimiters are out of order"
             )
 
-        pre_attn_start = previous_mlp_combine + 1
+        pre_attn_start = previous_mlp_combine_end + 1
         attention_anchor_nodes = (
             ("linear_attention.split_pack",)
             if layer_kind == "linear"
@@ -771,17 +848,18 @@ def map_decode_step(
             _map_qsa_attention(rows, attention_start, attn_combine)
 
         _set_context(
-            rows,
-            attn_combine,
-            attn_combine + 1,
-            layer_id=layer_id,
-            layer_kind=layer_kind,
-            substage="attn_hc_combine",
+            rows, attn_combine, attn_combine + 1,
+            layer_id=layer_id, layer_kind=layer_kind, substage="attn_hc_combine",
         )
+        if attn_combine_end != attn_combine:
+            _set_context(
+                rows, attn_combine_end, attn_combine_end + 1,
+                layer_id=layer_id, layer_kind=layer_kind, substage="attn_hc_combine",
+            )
         mlp_branch_norm = next(
             (
                 index
-                for index in range(attn_combine + 1, mlp_combine)
+                for index in range(attn_combine_end + 1, mlp_combine)
                 if "grouped_gemma_rmsnorm_kernel"
                 in rows[index]["kernel_name"].lower()
             ),
@@ -791,10 +869,10 @@ def map_decode_step(
             raise ValueError(f"layer {layer_id} is missing its MoE branch norm")
         mlp_mix_end = _hc_mix_end(rows, mlp_branch_norm + 1, mlp_combine)
         moe_start = mlp_mix_end + 1
-        if attn_combine + 1 < mlp_branch_norm:
+        if attn_combine_end + 1 < mlp_branch_norm:
             _set_context(
                 rows,
-                attn_combine + 1,
+                attn_combine_end + 1,
                 mlp_branch_norm,
                 layer_id=layer_id,
                 layer_kind=layer_kind,
@@ -805,7 +883,7 @@ def map_decode_step(
                 if layer_kind == "linear"
                 else "qsa_attention.metadata"
             )
-            for index in range(attn_combine + 1, mlp_branch_norm):
+            for index in range(attn_combine_end + 1, mlp_branch_norm):
                 _assign(
                     rows,
                     index,
@@ -816,7 +894,7 @@ def map_decode_step(
                 )
         _set_context(
             rows,
-            attn_combine + 1,
+            attn_combine_end + 1,
             moe_start,
             layer_id=layer_id,
             layer_kind=layer_kind,
@@ -901,14 +979,50 @@ def map_decode_step(
                     overwrite=True,
                 )
         _set_context(
-            rows,
-            mlp_combine,
-            mlp_combine + 1,
-            layer_id=layer_id,
-            layer_kind=layer_kind,
-            substage="mlp_hc_combine",
+            rows, mlp_combine, mlp_combine + 1,
+            layer_id=layer_id, layer_kind=layer_kind, substage="mlp_hc_combine",
         )
-        previous_mlp_combine = mlp_combine
+        if mlp_combine_end != mlp_combine:
+            _set_context(
+                rows, mlp_combine_end, mlp_combine_end + 1,
+                layer_id=layer_id, layer_kind=layer_kind, substage="mlp_hc_combine",
+            )
+        previous_mlp_combine_end = mlp_combine_end
+
+    # CUDA Graph serialization can interleave a future stream's MoE router
+    # GEMM between another stream's split HC gate/apply pair. Recover that
+    # router only from the exact same-stream successor: a routing/top-k kernel
+    # that has already received a validated layer context above.
+    for index, row in enumerate(rows):
+        if row.get("node") is not None or not _is_gemm(str(row["kernel_name"])):
+            continue
+        stream = row.get("stream")
+        successor = next(
+            (
+                candidate
+                for candidate in range(index + 1, len(rows))
+                if rows[candidate].get("stream") == stream
+            ),
+            None,
+        )
+        if successor is None or rows[successor].get("node") != "moe.topk":
+            continue
+        owner = rows[successor]
+        _assign(
+            rows,
+            index,
+            "moe.router",
+            "MoE router projection",
+            "validated_same_stream_router_sequence",
+            "high",
+        )
+        row.update(
+            {
+                "layer_id": owner.get("layer_id"),
+                "layer_kind": owner.get("layer_kind"),
+                "substage": owner.get("substage"),
+            }
+        )
 
     # Prefix: model-runner metadata, token embedding, PLE history preparation,
     # and the one-time HC expansion before layer 0.
@@ -955,7 +1069,11 @@ def map_decode_step(
         }:
             continue
         name = rows[index]["kernel_name"]
-        if vocab is not None and index == vocab:
+        if "_qwen4_ngram_hash_kernel" in name.lower():
+            node, label = "ple.ngram_hash", "N-gram context hash"
+        elif "_gather_ple_embedding_from_pinned_kernel" in name.lower():
+            node, label = "ple.ngram_embedding", "pinned-host N-gram embedding lookup"
+        elif vocab is not None and index == vocab:
             node, label = "top.embedding", "token embedding lookup"
         elif vocab is not None and index < vocab:
             node, label = "top.runtime_support", "decode metadata/cache preparation"
@@ -977,7 +1095,7 @@ def map_decode_step(
         rows[index]["substage"] = "model_prefix"
 
     # Suffix: commit PLE state, final HC mixer, LM head, and logits collectives.
-    suffix_start = combines[-1] + 1
+    suffix_start = combine_ranges[-1][1] + 1
     final_norm = next(
         (
             index

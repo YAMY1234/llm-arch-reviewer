@@ -20,6 +20,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from .sol import SolError, attach_sol_to_profile, build_sol_artifacts
 from .profile_acceptance import (
@@ -56,7 +57,9 @@ def _validate_schema_version(
 ) -> None:
     actual = document.get("schema_version")
     if actual != expected:
-        raise CatalogError(f"{source}: expected schema_version={expected!r}, got {actual!r}")
+        raise CatalogError(
+            f"{source}: expected schema_version={expected!r}, got {actual!r}"
+        )
 
 
 def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> None:
@@ -66,9 +69,7 @@ def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> No
         return
     coverage = model_ir.get("semantic_coverage")
     if not isinstance(coverage, dict):
-        raise CatalogError(
-            f"{source}: semantic_revision>=3 requires semantic_coverage"
-        )
+        raise CatalogError(f"{source}: semantic_revision>=3 requires semantic_coverage")
     required = (
         "parameter_closure",
         "state_closure",
@@ -118,9 +119,7 @@ def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) ->
                 )
 
 
-def _validate_leaf_equation_coverage(
-    model_ir: dict[str, Any], *, source: Path
-) -> None:
+def _validate_leaf_equation_coverage(model_ir: dict[str, Any], *, source: Path) -> None:
     """Require every primitive compute leaf to define its own mathematics.
 
     A drill node may delegate its equation to the child data-flow view. A
@@ -139,12 +138,11 @@ def _validate_leaf_equation_coverage(
             target = f"{view_id}.{node.get('id', '<missing>')}"
             semantic_details = node.get("semantic_details") or {}
             has_math = bool(semantic_details.get("math"))
-            has_signature = bool(
-                (node.get("operator_signature") or {}).get("symbolic")
-            )
+            has_signature = bool((node.get("operator_signature") or {}).get("symbolic"))
             operation = operations.get(str(node.get("semantic_op") or "")) or {}
             has_contract_equation = bool(
-                isinstance(operation, dict) and str(operation.get("equation") or "").strip()
+                isinstance(operation, dict)
+                and str(operation.get("equation") or "").strip()
             )
             exemption = semantic_details.get("equation_exempt_reason")
             if exemption is not None and (
@@ -166,9 +164,7 @@ _DIMENSION_TRANSFORM_IN_LABEL = re.compile(
     r"(?:\[[A-Z0-9_, ×]+\]|(?:\d+|[A-Z][A-Za-z0-9_]*)(?:\s*×\s*(?:\d+|[A-Z][A-Za-z0-9_]*))?)"
     r"\s*→\s*(?:\[[A-Z0-9_, ×]+\]|\d+|[A-Z][A-Za-z0-9_]*)"
 )
-_SIGNATURE_SYMBOL = re.compile(
-    r"(?<![A-Za-z0-9_])[A-Z][A-Za-z0-9_]*(?![A-Za-z0-9_])"
-)
+_SIGNATURE_SYMBOL = re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Za-z0-9_]*(?![A-Za-z0-9_])")
 
 
 def _validate_notation_contract(model_ir: dict[str, Any], *, source: Path) -> None:
@@ -268,7 +264,9 @@ def _validate_dimension_symbols(model_ir: dict[str, Any], *, source: Path) -> No
                     f"unknown targets {unknown}"
                 )
         for path in filter(None, paths):
-            if not str(path).startswith(("workload.", "execution_parameters.", "hardware.")):
+            if not str(path).startswith(
+                ("workload.", "execution_parameters.", "hardware.")
+            ):
                 raise CatalogError(
                     f"{source}: dimension {symbol} source_path {path!r} is not "
                     "an approved validated profile metadata path"
@@ -317,7 +315,9 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
                             f"semantic_details.{field} must be a list"
                         )
                 runtime_mapping = semantic_details.get("runtime_mapping")
-                if runtime_mapping is not None and not isinstance(runtime_mapping, dict):
+                if runtime_mapping is not None and not isinstance(
+                    runtime_mapping, dict
+                ):
                     raise CatalogError(
                         f"{source}: node {view_id}.{node_id} "
                         "semantic_details.runtime_mapping must be a mapping"
@@ -349,7 +349,10 @@ def _node_index(views: dict[str, Any], *, source: Path) -> dict[str, dict[str, A
     for target, node in index.items():
         architecture_target = node.get("architecture_target")
         if architecture_target is not None:
-            if not isinstance(architecture_target, str) or architecture_target not in index:
+            if (
+                not isinstance(architecture_target, str)
+                or architecture_target not in index
+            ):
                 raise CatalogError(
                     f"{source}: node {target} architecture_target "
                     f"{architecture_target!r} is not a known IR node"
@@ -501,7 +504,9 @@ def _validate_boundary_contracts(model_ir: dict[str, Any], *, source: Path) -> N
             )
 
         child_view = views[child_view_id]
-        child_nodes = {str(node["id"]): node for node in child_view.get("nodes", []) or []}
+        child_nodes = {
+            str(node["id"]): node for node in child_view.get("nodes", []) or []
+        }
         directions = {
             node_id: str(node.get("boundary_direction"))
             for node_id, node in child_nodes.items()
@@ -581,9 +586,7 @@ def _validate_boundary_contracts(model_ir: dict[str, Any], *, source: Path) -> N
                 )
 
 
-def _validate_timing_scope_contracts(
-    model_ir: dict[str, Any], *, source: Path
-) -> None:
+def _validate_timing_scope_contracts(model_ir: dict[str, Any], *, source: Path) -> None:
     """Validate semantic occurrence scopes used for parent timing roll-ups.
 
     These contracts are framework-independent.  They name Model-IR owners and
@@ -612,9 +615,7 @@ def _validate_timing_scope_contracts(
                 f"{source}: timing scope references unknown target {target!r}"
             )
         if target in seen_targets:
-            raise CatalogError(
-                f"{source}: duplicate timing scope target {target!r}"
-            )
+            raise CatalogError(f"{source}: duplicate timing scope target {target!r}")
         seen_targets.add(target)
         sources = [str(item) for item in contract.get("source_nodes") or []]
         if not sources or any(item not in nodes for item in sources):
@@ -691,7 +692,9 @@ def _compile_semantic_transitions(
         }
         for edge in view.get("edges", []) or []:
             if strict:
-                missing = [field for field in _EDGE_CONTRACT_FIELDS if not edge.get(field)]
+                missing = [
+                    field for field in _EDGE_CONTRACT_FIELDS if not edge.get(field)
+                ]
                 if missing:
                     raise CatalogError(
                         f"{source}: edge {view_id}.{edge.get('from')} -> "
@@ -699,7 +702,9 @@ def _compile_semantic_transitions(
                         f"{', '.join(missing)}"
                     )
             incoming[str(edge["to"])].append(_tensor_contract(edge, endpoint="source"))
-            outgoing[str(edge["from"])].append(_tensor_contract(edge, endpoint="target"))
+            outgoing[str(edge["from"])].append(
+                _tensor_contract(edge, endpoint="target")
+            )
 
         for node in view.get("nodes", []) or []:
             semantic_op = str(node["semantic_op"])
@@ -727,12 +732,7 @@ def _compile_semantic_transitions(
                     f"explicit operation contract for {semantic_op!r}"
                 )
             equation = str((operation or {}).get("equation") or "")
-            if (
-                strict
-                and is_model_node
-                and require_equations
-                and not equation
-            ):
+            if strict and is_model_node and require_equations and not equation:
                 raise CatalogError(
                     f"{source}: model node {view_id}.{node['id']} requires an equation"
                 )
@@ -752,47 +752,81 @@ def _compile_semantic_transitions(
                 "semantic_op": semantic_op,
                 "kind": str((operation or {}).get("kind") or inferred_kind),
                 "summary": str(node.get("label") or node["id"]).splitlines()[0],
-                "equation": equation or "\n".join(detail_math) or signature_equation or (
+                "equation": equation
+                or "\n".join(detail_math)
+                or signature_equation
+                or (
                     execution_equation
                     if execution_equation
-                    else f"No model equation: {equation_exemption}"
-                    if equation_exemption
-                    else
-                    f"See {node['drill']} semantic data-flow"
-                    if node.get("drill")
-                    else "No value transformation; semantic boundary"
-                    if inferred_kind == "boundary"
-                    else "Persistent state read/write"
-                    if inferred_kind == "state"
-                    else "Execution path selection"
-                    if inferred_kind == "control"
-                    else "Composite semantic module"
+                    else (
+                        f"No model equation: {equation_exemption}"
+                        if equation_exemption
+                        else (
+                            f"See {node['drill']} semantic data-flow"
+                            if node.get("drill")
+                            else (
+                                "No value transformation; semantic boundary"
+                                if inferred_kind == "boundary"
+                                else (
+                                    "Persistent state read/write"
+                                    if inferred_kind == "state"
+                                    else (
+                                        "Execution path selection"
+                                        if inferred_kind == "control"
+                                        else "Composite semantic module"
+                                    )
+                                )
+                            )
+                        )
+                    )
                 ),
-                "inputs": sorted(incoming[str(node["id"])], key=lambda item: (item["name"], item["source"])),
-                "outputs": sorted(outgoing[str(node["id"])], key=lambda item: (item["name"], item["target"])),
+                "inputs": sorted(
+                    incoming[str(node["id"])],
+                    key=lambda item: (item["name"], item["source"]),
+                ),
+                "outputs": sorted(
+                    outgoing[str(node["id"])],
+                    key=lambda item: (item["name"], item["target"]),
+                ),
                 "invariants": list(
                     dict.fromkeys(
                         [
                             *copy.deepcopy((operation or {}).get("invariants", [])),
-                            *[str(item) for item in semantic_details.get("invariants") or []],
+                            *[
+                                str(item)
+                                for item in semantic_details.get("invariants") or []
+                            ],
                         ]
                     )
                 ),
                 "contract_source": (
                     "model_ir.semantic_contract+edges"
                     if operation
-                    else "model_ir.semantic_details+edges"
-                    if semantic_details or signature
-                    else "model_ir.edges"
+                    else (
+                        "model_ir.semantic_details+edges"
+                        if semantic_details or signature
+                        else "model_ir.edges"
+                    )
                 ),
                 **(
                     {"notes": str(operation["notes"])}
                     if (operation or {}).get("notes")
-                    else {"notes": "\n".join(str(item) for item in semantic_details.get("notes") or [])}
-                    if semantic_details.get("notes")
+                    else (
+                        {
+                            "notes": "\n".join(
+                                str(item)
+                                for item in semantic_details.get("notes") or []
+                            )
+                        }
+                        if semantic_details.get("notes")
+                        else {}
+                    )
+                ),
+                **(
+                    {"drill_boundary": copy.deepcopy(drill_contract)}
+                    if drill_contract
                     else {}
                 ),
-                **({"drill_boundary": copy.deepcopy(drill_contract)} if drill_contract else {}),
             }
 
     unused = sorted(set(operations) - used_operations)
@@ -844,10 +878,14 @@ def _insert_after(
     view_id, after_id = _split_target(transform.get("after", ""), source=source)
     view = views.get(view_id)
     if not view:
-        raise CatalogError(f"{source}: insert_after references unknown view {view_id!r}")
+        raise CatalogError(
+            f"{source}: insert_after references unknown view {view_id!r}"
+        )
     nodes = view.get("nodes", []) or []
     if not any(node.get("id") == after_id for node in nodes):
-        raise CatalogError(f"{source}: insert_after references unknown node {transform['after']!r}")
+        raise CatalogError(
+            f"{source}: insert_after references unknown node {transform['after']!r}"
+        )
 
     new_node = copy.deepcopy(transform.get("node"))
     if not isinstance(new_node, dict) or not new_node.get("id"):
@@ -899,7 +937,9 @@ def _insert_after(
             f"{source}: insert_after creates duplicate node {view_id}.{new_node['id']}"
         )
 
-    insert_at = next(i for i, node in enumerate(nodes) if node.get("id") == after_id) + 1
+    insert_at = (
+        next(i for i, node in enumerate(nodes) if node.get("id") == after_id) + 1
+    )
     nodes.insert(insert_at, new_node)
     view["nodes"] = nodes
 
@@ -940,14 +980,162 @@ def apply_execution_plan(
     return views
 
 
+_SELECTOR_OPERATORS = {"equals", "one_of", "minimum", "maximum"}
+
+
+def _validate_execution_selector(plan: dict[str, Any], *, source: Path) -> None:
+    """Validate the authored config-to-Execution discriminator.
+
+    The selector is deliberately independent of trace content. It may inspect
+    only normalized execution-contract fields plus the separately supplied
+    framework identity; runtime implementation, workload, profiler, and trace
+    fields are not legal selector inputs.
+    """
+
+    selector = plan.get("selector")
+    if not isinstance(selector, dict):
+        raise CatalogError(f"{source}: execution plan requires selector")
+    frameworks = selector.get("framework_ids")
+    if (
+        not isinstance(frameworks, list)
+        or not frameworks
+        or len(frameworks) != len(set(frameworks))
+        or any(
+            framework not in {"sglang", "vllm", "tensorrt_llm"}
+            for framework in frameworks
+        )
+    ):
+        raise CatalogError(f"{source}: selector.framework_ids is invalid")
+    match = selector.get("match")
+    if not isinstance(match, dict) or not match:
+        raise CatalogError(f"{source}: selector.match must be non-empty")
+    generation_condition = match.get("generation.mode")
+    if (
+        not isinstance(generation_condition, dict)
+        or set(generation_condition) != {"equals"}
+        or not isinstance(generation_condition.get("equals"), str)
+        or not generation_condition["equals"]
+    ):
+        raise CatalogError(
+            f"{source}: selector generation.mode must use one exact equals value; "
+            "materially different generation graphs require separate Execution IRs"
+        )
+    for path, condition in match.items():
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.startswith(
+                ("runtime_implementation.", "profile_contract.", "capture_procedure.")
+            )
+        ):
+            raise CatalogError(
+                f"{source}: selector path {path!r} is not an execution-contract field"
+            )
+        if not isinstance(condition, dict) or len(condition) != 1:
+            raise CatalogError(
+                f"{source}: selector condition for {path!r} must have one operator"
+            )
+        operator, expected = next(iter(condition.items()))
+        if operator not in _SELECTOR_OPERATORS:
+            raise CatalogError(
+                f"{source}: selector condition for {path!r} uses {operator!r}"
+            )
+        if operator == "one_of" and (
+            not isinstance(expected, list)
+            or not expected
+            or len(expected) != len({json.dumps(v, sort_keys=True) for v in expected})
+        ):
+            raise CatalogError(f"{source}: selector one_of for {path!r} is invalid")
+        if operator in {"minimum", "maximum"} and not isinstance(
+            expected, (int, float)
+        ):
+            raise CatalogError(
+                f"{source}: selector {operator} for {path!r} must be numeric"
+            )
+    defaults = plan.get("default_parameters") or {}
+    for axis in ("tp_size", "dp_size", "cp_size", "ep_size", "pp_size"):
+        condition = match.get(f"parallelism.{axis}")
+        if axis not in defaults or not condition or "equals" not in condition:
+            continue
+        if condition["equals"] != defaults[axis]:
+            raise CatalogError(
+                f"{source}: selector parallelism.{axis} does not match "
+                f"default_parameters.{axis}"
+            )
+
+
+def _condition_domains_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Return whether two one-dimensional selector predicates can both hold."""
+
+    left_op, left_value = next(iter(left.items()))
+    right_op, right_value = next(iter(right.items()))
+    if left_op == "equals":
+        left_values = {json.dumps(left_value, sort_keys=True)}
+    elif left_op == "one_of":
+        left_values = {json.dumps(value, sort_keys=True) for value in left_value}
+    else:
+        left_values = None
+    if right_op == "equals":
+        right_values = {json.dumps(right_value, sort_keys=True)}
+    elif right_op == "one_of":
+        right_values = {json.dumps(value, sort_keys=True) for value in right_value}
+    else:
+        right_values = None
+    if left_values is not None and right_values is not None:
+        return bool(left_values & right_values)
+    if left_values is not None:
+        decoded = [json.loads(value) for value in left_values]
+        return any(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and (right_op != "minimum" or value >= right_value)
+            and (right_op != "maximum" or value <= right_value)
+            for value in decoded
+        )
+    if right_values is not None:
+        return _condition_domains_overlap(right, left)
+    left_min = left_value if left_op == "minimum" else float("-inf")
+    left_max = left_value if left_op == "maximum" else float("inf")
+    right_min = right_value if right_op == "minimum" else float("-inf")
+    right_max = right_value if right_op == "maximum" else float("inf")
+    return max(left_min, right_min) <= min(left_max, right_max)
+
+
+def _selectors_overlap(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if not set(left["framework_ids"]) & set(right["framework_ids"]):
+        return False
+    left_match = left["match"]
+    right_match = right["match"]
+    for path in set(left_match) & set(right_match):
+        if not _condition_domains_overlap(left_match[path], right_match[path]):
+            return False
+    # A field constrained by only one side can always take that side's value,
+    # so it cannot disambiguate the two plans.
+    return True
+
+
+def _validate_execution_selector_set(
+    plans: list[tuple[Path, dict[str, Any]]],
+) -> None:
+    for index, (left_path, left) in enumerate(plans):
+        for right_path, right in plans[index + 1 :]:
+            if _selectors_overlap(left["selector"], right["selector"]):
+                raise CatalogError(
+                    f"{left_path} and {right_path}: execution selectors overlap; "
+                    "a normalized config could resolve to multiple Execution IRs"
+                )
+
+
 def _fingerprint_payload(
     model_ir: dict[str, Any], plan: dict[str, Any], views: dict[str, Any]
 ) -> dict[str, Any]:
     """Return the structural payload used for execution-path identity.
 
-    Labels, notes, source links, profiles, and concrete TP degree are excluded.
-    A TP-only template therefore keeps one identity across TP2/TP4/TP8 while
-    topology or communication-graph changes produce a new fingerprint.
+    Labels, notes, source links, profiles, and framework implementation identity
+    are excluded. Exact parallelism and generation/control selectors are
+    included: TP2, TP4, TP8, ordinary autoregressive execution, and a materially
+    different speculative-generation contract are distinct Execution IRs even
+    when they reuse the same authored transforms.
     """
 
     semantic_only_views = {
@@ -992,6 +1180,7 @@ def _fingerprint_payload(
         "execution_path_id": plan["execution_path_id"],
         "execution_plan_version": plan["plan_version"],
         "parallelism_axes": plan.get("parallelism_axes", {}),
+        "execution_selector_match": plan.get("selector", {}).get("match", {}),
         "views": structural_views,
     }
 
@@ -1181,6 +1370,12 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
             "execution_validation",
             "extends",
             "binding_compatible_base_commit",
+            "binding_revision_id",
+            "add_trace_acceptance_sha256",
+            "runtime_identity",
+            "runtime_identity_sha256",
+            "mapping_rules_sha256",
+            "mapping_rules",
         )
         if key in binding
     }
@@ -1190,7 +1385,11 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
         if not isinstance(node_binding, dict):
             raise CatalogError(f"{source}: binding for {target!r} must be a mapping")
         for link in node_binding.get("links", []) or []:
-            if not isinstance(link, dict) or not link.get("file") or not link.get("symbol"):
+            if (
+                not isinstance(link, dict)
+                or not link.get("file")
+                or not link.get("symbol")
+            ):
                 raise CatalogError(
                     f"{source}: binding link for {target!r} requires file and symbol"
                 )
@@ -1203,7 +1402,267 @@ def compile_binding(binding: dict[str, Any], *, source: Path) -> dict[str, Any]:
     return compiled
 
 
-def apply_binding(views: dict[str, Any], binding: dict[str, Any], *, source: Path) -> None:
+def _validate_binding_revision_contract(
+    binding: dict[str, Any],
+    *,
+    execution_fingerprint_value: str,
+    node_targets: set[str],
+    source: Path,
+) -> None:
+    revision_fields = {
+        "binding_revision_id",
+        "add_trace_acceptance_sha256",
+        "runtime_identity",
+        "runtime_identity_sha256",
+        "mapping_rules_sha256",
+        "mapping_rules",
+    }
+    present = revision_fields & set(binding)
+    if not present:
+        return
+    if present != revision_fields:
+        raise CatalogError(
+            f"{source}: versioned Binding requires all of {sorted(revision_fields)}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", str(binding["add_trace_acceptance_sha256"])):
+        raise CatalogError(f"{source}: add_trace_acceptance_sha256 is invalid")
+    identity = binding["runtime_identity"]
+    if not isinstance(identity, dict):
+        raise CatalogError(f"{source}: runtime_identity must be a mapping")
+    required_identity = {
+        "framework_id",
+        "source_repo",
+        "source_commit",
+        "container_digest",
+        "package_lock_sha256",
+        "extension_artifacts",
+        "backend_selections",
+        "build_flags",
+    }
+    missing = sorted(required_identity - set(identity))
+    if missing:
+        raise CatalogError(f"{source}: runtime_identity is missing {missing}")
+    unknown = sorted(set(identity) - (required_identity | {"source_patch_sha256"}))
+    if unknown:
+        raise CatalogError(
+            f"{source}: runtime_identity contains non-identity fields {unknown}"
+        )
+    if identity["framework_id"] not in {"sglang", "vllm", "tensorrt_llm"}:
+        raise CatalogError(f"{source}: runtime_identity.framework_id is invalid")
+    source_repo = urlsplit(str(identity["source_repo"]))
+    if source_repo.scheme not in {"http", "https"} or not source_repo.netloc:
+        raise CatalogError(
+            f"{source}: runtime_identity.source_repo must be an absolute HTTP(S) URI"
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", str(identity["source_commit"])):
+        raise CatalogError(
+            f"{source}: runtime_identity.source_commit must be a full lowercase Git SHA"
+        )
+    container_digest = str(identity["container_digest"])
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", container_digest):
+        raise CatalogError(
+            f"{source}: runtime_identity.container_digest must be immutable SHA256"
+        )
+    for digest_field in ("package_lock_sha256", "source_patch_sha256"):
+        value = identity.get(digest_field)
+        if value is not None and not re.fullmatch(r"[0-9a-f]{64}", str(value)):
+            raise CatalogError(
+                f"{source}: runtime_identity.{digest_field} must be lowercase SHA256"
+            )
+    identity_payload = copy.deepcopy(identity)
+    artifacts = identity_payload.get("extension_artifacts")
+    if not isinstance(artifacts, list):
+        raise CatalogError(
+            f"{source}: runtime_identity.extension_artifacts must be an array"
+        )
+    artifact_names: set[str] = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {"name", "sha256"}:
+            raise CatalogError(
+                f"{source}: every runtime extension artifact requires name and sha256"
+            )
+        name = str(artifact["name"])
+        if not name or name in artifact_names:
+            raise CatalogError(
+                f"{source}: runtime extension artifact names must be unique and non-empty"
+            )
+        artifact_names.add(name)
+        if not re.fullmatch(r"[0-9a-f]{64}", str(artifact["sha256"])):
+            raise CatalogError(
+                f"{source}: runtime extension artifact {name!r} has invalid SHA256"
+            )
+    identity_payload["extension_artifacts"] = sorted(
+        artifacts, key=lambda item: (str(item.get("name")), str(item.get("sha256")))
+    )
+    calculated_identity_digest = hashlib.sha256(
+        json.dumps(
+            identity_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+    if calculated_identity_digest != binding["runtime_identity_sha256"]:
+        raise CatalogError(f"{source}: runtime_identity_sha256 does not match payload")
+    calculated_revision = (
+        "bind_"
+        + hashlib.sha256(
+            f"{execution_fingerprint_value}:{calculated_identity_digest}".encode()
+        ).hexdigest()[:16]
+    )
+    if calculated_revision != binding["binding_revision_id"]:
+        raise CatalogError(
+            f"{source}: binding_revision_id does not match runtime identity and "
+            "Execution IR fingerprint"
+        )
+    if str(identity["source_repo"]) != str(binding["source_repo"]) or str(
+        identity["source_commit"]
+    ) != str(binding["source_commit"]):
+        raise CatalogError(
+            f"{source}: runtime identity source does not match implementation binding source"
+        )
+    if identity["framework_id"] != _framework_id(binding, source=source):
+        raise CatalogError(
+            f"{source}: runtime identity framework does not match binding"
+        )
+    rules = binding["mapping_rules"]
+    if not isinstance(rules, list) or not rules:
+        raise CatalogError(f"{source}: versioned Binding requires mapping_rules")
+    rule_ids: set[str] = set()
+    for rule in rules:
+        required_rule_fields = {
+            "rule_id",
+            "ir_target",
+            "eager_match",
+            "production_transfer",
+            "scope",
+        }
+        if not isinstance(rule, dict) or set(rule) != required_rule_fields:
+            raise CatalogError(
+                f"{source}: mapping rule requires exactly {sorted(required_rule_fields)}"
+            )
+        if not re.fullmatch(r"[a-zA-Z0-9_.-]+", str(rule["rule_id"])):
+            raise CatalogError(f"{source}: mapping rule has invalid rule_id")
+        if rule["rule_id"] in rule_ids:
+            raise CatalogError(f"{source}: duplicate mapping rule {rule['rule_id']!r}")
+        rule_ids.add(rule["rule_id"])
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", str(rule["ir_target"])):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid IR target"
+            )
+        if rule["ir_target"] not in node_targets:
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} references unknown "
+                f"IR target {rule['ir_target']!r}"
+            )
+        eager_match = rule["eager_match"]
+        allowed_eager_fields = {
+            "python_stack_digest",
+            "source_symbol",
+            "operator_sequence_digest",
+            "collective_signature",
+            "state_transition",
+        }
+        if (
+            not isinstance(eager_match, dict)
+            or not eager_match
+            or not set(eager_match).issubset(allowed_eager_fields)
+        ):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid eager_match"
+            )
+        for field in ("python_stack_digest", "operator_sequence_digest"):
+            if field in eager_match and not re.fullmatch(
+                r"[0-9a-f]{64}", str(eager_match[field])
+            ):
+                raise CatalogError(
+                    f"{source}: mapping rule {rule['rule_id']!r} has invalid {field}"
+                )
+        if any(
+            field in eager_match and not str(eager_match[field])
+            for field in (
+                "source_symbol",
+                "collective_signature",
+                "state_transition",
+            )
+        ):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has an empty eager matcher"
+            )
+        transfer = rule["production_transfer"]
+        if not isinstance(transfer, dict) or set(transfer) != {
+            "method",
+            "signature_digest",
+        }:
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid production transfer"
+            )
+        if transfer["method"] not in {
+            "exact_sequence",
+            "annotated_scope",
+            "collective_order",
+            "state_boundary",
+            "reviewed_fusion",
+        } or not re.fullmatch(r"[0-9a-f]{64}", str(transfer["signature_digest"])):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid production transfer"
+            )
+        scope = rule["scope"]
+        if (
+            not isinstance(scope, dict)
+            or not {"phase", "generation_mode"}.issubset(scope)
+            or not set(scope).issubset(
+                {"phase", "generation_mode", "layer_ids", "substage"}
+            )
+        ):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid scope"
+            )
+        if scope["phase"] not in {"prefill", "decode"} or not str(
+            scope["generation_mode"]
+        ):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid scope"
+            )
+        layer_ids = scope.get("layer_ids")
+        if layer_ids is not None and (
+            not isinstance(layer_ids, list)
+            or len(layer_ids) != len(set(layer_ids))
+            or any(
+                not isinstance(layer_id, int)
+                or isinstance(layer_id, bool)
+                or layer_id < 0
+                for layer_id in layer_ids
+            )
+        ):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has invalid layer_ids"
+            )
+        if "substage" in scope and not str(scope["substage"]):
+            raise CatalogError(
+                f"{source}: mapping rule {rule['rule_id']!r} has an empty substage"
+            )
+    normalized_rules = copy.deepcopy(rules)
+    for rule in normalized_rules:
+        layer_ids = rule.get("scope", {}).get("layer_ids")
+        if layer_ids is not None:
+            rule["scope"]["layer_ids"] = sorted(layer_ids)
+    normalized_rules.sort(key=lambda rule: rule["rule_id"])
+    calculated_rules_digest = hashlib.sha256(
+        json.dumps(
+            normalized_rules,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+    if calculated_rules_digest != binding["mapping_rules_sha256"]:
+        raise CatalogError(f"{source}: mapping_rules_sha256 does not match payload")
+
+
+def apply_binding(
+    views: dict[str, Any], binding: dict[str, Any], *, source: Path
+) -> None:
     for target, node_binding in (binding.get("node_bindings") or {}).items():
         node = _find_node(views, target, source=source)
         node["code_links"] = copy.deepcopy(node_binding.get("code_links", []))
@@ -1220,7 +1679,9 @@ def apply_binding(views: dict[str, Any], binding: dict[str, Any], *, source: Pat
     for target, node in index.items():
         if node.get("implementation_binding"):
             continue
-        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        runtime_mapping = (node.get("semantic_details") or {}).get(
+            "runtime_mapping"
+        ) or {}
         if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
             continue
         owner = index.get(str(runtime_mapping.get("owner") or ""))
@@ -1260,8 +1721,22 @@ def compile_profile(
     source: Path,
 ) -> dict[str, Any]:
     _validate_parallelism(profile, plan, source=source)
+    generation_condition = (
+        (plan.get("selector") or {}).get("match") or {}
+    ).get("generation.mode") or {}
+    expected_generation = generation_condition.get("equals")
+    actual_generation = profile.get("generation_mode", "autoregressive")
+    if expected_generation is None:
+        raise CatalogError(
+            f"{source}: execution plan must select one exact generation.mode"
+        )
+    if actual_generation != expected_generation:
+        raise CatalogError(
+            f"{source}: generation_mode={actual_generation!r} does not match "
+            f"Execution IR requirement {expected_generation!r}"
+        )
     effective_states = copy.deepcopy(profile.get("node_states") or {})
-    if profile.get("generation_mode", "autoregressive") != "eagle_mtp":
+    if actual_generation != "eagle_mtp":
         for target in sorted(node_targets):
             if target.startswith("mtp_"):
                 effective_states.setdefault(
@@ -1277,7 +1752,9 @@ def compile_profile(
     for target, node in (node_index or {}).items():
         if target in effective_states or target in (profile.get("node_metrics") or {}):
             continue
-        runtime_mapping = (node.get("semantic_details") or {}).get("runtime_mapping") or {}
+        runtime_mapping = (node.get("semantic_details") or {}).get(
+            "runtime_mapping"
+        ) or {}
         if runtime_mapping.get("expectation") not in {"fused", "fused_state"}:
             continue
         owner = str(runtime_mapping.get("owner") or "")
@@ -1427,7 +1904,9 @@ def compile_profile(
             )
         evidence_scope = raw_group.get("evidence_scope") or {}
         resolution = evidence_scope.get("resolution")
-        if raw_group.get("timing_semantics") == "shared_event_set" and resolution not in {
+        if raw_group.get(
+            "timing_semantics"
+        ) == "shared_event_set" and resolution not in {
             "exact_occurrence",
             "profile_aggregate",
         }:
@@ -1453,8 +1932,7 @@ def compile_profile(
                 )
             for member in (target for target in ir_nodes if target != owner):
                 events = {
-                    str(event_id)
-                    for event_id in (member_event_ids.get(member) or [])
+                    str(event_id) for event_id in (member_event_ids.get(member) or [])
                 }
                 if not events:
                     raise CatalogError(
@@ -1488,9 +1966,7 @@ def compile_profile(
         covered_by_authored.update(ir_nodes)
         fusion_groups[str(group_id)] = copy.deepcopy(raw_group)
         authored_group_by_owner[owner] = str(group_id)
-        authored_group_for_target.update(
-            {target: str(group_id) for target in ir_nodes}
-        )
+        authored_group_for_target.update({target: str(group_id) for target in ir_nodes})
     for group_id, group in derived_fusion_groups.items():
         owner = group["owner"]
         members = group["ir_nodes"][1:]
@@ -1552,9 +2028,7 @@ def compile_profile(
     # profile's architecture root.  This relationship is explicit IR data;
     # the viewer must never infer it from labels or framework-specific names.
     entry_view = str(profile.get("entry_view") or "top")
-    reachable_views = (
-        _reachable_views(views, entry_view) if views is not None else None
-    )
+    reachable_views = _reachable_views(views, entry_view) if views is not None else None
     if views is not None and entry_view not in views:
         raise CatalogError(f"{source}: profile entry_view {entry_view!r} is unknown")
     for group_id, group in fusion_groups.items():
@@ -1602,10 +2076,7 @@ def compile_profile(
     for target in sorted(targets):
         cell = copy.deepcopy(effective_states.get(target, {}))
         cell.update(copy.deepcopy((profile.get("node_metrics") or {}).get(target, {})))
-        if (
-            "gpu_residency_ms" not in cell
-            and "gpu_residency_ms_per_iter" in cell
-        ):
+        if "gpu_residency_ms" not in cell and "gpu_residency_ms_per_iter" in cell:
             cell["gpu_residency_ms"] = cell["gpu_residency_ms_per_iter"]
         group_id = fusion_group_for_target.get(target)
         if group_id:
@@ -1636,23 +2107,23 @@ def compile_profile(
             cell["timing_role"] = "standalone"
         data[target] = {variant: cell}
     meta = {
-            key: copy.deepcopy(profile[key])
-            for key in (
-                "profile_id",
-                "label",
-                "phase",
-                "generation_mode",
-                "entry_view",
-                "variant_id",
-                "execution_parameters",
-                "hardware",
-                "workload",
-                "profiler",
-                "evidence",
-                "profile_summary",
-            )
-            if key in profile
-        }
+        key: copy.deepcopy(profile[key])
+        for key in (
+            "profile_id",
+            "label",
+            "phase",
+            "generation_mode",
+            "entry_view",
+            "variant_id",
+            "execution_parameters",
+            "hardware",
+            "workload",
+            "profiler",
+            "evidence",
+            "profile_summary",
+        )
+        if key in profile
+    }
     meta.setdefault("generation_mode", "autoregressive")
     meta.setdefault("entry_view", "top")
     comparison_contract_id, comparison_contract_payload = comparison_contract(
@@ -1698,9 +2169,9 @@ def build_enriched(
     for profile_id, profile in profiles.items():
         for target, variants in profile.get("data", {}).items():
             view_id, node_id = target.split(".", 1)
-            enriched[view_id]["nodes_profile"].setdefault(node_id, {})[
-                profile_id
-            ] = copy.deepcopy(variants)
+            enriched[view_id]["nodes_profile"].setdefault(node_id, {})[profile_id] = (
+                copy.deepcopy(variants)
+            )
     return enriched
 
 
@@ -1715,9 +2186,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
     pipeline_path = model_root / "pipeline.yaml"
     pipeline = load_yaml(pipeline_path) if pipeline_path.is_file() else {}
     require_executable_drill_rollups = bool(
-        (pipeline.get("acceptance") or {}).get(
-            "require_executable_drill_rollups", True
-        )
+        (pipeline.get("acceptance") or {}).get("require_executable_drill_rollups", True)
     )
     _validate_schema_version(model_ir, "model-ir.v2", source=model_path)
     _require(
@@ -1763,7 +2232,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             source=path,
         )
         if binding["model_id"] != model_ir["model_id"]:
-            raise CatalogError(f"{path}: model_id does not match {model_ir['model_id']}")
+            raise CatalogError(
+                f"{path}: model_id does not match {model_ir['model_id']}"
+            )
         raw_bindings.append((path, binding))
 
     raw_profiles: list[tuple[Path, dict[str, Any]]] = []
@@ -1786,7 +2257,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             source=path,
         )
         if profile["model_id"] != model_ir["model_id"]:
-            raise CatalogError(f"{path}: model_id does not match {model_ir['model_id']}")
+            raise CatalogError(
+                f"{path}: model_id does not match {model_ir['model_id']}"
+            )
         try:
             validate_profile_timing_closure(profile)
         except ValueError as exc:
@@ -1835,14 +2308,18 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     "binding_compatible_base_commit must explicitly name the "
                     "base source commit"
                 )
-        return binding_lineage(base_id, (*trail, implementation_id)) + [
-            (path, binding)
-        ]
+        return binding_lineage(base_id, (*trail, implementation_id)) + [(path, binding)]
+
+    loaded_plans: list[tuple[Path, dict[str, Any]]] = []
+    for plan_path in plan_paths:
+        plan = load_yaml(plan_path)
+        _validate_execution_selector(plan, source=plan_path)
+        loaded_plans.append((plan_path, plan))
+    _validate_execution_selector_set(loaded_plans)
 
     execution_variants: dict[str, Any] = {}
     plans_by_id: dict[str, tuple[Path, dict[str, Any], str]] = {}
-    for plan_path in plan_paths:
-        plan = load_yaml(plan_path)
+    for plan_path, plan in loaded_plans:
         _validate_schema_version(plan, "execution-plan.v2", source=plan_path)
         _require(
             plan,
@@ -1857,7 +2334,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             source=plan_path,
         )
         if plan["model_id"] != model_ir["model_id"]:
-            raise CatalogError(f"{plan_path}: model_id does not match {model_ir['model_id']}")
+            raise CatalogError(
+                f"{plan_path}: model_id does not match {model_ir['model_id']}"
+            )
         if plan["execution_path_id"] in plans_by_id:
             raise CatalogError(
                 f"{plan_path}: duplicate execution path {plan['execution_path_id']!r}"
@@ -1871,6 +2350,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             "fingerprint": fingerprint,
             "model_ir_version": model_ir["ir_version"],
             "execution_plan_version": plan["plan_version"],
+            "selector": copy.deepcopy(plan["selector"]),
             "parallelism_axes": copy.deepcopy(plan.get("parallelism_axes", {})),
             "default_parameters": copy.deepcopy(plan.get("default_parameters", {})),
             "default_view": model_ir["default_view"],
@@ -1887,7 +2367,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         target_index = _node_index(
             execution_variants[fingerprint]["views"], source=path
         )
-        unknown = sorted(set(raw_binding.get("node_bindings") or {}) - set(target_index))
+        unknown = sorted(
+            set(raw_binding.get("node_bindings") or {}) - set(target_index)
+        )
         if unknown:
             raise CatalogError(f"{path}: binding references unknown nodes: {unknown}")
         merged_binding = copy.deepcopy(raw_binding)
@@ -1905,6 +2387,12 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                 }
             )
         merged_binding["node_bindings"] = merged_nodes
+        _validate_binding_revision_contract(
+            merged_binding,
+            execution_fingerprint_value=fingerprint,
+            node_targets=set(target_index),
+            source=path,
+        )
         compiled = compile_binding(merged_binding, source=path)
         compiled["execution_variant"] = fingerprint
         validation = compiled.get("execution_validation")
@@ -1916,9 +2404,10 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
                     f"{validation_fingerprint!r} does not match compiled "
                     f"Execution IR {fingerprint!r}"
                 )
-            if compiled.get("binding_status") == "validated" and validation.get(
-                "status"
-            ) != "pass":
+            if (
+                compiled.get("binding_status") == "validated"
+                and validation.get("status") != "pass"
+            ):
                 raise CatalogError(
                     f"{path}: binding_status='validated' requires "
                     "execution_validation.status='pass'"
@@ -1940,7 +2429,9 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
             )
         evidence_commit = (raw_profile.get("evidence") or {}).get("source_commit")
         implementation_commit = implementations[impl_id].get("source_commit")
-        if evidence_commit is not None and str(evidence_commit) != str(implementation_commit):
+        if evidence_commit is not None and str(evidence_commit) != str(
+            implementation_commit
+        ):
             raise CatalogError(
                 f"{path}: evidence source_commit {evidence_commit!r} does not match "
                 f"implementation {impl_id!r} commit {implementation_commit!r}"
@@ -2078,9 +2569,7 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         ]
 
     for entry in comparison_contracts.values():
-        fingerprints = set(
-            entry["execution_variants_by_implementation"].values()
-        )
+        fingerprints = set(entry["execution_variants_by_implementation"].values())
         entry["execution_ir_compatible"] = len(fingerprints) <= 1
 
     default_path_id = model_ir.get("default_execution_path") or next(iter(plans_by_id))

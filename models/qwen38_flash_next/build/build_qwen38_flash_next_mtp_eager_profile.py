@@ -30,10 +30,12 @@ from models.qwen38_flash_next.build.build_qwen38_flash_next_eager_prefill_profil
 )
 from models.qwen38_flash_next.build.qwen38_flash_next_decode_attribution import (  # noqa: E402
     _assign,
+    _hc_combine_ranges,
     _hc_mix_end,
     _is_gemm,
     _metric,
     _map_moe,
+    _map_ple,
     _map_qsa_attention,
     attach_qsa_indexer_drill_metrics,
     attach_qsa_indexer_drill_targets,
@@ -55,6 +57,7 @@ SOURCE_PATCH_COMPONENTS = [
     {"name": "qsa_hardening", "sha256": SOURCE_PATCH_SHA256},
 ]
 IMPLEMENTATION_ID = "sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn"
+EXECUTION_PATH_ID = "tp_only_eagle_mtp"
 LINEAR_LAYER_MODULE = re.compile(r"Qwen4ExpLinearDecoderLayer_(\d+)")
 ATTENTION_LAYER_MODULE = re.compile(r"Qwen4ExpAttentionDecoderLayer_(\d+)")
 
@@ -75,6 +78,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cross-rank-summary", type=Path)
     parser.add_argument("--semantic-job-id", required=True)
     parser.add_argument("--timing-job-id", required=True)
+    parser.add_argument("--source-commit", default=SOURCE_COMMIT)
+    parser.add_argument("--base-source-commit", default=BASE_SOURCE_COMMIT)
+    parser.add_argument("--source-patch-sha256", default=SOURCE_PATCH_SHA256)
+    parser.add_argument(
+        "--source-patch-components-json",
+        default=json.dumps(SOURCE_PATCH_COMPONENTS, sort_keys=True),
+    )
+    parser.add_argument("--implementation-id", default=IMPLEMENTATION_ID)
+    parser.add_argument(
+        "--profile-id-suffix",
+        default="",
+        help=(
+            "Optional deterministic runtime-revision suffix, normally the "
+            "binding_revision_id, used when the same workload is measured for "
+            "more than one implementation Binding."
+        ),
+    )
+    parser.add_argument(
+        "--source-delta",
+        default=(
+            "qwen4-main 32e9cb5 rollback plus QSA lifecycle/capacity hardening; "
+            "model math and profile-window scheduling are unchanged"
+        ),
+    )
     parser.add_argument("--output-profile", type=Path, required=True)
     parser.add_argument("--output-analysis", type=Path, required=True)
     return parser.parse_args()
@@ -342,11 +369,145 @@ def semantic_events(args: argparse.Namespace) -> list[dict[str, Any]]:
     _reconcile_hyperconnection_structure(attributed, phase=args.phase)
     _reconcile_mtp_input_fusion(attributed)
     _reconcile_mtp_moe_structure(attributed, phase=args.phase)
+    if args.phase == "decode":
+        _reconcile_eager_decode_boundaries(attributed)
     return attributed
 
 
+def _reconcile_eager_decode_boundaries(events: list[dict[str, Any]]) -> None:
+    """Refine eager-only source boundaries used by the runtime Binding.
+
+    The generic stack classifier intentionally starts conservatively.  For the
+    MTP decode binding, several kernels have exact source symbols and stable
+    local ordering that let us prove narrower Model/Execution IR ownership.
+    Keep this pass fail-closed: a changed count or ordering means that a new
+    runtime binding revision must be authored rather than silently inheriting
+    the old rule set.
+    """
+
+    def exact_indices(predicate: Any, *, expected: int, label: str) -> list[int]:
+        indices = [index for index, event in enumerate(events) if predicate(event)]
+        if len(indices) != expected:
+            raise ValueError(
+                f"eager MTP decode {label} boundary changed: "
+                f"expected {expected}, got {len(indices)}"
+            )
+        return indices
+
+    embedding = exact_indices(
+        lambda event: (
+            event.get("semantic_function") == "_embed_local_shard"
+            and "_vocab_parallel_embedding_kernel"
+            in str(event.get("kernel_name") or "").lower()
+            and event.get("layer_kind") != "mtp"
+        ),
+        expected=1,
+        label="target token embedding",
+    )
+    events[embedding[0]].update(
+        {
+            "node": "top.embedding",
+            "kernel_label": "target token embedding lookup",
+            "attribution_method": "exact_eager_source_symbol",
+            "confidence": "high",
+            "substage": "model_prefix",
+        }
+    )
+
+    token_history = exact_indices(
+        lambda event: event.get("semantic_function")
+        in {"_prepare_ple_batch", "compute_ngram_ids"},
+        expected=22,
+        label="PLE token-history preparation",
+    )
+    for index in token_history:
+        events[index].update(
+            {
+                "node": "ple.token_history",
+                "kernel_label": "prepare cached N-gram token history",
+                "attribution_method": "exact_eager_source_symbol",
+                "confidence": "high",
+                "substage": "model_prefix",
+            }
+        )
+
+    ngram_embedding = exact_indices(
+        lambda event: "_gather_ple_embedding_from_pinned_kernel"
+        in str(event.get("kernel_name") or "").lower(),
+        expected=1,
+        label="PLE N-gram embedding lookup",
+    )
+    events[ngram_embedding[0]].update(
+        {
+            "node": "ple.ngram_embedding",
+            "kernel_label": "pinned-host N-gram embedding lookup",
+            "attribution_method": "exact_eager_kernel_and_source_symbol",
+            "confidence": "high",
+            "substage": "model_prefix",
+        }
+    )
+
+    ple_collective = exact_indices(
+        lambda event: event.get("node") == "ple.tp_embedding_collective",
+        expected=1,
+        label="PLE embedding collective",
+    )[0]
+    ple_stop = next(
+        (
+            index
+            for index in range(ple_collective + 1, len(events))
+            if events[index].get("substage") != "ple"
+        ),
+        len(events),
+    )
+    for index in range(ple_collective + 1, ple_stop):
+        events[index]["node"] = None
+    _map_ple(events, ple_collective, ple_stop)
+
+    context_commit = exact_indices(
+        lambda event: event.get("semantic_function") == "_commit_ple_batch",
+        expected=2,
+        label="PLE context commit",
+    )
+    for index in context_commit:
+        events[index].update(
+            {
+                "node": "ple.context_commit",
+                "kernel_label": "commit PLE recurrent context",
+                "attribution_method": "exact_eager_source_symbol",
+                "confidence": "high",
+                "substage": "model_suffix",
+            }
+        )
+
+    logits_copy = exact_indices(
+        lambda event: (
+            event.get("semantic_function") == "_copy_logits_to_buffer"
+            and event.get("node") == "top.tp_logits_collective"
+        ),
+        expected=1,
+        label="target logits materialization",
+    )
+    events[logits_copy[0]].update(
+        {
+            "node": "top.logits",
+            "kernel_label": "materialize target vocabulary logits",
+            "attribution_method": "exact_eager_source_symbol",
+            "confidence": "high",
+            "substage": "model_suffix",
+        }
+    )
+
+
 def _reconcile_mtp_input_fusion(events: list[dict[str, Any]]) -> None:
-    """Split the source-ordered five-kernel MTP residual-linear fusion."""
+    """Split the source-ordered MTP residual-linear fusion.
+
+    The legacy FlashInfer RMSNorm path emits one kernel per normalization. The
+    PR #37500 compatibility binding uses equation-equivalent native RMSNorm,
+    which emits a reviewed ten-op normalization sequence before each GEMM.
+    Both implementations must retain the same two projection boundaries and
+    final residual add; any other sequence is rejected.
+    """
 
     indices = [
         index
@@ -354,23 +515,51 @@ def _reconcile_mtp_input_fusion(events: list[dict[str, Any]]) -> None:
         if event.get("node") == "mtp_head.residual_fusion"
         and event.get("semantic_function") == "_fuse_residual_linear_shared"
     ]
-    if len(indices) != 5 or indices != list(range(indices[0], indices[0] + 5)):
+    if not indices or indices != list(range(indices[0], indices[0] + len(indices))):
         raise ValueError(
-            "MTP input fusion must be one contiguous "
-            f"RMSNorm/GEMM/RMSNorm/GEMM/add block; got {indices}"
+            "MTP input fusion must be one contiguous block; "
+            f"got {indices}"
         )
     names = [str(events[index]["kernel_name"]).lower() for index in indices]
-    if not (
-        "rmsnormkernel" in names[0]
-        and "rmsnormkernel" in names[2]
-        and "cudafunctor_add" in names[4]
-    ):
-        raise ValueError("MTP input fusion kernel order changed")
-    assignments = (
-        (indices[:2], "mtp_head.embedding_projection"),
-        (indices[2:4], "mtp_head.hidden_projection"),
-        (indices[4:], "mtp_head.residual_fusion"),
-    )
+    if len(indices) == 5:
+        if not (
+            "rmsnormkernel" in names[0]
+            and "rmsnormkernel" in names[2]
+            and "cudafunctor_add" in names[4]
+        ):
+            raise ValueError("legacy MTP input fusion kernel order changed")
+        assignments = (
+            (indices[:2], "mtp_head.embedding_projection"),
+            (indices[2:4], "mtp_head.hidden_projection"),
+            (indices[4:], "mtp_head.residual_fusion"),
+        )
+    else:
+        cpu_ops = [str(events[index].get("cpu_op_name") or "") for index in indices]
+        native_norm = [
+            "aten::copy_",
+            "aten::pow",
+            "aten::mean",
+            "aten::add",
+            "aten::rsqrt",
+            "aten::mul",
+            "aten::copy_",
+            "aten::add",
+            "aten::mul",
+            "aten::copy_",
+        ]
+        expected = [*native_norm, "aten::mm", *native_norm, "aten::mm", "aten::add"]
+        if cpu_ops != expected:
+            raise ValueError(
+                "native-RMSNorm MTP input fusion operator sequence changed: "
+                f"{cpu_ops}"
+            )
+        first_gemm = indices[len(native_norm)]
+        second_gemm = indices[2 * len(native_norm) + 1]
+        assignments = (
+            (list(range(indices[0], first_gemm + 1)), "mtp_head.embedding_projection"),
+            (list(range(first_gemm + 1, second_gemm + 1)), "mtp_head.hidden_projection"),
+            ([indices[-1]], "mtp_head.residual_fusion"),
+        )
     for members, node in assignments:
         for index in members:
             events[index].update(
@@ -386,6 +575,30 @@ def _reconcile_mtp_input_fusion(events: list[dict[str, Any]]) -> None:
                     },
                 }
             )
+
+
+_NATIVE_MTP_RMSNORM_KERNEL_PATTERNS = (
+    "direct_copy_kernel_cuda",
+    "pow_tensor_scalar_kernel_impl",
+    "meanops<float",
+    "cudafunctoronself_add<float>",
+    "rsqrt_kernel_cuda",
+    "mulfunctor<float>",
+    "direct_copy_kernel_cuda",
+    "cudafunctoronself_add<float>",
+    "mulfunctor<float>",
+    "bfloat16_copy_kernel_cuda",
+)
+
+
+def _is_native_mtp_rmsnorm_kernel_sequence(
+    rows: list[dict[str, Any]], start: int
+) -> bool:
+    stop = start + len(_NATIVE_MTP_RMSNORM_KERNEL_PATTERNS)
+    if start < 0 or stop > len(rows):
+        return False
+    names = [str(rows[index]["kernel_name"]).lower() for index in range(start, stop)]
+    return all(pattern in name for pattern, name in zip(_NATIVE_MTP_RMSNORM_KERNEL_PATTERNS, names))
 
 
 def _reconcile_mtp_moe_structure(
@@ -456,11 +669,7 @@ def _reconcile_hyperconnection_structure(
     therefore stronger than borrowing the nearest model-module stack.
     """
 
-    combine_indices = [
-        index
-        for index, event in enumerate(events)
-        if "hc_combine_kernel" in str(event["kernel_name"]).lower()
-    ]
+    combine_ranges = _hc_combine_ranges(events)
     def is_mix_member(event: dict[str, Any]) -> bool:
         return (
             "_hc_mix_persistent_kernel" in str(event["kernel_name"]).lower()
@@ -488,17 +697,17 @@ def _reconcile_hyperconnection_structure(
         return members
 
     paired_norms: set[int] = set()
-    previous_combine = -1
-    for combine_index in combine_indices:
+    previous_combine_end = -1
+    for (combine_index, combine_end) in combine_ranges:
         candidates = [
             index
             for index in mix_norm_indices
-            if previous_combine < index < combine_index and index not in paired_norms
+            if previous_combine_end < index < combine_index and index not in paired_norms
         ]
         if not candidates:
             raise ValueError(
                 "HC combine has no preceding mix boundary: "
-                f"previous={previous_combine} combine={combine_index}"
+                f"previous={previous_combine_end} combine={combine_index}"
             )
         norm_index = candidates[-1]
         paired_norms.add(norm_index)
@@ -532,7 +741,7 @@ def _reconcile_hyperconnection_structure(
                     },
                 }
             )
-        previous_combine = combine_index
+        previous_combine_end = combine_end
 
     final_norm_indices = [
         index for index in mix_norm_indices if index not in paired_norms
@@ -659,7 +868,7 @@ def _reconcile_hyperconnection_structure(
 def _validated_mtp_proposal_update_indices(
     events: list[dict[str, Any]], start: int, upper_bound: int
 ) -> list[int]:
-    """Return the eager-proven next-proposal selection sequence.
+    """Return the source-reviewed next-proposal selection sequence.
 
     This deliberately recognizes the reviewed contract sequence instead of
     sweeping every kernel after the MTP logits collective into the LM head.
@@ -820,14 +1029,12 @@ def _map_mtp_draft_graph(
             overwrite=True,
         )
 
-    combines = [
-        index
-        for index, row in enumerate(rows)
-        if "hc_combine_kernel" in str(row["kernel_name"]).lower()
-    ]
-    if len(combines) != 2:
-        raise ValueError(f"one-layer MTP graph must have two HC combines: {combines}")
-    attn_combine, mlp_combine = combines
+    combine_ranges = _hc_combine_ranges(rows)
+    if len(combine_ranges) != 2:
+        raise ValueError(
+            f"one-layer MTP graph must have two HC combines: {combine_ranges}"
+        )
+    (attn_combine, attn_combine_end), (mlp_combine, mlp_combine_end) = combine_ranges
     qk = next(
         (
             index
@@ -867,30 +1074,52 @@ def _map_mtp_draft_graph(
         if "rmsnorm" in str(rows[index]["kernel_name"]).lower()
         and "grouped_gemma" not in str(rows[index]["kernel_name"]).lower()
     ]
-    if vocab is None or len(prefix_norms) != 2:
+    if vocab is None:
         raise ValueError(
             "one-layer MTP input fusion anchors changed: "
             f"vocab={vocab} norms={prefix_norms}"
         )
-    first_norm, second_norm = prefix_norms
-    first_gemm = next(
-        (
-            index
-            for index in range(first_norm + 1, second_norm)
-            if _is_gemm(str(rows[index]["kernel_name"]))
-        ),
-        None,
-    )
-    second_gemm = next(
-        (
-            index
-            for index in range(second_norm + 1, attn_norm)
-            if _is_gemm(str(rows[index]["kernel_name"]))
-        ),
-        None,
-    )
-    if first_gemm is None or second_gemm is None:
-        raise ValueError("one-layer MTP input projection GEMMs changed")
+    native_start = embedding_collective + 1
+    native_width = len(_NATIVE_MTP_RMSNORM_KERNEL_PATTERNS)
+    if _is_native_mtp_rmsnorm_kernel_sequence(rows, native_start):
+        first_norm = native_start
+        first_gemm = native_start + native_width
+        second_norm = first_gemm + 1
+        second_gemm = second_norm + native_width
+        residual_add = second_gemm + 1
+        if not (
+            _is_gemm(str(rows[first_gemm]["kernel_name"]))
+            and _is_native_mtp_rmsnorm_kernel_sequence(rows, second_norm)
+            and _is_gemm(str(rows[second_gemm]["kernel_name"]))
+            and residual_add == attn_norm - 1
+            and "cudafunctor_add" in str(rows[residual_add]["kernel_name"]).lower()
+        ):
+            raise ValueError("native-RMSNorm MTP graph input fusion changed")
+    else:
+        if len(prefix_norms) != 2:
+            raise ValueError(
+                "one-layer MTP input fusion anchors changed: "
+                f"vocab={vocab} norms={prefix_norms}"
+            )
+        first_norm, second_norm = prefix_norms
+        first_gemm = next(
+            (
+                index
+                for index in range(first_norm + 1, second_norm)
+                if _is_gemm(str(rows[index]["kernel_name"]))
+            ),
+            None,
+        )
+        second_gemm = next(
+            (
+                index
+                for index in range(second_norm + 1, attn_norm)
+                if _is_gemm(str(rows[index]["kernel_name"]))
+            ),
+            None,
+        )
+        if first_gemm is None or second_gemm is None:
+            raise ValueError("one-layer MTP input projection GEMMs changed")
 
     for index in range(0, vocab):
         _assign(
@@ -979,13 +1208,19 @@ def _map_mtp_draft_graph(
         if node.startswith("qsa_attention."):
             rows[index]["node"] = "mtp_qsa_attention." + node.split(".", 1)[1]
     _set_mtp_context(
-        rows, attn_combine, attn_combine + 1, substage="mtp_draft_extend_attn_hc_combine"
+        rows, attn_combine, attn_combine + 1,
+        substage="mtp_draft_extend_attn_hc_combine",
     )
+    if attn_combine_end != attn_combine:
+        _set_mtp_context(
+            rows, attn_combine_end, attn_combine_end + 1,
+            substage="mtp_draft_extend_attn_hc_combine",
+        )
 
     mlp_norm = next(
         (
             index
-            for index in range(attn_combine + 1, mlp_combine)
+            for index in range(attn_combine_end + 1, mlp_combine)
             if "grouped_gemma_rmsnorm_kernel"
             in str(rows[index]["kernel_name"]).lower()
         ),
@@ -995,7 +1230,12 @@ def _map_mtp_draft_graph(
         raise ValueError("one-layer MTP graph is missing its MoE HC norm")
     mlp_mix_end = _hc_mix_end(rows, mlp_norm + 1, mlp_combine)
     moe_start = mlp_mix_end + 1
-    _set_mtp_context(rows, attn_combine + 1, moe_start, substage="mtp_draft_extend_mlp_hc_mix")
+    _set_mtp_context(
+        rows,
+        attn_combine_end + 1,
+        moe_start,
+        substage="mtp_draft_extend_mlp_hc_mix",
+    )
     _assign(
         rows,
         mlp_norm,
@@ -1022,13 +1262,19 @@ def _map_mtp_draft_graph(
         if node.startswith("moe."):
             rows[index]["node"] = "mtp_moe." + node.split(".", 1)[1]
     _set_mtp_context(
-        rows, mlp_combine, mlp_combine + 1, substage="mtp_draft_extend_mlp_hc_combine"
+        rows, mlp_combine, mlp_combine + 1,
+        substage="mtp_draft_extend_mlp_hc_combine",
     )
+    if mlp_combine_end != mlp_combine:
+        _set_mtp_context(
+            rows, mlp_combine_end, mlp_combine_end + 1,
+            substage="mtp_draft_extend_mlp_hc_combine",
+        )
 
     final_norm = next(
         (
             index
-            for index in range(mlp_combine + 1, len(rows))
+            for index in range(mlp_combine_end + 1, len(rows))
             if "grouped_gemma_rmsnorm_kernel"
             in str(rows[index]["kernel_name"]).lower()
         ),
@@ -1038,22 +1284,13 @@ def _map_mtp_draft_graph(
     if final_norm is None:
         raise ValueError("one-layer MTP graph is missing its final HC norm")
     final_mix_end = _hc_mix_end(rows, final_norm + 1, logits_collective)
-    lm_head_indices = [
-        index
-        for index in range(final_mix_end + 1, logits_collective)
-        if _is_gemm(str(rows[index]["kernel_name"]))
-    ]
-    if lm_head_indices != list(range(final_mix_end + 1, logits_collective)) or len(
-        lm_head_indices
-    ) != 1:
-        raise ValueError(
-            "one-layer MTP graph must contain exactly one LM-head GEMM before "
-            f"the logits collective: {lm_head_indices}"
-        )
+    row_select_indices, lm_head = _mtp_lm_head_range(
+        rows, final_mix_end + 1, logits_collective
+    )
 
     # Runtime graph/state preparation may execute before the final HC mix on an
     # auxiliary stream. It belongs to the draft-forward stage, not to lm_head.
-    for index in range(mlp_combine + 1, final_norm):
+    for index in range(mlp_combine_end + 1, final_norm):
         _assign(
             rows,
             index,
@@ -1077,7 +1314,19 @@ def _map_mtp_draft_graph(
         )
         _set_mtp_context(rows, index, index + 1, substage="mtp_draft_extend", layer=False)
 
-    lm_head = lm_head_indices[0]
+    for index in row_select_indices:
+        _assign(
+            rows,
+            index,
+            "mtp_head.lm_head",
+            "select the DRAFT_EXTEND_V2 row for the MTP LM head",
+            "validated_mtp_logits_row_selection_contract",
+            "high",
+            overwrite=True,
+        )
+        _set_mtp_context(
+            rows, index, index + 1, substage="mtp_draft_extend", layer=False
+        )
     _assign(
         rows,
         lm_head,
@@ -1113,7 +1362,7 @@ def _map_mtp_draft_graph(
         layer=False,
     )
 
-    proposal_indices = _validated_mtp_proposal_update_indices(
+    proposal_indices = _validated_mtp_graph_output_selection_indices(
         rows, materialization_index + 1, len(rows)
     )
     for index in proposal_indices:
@@ -1129,14 +1378,15 @@ def _map_mtp_draft_graph(
         _set_mtp_context(rows, index, index + 1, substage="proposal_update", layer=False)
 
     claimed = {
-        *range(mlp_combine + 1, final_mix_end + 1),
+        *range(mlp_combine_end + 1, final_mix_end + 1),
+        *row_select_indices,
         lm_head,
         logits_collective,
         materialization_index,
         *proposal_indices,
     }
     deferred_runtime = [
-        index for index in range(mlp_combine + 1, len(rows)) if index not in claimed
+        index for index in range(mlp_combine_end + 1, len(rows)) if index not in claimed
     ]
     final_norm_ts = float(rows[final_norm]["ts_us"])
     if any(float(rows[index]["ts_us"]) >= final_norm_ts for index in deferred_runtime):
@@ -1163,6 +1413,116 @@ def _map_mtp_draft_graph(
             f"{Counter(row['kernel_name'] for row in unresolved).most_common(8)}"
         )
     return rows
+
+
+def _validated_mtp_graph_output_selection_indices(
+    rows: list[dict[str, Any]], start: int, stop: int
+) -> list[int]:
+    """Validate the graph-owned HC output selection after logits materialization."""
+
+    indices = list(range(start, stop))
+    if len(indices) != 1:
+        raise ValueError(
+            "MTP draft graph must end with exactly one HC-output selection kernel"
+        )
+    name = str(rows[indices[0]].get("kernel_name") or "").lower()
+    if "index_elementwise_kernel" not in name or "opaquetype<2>" not in name:
+        raise ValueError("MTP draft graph HC-output selection signature changed")
+    return indices
+
+
+def _partition_mtp_draft_runtime(
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split non-graph draft setup from the asynchronous proposal tail.
+
+    CUDA Graph children are owned separately by graph id.  The remaining
+    kernels overlap the graph on ordinary streams: an exact 18-kernel input/
+    QSA-metadata preparation sequence plus argmax/fill and an optional
+    selected-HC-state index.  The optional index can physically spill across
+    the annotation boundary on one TP rank, so it is validated but not required
+    in each physical window.
+    """
+
+    proposal: list[dict[str, Any]] = []
+    setup: list[dict[str, Any]] = []
+    for row in rows:
+        name = str(row.get("kernel_name") or "").lower()
+        cpu_op = str(row.get("cpu_op_name") or "")
+        is_argmax = "argmaxops<float>" in name
+        is_score_fill = "fillfunctor<float>" in name
+        is_hc_select = (
+            "index_elementwise_kernel" in name
+            and "opaquetype<8>" in name
+            and cpu_op in {"", "aten::index"}
+        )
+        if is_argmax or is_score_fill or is_hc_select:
+            proposal.append(row)
+        else:
+            setup.append(row)
+
+    setup_names = [str(row.get("kernel_name") or "").lower() for row in setup]
+    required_setup_anchors = (
+        "compute_position_kernel",
+        "_qsa_graph_layout_kernel",
+        "_qsa_graph_row_metadata_kernel",
+    )
+    if len(setup) != 18 or any(
+        sum(anchor in name for name in setup_names) != 1
+        for anchor in required_setup_anchors
+    ):
+        raise ValueError(
+            "MTP non-graph draft input/QSA setup sequence changed: "
+            f"count={len(setup)}"
+        )
+    proposal_names = [str(row.get("kernel_name") or "").lower() for row in proposal]
+    if (
+        len(proposal) not in {2, 3}
+        or sum("argmaxops<float>" in name for name in proposal_names) != 1
+        or sum("fillfunctor<float>" in name for name in proposal_names) != 1
+        or sum("opaquetype<8>" in name for name in proposal_names) != len(proposal) - 2
+    ):
+        raise ValueError(
+            "MTP asynchronous proposal-update sequence changed: "
+            f"count={len(proposal)}"
+        )
+    return setup, proposal
+
+
+def _mtp_lm_head_range(
+    rows: list[dict[str, Any]], start: int, stop: int
+) -> tuple[list[int], int]:
+    """Validate the optional DRAFT_EXTEND_V2 row select plus one LM-head GEMM.
+
+    ``LogitsProcessor._get_pruned_states`` indexes ``hidden_states`` before the
+    LM head when ``draft_extend_select_index`` is present.  Eager execution can
+    omit that graph-specialized select, so the graph contract deliberately
+    permits either no select or the one exact OpaqueType<2> index kernel.  No
+    other kernel may be hidden inside this boundary.
+    """
+
+    indices = list(range(start, stop))
+    gemms = [index for index in indices if _is_gemm(str(rows[index]["kernel_name"]))]
+    row_selects = [
+        index
+        for index in indices
+        if "index_elementwise_kernel" in str(rows[index]["kernel_name"]).lower()
+        and "opaquetype<2>" in str(rows[index]["kernel_name"]).lower()
+    ]
+    allowed = {*gemms, *row_selects}
+    if (
+        len(gemms) != 1
+        or gemms[0] != stop - 1
+        or len(row_selects) > 1
+        or any(index not in allowed for index in indices)
+        or (row_selects and row_selects[0] != gemms[0] - 1)
+    ):
+        raise ValueError(
+            "one-layer MTP graph must contain an optional exact logits-row "
+            "selection followed by exactly one LM-head GEMM before the logits "
+            f"collective: row_selects={row_selects} gemms={gemms}"
+        )
+    return row_selects, gemms[0]
 
 
 def _runtime_stage_rows(
@@ -1258,8 +1618,28 @@ def _transfer_cudagraph_timing(
         extend_bounds = stage["mtp_draft_extend_us"]
         draft_bounds = stage["draft_select_us"]
         _iter_start, iter_stop = _bounds(timing_manifest)[step_index - 1]
-        target_events = selected(chunk, target_bounds)
-        draft_graph_events = selected(chunk, extend_bounds)
+        target_interval_events = selected(chunk, target_bounds)
+        draft_interval_events = selected(chunk, extend_bounds)
+        target_events = [
+            event for event in target_interval_events if int(event.get("graph_id") or 0) > 0
+        ]
+        draft_graph_events = [
+            event for event in draft_interval_events if int(event.get("graph_id") or 0) > 0
+        ]
+        target_overlap_runtime = [
+            event for event in target_interval_events if int(event.get("graph_id") or 0) == 0
+        ]
+        if target_overlap_runtime:
+            raise ValueError(
+                "non-graph kernels unexpectedly overlap the target CUDA Graph interval"
+            )
+        draft_setup_events, draft_proposal_events = _partition_mtp_draft_runtime(
+            [
+                event
+                for event in draft_interval_events
+                if int(event.get("graph_id") or 0) == 0
+            ]
+        )
         accept_events = [
             event
             for event in chunk
@@ -1295,7 +1675,23 @@ def _transfer_cudagraph_timing(
                 label="accept path and commit target model state",
                 substage="accept_commit",
             ),
+            *_runtime_stage_rows(
+                draft_setup_events,
+                rank=rank,
+                step_index=step_index,
+                node="mtp_generation.mtp_draft_extend",
+                label="prepare MTP draft inputs and QSA graph metadata",
+                substage="mtp_draft_extend_runtime",
+            ),
             *mapped_draft,
+            *_runtime_stage_rows(
+                draft_proposal_events,
+                rank=rank,
+                step_index=step_index,
+                node="mtp_generation.proposal_update",
+                label="asynchronous next-proposal and HC-state selection",
+                substage="proposal_update",
+            ),
             *_runtime_stage_rows(
                 proposal_commit_events,
                 rank=rank,
@@ -1326,6 +1722,8 @@ def _transfer_cudagraph_timing(
                 "target_graph_kernel_count": len(mapped_target),
                 "accept_commit_kernel_count": len(accept_events),
                 "mtp_draft_graph_kernel_count": len(mapped_draft),
+                "mtp_draft_setup_kernel_count": len(draft_setup_events),
+                "mtp_draft_overlap_proposal_kernel_count": len(draft_proposal_events),
                 "proposal_commit_kernel_count": len(proposal_commit_events),
                 "draft_select_kernel_count": len(draft_select_events),
                 "attributed_kernel_count": len(rows),
@@ -1968,6 +2366,15 @@ def _average_step_timing(
 
 
 def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    # An empty CLI value represents an unpatched upstream runtime.  Keep the
+    # persisted contract typed as JSON/YAML null instead of inventing a digest
+    # or forcing every clean implementation to carry a synthetic patch.
+    source_patch_sha256 = args.source_patch_sha256 or None
+    source_patch_components = json.loads(args.source_patch_components_json)
+    if not isinstance(source_patch_components, list) or any(
+        not isinstance(item, dict) for item in source_patch_components
+    ):
+        raise ValueError("--source-patch-components-json must encode an array of objects")
     if args.phase == "prefill" and args.batch_size != 1:
         raise ValueError("MTP prefill profile requires global BS1")
     if args.batch_size not in {1, 16, 64, 256}:
@@ -2042,13 +2449,13 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             )
         if protocol.get("overlap_schedule") != "enabled":
             raise ValueError("MTP catalog traces require the default overlap scheduler path")
-        if protocol.get("source_commit") != SOURCE_COMMIT:
+        if protocol.get("source_commit") != args.source_commit:
             raise ValueError("MTP protocol source commit mismatch")
-        if protocol.get("base_source_commit") != BASE_SOURCE_COMMIT:
+        if protocol.get("base_source_commit") != args.base_source_commit:
             raise ValueError("MTP protocol base source commit mismatch")
-        if protocol.get("source_patch_sha256") != SOURCE_PATCH_SHA256:
+        if protocol.get("source_patch_sha256") != source_patch_sha256:
             raise ValueError("MTP protocol source patch mismatch")
-        if protocol.get("source_patch_components") != SOURCE_PATCH_COMPONENTS:
+        if protocol.get("source_patch_components") != source_patch_components:
             raise ValueError("MTP protocol source patch components mismatch")
     if semantic_protocol.get("formal_profile_steps") != 1:
         raise ValueError("MTP semantic trace must capture one scheduler iteration")
@@ -2072,7 +2479,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
             raise ValueError("CUDA Graph timing requires --cross-rank-summary")
         cross_rank = json.loads(args.cross_rank_summary.read_text())
         if (
-            cross_rank.get("schema_version") != "mtp_cross_rank_timing.v1"
+            cross_rank.get("schema_version") != "mtp_cross_rank_timing.v2"
             or cross_rank.get("sample_count_per_rank") != 5
             or [row.get("rank") for row in cross_rank.get("ranks", [])]
             != [0, 1, 2, 3]
@@ -2092,7 +2499,17 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         raise ValueError("MTP timing attribution is incomplete")
     n_iters = len(_bounds(timing_manifest))
     metrics = build_metrics(attributed, phase=args.phase, n_iters=n_iters)
-    states = mtp_node_states(args.phase)
+    # ``node_states`` is the explicit no-independent-timing fallback.  A newer
+    # runtime revision may materialize a formerly fused semantic leaf as its
+    # own kernel (for example FlashInfer's decode gating kernel).  Measured
+    # ownership wins, and the generic compiler independently rejects any
+    # state/metric overlap so a stale fused label can never hide or duplicate
+    # that timing.
+    states = {
+        target: state
+        for target, state in mtp_node_states(args.phase).items()
+        if target not in metrics
+    }
     timing = _average_step_timing(attributed, timing_manifest)
     phase_label = "prefill" if args.phase == "prefill" else "decode"
     timing_label = "CUDA Graph" if timing_mode == "cudagraph" else "eager"
@@ -2113,14 +2530,18 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         if args.phase == "prefill"
         else f"qwen38_flash_next_tp4_mtp_{'cg' if timing_mode == 'cudagraph' else 'eager'}_decode_gbs{args.batch_size:03d}_8k1k"
     )
+    if args.profile_id_suffix:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_]*", args.profile_id_suffix):
+            raise ValueError("--profile-id-suffix must contain only lowercase letters, digits, and underscores")
+        profile_id = f"{profile_id}_{args.profile_id_suffix}"
     variant_id = profile_id.removeprefix("qwen38_flash_next_")
     profile = {
         "schema_version": "profile.v2",
         "profile_id": profile_id,
         "label": f"GB300 · pure TP4 · FlashInfer GDN · MTP on · {timing_label} {phase_label} · default overlap · global BS{args.batch_size} · 8k/1k",
         "model_id": "qwen38_flash_next",
-        "execution_path_id": "tp_only",
-        "implementation_id": IMPLEMENTATION_ID,
+        "execution_path_id": EXECUTION_PATH_ID,
+        "implementation_id": args.implementation_id,
         "variant_id": variant_id,
         "phase": args.phase,
         "generation_mode": "eagle_mtp",
@@ -2167,11 +2588,11 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "evidence": {
             "job_id": int(args.timing_job_id) if args.timing_job_id.isdigit() else args.timing_job_id,
             "semantic_job_id": int(args.semantic_job_id) if args.semantic_job_id.isdigit() else args.semantic_job_id,
-            "source_commit": SOURCE_COMMIT,
-            "source_patch_sha256": SOURCE_PATCH_SHA256,
-            "base_source_commit": BASE_SOURCE_COMMIT,
-            "source_delta": "qwen4-main 32e9cb5 rollback plus QSA lifecycle/capacity hardening; model math and profile-window scheduling are unchanged",
-            "source_patch_components": SOURCE_PATCH_COMPONENTS,
+            "source_commit": args.source_commit,
+            "source_patch_sha256": source_patch_sha256,
+            "base_source_commit": args.base_source_commit,
+            "source_delta": args.source_delta,
+            "source_patch_components": source_patch_components,
             "scheduler_path": f"{timing_mode}_default_overlap",
             "model_revision": MODEL_REVISION,
             "gdn_backend": "flashinfer_bf16",

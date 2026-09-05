@@ -238,6 +238,45 @@ def test_validator_rejects_subject_as_its_own_authority(tmp_path: Path) -> None:
     assert any("self-validation" in error for error in report["errors"])
 
 
+def test_versioned_binding_requires_matching_acceptance_authority(
+    tmp_path: Path,
+) -> None:
+    root, contract = _write_toy_catalog(tmp_path)
+    binding_path = root / "bindings" / "impl.yaml"
+    binding = yaml.safe_load(binding_path.read_text())
+    binding.update(
+        binding_revision_id="bind_0123456789abcdef",
+        add_trace_acceptance_sha256="c" * 64,
+    )
+    _write_yaml(binding_path, binding)
+
+    report = validate_validation_evidence(root)
+    assert report["status"] == "fail"
+    assert any(
+        "requires exactly one matching add-trace acceptance authority" in error
+        for error in report["errors"]
+    )
+
+    contract = deepcopy(contract)
+    contract["authorities"].append(
+        {
+            "id": "accepted_binding",
+            "kind": "eager_reconciliation",
+            "assurance": "immutable_external_attestation",
+            "source": {
+                "uri": "evidence://toy/add-trace-acceptance",
+                "revision": "bind_0123456789abcdef",
+                "digest": {"algorithm": "sha256", "value": "c" * 64},
+            },
+        }
+    )
+    contract["gates"]["binding_reconciliation"]["authority_refs"].append(
+        "accepted_binding"
+    )
+    _write_yaml(root / "validation_evidence.yaml", contract)
+    assert validate_validation_evidence(root)["status"] == "pass"
+
+
 def test_validator_rejects_a_wrong_independently_attested_value(tmp_path: Path) -> None:
     root, contract = _write_toy_catalog(tmp_path)
     contract = deepcopy(contract)

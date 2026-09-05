@@ -387,6 +387,35 @@ def validate_validation_evidence(model_root: Path) -> dict[str, Any]:
         for ref in refs.intersection(authority_by_id):
             if authority_reports[ref]["status"] != "pass":
                 errors.append(f"gate {gate_name}: authority {ref} did not validate")
+        if gate_name == "binding_reconciliation":
+            for binding_path in sorted(model_root.glob("bindings/*.yaml")):
+                binding = yaml.safe_load(binding_path.read_text()) or {}
+                acceptance_sha = binding.get("add_trace_acceptance_sha256")
+                if not acceptance_sha:
+                    continue
+                revision_id = binding.get("binding_revision_id")
+                matching_authorities = []
+                for authority_id, authority in authority_by_id.items():
+                    source = authority.get("source") or {}
+                    digest = source.get("digest") or {}
+                    if (
+                        authority.get("kind") == "eager_reconciliation"
+                        and source.get("revision") == revision_id
+                        and digest.get("algorithm") == "sha256"
+                        and digest.get("value") == acceptance_sha
+                    ):
+                        matching_authorities.append(authority_id)
+                if len(matching_authorities) != 1:
+                    errors.append(
+                        f"gate {gate_name}: versioned Binding "
+                        f"{_relative(binding_path, model_root)} requires exactly one "
+                        "matching add-trace acceptance authority"
+                    )
+                elif matching_authorities[0] not in refs:
+                    errors.append(
+                        f"gate {gate_name}: add-trace acceptance authority "
+                        f"{matching_authorities[0]} is not referenced by the gate"
+                    )
         kinds = {
             authority_by_id[ref].get("kind")
             for ref in refs

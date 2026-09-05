@@ -16,6 +16,42 @@ or implementation:
    production-evidence gates. It prevents a downstream IR, Profile, Timeline,
    or generated bundle from being reused as its own upstream expectation.
 
+The M0.5 add-trace workflow persists six additional stage contracts:
+
+- `add-trace-run.v1` normalizes the raw launch/config inventory into independent
+  Model, Execution, Runtime Implementation, Profile, and capture-procedure buckets;
+  each disposition preserves the observed raw value separately from the
+  evidence-backed normalized value;
+- `add-trace-plan.v1` records the unique selector result, Execution fingerprint,
+  exact checkpoint-to-Model-IR resolution, pre-capture Execution/runtime Binding
+  revision ID, and immutable manifest hash;
+- `binding-revision.v1` versions deterministic eager match and production
+  transfer rules separately from the Execution IR, seals that rule content
+  with `mapping_rules_sha256`, and carries the hash-addressed source,
+  checkpoint, container, package, extension, build, and effective-config
+  artifacts that prove Runtime Identity;
+- `binding-reconciliation.v1` proves every rule on every TP rank with CUDA Graph
+  disabled, accounts for every eager kernel as either rule-owned or explicitly
+  typed runtime support with count/duration closure, and binds that evidence to
+  the exact add-trace plan digest;
+- `trace-attribution.v1` accounts for every production event and duration as an
+  IR event or typed support event, with explicit fusion ownership and a hashed
+  window-selection artifact; acceptance additionally resolves every authored
+  target against the current compiled Execution IR, while its plan digest and
+  rule-level fusion IDs prevent cross-run or same-target rule substitution;
+- `add-trace-acceptance.v1` is emitted only after cross-document identity,
+  compiled Model IR identity, all-rank, mapping-predicate, transfer-signature,
+  fusion, capture-protocol, runtime-evidence, artifact-hash, and
+  coverage closure passes; it content-addresses all five accepted input
+  documents so an evidence mutation cannot preserve the same attestation.
+
+`scripts/materialize_binding_revision.py` consumes both the Binding revision and
+its exact acceptance artifact. It verifies their content-addressed identities,
+removes stale template inheritance, reconstructs node source links from the
+accepted eager rules, persists `add_trace_acceptance_sha256`, and validates the
+emitted `implementation-binding.v2`;
+materialization is therefore downstream of, not a bypass around, acceptance.
+
 Optional optimization-analysis derivatives do not change the first five
 runtime contracts or the sixth validation contract:
 
@@ -70,19 +106,26 @@ when an intermediate shard/state crosses a canonical boundary or is consumed by
 another module, not merely because the physical collective algorithm differs.
 
 Applying a plan first produces a candidate structural fingerprint. The hash
-contains only the normalized execution contract. Each exact implementation must
+contains only the normalized execution contract, including exact TP/DP/CP/EP/PP
+degrees and generation/control selectors. Each exact implementation must
 then reconcile a CUDA-Graph-disabled eager trace—Python stacks, shapes, scope
 multiplicity, state transitions, and collective order—against the entire
 candidate Execution IR. A passing evidence attestation belongs to the finalized
 binding; framework-specific stack names never enter the shared fingerprint.
+`generation.mode` is a required exact `equals` selector: materially different
+autoregressive and MTP generation graphs cannot share one Execution Plan via
+`one_of`. Runtime resolution also requires the selector to constrain every leaf
+of the normalized Execution contract, so a new execution-affecting config field
+cannot be ignored while reusing an older plan.
 
-Generation/control flow is orthogonal to the parallel execution topology. A
+Generation/control flow is not a separate IR layer. A
 profile declares `generation_mode` (for example `autoregressive` or
 `eagle_mtp`) and an `entry_view`. The stable Model IR may therefore expose an
 optional auxiliary MTP head and its generation loop once, while TP/DP/EP
-execution plans continue to describe only placement, sharding, and
-communication. This avoids a TP × DP × EP × MTP cross product of duplicated
-architecture graphs.
+execution plan may cover it only when the exact operator/state/placement/
+communication contract is already represented. A different draft architecture
+or generation control flow requires another Execution Plan; the Model IR views
+may still be reused without duplicating architecture semantics.
 
 The compiled bundle preserves both the raw Model IR views and every derived
 Execution IR. Compiled nodes expose `ir_origin`; execution-plan insertions also

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "add-trace-run.schema.json",
+  "title": "llm-arch-reviewer deterministic add-trace run",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "model_id",
+    "raw_config",
+    "normalized_config",
+    "raw_config_disposition"
+  ],
+  "properties": {
+    "schema_version": {"const": "add-trace-run.v1"},
+    "run_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+    "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "raw_config": {"type": "object", "minProperties": 1},
+    "normalized_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_contract", "execution_contract", "runtime_implementation", "profile_contract", "capture_procedure"],
+      "properties": {
+        "model_contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model_artifact_id", "model_revision"],
+          "properties": {
+            "model_artifact_id": {"type": "string", "minLength": 1},
+            "model_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+          }
+        },
+        "execution_contract": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["parallelism", "generation"],
+          "properties": {
+            "parallelism": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tp_size", "dp_size", "cp_size", "ep_size", "pp_size"],
+              "properties": {
+                "tp_size": {"type": "integer", "minimum": 1},
+                "dp_size": {"type": "integer", "minimum": 1},
+                "cp_size": {"type": "integer", "minimum": 1},
+                "ep_size": {"type": "integer", "minimum": 1},
+                "pp_size": {"type": "integer", "minimum": 1}
+              }
+            },
+            "generation": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["mode"],
+              "properties": {
+                "mode": {"type": "string", "pattern": "^[a-z0-9_-]+$"}
+              }
+            }
+          }
+        },
+        "runtime_implementation": {"$ref": "binding-revision.schema.json#/$defs/runtime_identity"},
+        "profile_contract": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["phase", "batch_size", "hardware_id"],
+          "properties": {
+            "phase": {"enum": ["prefill", "decode"]},
+            "batch_size": {"type": "integer", "minimum": 1},
+            "hardware_id": {"type": "string", "minLength": 1}
+          }
+        },
+        "capture_procedure": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["eager_cuda_graph_enabled", "production_cuda_graph_enabled"],
+          "properties": {
+            "eager_cuda_graph_enabled": {"const": false},
+            "production_cuda_graph_enabled": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "raw_config_disposition": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["raw_key", "value", "disposition", "evidence"],
+        "properties": {
+          "raw_key": {"type": "string", "minLength": 1},
+          "value": true,
+          "normalized_value": true,
+          "disposition": {
+            "enum": ["model_contract", "execution_contract", "runtime_implementation", "profile_contract", "capture_procedure", "ignored"]
+          },
+          "normalized_path": {"type": "string", "pattern": "^[a-zA-Z0-9_.-]+$"},
+          "ignored_reason": {"type": "string", "minLength": 1},
+          "evidence": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"disposition": {"const": "ignored"}}},
+            "then": {"required": ["ignored_reason"], "not": {"anyOf": [{"required": ["normalized_path"]}, {"required": ["normalized_value"]}]}},
+            "else": {"required": ["normalized_path", "normalized_value"], "not": {"required": ["ignored_reason"]}}
+          }
+        ]
+      }
+    }
+  }
+}

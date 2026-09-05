@@ -4,20 +4,29 @@ label: Pure tensor parallel
 model_id: qwen38_flash_next
 plan_version: 1
 
+selector:
+  framework_ids: [sglang]
+  match:
+    parallelism.tp_size: {equals: 4}
+    parallelism.dp_size: {equals: 1}
+    parallelism.cp_size: {equals: 1}
+    parallelism.ep_size: {equals: 1}
+    parallelism.pp_size: {equals: 1}
+    generation.mode: {equals: autoregressive}
+    attention.mode: {equals: tensor_parallel}
+    moe.mode: {equals: tensor_parallel}
+
 parallelism_axes:
   dp_size: 1
   cp_size: 1
   ep_size: 1
-  tp_size: parameterized
+  tp_size: 4
 
 default_parameters:
   tp_size: 4
   dp_size: 1
   cp_size: 1
   ep_size: 1
-
-constraints:
-  tp_size_min: 2
 
 transforms:
   - op: annotate_node
@@ -50,9 +59,9 @@ transforms:
       execution: {placement: tp_group, collective: all_gather, parallelism: TP, payload: "vocabulary-logit shards · bf16 [B,T,V/TP]", result: "full vocabulary logits"}
     edge: {shape: "[B,T,V]", dtype: bf16}
 
-  # MTP is an orthogonal generation mode, but its auxiliary head executes on
-  # the same TP group. Keep its communication boundaries explicit without
-  # creating a separate "MTP × TP" execution-plan copy.
+  # The model-level MTP views remain available for cross-view navigation, but
+  # this Execution IR is selected only for ordinary autoregressive generation.
+  # EAGLE MTP has its own exact execution contract in tp_only_eagle_mtp.yaml.
   - op: annotate_node
     target: mtp_head.embedding
     set:

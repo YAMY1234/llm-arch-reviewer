@@ -697,9 +697,10 @@ fetch(DATA_URL, {cache: "no-store"}).then(r => {
   }
   const qs = new URLSearchParams(location.search);
   CURRENT_IR_LAYER = qs.get("irLayer") === "model" ? "model" : "execution";
+  const requestedProfile = d.profiles?.[qs.get("profile") || ""];
   activateV2Selection(
-    qs.get("execution") || d.default_execution_variant,
-    qs.get("implementation") || d.default_implementation,
+    qs.get("execution") || requestedProfile?.execution_variant || d.default_execution_variant,
+    qs.get("implementation") || requestedProfile?.implementation_id || d.default_implementation,
   );
   // 注入 PARENT (build 时派生); 旧数据没有就回退到从 views 现算
   PARENT = DATA.parent || derivePARENT(DATA.views);

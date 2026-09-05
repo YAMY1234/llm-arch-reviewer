@@ -119,5 +119,5 @@ no failure or clipping/overlap report.
 Direct Viewer links:
 
 - [DeepSeek V4 Pro canonical Viewer](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2)
-- [SGLang decode GBS 1](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2&execution=exec_6178deeaa361c4f1&implementation=sglang_71de97b_dsv4pro0813_tp8&profile=deepseek_v4_pro_tp8_sglang_cg_decode_gbs001_8k1k&phase=decode)
-- [vLLM decode GBS 1](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2&execution=exec_6178deeaa361c4f1&implementation=vllm_dd10e03_dsv4pro0813_tp8&profile=deepseek_v4_pro_tp8_vllm_cg_decode_gbs001_8k1k&phase=decode)
+- [SGLang decode GBS 1](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2&execution=exec_9208b2a45f2a90e7&implementation=sglang_71de97b_dsv4pro0813_tp8&profile=deepseek_v4_pro_tp8_sglang_cg_decode_gbs001_8k1k&phase=decode)
+- [vLLM decode GBS 1](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v4_pro_v2&execution=exec_9208b2a45f2a90e7&implementation=vllm_dd10e03_dsv4pro0813_tp8&profile=deepseek_v4_pro_tp8_vllm_cg_decode_gbs001_8k1k&phase=decode)

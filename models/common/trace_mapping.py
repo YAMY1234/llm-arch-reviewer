@@ -42,6 +42,8 @@ class KernelEvent:
     cpu_input_dims: Any
     cpu_input_types: Any
     python_stack: list[FrameRef]
+    graph_id: int | None = None
+    launch_ts_us: float | None = None
 
 
 @dataclass(frozen=True)
@@ -984,6 +986,12 @@ def normalize_kernel_events(
                 cpu_input_dims=cpu_args.get("Input Dims"),
                 cpu_input_types=cpu_args.get("Input type"),
                 python_stack=stack,
+                graph_id=_as_int(
+                    args.get("graph id")
+                    if args.get("graph id") is not None
+                    else args.get("graph_id")
+                ),
+                launch_ts_us=target_ts[event_id],
             )
         )
     return out
@@ -1045,7 +1053,7 @@ def validate_mappings(
     events: list[KernelEvent],
     mappings: list[KernelMapping],
     *,
-    expected_phase: str | None = "forward_extend",
+    expected_phase: str | tuple[str, ...] | None = "forward_extend",
     min_mapped_duration_ratio: float = 0.70,
 ) -> dict[str, Any]:
     errors: list[str] = []
@@ -1061,6 +1069,9 @@ def validate_mappings(
         durations.get(event.event_id, 0.0) for event in events if event.python_stack
     )
 
+    expected_phases = (
+        (expected_phase,) if isinstance(expected_phase, str) else expected_phase
+    )
     for mapping in mappings:
         has_unique_kernel_evidence = "unique_kernel_signature" in mapping.evidence
         if (
@@ -1076,10 +1087,13 @@ def validate_mappings(
                 f"{mapping.event_id} maps to {mapping.selected_node} without python_stack"
             )
         if (
-            expected_phase
+            expected_phases
             and mapping.selected_node
             and mapping.selected_node != "decode_graph_replay"
-            and not _frame_contains(mapping.phase_frame, expected_phase)
+            and not any(
+                _frame_contains(mapping.phase_frame, phase)
+                for phase in expected_phases
+            )
         ):
             warnings.append(
                 f"{mapping.event_id} maps to {mapping.selected_node} but phase is "
@@ -1179,7 +1193,7 @@ def build_trace_mapping(
     skip_first: bool = True,
     signature_kernel: str | None = None,
     expected_signature_count: int | None = None,
-    expected_phase_frame: str | None = None,
+    expected_phase_frame: str | tuple[str, ...] | None = None,
     close_phase_tails: bool = False,
     phase_tail_owner_frame: str | None = None,
     capture_contract: dict[str, Any] | None = None,

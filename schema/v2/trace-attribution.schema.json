@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "trace-attribution.schema.json",
+  "title": "graph-on production trace attribution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "model_id", "execution_path_id",
+    "execution_fingerprint", "binding_revision_id", "plan_sha256", "status", "phase",
+    "cuda_graph_enabled", "protocol_artifact", "rank_artifacts", "window_selection_artifact",
+    "event_mappings", "support_events", "fusion_groups", "coverage", "unresolved"
+  ],
+  "properties": {
+    "schema_version": {"const": "trace-attribution.v1"},
+    "run_id": {"type": "string"},
+    "model_id": {"type": "string"},
+    "execution_path_id": {"type": "string"},
+    "execution_fingerprint": {"type": "string", "pattern": "^exec_[0-9a-f]{16}$"},
+    "binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+    "plan_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["pass", "fail"]},
+    "phase": {"enum": ["prefill", "decode"]},
+    "cuda_graph_enabled": {"type": "boolean"},
+    "protocol_artifact": {"$ref": "#/$defs/artifact"},
+    "rank_artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/rank_artifact"}},
+    "window_selection_artifact": {"$ref": "#/$defs/artifact"},
+    "event_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["event_id", "rank", "ir_target", "rule_id", "eager_event_ids", "transfer_method", "transfer_signature_digest", "confidence", "occurrence_id", "duration_us"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "rank": {"type": "integer", "minimum": 0},
+          "ir_target": {"type": "string"},
+          "rule_id": {"type": "string"},
+          "eager_event_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+          "transfer_method": {"enum": ["exact_sequence", "annotated_scope", "collective_order", "state_boundary", "reviewed_fusion"]},
+          "transfer_signature_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "confidence": {"enum": ["exact", "high"]},
+          "occurrence_id": {"type": "string", "minLength": 1},
+          "duration_us": {"type": "number", "exclusiveMinimum": 0}
+        }
+      }
+    },
+    "support_events": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["event_id", "rank", "support_class", "support_reason", "duration_us"],
+        "properties": {
+          "event_id": {"type": "string"},
+          "rank": {"type": "integer", "minimum": 0},
+          "support_class": {"enum": ["cuda_runtime", "cuda_graph_runtime", "collective_runtime", "memory_management", "sampling_runtime", "profiler_overhead", "framework_runtime"]},
+          "support_reason": {"type": "string", "minLength": 1},
+          "duration_us": {"type": "number", "exclusiveMinimum": 0}
+        }
+      }
+    },
+    "fusion_groups": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["group_id", "rank", "owner_rule_id", "owner_ir_target", "member_rule_ids", "member_ir_targets", "event_ids", "evidence"],
+        "properties": {
+          "group_id": {"type": "string", "pattern": "^[a-zA-Z0-9_.:-]+$"},
+          "rank": {"type": "integer", "minimum": 0},
+          "owner_rule_id": {"type": "string", "minLength": 1},
+          "owner_ir_target": {"type": "string", "minLength": 1},
+          "member_rule_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "member_ir_targets": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "event_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "evidence": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_count_total", "event_count_accounted", "duration_us_total", "duration_us_accounted"],
+      "properties": {
+        "event_count_total": {"type": "integer", "minimum": 1},
+        "event_count_accounted": {"type": "integer", "minimum": 1},
+        "duration_us_total": {"type": "number", "exclusiveMinimum": 0},
+        "duration_us_accounted": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "unresolved": {"type": "array", "maxItems": 0}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "rank_artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rank", "path", "sha256"],
+      "properties": {
+        "rank": {"type": "integer", "minimum": 0},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

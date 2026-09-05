@@ -19,6 +19,7 @@ SEMANTIC_LEDGER_SCHEMA = (
 VALIDATION_EVIDENCE_SCHEMA = (
     REPO_ROOT / "schema" / "v2" / "validation-evidence.schema.json"
 )
+EXECUTION_PLAN_SCHEMA = REPO_ROOT / "schema" / "v2" / "execution-plan.schema.json"
 
 
 def _validate_yaml(data_path: Path, schema_path: Path) -> None:
@@ -60,6 +61,24 @@ def test_semantic_source_ledgers_match_json_schema(ledger_path: Path) -> None:
 )
 def test_validation_evidence_contracts_match_json_schema(evidence_path: Path) -> None:
     _validate_yaml(evidence_path, VALIDATION_EVIDENCE_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "execution_path",
+    sorted(CATALOG_ROOT.glob("*/execution_paths/*.yaml")),
+    ids=lambda path: f"{path.parents[1].name}:{path.stem}",
+)
+def test_execution_plans_match_json_schema(execution_path: Path) -> None:
+    _validate_yaml(execution_path, EXECUTION_PLAN_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "schema_path",
+    sorted((REPO_ROOT / "schema" / "v2").glob("*.schema.json")),
+    ids=lambda path: path.name,
+)
+def test_every_v2_json_schema_is_well_formed(schema_path: Path) -> None:
+    Draft202012Validator.check_schema(json.loads(schema_path.read_text()))
 
 
 def test_every_catalog_has_a_validation_evidence_contract() -> None:

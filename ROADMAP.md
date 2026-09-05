@@ -91,6 +91,32 @@ M0 exit criteria:
   navigation, physical/compact stream, and HiDPI interaction tests all pass;
 - `release_ready` is true only when both static and browser gates pass.
 
+## M0.5 — Deterministic add-trace contract
+
+- [x] Add executable run, plan, Binding-revision, eager-reconciliation,
+  production-attribution, and acceptance schemas.
+- [x] Resolve the checkpoint artifact and immutable revision against the
+  independently authored Model IR source lock before Execution matching.
+- [x] Make config-to-Execution resolution authored and deterministic: zero
+  matches means a new Execution is required; multiple matches are an error.
+- [x] Content-address Runtime Implementation Identity from immutable source,
+  container, package, extension, backend, and build artifacts. Function names,
+  stacks, and kernel names remain versioned Binding content.
+- [x] Reopen, machine-compare, and hash-seal the eager and production capture
+  protocols plus the concrete source/checkpoint/container/package/extension/
+  build/effective-config evidence behind Runtime Identity.
+- [x] Require exact manifest/plan identity, graph-off eager rule closure on
+  every TP rank, observed-predicate and transfer-signature equality, graph-on
+  production transfer, compiled Model IR identity and target existence, explicit fusion ownership,
+  controlled typed support work, selected-window hashing, complete event/duration
+  accounting, and content-addressed final input-document closure.
+- [x] Provide `scripts/run_pipeline_v2.py plan|accept` as the working interface.
+  Require `materialize_binding_revision.py` to verify the exact accepted
+  revision before emitting a schema-valid catalog Binding, without stale
+  template inheritance and with source links rebuilt from accepted rules.
+  M1 extends it with resumable capture/parse/map/materialize producers; it does
+  not replace or weaken these gates.
+
 ## M1 — One-command model and framework onboarding
 
 **Goal:** a new model/framework is produced by adapters and manifests, not by

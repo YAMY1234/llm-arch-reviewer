@@ -18,18 +18,23 @@ are not product labels.
 the checkpoint configuration, not reconstructed from one code revision or one
 profile.
 
-`execution_paths/tp_only.yaml` remains the default. Separate plans represent
-Attention DP + TP MoE and Attention DP + DeepEP + DeepGEMM because their
-placement, collectives, payloads, and token-dispatch flow differ.
+`execution_paths/tp_only.yaml` remains the default for ordinary autoregressive
+generation. `execution_paths/tp_only_eagle_mtp.yaml` is the distinct TP4 EAGLE
+MTP execution contract. Separate plans also represent Attention DP + TP MoE
+and Attention DP + DeepEP + DeepGEMM because their placement, collectives,
+payloads, and token-dispatch flow differ.
 Commit-specific symbols and measured profiles live in the sibling `bindings/`
 and `profiles/` directories and must reference existing execution nodes.
 
-Generation strategy is an orthogonal profile dimension. Autoregressive and
-EAGLE-MTP profiles share the same canonical target-model and TP/DP/EP execution
-plans; MTP adds a separate generation-control view plus a one-layer auxiliary
-head scope. This avoids duplicating every parallel execution path merely to
-represent MTP on/off, and prevents reused auxiliary QSA/MoE kernels from being
-aggregated into the 48-layer target model.
+Generation strategy is part of the Execution contract whenever it changes the
+executed mathematical graph or recurrent state. Autoregressive and EAGLE-MTP
+therefore share one canonical Model IR but resolve to different Execution IRs;
+the MTP path includes the generation-control view and one-layer auxiliary head
+scope and selects the exact EAGLE contract `steps=1`, `topk=1`, and
+`draft_tokens=2`. Changing any of those values requires another Execution IR
+unless an independently authored equivalence proof shows the graph and state
+contract are unchanged. This prevents auxiliary QSA/MoE kernels from being aggregated into the
+48-layer target model while keeping semantics independent of trace revisions.
 
 For the pinned SGLang implementation, the pure-TP overlay makes the following
 code-path facts explicit:
@@ -118,6 +123,20 @@ state combination used by the next request; it is neither required for cache
 isolation with radix disabled nor representative of serving. Every MTP profile
 records this boundary and uses the distinct implementation ID
 `sglang_qwen38_flash_next_32e9cb5_qsa_hardening_flashinfer_gdn`.
+
+The sibling binding `sglang_25ee2b56_pr37500_tp4_eagle_mtp` validates the same
+authored TP4 EAGLE execution contract against clean upstream
+`sgl-project/sglang` PR #37500 head `25ee2b56`, without a local patch. Its
+runtime identity and 67 source-anchored mapping rules are content-addressed as
+`bind_ba79b6e52262fede`. Graph-off job `3566706` closes all 1,792 events on each
+of four TP ranks with Python stacks. Stack-disabled graph-on job `3566707`
+closes all 8,480 selected events on each rank and supplies production timing.
+The gate also reopens and seals both capture protocols and fourteen runtime
+identity artifacts (source tree, checkpoint revision, container, package lock,
+extension trees, runtime versions, and effective arguments for both runs).
+The profile ID carries the Binding revision suffix, so this new runtime
+measurement coexists with the earlier implementation instead of overwriting a
+same-workload profile.
 
 Prefill and decode are separate profile phases.  Prefill covers one global BS1
 8k request.  Pure TP executes it as one 8k forward; DP paths execute the same

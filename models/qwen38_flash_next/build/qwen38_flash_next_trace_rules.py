@@ -10,6 +10,7 @@ QWEN38_FLASH_NEXT_GDN_SIGNATURE_KERNEL = "fused_qkvzba_split"
 QWEN38_FLASH_NEXT_GDN_LAYERS_PER_FORWARD = 36
 QWEN38_FLASH_NEXT_CONFIGS = {
     "tp_only",
+    "tp_only_eagle_mtp",
     "tp4_flashinfer_gdn",
     "dp_attention",
     "ep4_a2a_none",
@@ -34,6 +35,14 @@ def _classify_qwen38_flash_next_mtp_node(
     lowered = names.lower()
     kernel = kernel_name.lower()
     cpu = (cpu_op_name or "").lower()
+
+    # These asynchronous fused-MoE launches may inherit a stale HC span on
+    # nonzero TP ranks. Their reviewed backend signatures are stronger than
+    # that enclosing span and the auxiliary-model scope is explicit here.
+    if "bmm_bfloat" in kernel:
+        return "mtp_moe.routed_experts", "high"
+    if "_fused_gate_sigmoid_mul_add_kernel" in kernel:
+        return "mtp_moe.combine", "high"
 
     if "allgather" in kernel or "all_gather" in kernel:
         return "mtp_head.tp_logits_collective", "high"
@@ -81,7 +90,9 @@ def _classify_qwen38_flash_next_mtp_node(
     ):
         return "mtp_qsa_attention.indexer", "high"
     if "qwen4expattentiondecoderlayer" in lowered:
-        if "o_proj" in lowered:
+        if "o_proj" in lowered or (
+            "rowparallellinear" in lowered and "dense_bf16_gemm" in kernel
+        ):
             return "mtp_qsa_attention.output_projection", "medium"
         if "_prepare_qkv_gate" in lowered or "qkv" in lowered:
             return "mtp_qsa_attention.qkv_gate_projection", "medium"
@@ -95,7 +106,7 @@ def _classify_qwen38_flash_next_mtp_node(
             or "fmha" in kernel
         ):
             return "mtp_qsa_attention.attention_core", "medium"
-        if "sigmoid" in cpu:
+        if "sigmoid" in cpu or "_fused_sigmoid_mul_kernel" in kernel:
             return "mtp_qsa_attention.output_gate", "medium"
 
     if "qwen2moemlp" in lowered or "_forward_shared_experts" in lowered:
@@ -133,6 +144,31 @@ def classify_qwen38_flash_next_node(
     if "qwen4_exp_mtp.py" in lowered_names or "qwen4expforcausallmmtp" in lowered_names:
         return _classify_qwen38_flash_next_mtp_node(kernel_name, cpu_op_name, stack)
 
+    # Collectives at the model-entry and deferred-PLE boundaries do not carry
+    # a decoder-layer module owner.  Classify them from the exact source
+    # contract before the EAGLE orchestration fallback below.  Otherwise the
+    # outer ``run_eagle_verify`` frame hides the token-embedding all-reduce,
+    # while the enclosing linear layer makes the deferred PLE reduction look
+    # like an attention collective.
+    if "allreduce" in kernel or "all_reduce" in kernel:
+        if "vocabparallelembedding" in lowered_names:
+            if "qwen4expngramembedding" in lowered_names:
+                return "ple.tp_embedding_collective", "high"
+            return "top.tp_embedding_collective", "high"
+        if (
+            "_consume_prefetched_embeddings" in lowered_names
+            and "qwen4expplelayer" in lowered_names
+        ):
+            return "ple.tp_embedding_collective", "high"
+
+    # Unique reviewed MoE backend signatures override stale scheduler or HC
+    # launch frames. Auxiliary-MTP scope was handled above; these are target
+    # decoder events and are later checked against exact top-k/finalize order.
+    if "bmm_bfloat" in kernel:
+        return "moe.routed_experts", "high"
+    if "_fused_gate_sigmoid_mul_add_kernel" in kernel:
+        return "moe.combine", "high"
+
     # EAGLE orchestration launches a small amount of GPU work outside both the
     # target-model and auxiliary-model module scopes. Do not let those kernels
     # fall into generic runtime support: they are stable generation stages.
@@ -147,6 +183,11 @@ def classify_qwen38_flash_next_node(
         )
     )
     if not in_model_scope:
+        if (
+            ("allgather" in kernel or "all_gather" in kernel)
+            and "managers/scheduler.py" in lowered_names
+        ):
+            return "top.runtime_support", "high"
         if "_draft_extend_for_prefill" in lowered_names:
             return "mtp_generation.mtp_prefill", "high"
         if "_draft_extend_for_decode" in lowered_names or "prepare_for_draft_extend" in lowered_names:
@@ -158,9 +199,27 @@ def classify_qwen38_flash_next_node(
             return "mtp_generation.draft_select", "high"
         if any(
             marker in lowered_names
-            for marker in ("run_eagle_verify", "eagleverifyinput", "tree_speculative_sampling")
+            for marker in (
+                "eagle_sample",
+                "verify_tree_greedy_func",
+                "tree_speculative_sampling",
+                "commit_mamba_states_after_verify",
+                "fill_bonus_tokens",
+            )
         ):
             return "mtp_generation.accept_commit", "high"
+        if any(
+            marker in lowered_names
+            for marker in (
+                "cuda_graph_buffer_registry.py",
+                "eager_runner.py",
+                "cuda_graph_runner.py",
+                "run_eagle_verify",
+                "eagle_prepare_for_verify",
+                "forward_batch_generation",
+            )
+        ):
+            return "top.runtime_support", "high"
 
     # PLE context preparation and commit run outside the decoder-layer module
     # frames, so classify them from their exact source functions before the
@@ -171,9 +230,30 @@ def classify_qwen38_flash_next_node(
     if "_commit_ple_batch" in names:
         return "ple.context_commit", "high"
 
+    # Source-exact preparation boundaries that are not represented by a
+    # standalone module frame.  Layer 0 expands H into the configured HC
+    # streams, while configured 1-based PLE layer 2 is local layer index 1.
+    if "_prepare_qwen4_exp_attn" in lowered_names:
+        if (
+            (cpu == "aten::cat" or "catarray" in kernel)
+            and "qwen4explineardecoderlayer_0" in lowered_names
+        ):
+            return "stack.hc_expand", "high"
+        if (
+            (cpu == "aten::add" or "cudafunctor_add" in kernel)
+            and "qwen4explineardecoderlayer_1" in lowered_names
+        ):
+            return "ple.injection", "high"
+
     # These model-specific signatures are semantically unique and must win
     # over an occasionally stale enclosing Python span in overlapped traces.
-    if QWEN38_FLASH_NEXT_GDN_SIGNATURE_KERNEL in kernel:
+    if any(
+        signature in kernel
+        for signature in (
+            QWEN38_FLASH_NEXT_GDN_SIGNATURE_KERNEL,
+            "fused_qkv_split_gdn_prefill",
+        )
+    ):
         return "linear_attention.split_pack", "high"
     if "causal_conv1d" in kernel:
         return "linear_attention.causal_conv", "high"
@@ -191,6 +271,10 @@ def classify_qwen38_flash_next_node(
     ):
         return "linear_attention.delta_rule", "high"
 
+    # The runtime's fused MoE kernels can launch after their Python NVTX scope
+    # has closed.  These signatures are unique to the reviewed MoE backend;
+    # the profile builder subsequently recovers target-vs-MTP ownership only
+    # inside exact top-k/finalize boundaries.
     # Collectives must win over the enclosing module fallback.  In particular,
     # an MoE all-reduce still carries Qwen2Moe/FusedMoE frames and would
     # otherwise be mislabeled as expert compute.
@@ -241,7 +325,9 @@ def classify_qwen38_flash_next_node(
     if "fused_gdn_gating" in kernel:
         return "linear_attention.gating", "high"
     if "Qwen3_5GatedDeltaNet" in names:
-        if "out_proj" in names:
+        if "out_proj" in names or (
+            "RowParallelLinear" in names and "dense_bf16_gemm" in kernel
+        ):
             return "linear_attention.output_projection", "medium"
         if "in_proj_ba" in names:
             return "linear_attention.ba_projection", "medium"
@@ -260,7 +346,9 @@ def classify_qwen38_flash_next_node(
     ):
         return "qsa_attention.indexer", "high"
     if "Qwen4ExpAttentionDecoderLayer" in names:
-        if "o_proj" in names:
+        if "o_proj" in names or (
+            "RowParallelLinear" in names and "dense_bf16_gemm" in kernel
+        ):
             return "qsa_attention.output_projection", "medium"
         if "_prepare_qkv_gate" in names or "qkv" in names.lower():
             return "qsa_attention.qkv_gate_projection", "medium"
@@ -274,7 +362,7 @@ def classify_qwen38_flash_next_node(
             or "fmha" in kernel
         ):
             return "qsa_attention.attention_core", "medium"
-        if "sigmoid" in cpu:
+        if "sigmoid" in cpu or "_fused_sigmoid_mul_kernel" in kernel:
             return "qsa_attention.output_gate", "medium"
 
     if "Qwen2MoeMLP" in names or "_forward_shared_experts" in names:
@@ -374,6 +462,11 @@ QWEN38_FLASH_NEXT_TRACE_RULES = TraceMappingRules(
             "topk.py",
         ),
         semantic_patterns=(
+            "managers/scheduler.py",
+            "speculative/eagle_worker_common.py",
+            "speculative/eagle_worker_v2.py",
+            "speculative/eagle_utils.py",
+            "speculative/spec_utils.py",
             "models/qwen4_exp_mtp.py",
             "models/qwen4_exp.py",
             "models/qwen3_5.py",
@@ -413,6 +506,8 @@ QWEN38_FLASH_NEXT_TRACE_RULES = TraceMappingRules(
             "_draft_extend_for_prefill",
             "_draft_extend_for_decode",
             "run_eagle_verify",
+            "forward_batch_generation",
+            "event_loop_overlap",
             "cuda_graph_runner",
             "replay",
         ),

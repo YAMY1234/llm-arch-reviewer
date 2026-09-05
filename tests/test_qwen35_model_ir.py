@@ -654,7 +654,7 @@ def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
         assert implementation["source_lock_status"] == "runtime_verified"
         assert implementation["execution_validation"]["status"] == "pass"
         assert implementation["execution_validation"]["cuda_graph_enabled"] is False
-        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_9772c24a3aa3f623"
+        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_2ca0442bb646b1ff"
         assert len(implementation["node_bindings"]) == target_count
 
 

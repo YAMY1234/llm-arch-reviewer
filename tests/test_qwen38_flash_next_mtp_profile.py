@@ -12,24 +12,59 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from models.qwen38_flash_next.build.build_qwen38_flash_next_mtp_eager_profile import (  # noqa: E402
     BASE_SOURCE_COMMIT,
+    EXECUTION_PATH_ID,
     SOURCE_COMMIT,
     SOURCE_PATCH_COMPONENTS,
     SOURCE_PATCH_SHA256,
     _append_source_reviewed_mtp_decode_runtime_tail,
     _layer_context,
+    _mtp_lm_head_range,
+    _partition_mtp_draft_runtime,
     _reconcile_hyperconnection_structure,
     _reconcile_mtp_input_fusion,
     _reconcile_mtp_moe_structure,
     _resolve_mtp_generation_boundary_insert,
     _restore_mtp_scope_for_timing_inserts,
     _validated_mtp_proposal_update_indices,
+    _validated_mtp_graph_output_selection_indices,
     build_metrics,
     mtp_node_states,
     validate_cudagraph_round,
 )
+from models.qwen38_flash_next.build.build_qwen38_flash_next_trace_mapping import (  # noqa: E402
+    expected_stack_phase,
+)
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "eagle_mtp_decode",
+        "mtp_decode",
+        "eagle_mtp_cudagraph_decode",
+        "mtp_cudagraph_decode",
+    ],
+)
+def test_mtp_window_aliases_validate_the_concrete_decode_stack(phase: str) -> None:
+    assert expected_stack_phase(phase) == (
+        "forward_decode",
+        "forward_extend",
+        "draft_forward",
+        "_draft_extend_for_decode",
+        "run_eagle_verify",
+        "forward_batch_generation",
+        "event_loop_overlap",
+        "cuda_graph_runner",
+        "replay",
+    )
+
+
+def test_non_mtp_window_preserves_its_stack_phase() -> None:
+    assert expected_stack_phase("forward_extend") == "forward_extend"
 
 
 def test_mtp_profile_source_is_qwen4_main_with_qsa_hardening() -> None:
+    assert EXECUTION_PATH_ID == "tp_only_eagle_mtp"
     assert BASE_SOURCE_COMMIT == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
     assert SOURCE_COMMIT == "32e9cb5b95104dc3a10b96bafae7afa50052d94d"
     assert SOURCE_PATCH_SHA256 == "07c22e094da7103011301ced5824134e0387b310a5a03df0579bdd7ed08f17b3"
@@ -157,6 +192,46 @@ def test_mtp_proposal_update_requires_the_reviewed_contract_sequence() -> None:
     events[1]["kernel_name"] = "unrelated generic kernel"
     with pytest.raises(ValueError, match="proposal-update contract sequence changed"):
         _validated_mtp_proposal_update_indices(events, 0, len(events))
+
+
+
+def test_mtp_graph_output_selection_and_overlapped_runtime_are_fail_closed() -> None:
+    output = [{"kernel_name": "index_elementwise_kernel OpaqueType<2>"}]
+    assert _validated_mtp_graph_output_selection_indices(output, 0, 1) == [0]
+
+    setup = [{"kernel_name": f"setup-{index}"} for index in range(18)]
+    setup[3]["kernel_name"] = "compute_position_kernel"
+    setup[7]["kernel_name"] = "_qsa_graph_layout_kernel"
+    setup[8]["kernel_name"] = "_qsa_graph_row_metadata_kernel"
+    proposal = [
+        {"kernel_name": "reduce ArgMaxOps<float>"},
+        {"kernel_name": "FillFunctor<float>"},
+        {
+            "cpu_op_name": "aten::index",
+            "kernel_name": "index_elementwise_kernel OpaqueType<8>",
+        },
+    ]
+    actual_setup, actual_proposal = _partition_mtp_draft_runtime(setup + proposal)
+    assert actual_setup == setup
+    assert actual_proposal == proposal
+
+    setup.pop()
+    with pytest.raises(ValueError, match="input/QSA setup sequence changed"):
+        _partition_mtp_draft_runtime(setup + proposal)
+
+
+def test_mtp_graph_lm_head_accepts_only_exact_optional_row_select() -> None:
+    events = [
+        {"kernel_name": "index_elementwise_kernel OpaqueType<2>"},
+        {"kernel_name": "nvjet_sm103_tst_64x8_64x16_4x1_v_bz_TNT"},
+    ]
+
+    assert _mtp_lm_head_range(events, 0, 2) == ([0], 1)
+    assert _mtp_lm_head_range(events[1:], 0, 1) == ([], 0)
+
+    events[0]["kernel_name"] = "index_elementwise_kernel OpaqueType<4>"
+    with pytest.raises(ValueError, match="optional exact logits-row selection"):
+        _mtp_lm_head_range(events, 0, 2)
 
 
 def test_generic_routed_expert_between_mtp_topk_and_combine_gets_mtp_scope() -> None:
@@ -394,6 +469,102 @@ def test_mtp_input_fusion_splits_two_projection_pairs_and_residual_add() -> None
         "mtp_head.hidden_projection",
         "mtp_head.residual_fusion",
     ]
+
+
+def test_native_rmsnorm_mtp_input_fusion_preserves_projection_boundaries() -> None:
+    native_norm = [
+        "aten::copy_",
+        "aten::pow",
+        "aten::mean",
+        "aten::add",
+        "aten::rsqrt",
+        "aten::mul",
+        "aten::copy_",
+        "aten::add",
+        "aten::mul",
+        "aten::copy_",
+    ]
+    cpu_ops = [*native_norm, "aten::mm", *native_norm, "aten::mm", "aten::add"]
+    events = [
+        {
+            "kernel_name": op,
+            "cpu_op_name": op,
+            "node": "mtp_head.residual_fusion",
+            "semantic_function": "_fuse_residual_linear_shared",
+        }
+        for op in cpu_ops
+    ]
+
+    _reconcile_mtp_input_fusion(events)
+
+    assert [event["node"] for event in events[:11]] == [
+        "mtp_head.embedding_projection"
+    ] * 11
+    assert [event["node"] for event in events[11:22]] == [
+        "mtp_head.hidden_projection"
+    ] * 11
+    assert events[22]["node"] == "mtp_head.residual_fusion"
+
+
+def test_split_hc_combine_requires_next_same_stream_gate_and_apply() -> None:
+    from models.qwen38_flash_next.build.qwen38_flash_next_decode_attribution import (
+        _hc_combine_ranges,
+    )
+
+    rows = [
+        {"kernel_name": "hc_combine_gate_kernel", "stream": 7},
+        {"kernel_name": "dense_bf16_gemm", "stream": 8},
+        {"kernel_name": "hc_combine_apply_kernel", "stream": 7},
+        {"kernel_name": "hc_combine_kernel", "stream": 7},
+    ]
+    assert _hc_combine_ranges(rows) == [(0, 2), (3, 3)]
+    with pytest.raises(ValueError, match="lacks next-same-stream apply"):
+        _hc_combine_ranges([{"kernel_name": "hc_combine_gate_kernel", "stream": 7}])
+
+
+def test_pr37500_hc_mix_uses_exact_two_gemm_prefix() -> None:
+    from models.qwen38_flash_next.build.qwen38_flash_next_decode_attribution import (
+        _hc_mix_end,
+    )
+
+    rows = [
+        {"kernel_name": "dense_bf16_gemm_mix_silu"},
+        {"kernel_name": "dense_bf16_gemm_mix_gate"},
+        {"kernel_name": "dense_bf16_gemm_attention_consumer"},
+    ]
+    assert _hc_mix_end(rows, 0, len(rows)) == 1
+
+
+def test_ple_decode_accepts_prefetched_lookup_boundary() -> None:
+    from models.qwen38_flash_next.build.qwen38_flash_next_decode_attribution import (
+        _map_ple,
+    )
+
+    rows = [
+        {"kernel_name": "allreduce", "node": "ple.tp_embedding_collective"},
+        {"kernel_name": "dense_bf16_gemm", "node": None},
+        {"kernel_name": "grouped_gemma_rmsnorm_kernel", "node": None},
+        {"kernel_name": "conv_depthwise", "node": None},
+    ]
+    _map_ple(rows, 0, len(rows))
+    assert [row["node"] for row in rows] == [
+        "ple.tp_embedding_collective",
+        "ple.key_value_projection",
+        "ple.grouped_norm_gate",
+        "ple.short_conv",
+    ]
+
+
+def test_native_mtp_rmsnorm_graph_signature_is_exact() -> None:
+    from models.qwen38_flash_next.build.build_qwen38_flash_next_mtp_eager_profile import (
+        _NATIVE_MTP_RMSNORM_KERNEL_PATTERNS,
+        _is_native_mtp_rmsnorm_kernel_sequence,
+    )
+
+    rows = [{"kernel_name": pattern} for pattern in _NATIVE_MTP_RMSNORM_KERNEL_PATTERNS]
+    assert _is_native_mtp_rmsnorm_kernel_sequence(rows, 0)
+    rows[3] = {"kernel_name": "unexpected_add_kernel"}
+    assert not _is_native_mtp_rmsnorm_kernel_sequence(rows, 0)
 
 
 def _exact(node: str, layer_kind: str) -> dict:

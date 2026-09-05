@@ -103,6 +103,10 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
             "exec_123": {
                 "execution_path_id": "tp8",
                 "execution_plan_version": 1,
+                "selector": {
+                    "framework_ids": ["sglang"],
+                    "match": {"parallelism.tp_size": {"equals": 8}},
+                },
             }
         },
         "implementations": {
@@ -112,6 +116,10 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
                 "source_commit": "abc123",
                 "binding_status": "validated",
                 "execution_variant": "exec_123",
+                "binding_revision_id": "bind_1234567890abcdef",
+                "runtime_identity_sha256": "a" * 64,
+                "mapping_rules_sha256": "b" * 64,
+                "mapping_rules": [{"rule_id": "rule.one"}],
             }
         },
         "profiles": {
@@ -191,3 +199,11 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
     assert profile["execution_fingerprint"] == "exec_123"
     assert profile["timeline_sha256"] == "trace-sha"
     assert profile["contract_sha256"]
+    variant = first["models"][0]["execution_variants"][0]
+    assert variant["selector"]["match"]["parallelism.tp_size"] == {"equals": 8}
+    assert variant["selector_sha256"]
+    revision = first["models"][0]["source_revisions"][0]
+    assert revision["binding_revision_id"] == "bind_1234567890abcdef"
+    assert revision["runtime_identity_sha256"] == "a" * 64
+    assert revision["mapping_rules_sha256"] == "b" * 64
+    assert revision["mapping_rule_count"] == 1

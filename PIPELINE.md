@@ -132,6 +132,10 @@ The compiler first applies the plan to Model IR and produces a **candidate**
 Execution IR plus a deterministic structural fingerprint. That fingerprint is
 computed only from the normalized execution contract; source symbols, Python
 function names, kernel names, and trace timestamps are deliberately excluded.
+The exact parallelism degrees and generation/control contract are included.
+Changing TP/DP/CP/EP/PP, or changing the mathematical speculative-generation
+path, therefore selects a different Execution IR rather than becoming another
+Profile of the old one.
 The candidate becomes a validated Execution IR only after Stage 4 reconciles it
 against a CUDA-Graph-disabled eager run.
 
@@ -202,7 +206,10 @@ Timeline data cannot redefine either IR.
 Generation mode is a profile/binding dimension, **not a sixth IR layer**. For
 example, EAGLE MTP uses stable MTP Model IR views, reuses the target-model graph
 for verification, and selects an MTP-specific entry view. There is no separate
-"Generation IR".
+"Generation IR". It may share an Execution Plan with autoregressive execution
+only when its normalized operator, state, placement, and communication contract
+is already represented by that plan. A mathematically different path such as a
+different draft architecture requires a distinct Execution Plan.
 
 ### 2.6 Optional SoL and gap-analysis derivatives
 
@@ -823,25 +830,85 @@ Raw traces and intermediate task material do not belong in the repository.
 Catalog documents contain content hashes and resolvable local/artifact
 references.
 
-The intended single command is:
+M0.5 provides two fail-closed, executable entry points for adding evidence to
+an existing catalog:
 
 ```bash
 python3 scripts/run_pipeline_v2.py \
-  --manifest catalog/<model>/pipeline.yaml \
-  --target deliverable
+  plan --manifest current/<run>/run.yaml --output current/<run>/plan.json
+
+python3 scripts/run_pipeline_v2.py \
+  accept --manifest current/<run>/run.yaml \
+  --plan current/<run>/plan.json \
+  --binding-revision current/<run>/binding-revision.yaml \
+  --eager-reconciliation current/<run>/eager-reconciliation.json \
+  --trace-attribution current/<run>/trace-attribution.json \
+  --output current/<run>/acceptance.json
+
+python3 scripts/materialize_binding_revision.py \
+  --template catalog/<model>/bindings/<compatible-template>.yaml \
+  --binding-revision current/<run>/binding-revision.json \
+  --acceptance current/<run>/acceptance.json \
+  --implementation-id <implementation-id> --label '<label>' \
+  --container '<immutable-image-digest>' \
+  --eager-evidence evidence://<eager-authority> \
+  --production-evidence evidence://<production-authority> \
+  --output catalog/<model>/bindings/<implementation-id>.yaml
 ```
 
-`scripts/build_v2.py` remains the compiler for already-prepared catalog data.
-The orchestrator above is the next implementation step after this contract is
-reviewed; it will call capture, attribution, validation, and compilation stages
-without introducing a second pipeline.
+`plan` classifies every raw config field and records both its observed raw value
+and its normalized value plus extraction evidence (so path/flag normalization is
+explicit rather than silently requiring the strings to match). It first matches the checkpoint artifact
+and revision to the catalog's independently authored Model IR source lock, then
+resolves exactly one authored Execution selector and derives the pre-capture
+Binding revision ID from the Execution fingerprint plus Runtime Identity digest.
+Resolution is fail-closed over the complete normalized Execution contract: every
+leaf field in that contract must have an authored selector predicate. An added or
+previously unknown execution field therefore cannot silently inherit an existing
+Execution IR.
+`accept` independently
+seals the resulting Binding content with `mapping_rules_sha256`, then reopens
+every referenced rank, capture-protocol, selected-window, and Runtime Identity
+artifact and proves manifest/plan identity, exact
+all-rank eager rule closure, exact eager event/duration closure across rule-owned
+and explicitly typed support kernels, equality between each authored eager predicate and
+its observed match evidence, equality between each authored transfer signature
+and production event, identity of the current compiled Model IR, existence of
+every Binding target in the current Execution IR, controlled support-event taxonomy, per-rank/per-rule
+fusion ownership, selected-window identity, and total event/duration closure.
+The final attestation content-addresses all five input documents, both distinct
+capture protocols, the Runtime Identity evidence set, and the referenced raw
+artifacts. There is deliberately no CLI switch that bypasses
+artifact hashing.
+
+The catalog materializer accepts only the exact Binding revision authorized by
+that content-addressed acceptance artifact. It drops inherited/template-only
+identity, replaces stale node bindings with deterministic source-symbol links
+derived from the accepted eager rules, and schema-checks the new implementation
+Binding. The emitted Binding persists `add_trace_acceptance_sha256`, so its
+publishing authority remains explicit. Catalog publication therefore cannot
+bypass acceptance or accidentally inherit an older Binding's rules.
+
+Capture and attribution remain explicit producer stages in M0.5; the planned M1
+stage DAG will invoke those producers automatically. `scripts/build_v2.py`
+remains the compiler for accepted catalog data, so this does not create a
+second publishing pipeline.
 
 ## 7. Profile matrix and growth policy
 
-Start with pure TP as the default reference. Add a new profile to an existing
-execution fingerprint when only hardware, workload, backend implementation, or
-measurement changes. Add a new binding when framework/source/backend code
-changes. Add a new Execution Plan when the distributed contract changes.
+Start with pure TP as the default reference. A normalized run config, not an
+agent or a user-supplied path ID, selects the Execution IR. Add a new Profile
+when only workload, hardware, capture procedure, or measured values change.
+Create a new Runtime Binding revision when source/container/package/backend
+artifacts change but the Execution contract remains the same. Add a new
+Execution Plan when exact parallelism, placement, communication, state, or
+generation/control contract changes. Every Execution selector must bind one
+exact `generation.mode`; a selector cannot group autoregressive and MTP graphs
+with `one_of`, and it must constrain every normalized Execution-contract leaf.
+Function names, Python stacks, and kernel
+names are Binding content and never define Runtime Implementation Identity.
+Their deterministic rules are protected by `mapping_rules_sha256`; changing a
+rule without regenerating and reaccepting the Binding therefore fails closed.
 
 Recommended progression:
 
@@ -850,8 +917,8 @@ Recommended progression:
 3. MoE EP and the selected communication/GEMM backend;
 4. useful combinations such as attention DP + MoE EP;
 5. additional frameworks bound to the same Model/Execution IR;
-6. optional generation modes such as MTP, using the same contracts and separate
-   profile dimensions.
+6. optional generation modes such as MTP: reuse an Execution Plan only after
+   exact contract equivalence; otherwise create a separate Execution Plan.
 
 Every distinct code path is profiled independently. Results from one path are
 never copied into another merely because their Model IR nodes share names.
@@ -1145,9 +1212,10 @@ records compiler/Viewer/catalog/bundle/evidence identities, source revisions,
 Execution fingerprints, exact profile contracts, mapping coverage, and browser
 acceptance. It also validates and publishes the four-gate independent-evidence
 report for every discovered catalog; adding a model without that contract, or
-using a downstream artifact as its own authority, blocks release. The
-manifest-driven `run_pipeline_v2.py` orchestrator remains M1, not an already
-working command.
+using a downstream artifact as its own authority, blocks release. M0.5 adds the
+working `run_pipeline_v2.py plan|accept` contract for deterministic trace
+addition. The capture/parse/map/materialize stage-DAG orchestration remains M1;
+it must consume these same artifacts and gates rather than invent another path.
 
 The removed Qwen3.5 trace-first/manual pipeline is not a second supported path.
 Its useful ideas survive here as frozen inputs, reusable trace parsing,
