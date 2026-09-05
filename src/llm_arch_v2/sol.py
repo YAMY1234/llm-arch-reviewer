@@ -33,9 +33,46 @@ _UNARY_OPERATORS = {
     ast.USub: lambda value: -value,
 }
 
+_PERSISTED_FLOAT_SIGNIFICANT_DIGITS = 14
+
+
+def _stable_float(value: float) -> float:
+    """Canonicalize derived floats before hashing or persistence.
+
+    The SoL model combines many divisions, products, and sums. IEEE-754
+    results can differ by one or two ULPs across CPU architectures even when
+    the mathematical inputs are identical. Those insignificant differences
+    must not change a content-addressed physical-plan or release bundle.
+    Fourteen significant decimal digits retain substantially more precision
+    than any published timing while producing one portable representation.
+    """
+
+    if not math.isfinite(value):
+        raise SolError("SoL artifacts cannot persist non-finite floats")
+    normalized = float(format(value, f".{_PERSISTED_FLOAT_SIGNIFICANT_DIGITS}g"))
+    return 0.0 if normalized == 0 else normalized
+
+
+def _stable_numeric_tree(value: Any) -> Any:
+    """Return a structurally identical tree with canonical derived floats."""
+
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, float):
+        return _stable_float(value)
+    if isinstance(value, dict):
+        return {key: _stable_numeric_tree(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_stable_numeric_tree(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_stable_numeric_tree(item) for item in value)
+    return value
+
 
 def _canonical_hash(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    payload = json.dumps(
+        _stable_numeric_tree(value), sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -1515,7 +1552,7 @@ def build_sol_artifacts(
     }
     if measured_runtime is not None:
         gap_report["measured_runtime"] = measured_runtime
-    return sol_profile, gap_report
+    return _stable_numeric_tree(sol_profile), _stable_numeric_tree(gap_report)
 
 
 def attach_sol_to_profile(

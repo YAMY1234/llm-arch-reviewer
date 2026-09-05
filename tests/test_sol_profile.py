@@ -19,6 +19,8 @@ if str(SRC_ROOT) not in sys.path:
 from llm_arch_v2.compiler import compile_catalog  # noqa: E402
 from llm_arch_v2.sol import (  # noqa: E402
     SolError,
+    _canonical_hash,
+    _stable_numeric_tree,
     attach_sol_to_profile,
     build_sol_artifacts,
 )
@@ -29,6 +31,22 @@ HARDWARE_PATH = REPO_ROOT / "catalog" / "hardware" / "gb300_nvl72.yaml"
 MANIFEST_PATH = (
     QWEN38_FLASH_NEXT_ROOT / "sol_manifests" / "tp4_gb300_decode_gbs1_8k1k.yaml"
 )
+
+
+def test_sol_persisted_floats_are_cross_platform_canonical() -> None:
+    macos_result = {
+        "duration_ms": 0.008253246666666667,
+        "critical_path_ms": 0.6613886946666666,
+        "nested": [0.466880484, -0.0],
+    }
+    linux_result = {
+        "duration_ms": 0.008253246666666669,
+        "critical_path_ms": 0.6613886946666665,
+        "nested": [0.4668804839999999, 0.0],
+    }
+
+    assert _stable_numeric_tree(macos_result) == _stable_numeric_tree(linux_result)
+    assert _canonical_hash(macos_result) == _canonical_hash(linux_result)
 
 
 def test_qwen38_flash_next_sol_profile_is_separate_fail_closed_overlay() -> None:
