@@ -24,7 +24,7 @@ source_lock:
 
 execution:
   execution_path_id: tp8
-  execution_fingerprint: exec_2ca0442bb646b1ff
+  execution_fingerprint: exec_d324d6ce3cf03ea1
   serving_mode: aggregated
   generation_mode: autoregressive
   modality: text_only
@@ -79,6 +79,29 @@ capture_policy:
     require_tp_all_gather_count: 1
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views:
+    - moe_router_selection
+    - moe_routed_expert
+    - moe_shared_expert
+    - mtp_moe_router_selection
+    - mtp_moe_routed_expert
+    - mtp_moe_shared_expert
+    required_drills:
+      moe_block.router: moe_router_selection
+      moe_block.routed_experts: moe_routed_expert
+      moe_block.shared_expert: moe_shared_expert
+      mtp_moe_block.router: mtp_moe_router_selection
+      mtp_moe_block.routed_experts: mtp_moe_routed_expert
+      mtp_moe_block.shared_expert: mtp_moe_shared_expert
+    required_nodes:
+      moe_router_selection: [router_input, router_projection, softmax, topk_indices, gather_weights, selected_routes]
+      moe_routed_expert: [hidden_input, route_assignments, dispatch, gate_projection, up_projection, silu, gated_product, down_projection, restore, routed_output]
+      moe_shared_expert: [shared_input, gate_projection, up_projection, silu, gated_product, down_projection, scalar_gate_projection, scalar_sigmoid, gated_shared_output, shared_output]
+      mtp_moe_router_selection: [router_input, router_projection, softmax, topk_indices, gather_weights, selected_routes]
+      mtp_moe_routed_expert: [hidden_input, route_assignments, dispatch, gate_projection, up_projection, silu, gated_product, down_projection, restore, routed_output]
+      mtp_moe_shared_expert: [shared_input, gate_projection, up_projection, silu, gated_product, down_projection, scalar_gate_projection, scalar_sigmoid, gated_shared_output, shared_output]
   expected_profile_points: 10
   unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported
   accepted_profile_requirements:
@@ -102,7 +125,7 @@ stage1_result:
   unsupported_profile_count: 0
   pending_profile_count: 0
   unsupported_profile_manifest: catalog/qwen35/unsupported_profiles.yaml
-  semantic_source_coverage: 121_of_121_runtime_semantic_leaves
-  binding_coverage: 203_of_203_compiled_nodes_for_each_framework
+  semantic_source_coverage: 167_of_167_audited_model_ir_leaves
+  binding_coverage: 255_of_255_compiled_nodes_for_each_framework
   final_validation: current/qwen35-complete-profiles/validation/final-validation.json
-  deterministic_bundle_sha256: 5e362d8516ed26bb9068360bf4afbc7e18dfde53a52cb7b46016b26e131adf88
+  deterministic_bundle_sha256: 42be5b166147dd4ae820eb12c8fa17393bacdab3f3bbf8fb87e18966badee215

@@ -64,7 +64,7 @@ Catalog 已声明的 model-specific symbol 重新写成旧数字常量。
 
 - 重复 layer stack 默认折叠，只显示 layer 数量和稳定排列规律，不为每个 layer instance 复制一张图。
 - 每种语义不同的 layer type 使用一张代表 view；结构相同的 layer 共享该 view。例如 linear-attention layer 与 full-attention layer 分开，而 36 个相同的 linear-attention layer 不逐个展开。
-- 代表 layer view 按稳定数据流展开 Attention、MoE/MLP、residual/HyperConnection 等主要语义模块；模块内部确实存在有架构意义的数据流时，可以继续 drill down。
+- 代表 layer view 按稳定数据流展开 Attention、MoE/MLP、residual/HyperConnection 等主要语义模块。凡 semantic contract 被标记为复合 `module` 的节点，都必须继续 drill 到具有类型化 edge 的子数据流；一个宽泛 equation 或一个宽泛 operator alias 不能替代内部 projection、activation、routing、reduction 与 state transition。Semantic revision 7 将此规则变成 compiler error，并要求 `semantic_coverage.detail_view_closure`。
 - 只在特定 layer 出现的一次性或旁路模块（例如 PLE injection）在 stack view 中单独表示，不因此复制一张完整的特殊 layer 图。
 
 Timeline 和 Profile evidence 可以保留实际 `layer_id`、expert/rank 等 invocation context；从具体 event 跳回 Architecture 时，打开对应的代表 layer/module leaf，并在详情中显示实际 instance。Runtime instance context 不会产生重复的 Model IR node。
@@ -205,7 +205,8 @@ Manifest 是唯一的 orchestration input。任何 builder 都不能静默替换
 4. 分配稳定 ID，并完整定义 edge identity、symbolic shape、layout、dtype 和 state lifetime。
 5. 为每个语义节点编写与 framework 无关的 equation 及必要 invariant。Boundary、state、control 和可展开的 module 节点也不能例外：必须明确写出 pass-through、更新、选择或 composite transformation，不能依赖 compiler/viewer 猜测的 fallback。
 6. 将每个 drill boundary 声明为 exact node、exact multi-node lifecycle 或 explicit external entry，并定义 input、handoff 和 output shape。
-7. 在附加任何 runtime data 之前运行 semantic closure tests 并 review 整张 graph。
+7. 将复合操作标记为 semantic-contract `module`，并为每一个 module 提供子 view；其中 primitive node、equation、dimension、dtype、state lifetime 与 source-ledger obligation 必须完整。
+8. 在附加任何 runtime data 之前运行 semantic closure tests 并 review 整张 graph。
 
 只有模型语义架构确实改变或原有语义表达有误时，才能修改 Model IR。Framework refactor 或 kernel fusion 不足以成为修改理由。
 
@@ -725,6 +726,7 @@ semantic expectation。这样可以阻止错误的 IR 或 trace 同时生成一�
 
 - 所有 document 通过 JSON Schema 和 cross-document reference check。
 - Model IR ID 稳定，所有 drill target 都能解析。
+- 对 semantic revision 7 及以上，所有 semantic-contract `module` 节点都必须有 drill view，且 catalog 必须声明 `detail_view_closure`；即使节点带有 equation 或单个 alias，opaque module leaf 仍然必须编译失败。
 - 已选中的可展开 compute/module 节点以及 runtime-bearing primitive leaf 绝不能显示为 `structural` boundary；它必须拥有正数的 measured／inclusive-union timing、是明确指向唯一 timing owner 的 fused member，或者具有不相交的 `fused_by_occurrence` partitions。只有显式定义的 boundary/control/state 节点，以及 `not_selected`、`disabled`、`out_of_scope` 等明确未激活分支可以没有 timing。
 - 每条 edge 都有 identity、shape、layout、dtype 和 state lifetime；每个语义节点都有 authored equation。缺少 operation、equation 为空，或出现 `None = None(None)` 一类 fallback artifact 时，编译必须直接失败。
 - 每个新建或发生修改的 catalog，都必须为每个声明的 dimension 提供唯一 authored
@@ -809,6 +811,7 @@ semantic expectation。这样可以阻止错误的 IR 或 trace 同时生成一�
 - 在认定 adapter 或 viewer change 具有通用性之前，至少使用第二个 framework 或第二个 model fixture 验证 generic path。
 - Release 必须从 canonical catalog 重新构建，不能复制 generated checkpoint 或旧 viewer bundle。CI 必须重新 build，并在 checked-in generated output 与 rebuild 结果不一致时失败。
 - Semantic refinement 必须与对应的 schema、source ledger、compiler、binding、mapping、test 和 generated bundle 原子化进入 release。Release gate 必须校验预期的 `semantic_revision`、semantic-ledger audit fingerprint 和必需的 primitive drill/view ID；只存在于未进入 release ancestry 的分支不能被视为已经交付。
+- Repository 的 `semantic-policy.yaml` 为所有新建或修改的 Model IR 规定最低 revision。低于最低 revision 的既有 catalog 只有在其已审计 Model IR 的精确 digest 完全不变时才能兼容；任何一个字节的修改都会使例外失效并要求迁移，因此新 catalog 不能主动退回较弱规则。Release identity 会与 compiler 和 Viewer digest 一起记录该 policy digest。
 - 发布 bundle 中的 semantic revision 和 primitive view inventory 必须与 source catalog 一致。Release validation 必须实际打开发布产物并检查代表性的 primitive path，不能只依赖本地 source test。
 
 ## 9. 人工 Review Gate

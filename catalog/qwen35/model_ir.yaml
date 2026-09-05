@@ -9,7 +9,11 @@ dimensions:
   B_local: requests assigned to one attention-DP rank
   T: token positions
   N: flattened active tokens
+  N_routed: selected token-expert pairs before implementation padding
   H: 4096
+  I: 1024
+  E: 512
+  K: 10
   V: 248320
   Q_heads: 32
   KV_heads: 2
@@ -43,7 +47,15 @@ dimension_symbols:
     value_class: stage_dependent
     provenance: runtime flattened scheduler batch
     unresolved_reason: requires a validated stage-specific active-token count
+  N_routed:
+    meaning: selected token-expert pairs before implementation padding
+    value_class: stage_dependent
+    provenance: logical routed dispatch cardinality N times K
+    unresolved_reason: requires the selected stage token count N
   H: {meaning: hidden width, value_class: model_constant, value: 4096, provenance: model_ir.facts.hidden_size}
+  I: {meaning: expert intermediate width, value_class: model_constant, value: 1024, provenance: model_ir.facts.expert_intermediate_size}
+  E: {meaning: routed expert count, value_class: model_constant, value: 512, provenance: model_ir.facts.routed_experts}
+  K: {meaning: selected experts per token, value_class: model_constant, value: 10, provenance: model_ir.facts.experts_per_token}
   V: {meaning: vocabulary width, value_class: model_constant, value: 248320, provenance: model_ir.facts.vocab_size}
   Q_heads: {meaning: query head count, value_class: model_constant, value: 32, provenance: model_ir.facts.attention_heads}
   KV_heads: {meaning: key/value head count, value_class: model_constant, value: 2, provenance: model_ir.facts.kv_heads}
@@ -3347,12 +3359,19 @@ views:
     - id: router
       label: Router and top-10 selection
       shape: gemm
+      operator_signature:
+        symbolic: H → E; E → K
+        concrete: 4096 → 512; 512 → 10
       semantic_op: qwen3_5.moe.router_topk
+      drill: moe_router_selection
       routed_experts: 512
       experts_per_token: 10
       semantic_details:
         operators:
-        - qwen3_5.moe.router_topk
+        - linear_projection
+        - softmax
+        - topk_indices
+        - selected_probability_gather
         math:
         - p = Softmax(X W_router^T); expert_ids = TopK(p,10); weights = Gather(p,expert_ids)
         runtime_mapping:
@@ -3367,11 +3386,21 @@ views:
     - id: routed_experts
       label: 512 routed SwiGLU experts
       shape: moe
+      operator_signature:
+        symbolic: H → I → H
+        concrete: 4096 → 1024 → 4096
       semantic_op: qwen3_5.moe.routed_experts
+      drill: moe_routed_expert
       expert_intermediate_size: 1024
       semantic_details:
         operators:
-        - qwen3_5.moe.routed_experts
+        - selected_token_dispatch
+        - gate_projection
+        - up_projection
+        - silu
+        - elementwise_multiply
+        - down_projection
+        - routed_output_restore
         math:
         - Y_e = W2_e(SiLU(W1_e X_e) elementwise_mul W3_e X_e) for each of 512 routed experts
         runtime_mapping:
@@ -3384,15 +3413,26 @@ views:
           revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
           locator: config.json
     - id: shared_expert
-      label: Always-on shared SwiGLU expert
+      label: Always-on shared SwiGLU expert + scalar gate
       shape: moe
+      operator_signature:
+        symbolic: H → I → H; gate H → 1
+        concrete: 4096 → 1024 → 4096; gate 4096 → 1
       semantic_op: qwen3_5.moe.shared_expert
+      drill: moe_shared_expert
       intermediate_size: 1024
       semantic_details:
         operators:
-        - qwen3_5.moe.shared_expert
+        - gate_projection
+        - up_projection
+        - silu
+        - elementwise_multiply
+        - down_projection
+        - scalar_gate_projection
+        - sigmoid
+        - scalar_broadcast_multiply
         math:
-        - Y_shared = W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+        - Y_shared = sigmoid(X W_shared_gate^T) elementwise_mul W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
         runtime_mapping:
           expectation: measured
           profile_leaf: moe_block.shared_expert
@@ -3410,7 +3450,7 @@ views:
         operators:
         - qwen3_5.moe.combine
         math:
-        - Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared
+        - Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared_gated
         runtime_mapping:
           expectation: measured
           profile_leaf: moe_block.weighted_combine
@@ -3449,9 +3489,9 @@ views:
     - from: router
       to: routed_experts
       label: top-10 expert assignments
-      shape: expert_ids [N,10] + weights [N,10]
+      shape: expert_ids [N,K] + weights [N,K]
       dtype: int32 + fp32
-      layout: logical contiguous expert_ids [N,10] + weights [N,10]
+      layout: logical contiguous expert_ids [N,K] + weights [N,K]
       state: ephemeral_forward_value
       identity: top-10 expert assignments
     - from: input_hidden
@@ -3464,8 +3504,8 @@ views:
     - from: routed_experts
       to: weighted_combine
       dtype: bf16
-      shape: '[N,10,H]'
-      layout: logical contiguous [N,10,H]
+      shape: '[N,K,H]'
+      layout: logical contiguous [N,K,H]
       state: ephemeral_forward_value
       identity: moe_block.routed_experts_to_weighted_combine
     - from: shared_expert
@@ -3482,6 +3522,412 @@ views:
       layout: logical contiguous [N,H]
       state: ephemeral_forward_value
       identity: moe_block.weighted_combine_to_output_hidden
+  moe_router_selection:
+    title: Qwen3.5 router projection and top-10 selection
+    execution_contract: false
+    nodes:
+    - id: router_input
+      label: Router input
+      shape: io
+      semantic_op: qwen3_5.moe.router.input
+      boundary_direction: input
+    - id: router_projection
+      label: FP32 router projection
+      shape: gemm
+      operator_signature:
+        symbolic: H → E
+        concrete: 4096 → 512
+      semantic_op: qwen3_5.moe.router.projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [router_logits = X W_router^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.router, reason: router aggregate owns projection and selection kernels}
+    - id: softmax
+      label: Softmax across 512 routed experts
+      shape: elem
+      semantic_op: qwen3_5.moe.router.softmax
+      semantic_details:
+        operators: [softmax]
+        math: [p_e = exp(router_logits_e) / sum_(j=1..E) exp(router_logits_j)]
+        runtime_mapping: {expectation: fused, owner: moe_block.router, reason: router aggregate owns projection and selection kernels}
+    - id: topk_indices
+      label: Select top-10 expert IDs
+      shape: elem
+      operator_signature:
+        symbolic: E → K
+        concrete: 512 → 10
+      semantic_op: qwen3_5.moe.router.topk_indices
+      semantic_details:
+        operators: [topk_indices]
+        math: [expert_ids = TopKIndices(p,K=10)]
+        runtime_mapping: {expectation: fused, owner: moe_block.router, reason: router aggregate owns projection and selection kernels}
+    - id: gather_weights
+      label: Gather selected expert weights
+      shape: elem
+      semantic_op: qwen3_5.moe.router.gather_weights
+      semantic_details:
+        operators: [selected_probability_gather]
+        math: [weights = Gather(p,expert_ids)]
+        runtime_mapping: {expectation: fused, owner: moe_block.router, reason: router aggregate owns projection and selection kernels}
+    - id: selected_routes
+      label: Top-10 expert IDs and weights
+      shape: io
+      semantic_op: qwen3_5.moe.router.output
+      boundary_direction: output
+    edges:
+    - from: router_input
+      to: router_projection
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.input_to_projection
+    - from: router_projection
+      to: softmax
+      shape: '[N,E]'
+      dtype: fp32
+      layout: logical contiguous [N,E]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.projection_to_softmax
+    - from: softmax
+      to: topk_indices
+      shape: '[N,E]'
+      dtype: fp32
+      layout: logical contiguous [N,E]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.softmax_to_topk_indices
+    - from: softmax
+      to: gather_weights
+      shape: '[N,E]'
+      dtype: fp32
+      layout: logical contiguous [N,E]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.softmax_to_gather_weights
+    - from: topk_indices
+      to: gather_weights
+      shape: '[N,K]'
+      dtype: int32
+      layout: logical contiguous [N,K]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.topk_indices_to_gather_weights
+    - from: gather_weights
+      to: selected_routes
+      shape: expert_ids [N,K] + weights [N,K]
+      dtype: int32 + fp32
+      layout: logical contiguous expert_ids [N,K] + weights [N,K]
+      state: ephemeral_forward_value
+      identity: moe_router_selection.gather_weights_to_output
+  moe_routed_expert:
+    title: Qwen3.5 selected routed SwiGLU expert data flow
+    execution_contract: false
+    nodes:
+    - id: hidden_input
+      label: Normalized MoE activations
+      shape: io
+      semantic_op: qwen3_5.moe.routed.input_hidden
+      boundary_direction: input
+    - id: route_assignments
+      label: Top-10 expert IDs and weights
+      shape: io
+      semantic_op: qwen3_5.moe.routed.input_routes
+      boundary_direction: input
+    - id: dispatch
+      label: Dispatch selected token-expert pairs
+      shape: elem
+      semantic_op: qwen3_5.moe.routed.dispatch
+      semantic_details:
+        operators: [selected_token_dispatch]
+        math: [X_routed = GatherByExpert(X,expert_ids) with N_routed = N times K]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns dispatch and expert computation}
+    - id: gate_projection
+      label: Gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: qwen3_5.moe.routed.gate_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [G = X_routed W_gate^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns fused SwiGLU computation}
+    - id: up_projection
+      label: Up projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: qwen3_5.moe.routed.up_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [U = X_routed W_up^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns fused SwiGLU computation}
+    - id: silu
+      label: SiLU gate activation
+      shape: elem
+      semantic_op: qwen3_5.moe.routed.silu
+      semantic_details:
+        operators: [silu]
+        math: [A = SiLU(G) = G elementwise_mul sigmoid(G)]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns fused SwiGLU computation}
+    - id: gated_product
+      label: Gated intermediate
+      shape: elem
+      semantic_op: qwen3_5.moe.routed.gated_product
+      semantic_details:
+        operators: [elementwise_multiply]
+        math: [M = A elementwise_mul U]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns fused SwiGLU computation}
+    - id: down_projection
+      label: Down projection
+      shape: gemm
+      operator_signature: {symbolic: I → H, concrete: 1024 → 4096}
+      semantic_op: qwen3_5.moe.routed.down_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [Y_routed_packed = M W_down^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns fused SwiGLU computation}
+    - id: restore
+      label: Restore per-token top-10 outputs
+      shape: elem
+      semantic_op: qwen3_5.moe.routed.restore
+      semantic_details:
+        operators: [routed_output_restore]
+        math: [Y_routed = RestoreByToken(Y_routed_packed,expert_ids)]
+        runtime_mapping: {expectation: fused, owner: moe_block.routed_experts, reason: routed-expert aggregate owns finalize and restore kernels}
+    - id: routed_output
+      label: Ten selected expert outputs per token
+      shape: io
+      semantic_op: qwen3_5.moe.routed.output
+      boundary_direction: output
+    edges:
+    - from: hidden_input
+      to: dispatch
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.hidden_input_to_dispatch
+    - from: route_assignments
+      to: dispatch
+      shape: expert_ids [N,K] + weights [N,K]
+      dtype: int32 + fp32
+      layout: logical contiguous expert_ids [N,K] + weights [N,K]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.route_assignments_to_dispatch
+    - from: dispatch
+      to: gate_projection
+      shape: '[N_routed,H]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,H]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.dispatch_to_gate_projection
+    - from: dispatch
+      to: up_projection
+      shape: '[N_routed,H]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,H]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.dispatch_to_up_projection
+    - from: gate_projection
+      to: silu
+      shape: '[N_routed,I]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,I]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.gate_projection_to_silu
+    - from: silu
+      to: gated_product
+      shape: '[N_routed,I]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,I]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.silu_to_gated_product
+    - from: up_projection
+      to: gated_product
+      shape: '[N_routed,I]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,I]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.up_projection_to_gated_product
+    - from: gated_product
+      to: down_projection
+      shape: '[N_routed,I]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,I]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.gated_product_to_down_projection
+    - from: down_projection
+      to: restore
+      shape: '[N_routed,H]'
+      dtype: bf16
+      layout: logical expert-major packed [N_routed,H]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.down_projection_to_restore
+    - from: restore
+      to: routed_output
+      shape: '[N,K,H]'
+      dtype: bf16
+      layout: logical contiguous [N,K,H]
+      state: ephemeral_forward_value
+      identity: moe_routed_expert.restore_to_output
+  moe_shared_expert:
+    title: Qwen3.5 always-on shared SwiGLU expert and scalar gate
+    execution_contract: false
+    nodes:
+    - id: shared_input
+      label: Shared-expert input
+      shape: io
+      semantic_op: qwen3_5.moe.shared.input
+      boundary_direction: input
+    - id: gate_projection
+      label: Gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: qwen3_5.moe.shared.gate_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [G_shared = X W_shared_gate_proj^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.shared_expert, reason: shared-expert aggregate owns fused projection and activation kernels}
+    - id: up_projection
+      label: Up projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: qwen3_5.moe.shared.up_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [U_shared = X W_shared_up^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.shared_expert, reason: shared-expert aggregate owns fused projection and activation kernels}
+    - id: silu
+      label: SiLU gate activation
+      shape: elem
+      semantic_op: qwen3_5.moe.shared.silu
+      semantic_details:
+        operators: [silu]
+        math: [A_shared = SiLU(G_shared)]
+        runtime_mapping: {expectation: fused, owner: moe_block.shared_expert, reason: shared-expert aggregate owns fused projection and activation kernels}
+    - id: gated_product
+      label: Gated shared intermediate
+      shape: elem
+      semantic_op: qwen3_5.moe.shared.gated_product
+      semantic_details:
+        operators: [elementwise_multiply]
+        math: [M_shared = A_shared elementwise_mul U_shared]
+        runtime_mapping: {expectation: fused, owner: moe_block.shared_expert, reason: shared-expert aggregate owns fused projection and activation kernels}
+    - id: down_projection
+      label: Down projection
+      shape: gemm
+      operator_signature: {symbolic: I → H, concrete: 1024 → 4096}
+      semantic_op: qwen3_5.moe.shared.down_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [Y_shared_raw = M_shared W_shared_down^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.shared_expert, reason: shared-expert aggregate owns fused projection and activation kernels}
+    - id: scalar_gate_projection
+      label: Shared-expert scalar gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → 1, concrete: 4096 → 1}
+      semantic_op: qwen3_5.moe.shared.scalar_gate_projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [g_logit = X W_shared_scalar_gate^T]
+        runtime_mapping: {expectation: fused, owner: moe_block.weighted_combine, reason: measured production epilogue owns scalar sigmoid gate and shared add}
+    - id: scalar_sigmoid
+      label: Sigmoid scalar gate
+      shape: elem
+      semantic_op: qwen3_5.moe.shared.scalar_sigmoid
+      semantic_details:
+        operators: [sigmoid]
+        math: [g_shared = sigmoid(g_logit)]
+        runtime_mapping: {expectation: fused, owner: moe_block.weighted_combine, reason: measured production epilogue owns scalar sigmoid gate and shared add}
+    - id: gated_shared_output
+      label: Scalar-gated shared output
+      shape: elem
+      semantic_op: qwen3_5.moe.shared.gated_output
+      semantic_details:
+        operators: [scalar_broadcast_multiply]
+        math: [Y_shared_gated = g_shared elementwise_mul Y_shared_raw]
+        runtime_mapping: {expectation: fused, owner: moe_block.weighted_combine, reason: measured production epilogue owns scalar sigmoid gate and shared add}
+    - id: shared_output
+      label: Gated shared-expert output
+      shape: io
+      semantic_op: qwen3_5.moe.shared.output
+      boundary_direction: output
+    edges:
+    - from: shared_input
+      to: gate_projection
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.input_to_gate_projection
+    - from: shared_input
+      to: up_projection
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.input_to_up_projection
+    - from: shared_input
+      to: scalar_gate_projection
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.input_to_scalar_gate_projection
+    - from: gate_projection
+      to: silu
+      shape: '[N,I]'
+      dtype: bf16
+      layout: logical contiguous [N,I]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.gate_projection_to_silu
+    - from: silu
+      to: gated_product
+      shape: '[N,I]'
+      dtype: bf16
+      layout: logical contiguous [N,I]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.silu_to_gated_product
+    - from: up_projection
+      to: gated_product
+      shape: '[N,I]'
+      dtype: bf16
+      layout: logical contiguous [N,I]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.up_projection_to_gated_product
+    - from: gated_product
+      to: down_projection
+      shape: '[N,I]'
+      dtype: bf16
+      layout: logical contiguous [N,I]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.gated_product_to_down_projection
+    - from: down_projection
+      to: gated_shared_output
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.down_projection_to_gated_output
+    - from: scalar_gate_projection
+      to: scalar_sigmoid
+      shape: '[N,1]'
+      dtype: bf16
+      layout: logical contiguous [N,1]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.scalar_gate_projection_to_sigmoid
+    - from: scalar_sigmoid
+      to: gated_shared_output
+      label: scalar gate
+      kind: dashed
+      shape: '[N,1]'
+      dtype: bf16
+      layout: broadcast scalar per token [N,1]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.scalar_sigmoid_to_gated_output
+    - from: gated_shared_output
+      to: shared_output
+      shape: '[N,H]'
+      dtype: bf16
+      layout: logical contiguous [N,H]
+      state: ephemeral_forward_value
+      identity: moe_shared_expert.gated_output_to_output
   mtp_full_attention_moe_block:
     title: Qwen3.5 MTP full-attention + MoE decoder layer
     nodes:
@@ -3984,12 +4430,19 @@ views:
     - id: router
       label: Router and top-10 selection
       shape: gemm
+      operator_signature:
+        symbolic: H → E; E → K
+        concrete: 4096 → 512; 512 → 10
       semantic_op: generation.mtp.moe.router_topk
+      drill: mtp_moe_router_selection
       routed_experts: 512
       experts_per_token: 10
       semantic_details:
         operators:
-        - generation.mtp.moe.router_topk
+        - linear_projection
+        - softmax
+        - topk_indices
+        - selected_probability_gather
         math:
         - p = Softmax(X W_router^T); expert_ids = TopK(p,10); weights = Gather(p,expert_ids)
         runtime_mapping:
@@ -4003,11 +4456,21 @@ views:
     - id: routed_experts
       label: 512 routed SwiGLU experts
       shape: moe
+      operator_signature:
+        symbolic: H → I → H
+        concrete: 4096 → 1024 → 4096
       semantic_op: generation.mtp.moe.routed_experts
+      drill: mtp_moe_routed_expert
       expert_intermediate_size: 1024
       semantic_details:
         operators:
-        - generation.mtp.moe.routed_experts
+        - selected_token_dispatch
+        - gate_projection
+        - up_projection
+        - silu
+        - elementwise_multiply
+        - down_projection
+        - routed_output_restore
         math:
         - Y_e = W2_e(SiLU(W1_e X_e) elementwise_mul W3_e X_e) for each of 512 routed experts
         runtime_mapping:
@@ -4019,15 +4482,26 @@ views:
           revision: 8f590eae8f10bf55d9a46f79ea0280bde435c9f8
           locator: config.json
     - id: shared_expert
-      label: Always-on shared SwiGLU expert
+      label: Always-on shared SwiGLU expert + scalar gate
       shape: moe
+      operator_signature:
+        symbolic: H → I → H; gate H → 1
+        concrete: 4096 → 1024 → 4096; gate 4096 → 1
       semantic_op: generation.mtp.moe.shared_expert
+      drill: mtp_moe_shared_expert
       intermediate_size: 1024
       semantic_details:
         operators:
-        - generation.mtp.moe.shared_expert
+        - gate_projection
+        - up_projection
+        - silu
+        - elementwise_multiply
+        - down_projection
+        - scalar_gate_projection
+        - sigmoid
+        - scalar_broadcast_multiply
         math:
-        - Y_shared = W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+        - Y_shared = sigmoid(X W_shared_gate^T) elementwise_mul W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -4044,7 +4518,7 @@ views:
         operators:
         - generation.mtp.moe.combine
         math:
-        - Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared
+        - Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared_gated
         runtime_mapping:
           expectation: structural
           reason: composite, boundary, state, or optional path
@@ -4082,9 +4556,9 @@ views:
     - from: router
       to: routed_experts
       label: top-10 expert assignments
-      shape: expert_ids [N,10] + weights [N,10]
+      shape: expert_ids [N,K] + weights [N,K]
       dtype: int32 + fp32
-      layout: logical contiguous expert_ids [N,10] + weights [N,10]
+      layout: logical contiguous expert_ids [N,K] + weights [N,K]
       state: ephemeral_forward_value
       identity: top-10 expert assignments
     - from: input_hidden
@@ -4097,8 +4571,8 @@ views:
     - from: routed_experts
       to: weighted_combine
       dtype: bf16
-      shape: '[N,10,H]'
-      layout: logical contiguous [N,10,H]
+      shape: '[N,K,H]'
+      layout: logical contiguous [N,K,H]
       state: ephemeral_forward_value
       identity: mtp_moe_block.routed_experts_to_weighted_combine
     - from: shared_expert
@@ -4115,6 +4589,174 @@ views:
       layout: logical contiguous [N,H]
       state: ephemeral_forward_value
       identity: mtp_moe_block.weighted_combine_to_output_hidden
+  mtp_moe_router_selection:
+    title: Qwen3.5 MTP router projection and top-10 selection
+    execution_contract: false
+    nodes:
+    - {id: router_input, label: Router input, shape: io, semantic_op: generation.mtp.moe.router.input, boundary_direction: input}
+    - id: router_projection
+      label: FP32 router projection
+      shape: gemm
+      operator_signature: {symbolic: H → E, concrete: 4096 → 512}
+      semantic_op: generation.mtp.moe.router.projection
+      semantic_details:
+        operators: [linear_projection]
+        math: [router_logits = X W_router^T]
+        runtime_mapping: {expectation: fused, owner: mtp_moe_block.router, reason: MTP router aggregate owns projection and selection kernels}
+    - id: softmax
+      label: Softmax across 512 routed experts
+      shape: elem
+      semantic_op: generation.mtp.moe.router.softmax
+      semantic_details:
+        operators: [softmax]
+        math: [p_e = exp(router_logits_e) / sum_(j=1..E) exp(router_logits_j)]
+        runtime_mapping: {expectation: fused, owner: mtp_moe_block.router, reason: MTP router aggregate owns projection and selection kernels}
+    - id: topk_indices
+      label: Select top-10 expert IDs
+      shape: elem
+      operator_signature: {symbolic: E → K, concrete: 512 → 10}
+      semantic_op: generation.mtp.moe.router.topk_indices
+      semantic_details:
+        operators: [topk_indices]
+        math: [expert_ids = TopKIndices(p,K=10)]
+        runtime_mapping: {expectation: fused, owner: mtp_moe_block.router, reason: MTP router aggregate owns projection and selection kernels}
+    - id: gather_weights
+      label: Gather selected expert weights
+      shape: elem
+      semantic_op: generation.mtp.moe.router.gather_weights
+      semantic_details:
+        operators: [selected_probability_gather]
+        math: [weights = Gather(p,expert_ids)]
+        runtime_mapping: {expectation: fused, owner: mtp_moe_block.router, reason: MTP router aggregate owns projection and selection kernels}
+    - {id: selected_routes, label: Top-10 expert IDs and weights, shape: io, semantic_op: generation.mtp.moe.router.output, boundary_direction: output}
+    edges:
+    - {from: router_input, to: router_projection, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.input_to_projection}
+    - {from: router_projection, to: softmax, shape: '[N,E]', dtype: fp32, layout: 'logical contiguous [N,E]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.projection_to_softmax}
+    - {from: softmax, to: topk_indices, shape: '[N,E]', dtype: fp32, layout: 'logical contiguous [N,E]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.softmax_to_topk_indices}
+    - {from: softmax, to: gather_weights, shape: '[N,E]', dtype: fp32, layout: 'logical contiguous [N,E]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.softmax_to_gather_weights}
+    - {from: topk_indices, to: gather_weights, shape: '[N,K]', dtype: int32, layout: 'logical contiguous [N,K]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.topk_indices_to_gather_weights}
+    - {from: gather_weights, to: selected_routes, shape: 'expert_ids [N,K] + weights [N,K]', dtype: 'int32 + fp32', layout: 'logical contiguous expert_ids [N,K] + weights [N,K]', state: ephemeral_forward_value, identity: mtp_moe_router_selection.gather_weights_to_output}
+  mtp_moe_routed_expert:
+    title: Qwen3.5 MTP selected routed SwiGLU expert data flow
+    execution_contract: false
+    nodes:
+    - {id: hidden_input, label: Normalized MoE activations, shape: io, semantic_op: generation.mtp.moe.routed.input_hidden, boundary_direction: input}
+    - {id: route_assignments, label: Top-10 expert IDs and weights, shape: io, semantic_op: generation.mtp.moe.routed.input_routes, boundary_direction: input}
+    - id: dispatch
+      label: Dispatch selected token-expert pairs
+      shape: elem
+      semantic_op: generation.mtp.moe.routed.dispatch
+      semantic_details:
+        operators: [selected_token_dispatch]
+        math: [X_routed = GatherByExpert(X,expert_ids) with N_routed = N times K]
+        runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns dispatch and expert computation}
+    - id: gate_projection
+      label: Gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: generation.mtp.moe.routed.gate_projection
+      semantic_details: {operators: [linear_projection], math: [G = X_routed W_gate^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns fused SwiGLU computation}}
+    - id: up_projection
+      label: Up projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: generation.mtp.moe.routed.up_projection
+      semantic_details: {operators: [linear_projection], math: [U = X_routed W_up^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns fused SwiGLU computation}}
+    - id: silu
+      label: SiLU gate activation
+      shape: elem
+      semantic_op: generation.mtp.moe.routed.silu
+      semantic_details: {operators: [silu], math: [A = SiLU(G) = G elementwise_mul sigmoid(G)], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns fused SwiGLU computation}}
+    - id: gated_product
+      label: Gated intermediate
+      shape: elem
+      semantic_op: generation.mtp.moe.routed.gated_product
+      semantic_details: {operators: [elementwise_multiply], math: [M = A elementwise_mul U], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns fused SwiGLU computation}}
+    - id: down_projection
+      label: Down projection
+      shape: gemm
+      operator_signature: {symbolic: I → H, concrete: 1024 → 4096}
+      semantic_op: generation.mtp.moe.routed.down_projection
+      semantic_details: {operators: [linear_projection], math: [Y_routed_packed = M W_down^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns fused SwiGLU computation}}
+    - id: restore
+      label: Restore per-token top-10 outputs
+      shape: elem
+      semantic_op: generation.mtp.moe.routed.restore
+      semantic_details: {operators: [routed_output_restore], math: ['Y_routed = RestoreByToken(Y_routed_packed,expert_ids)'], runtime_mapping: {expectation: fused, owner: mtp_moe_block.routed_experts, reason: MTP routed-expert aggregate owns finalize and restore kernels}}
+    - {id: routed_output, label: Ten selected expert outputs per token, shape: io, semantic_op: generation.mtp.moe.routed.output, boundary_direction: output}
+    edges:
+    - {from: hidden_input, to: dispatch, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.hidden_input_to_dispatch}
+    - {from: route_assignments, to: dispatch, shape: 'expert_ids [N,K] + weights [N,K]', dtype: 'int32 + fp32', layout: 'logical contiguous expert_ids [N,K] + weights [N,K]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.route_assignments_to_dispatch}
+    - {from: dispatch, to: gate_projection, shape: '[N_routed,H]', dtype: bf16, layout: 'logical expert-major packed [N_routed,H]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.dispatch_to_gate_projection}
+    - {from: dispatch, to: up_projection, shape: '[N_routed,H]', dtype: bf16, layout: 'logical expert-major packed [N_routed,H]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.dispatch_to_up_projection}
+    - {from: gate_projection, to: silu, shape: '[N_routed,I]', dtype: bf16, layout: 'logical expert-major packed [N_routed,I]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.gate_projection_to_silu}
+    - {from: silu, to: gated_product, shape: '[N_routed,I]', dtype: bf16, layout: 'logical expert-major packed [N_routed,I]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.silu_to_gated_product}
+    - {from: up_projection, to: gated_product, shape: '[N_routed,I]', dtype: bf16, layout: 'logical expert-major packed [N_routed,I]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.up_projection_to_gated_product}
+    - {from: gated_product, to: down_projection, shape: '[N_routed,I]', dtype: bf16, layout: 'logical expert-major packed [N_routed,I]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.gated_product_to_down_projection}
+    - {from: down_projection, to: restore, shape: '[N_routed,H]', dtype: bf16, layout: 'logical expert-major packed [N_routed,H]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.down_projection_to_restore}
+    - {from: restore, to: routed_output, shape: '[N,K,H]', dtype: bf16, layout: 'logical contiguous [N,K,H]', state: ephemeral_forward_value, identity: mtp_moe_routed_expert.restore_to_output}
+  mtp_moe_shared_expert:
+    title: Qwen3.5 MTP always-on shared SwiGLU expert and scalar gate
+    execution_contract: false
+    nodes:
+    - {id: shared_input, label: Shared-expert input, shape: io, semantic_op: generation.mtp.moe.shared.input, boundary_direction: input}
+    - id: gate_projection
+      label: Gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: generation.mtp.moe.shared.gate_projection
+      semantic_details: {operators: [linear_projection], math: [G_shared = X W_shared_gate_proj^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.shared_expert, reason: MTP shared-expert aggregate owns fused projection and activation kernels}}
+    - id: up_projection
+      label: Up projection
+      shape: gemm
+      operator_signature: {symbolic: H → I, concrete: 4096 → 1024}
+      semantic_op: generation.mtp.moe.shared.up_projection
+      semantic_details: {operators: [linear_projection], math: [U_shared = X W_shared_up^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.shared_expert, reason: MTP shared-expert aggregate owns fused projection and activation kernels}}
+    - id: silu
+      label: SiLU gate activation
+      shape: elem
+      semantic_op: generation.mtp.moe.shared.silu
+      semantic_details: {operators: [silu], math: [A_shared = SiLU(G_shared)], runtime_mapping: {expectation: fused, owner: mtp_moe_block.shared_expert, reason: MTP shared-expert aggregate owns fused projection and activation kernels}}
+    - id: gated_product
+      label: Gated shared intermediate
+      shape: elem
+      semantic_op: generation.mtp.moe.shared.gated_product
+      semantic_details: {operators: [elementwise_multiply], math: [M_shared = A_shared elementwise_mul U_shared], runtime_mapping: {expectation: fused, owner: mtp_moe_block.shared_expert, reason: MTP shared-expert aggregate owns fused projection and activation kernels}}
+    - id: down_projection
+      label: Down projection
+      shape: gemm
+      operator_signature: {symbolic: I → H, concrete: 1024 → 4096}
+      semantic_op: generation.mtp.moe.shared.down_projection
+      semantic_details: {operators: [linear_projection], math: [Y_shared_raw = M_shared W_shared_down^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.shared_expert, reason: MTP shared-expert aggregate owns fused projection and activation kernels}}
+    - id: scalar_gate_projection
+      label: Shared-expert scalar gate projection
+      shape: gemm
+      operator_signature: {symbolic: H → 1, concrete: 4096 → 1}
+      semantic_op: generation.mtp.moe.shared.scalar_gate_projection
+      semantic_details: {operators: [linear_projection], math: [g_logit = X W_shared_scalar_gate^T], runtime_mapping: {expectation: fused, owner: mtp_moe_block.weighted_combine, reason: MTP epilogue owns scalar sigmoid gate and shared add}}
+    - id: scalar_sigmoid
+      label: Sigmoid scalar gate
+      shape: elem
+      semantic_op: generation.mtp.moe.shared.scalar_sigmoid
+      semantic_details: {operators: [sigmoid], math: [g_shared = sigmoid(g_logit)], runtime_mapping: {expectation: fused, owner: mtp_moe_block.weighted_combine, reason: MTP epilogue owns scalar sigmoid gate and shared add}}
+    - id: gated_shared_output
+      label: Scalar-gated shared output
+      shape: elem
+      semantic_op: generation.mtp.moe.shared.gated_output
+      semantic_details: {operators: [scalar_broadcast_multiply], math: [Y_shared_gated = g_shared elementwise_mul Y_shared_raw], runtime_mapping: {expectation: fused, owner: mtp_moe_block.weighted_combine, reason: MTP epilogue owns scalar sigmoid gate and shared add}}
+    - {id: shared_output, label: Gated shared-expert output, shape: io, semantic_op: generation.mtp.moe.shared.output, boundary_direction: output}
+    edges:
+    - {from: shared_input, to: gate_projection, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.input_to_gate_projection}
+    - {from: shared_input, to: up_projection, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.input_to_up_projection}
+    - {from: shared_input, to: scalar_gate_projection, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.input_to_scalar_gate_projection}
+    - {from: gate_projection, to: silu, shape: '[N,I]', dtype: bf16, layout: 'logical contiguous [N,I]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.gate_projection_to_silu}
+    - {from: silu, to: gated_product, shape: '[N,I]', dtype: bf16, layout: 'logical contiguous [N,I]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.silu_to_gated_product}
+    - {from: up_projection, to: gated_product, shape: '[N,I]', dtype: bf16, layout: 'logical contiguous [N,I]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.up_projection_to_gated_product}
+    - {from: gated_product, to: down_projection, shape: '[N,I]', dtype: bf16, layout: 'logical contiguous [N,I]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.gated_product_to_down_projection}
+    - {from: down_projection, to: gated_shared_output, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.down_projection_to_gated_output}
+    - {from: scalar_gate_projection, to: scalar_sigmoid, shape: '[N,1]', dtype: bf16, layout: 'logical contiguous [N,1]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.scalar_gate_projection_to_sigmoid}
+    - {from: scalar_sigmoid, to: gated_shared_output, label: scalar gate, kind: dashed, shape: '[N,1]', dtype: bf16, layout: 'broadcast scalar per token [N,1]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.scalar_sigmoid_to_gated_output}
+    - {from: gated_shared_output, to: shared_output, shape: '[N,H]', dtype: bf16, layout: 'logical contiguous [N,H]', state: ephemeral_forward_value, identity: mtp_moe_shared_expert.gated_output_to_output}
   state_tensors:
     title: Canonical per-request decode state (unsharded model semantics)
     nodes:
@@ -5493,12 +6135,13 @@ views:
       layout: logical contiguous [P,Hv]
       state: ephemeral_forward_value
       identity: vision_block.attention_residual_to_block_output
-semantic_revision: 6
+semantic_revision: 7
 semantic_evidence:
   checkpoint_config: https://huggingface.co/nvidia/Qwen3.5-397B-A17B-NVFP4-V2/blob/8f590eae8f10bf55d9a46f79ea0280bde435c9f8/config.json
   method: checkpoint-declared architecture plus framework-independent mathematical and data-flow reconstruction; implementation
     reconciliation belongs to source ledgers and bindings
 semantic_coverage:
+  detail_view_closure: every compound semantic module is expanded into source-backed primitive operations with typed boundaries
   operator_dataflow_closure: complete_for_checkpoint_declared_text_vision_and_optional_mtp_paths
   parameter_closure: all_parameterized_semantic_operations_and_sharing_relationships_declared
   state_closure: full_attention_kv_gdn_conv_gdn_recurrent_and_speculative_commit_boundaries_declared
@@ -5616,7 +6259,7 @@ semantic_contract:
       equation: Delta_moe = RoutedSharedMoE(An; E=512, K=10, shared=1)
     generation.mtp.moe.combine:
       kind: reduction
-      equation: Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared
+      equation: Y = sum_(j=1..10)(weights_j Y_expert_j) + sigmoid(X W_shared_gate^T) elementwise_mul Y_shared
     generation.mtp.moe.input:
       kind: boundary
       equation: X := normalized MoE input [N,H]
@@ -5626,12 +6269,90 @@ semantic_contract:
     generation.mtp.moe.routed_experts:
       kind: module
       equation: Y_e = W2_e(SiLU(W1_e X_e) elementwise_mul W3_e X_e) for each of 512 routed experts
+    generation.mtp.moe.routed.down_projection:
+      kind: projection
+      equation: Y_routed = M W_down,e^T in R^(N_routed x H)
+    generation.mtp.moe.routed.dispatch:
+      kind: routing
+      equation: X_routed = Dispatch(X, expert_ids) in R^(N_routed x H), where N_routed = N K
+    generation.mtp.moe.routed.gate_projection:
+      kind: projection
+      equation: G = X_routed W_gate,e^T in R^(N_routed x I)
+    generation.mtp.moe.routed.gated_product:
+      kind: composition
+      equation: M = SiLU(G) elementwise_mul U
+    generation.mtp.moe.routed.input_hidden:
+      kind: boundary
+      equation: X := normalized MTP MoE activations [N,H]
+    generation.mtp.moe.routed.input_routes:
+      kind: boundary
+      equation: routes := expert_ids [N,K] plus routing weights [N,K]
+    generation.mtp.moe.routed.output:
+      kind: boundary
+      equation: Y_expert := per-token selected expert outputs [N,K,H]
+    generation.mtp.moe.routed.restore:
+      kind: routing
+      equation: Y_expert = RestoreTokenRouteOrder(Y_routed) in R^(N x K x H)
+    generation.mtp.moe.routed.silu:
+      kind: activation
+      equation: A = SiLU(G)
+    generation.mtp.moe.routed.up_projection:
+      kind: projection
+      equation: U = X_routed W_up,e^T in R^(N_routed x I)
+    generation.mtp.moe.router.gather_weights:
+      kind: routing
+      equation: weights = Gather(p, expert_ids) in R^(N x K)
+    generation.mtp.moe.router.input:
+      kind: boundary
+      equation: X := normalized MTP MoE input [N,H]
+    generation.mtp.moe.router.output:
+      kind: boundary
+      equation: routes := expert_ids [N,K] plus routing weights [N,K]
+    generation.mtp.moe.router.projection:
+      kind: projection
+      equation: logits = X W_router^T in R^(N x E)
+    generation.mtp.moe.router.softmax:
+      kind: routing
+      equation: p = Softmax(logits) over E experts in float32
+    generation.mtp.moe.router.topk_indices:
+      kind: routing
+      equation: expert_ids = TopKIndices(p,K) in R^(N x K)
     generation.mtp.moe.router_topk:
       kind: routing
       equation: p = Softmax(X W_router^T); expert_ids = TopK(p,10); weights = Gather(p,expert_ids)
     generation.mtp.moe.shared_expert:
       kind: module
-      equation: Y_shared = W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+      equation: Y_shared_gated = sigmoid(X W_shared_gate^T) elementwise_mul W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+    generation.mtp.moe.shared.down_projection:
+      kind: projection
+      equation: Y_shared = M W_down,s^T in R^(N x H)
+    generation.mtp.moe.shared.gate_projection:
+      kind: projection
+      equation: G = X W_gate,s^T in R^(N x I)
+    generation.mtp.moe.shared.gated_output:
+      kind: composition
+      equation: Y_shared_gated = g_s elementwise_mul Y_shared with scalar g_s broadcast over H
+    generation.mtp.moe.shared.gated_product:
+      kind: composition
+      equation: M = SiLU(G) elementwise_mul U
+    generation.mtp.moe.shared.input:
+      kind: boundary
+      equation: X := shared-expert input [N,H]
+    generation.mtp.moe.shared.output:
+      kind: boundary
+      equation: Y_shared_gated := gated shared-expert output [N,H]
+    generation.mtp.moe.shared.scalar_gate_projection:
+      kind: projection
+      equation: s = X W_shared_gate^T in R^(N x 1)
+    generation.mtp.moe.shared.scalar_sigmoid:
+      kind: activation
+      equation: g_s = sigmoid(s) in R^(N x 1)
+    generation.mtp.moe.shared.silu:
+      kind: activation
+      equation: A = SiLU(G)
+    generation.mtp.moe.shared.up_projection:
+      kind: projection
+      equation: U = X W_up,s^T in R^(N x I)
     generation.mtp.next_iteration:
       kind: control
       equation: repeat draft and verify from context_next until termination
@@ -5785,7 +6506,7 @@ semantic_contract:
       equation: Delta_moe = RoutedSharedMoE(An; E=512, K=10, shared=1)
     qwen3_5.moe.combine:
       kind: reduction
-      equation: Y = sum_(j=1..10)(weights_j Y_expert_j) + Y_shared
+      equation: Y = sum_(j=1..10)(weights_j Y_expert_j) + sigmoid(X W_shared_gate^T) elementwise_mul Y_shared
     qwen3_5.moe.input:
       kind: boundary
       equation: X := normalized MoE input [N,H]
@@ -5795,12 +6516,90 @@ semantic_contract:
     qwen3_5.moe.routed_experts:
       kind: module
       equation: Y_e = W2_e(SiLU(W1_e X_e) elementwise_mul W3_e X_e) for each of 512 routed experts
+    qwen3_5.moe.routed.down_projection:
+      kind: projection
+      equation: Y_routed = M W_down,e^T in R^(N_routed x H)
+    qwen3_5.moe.routed.dispatch:
+      kind: routing
+      equation: X_routed = Dispatch(X, expert_ids) in R^(N_routed x H), where N_routed = N K
+    qwen3_5.moe.routed.gate_projection:
+      kind: projection
+      equation: G = X_routed W_gate,e^T in R^(N_routed x I)
+    qwen3_5.moe.routed.gated_product:
+      kind: composition
+      equation: M = SiLU(G) elementwise_mul U
+    qwen3_5.moe.routed.input_hidden:
+      kind: boundary
+      equation: X := normalized MoE activations [N,H]
+    qwen3_5.moe.routed.input_routes:
+      kind: boundary
+      equation: routes := expert_ids [N,K] plus routing weights [N,K]
+    qwen3_5.moe.routed.output:
+      kind: boundary
+      equation: Y_expert := per-token selected expert outputs [N,K,H]
+    qwen3_5.moe.routed.restore:
+      kind: routing
+      equation: Y_expert = RestoreTokenRouteOrder(Y_routed) in R^(N x K x H)
+    qwen3_5.moe.routed.silu:
+      kind: activation
+      equation: A = SiLU(G)
+    qwen3_5.moe.routed.up_projection:
+      kind: projection
+      equation: U = X_routed W_up,e^T in R^(N_routed x I)
+    qwen3_5.moe.router.gather_weights:
+      kind: routing
+      equation: weights = Gather(p, expert_ids) in R^(N x K)
+    qwen3_5.moe.router.input:
+      kind: boundary
+      equation: X := normalized MoE input [N,H]
+    qwen3_5.moe.router.output:
+      kind: boundary
+      equation: routes := expert_ids [N,K] plus routing weights [N,K]
+    qwen3_5.moe.router.projection:
+      kind: projection
+      equation: logits = X W_router^T in R^(N x E)
+    qwen3_5.moe.router.softmax:
+      kind: routing
+      equation: p = Softmax(logits) over E experts in float32
+    qwen3_5.moe.router.topk_indices:
+      kind: routing
+      equation: expert_ids = TopKIndices(p,K) in R^(N x K)
     qwen3_5.moe.router_topk:
       kind: routing
       equation: p = Softmax(X W_router^T); expert_ids = TopK(p,10); weights = Gather(p,expert_ids)
     qwen3_5.moe.shared_expert:
       kind: module
-      equation: Y_shared = W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+      equation: Y_shared_gated = sigmoid(X W_shared_gate^T) elementwise_mul W2_s(SiLU(W1_s X) elementwise_mul W3_s X)
+    qwen3_5.moe.shared.down_projection:
+      kind: projection
+      equation: Y_shared = M W_down,s^T in R^(N x H)
+    qwen3_5.moe.shared.gate_projection:
+      kind: projection
+      equation: G = X W_gate,s^T in R^(N x I)
+    qwen3_5.moe.shared.gated_output:
+      kind: composition
+      equation: Y_shared_gated = g_s elementwise_mul Y_shared with scalar g_s broadcast over H
+    qwen3_5.moe.shared.gated_product:
+      kind: composition
+      equation: M = SiLU(G) elementwise_mul U
+    qwen3_5.moe.shared.input:
+      kind: boundary
+      equation: X := shared-expert input [N,H]
+    qwen3_5.moe.shared.output:
+      kind: boundary
+      equation: Y_shared_gated := gated shared-expert output [N,H]
+    qwen3_5.moe.shared.scalar_gate_projection:
+      kind: projection
+      equation: s = X W_shared_gate^T in R^(N x 1)
+    qwen3_5.moe.shared.scalar_sigmoid:
+      kind: activation
+      equation: g_s = sigmoid(s) in R^(N x 1)
+    qwen3_5.moe.shared.silu:
+      kind: activation
+      equation: A = SiLU(G)
+    qwen3_5.moe.shared.up_projection:
+      kind: projection
+      equation: U = X W_up,s^T in R^(N x I)
     qwen3_5.multimodal_injection:
       kind: composition
       equation: X[vision_token_positions] = X_vision; other X positions retain X_text
@@ -6277,6 +7076,21 @@ boundary_contracts:
   child_view: moe_block
   input_shape: '[N,H]'
   output_shape: '[N,H]'
+- parent_node: moe_block.router
+  boundary_mode: exact_node
+  child_view: moe_router_selection
+  input_shape: '[N,H]'
+  output_shape: 'expert_ids [N,K] + weights [N,K]'
+- parent_node: moe_block.routed_experts
+  boundary_mode: exact_node
+  child_view: moe_routed_expert
+  input_shape: '[N,H] + expert_ids [N,K] + weights [N,K]'
+  output_shape: '[N,K,H]'
+- parent_node: moe_block.shared_expert
+  boundary_mode: exact_node
+  child_view: moe_shared_expert
+  input_shape: '[N,H]'
+  output_shape: '[N,H]'
 - parent_node: mtp_full_attention_moe_block.attention
   boundary_mode: exact_node
   child_view: mtp_full_attention
@@ -6285,6 +7099,21 @@ boundary_contracts:
 - parent_node: mtp_full_attention_moe_block.moe
   boundary_mode: exact_node
   child_view: mtp_moe_block
+  input_shape: '[N,H]'
+  output_shape: '[N,H]'
+- parent_node: mtp_moe_block.router
+  boundary_mode: exact_node
+  child_view: mtp_moe_router_selection
+  input_shape: '[N,H]'
+  output_shape: 'expert_ids [N,K] + weights [N,K]'
+- parent_node: mtp_moe_block.routed_experts
+  boundary_mode: exact_node
+  child_view: mtp_moe_routed_expert
+  input_shape: '[N,H] + expert_ids [N,K] + weights [N,K]'
+  output_shape: '[N,K,H]'
+- parent_node: mtp_moe_block.shared_expert
+  boundary_mode: exact_node
+  child_view: mtp_moe_shared_expert
   input_shape: '[N,H]'
   output_shape: '[N,H]'
 - parent_node: mtp_draft_head.draft_decoder_layer

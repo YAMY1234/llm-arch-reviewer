@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -17,8 +18,12 @@ if str(SRC_ROOT) not in sys.path:
 from llm_arch_v2.compiler import (  # noqa: E402
     CatalogError,
     _validate_binding_revision_contract,
+    _validate_detail_view_closure,
     _validate_leaf_equation_coverage,
     _validate_notation_contract,
+    _validate_repository_semantic_policy,
+    _validate_semantic_coverage,
+    _validate_semantic_release_contract,
     apply_execution_plan,
     comparison_contract,
     compile_catalog,
@@ -501,6 +506,154 @@ def test_semantic_contract_operation_equation_satisfies_leaf_coverage() -> None:
     _validate_leaf_equation_coverage(
         model_ir, source=Path("catalog/example/model_ir.yaml")
     )
+
+
+def test_semantic_revision_7_requires_detail_view_closure_claim() -> None:
+    model_ir = {
+        "semantic_revision": 7,
+        "semantic_coverage": {
+            "operator_dataflow_closure": "complete",
+            "parameter_closure": "complete",
+            "state_closure": "complete",
+            "layer_variant_closure": "complete",
+            "config_field_disposition": {
+                "model_ir": [],
+                "execution_ir": [],
+                "binding_profile": [],
+                "excluded": [],
+            },
+        },
+    }
+    with pytest.raises(CatalogError, match="detail_view_closure"):
+        _validate_semantic_coverage(
+            model_ir, source=Path("catalog/example/model_ir.yaml")
+        )
+
+
+def test_repository_policy_grandfathers_only_unchanged_legacy_model_ir(
+    tmp_path: Path,
+) -> None:
+    catalog_root = tmp_path / "catalog"
+    model_root = catalog_root / "legacy"
+    model_root.mkdir(parents=True)
+    model_path = model_root / "model_ir.yaml"
+    original = "model_id: legacy\nsemantic_revision: 6\n"
+    model_path.write_text(original)
+    (catalog_root / "semantic-policy.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "semantic-policy.v1",
+                "minimum_semantic_revision": 7,
+                "legacy_model_ir_sha256": {
+                    "legacy": hashlib.sha256(original.encode()).hexdigest()
+                },
+            },
+            sort_keys=False,
+        )
+    )
+    legacy = {"model_id": "legacy", "semantic_revision": 6}
+    _validate_repository_semantic_policy(legacy, source=model_path)
+
+    model_path.write_text(original + "changed: true\n")
+    with pytest.raises(CatalogError, match="must migrate"):
+        _validate_repository_semantic_policy(legacy, source=model_path)
+
+    _validate_repository_semantic_policy(
+        {"model_id": "new", "semantic_revision": 7}, source=model_path
+    )
+
+
+def test_semantic_revision_7_rejects_opaque_module_leaf() -> None:
+    model_ir = {
+        "semantic_revision": 7,
+        "semantic_contract": {
+            "operations": {
+                "example.compound": {
+                    "kind": "module",
+                    "equation": "y = Compound(x)",
+                }
+            }
+        },
+        "views": {
+            "top": {
+                "nodes": [
+                    {
+                        "id": "compound",
+                        "label": "compound",
+                        "shape": "block",
+                        "semantic_op": "example.compound",
+                        "semantic_details": {
+                            "operators": ["example.compound"],
+                            "math": ["y = Compound(x)"],
+                        },
+                    }
+                ]
+            }
+        },
+    }
+    with pytest.raises(CatalogError, match="compound semantic module top.compound"):
+        _validate_detail_view_closure(
+            model_ir, source=Path("catalog/example/model_ir.yaml")
+        )
+
+    model_ir["views"]["top"]["nodes"][0]["drill"] = "compound_detail"
+    _validate_detail_view_closure(
+        model_ir, source=Path("catalog/example/model_ir.yaml")
+    )
+
+
+def test_semantic_revision_7_pins_required_drills_and_primitive_nodes() -> None:
+    model_ir = {
+        "semantic_revision": 7,
+        "views": {
+            "top": {
+                "nodes": [
+                        {
+                            "id": "module",
+                            "label": "module",
+                            "shape": "block",
+                            "semantic_op": "example.module",
+                            "drill": "detail",
+                    }
+                ],
+                "edges": [],
+            },
+            "detail": {
+                "nodes": [
+                    {
+                        "id": "projection",
+                        "label": "projection",
+                        "shape": "gemm",
+                        "semantic_op": "example.projection",
+                    }
+                ],
+                "edges": [],
+            },
+        },
+    }
+    pipeline = {
+        "acceptance": {
+            "semantic_release_contract": {
+                "expected_revision": 7,
+                "required_views": ["detail"],
+                "required_drills": {"top.module": "detail"},
+                "required_nodes": {"detail": ["projection"]},
+            }
+        }
+    }
+    _validate_semantic_release_contract(
+        model_ir, pipeline, source=Path("catalog/example/model_ir.yaml")
+    )
+
+    broken = copy.deepcopy(pipeline)
+    broken["acceptance"]["semantic_release_contract"]["required_nodes"]["detail"] = [
+        "projection",
+        "missing",
+    ]
+    with pytest.raises(CatalogError, match="missing required nodes"):
+        _validate_semantic_release_contract(
+            model_ir, broken, source=Path("catalog/example/model_ir.yaml")
+        )
 
 
 def test_operator_signature_does_not_change_execution_fingerprint() -> None:

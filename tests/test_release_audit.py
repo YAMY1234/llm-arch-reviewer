@@ -96,6 +96,7 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
     (docs_root / "viewer.html").write_text("viewer\n")
     (catalog_root / "toy").mkdir(parents=True)
     (catalog_root / "toy" / "model_ir.yaml").write_text("model_id: toy\n")
+    (catalog_root / "semantic-policy.yaml").write_text("semantic policy\n")
     (docs_root / "toy_v2").mkdir()
     bundle = {
         "meta": {"model_ir_version": 1, "model_semantic_revision": 6},
@@ -193,6 +194,7 @@ def test_release_acceptance_summary_is_deterministic_and_content_addressed(
     assert first["schema_version"] == "release-acceptance.v1"
     assert first["release_ready"] is True
     assert first["release_identity"]["compiler_sha256"]
+    assert first["release_identity"]["semantic_policy_sha256"]
     assert first["models"][0]["catalog_manifest_sha256"]
     assert first["models"][0]["validation_evidence"]["anti_self_validation"] == "pass"
     profile = first["models"][0]["profiles"][0]

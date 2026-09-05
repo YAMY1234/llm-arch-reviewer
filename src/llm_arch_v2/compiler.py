@@ -101,6 +101,49 @@ def _validate_semantic_coverage(model_ir: dict[str, Any], *, source: Path) -> No
             f"{source}: semantic_revision>=4 requires "
             "semantic_coverage.operator_dataflow_closure"
         )
+    if int(model_ir.get("semantic_revision") or 0) >= 7 and not coverage.get(
+        "detail_view_closure"
+    ):
+        raise CatalogError(
+            f"{source}: semantic_revision>=7 requires "
+            "semantic_coverage.detail_view_closure"
+        )
+
+
+def _validate_repository_semantic_policy(
+    model_ir: dict[str, Any], *, source: Path
+) -> None:
+    """Require new or semantically modified catalogs to use the current rules.
+
+    Pre-v7 catalogs are grandfathered only by the exact hash of their audited
+    Model IR.  This avoids a permanent model-name allowlist: any edit changes
+    the digest and forces migration, while a newly added catalog has no legacy
+    digest and must start at the repository minimum revision.
+    """
+
+    policy_path = source.parent.parent / "semantic-policy.yaml"
+    if not policy_path.is_file():
+        return
+    policy = load_yaml(policy_path)
+    _validate_schema_version(policy, "semantic-policy.v1", source=policy_path)
+    minimum = policy.get("minimum_semantic_revision")
+    if not isinstance(minimum, int) or minimum < 1:
+        raise CatalogError(
+            f"{policy_path}: minimum_semantic_revision must be a positive integer"
+        )
+    revision = int(model_ir.get("semantic_revision") or 0)
+    if revision >= minimum:
+        return
+    model_id = str(model_ir.get("model_id") or source.parent.name)
+    legacy = policy.get("legacy_model_ir_sha256") or {}
+    expected = legacy.get(model_id) if isinstance(legacy, dict) else None
+    actual = hashlib.sha256(source.read_bytes()).hexdigest()
+    if expected != actual:
+        raise CatalogError(
+            f"{source}: semantic revision {revision} is below repository minimum "
+            f"{minimum}; this new or modified Model IR must migrate to the current "
+            "detail-view closure contract"
+        )
 
 
 def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) -> None:
@@ -118,6 +161,107 @@ def _validate_operator_granularity(model_ir: dict[str, Any], *, source: Path) ->
                     f"{len(operators)} operators; split it into primitive nodes "
                     "or add a drill view"
                 )
+
+
+def _validate_detail_view_closure(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Forbid a declared semantic module from terminating as an opaque leaf.
+
+    Revision 7 turns detail-view completeness into a machine-checked Model IR
+    contract.  A module contract denotes a compound mathematical/data-flow
+    operation, so its graph node must drill into a child view.  This catches
+    the otherwise-valid but information-losing pattern where a broad module
+    alias carries one equation and therefore evades the multi-operator test.
+    """
+
+    if int(model_ir.get("semantic_revision") or 0) < 7:
+        return
+    operations = (model_ir.get("semantic_contract") or {}).get("operations") or {}
+    for view_id, view in (model_ir.get("views") or {}).items():
+        for node in view.get("nodes", []) or []:
+            semantic_op = str(node.get("semantic_op") or "")
+            operation = operations.get(semantic_op) or {}
+            if operation.get("kind") != "module" or node.get("drill"):
+                continue
+            target = f"{view_id}.{node.get('id', '<missing>')}"
+            raise CatalogError(
+                f"{source}: compound semantic module {target} ({semantic_op}) "
+                "must drill into a typed child data-flow view"
+            )
+
+
+def _validate_semantic_release_contract(
+    model_ir: dict[str, Any], pipeline: dict[str, Any], *, source: Path
+) -> None:
+    """Pin source-reviewed semantic refinements in the release manifest.
+
+    Generic closure rules decide whether a graph is well formed.  This separate
+    catalog-owned contract records which source-reviewed views and primitive
+    nodes must survive generation and publication for this particular model.
+    It is deliberately independent of trace-derived mappings and timings.
+    """
+
+    revision = int(model_ir.get("semantic_revision") or 0)
+    if revision < 7:
+        return
+    contract = ((pipeline.get("acceptance") or {}).get("semantic_release_contract"))
+    if not isinstance(contract, dict):
+        raise CatalogError(
+            f"{source}: semantic_revision>=7 requires "
+            "pipeline.acceptance.semantic_release_contract"
+        )
+    if contract.get("expected_revision") != revision:
+        raise CatalogError(
+            f"{source}: semantic_release_contract.expected_revision must equal "
+            f"semantic_revision {revision}"
+        )
+    views = model_ir.get("views") or {}
+    required_views = contract.get("required_views")
+    if not isinstance(required_views, list) or not required_views:
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_views must be non-empty"
+        )
+    missing_views = sorted(set(required_views) - set(views))
+    if missing_views:
+        raise CatalogError(
+            f"{source}: semantic_release_contract references missing views "
+            f"{missing_views}"
+        )
+    required_drills = contract.get("required_drills")
+    if not isinstance(required_drills, dict) or not required_drills:
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_drills must be non-empty"
+        )
+    node_index = _node_index(views, source=source)
+    for target, expected_view in required_drills.items():
+        node = node_index.get(str(target))
+        if node is None or node.get("drill") != expected_view:
+            raise CatalogError(
+                f"{source}: semantic_release_contract requires {target!r} to drill "
+                f"to {expected_view!r}"
+            )
+    required_nodes = contract.get("required_nodes")
+    if not isinstance(required_nodes, dict) or not required_nodes:
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_nodes must be non-empty"
+        )
+    for view_id, node_ids in required_nodes.items():
+        if view_id not in views:
+            raise CatalogError(
+                f"{source}: semantic_release_contract references missing view "
+                f"{view_id!r}"
+            )
+        if not isinstance(node_ids, list) or not node_ids:
+            raise CatalogError(
+                f"{source}: semantic_release_contract nodes for {view_id!r} "
+                "must be a non-empty list"
+            )
+        actual = {str(node.get("id")) for node in views[view_id].get("nodes", [])}
+        missing_nodes = sorted(set(node_ids) - actual)
+        if missing_nodes:
+            raise CatalogError(
+                f"{source}: semantic_release_contract view {view_id!r} is missing "
+                f"required nodes {missing_nodes}"
+            )
 
 
 def _validate_leaf_equation_coverage(model_ir: dict[str, Any], *, source: Path) -> None:
@@ -2229,9 +2373,12 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         ("model_id", "model_label", "ir_version", "default_view", "views"),
         source=model_path,
     )
+    _validate_repository_semantic_policy(model_ir, source=model_path)
     _node_index(model_ir["views"], source=model_path)
     _validate_semantic_coverage(model_ir, source=model_path)
     _validate_operator_granularity(model_ir, source=model_path)
+    _validate_detail_view_closure(model_ir, source=model_path)
+    _validate_semantic_release_contract(model_ir, pipeline, source=model_path)
     _validate_leaf_equation_coverage(model_ir, source=model_path)
     _validate_notation_contract(model_ir, source=model_path)
     _validate_dimension_symbols(model_ir, source=model_path)

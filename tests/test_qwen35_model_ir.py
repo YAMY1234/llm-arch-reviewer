@@ -86,6 +86,141 @@ def test_qwen35_drills_have_explicit_boundary_contracts() -> None:
             assert contract["handoff_shape"]
 
 
+def test_qwen35_moe_compound_nodes_drill_to_complete_primitive_dataflows() -> None:
+    model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    assert model["semantic_revision"] >= 7
+    assert model["semantic_coverage"]["detail_view_closure"]
+
+    expected_drills = {
+        "moe_block.router": "moe_router_selection",
+        "moe_block.routed_experts": "moe_routed_expert",
+        "moe_block.shared_expert": "moe_shared_expert",
+        "mtp_moe_block.router": "mtp_moe_router_selection",
+        "mtp_moe_block.routed_experts": "mtp_moe_routed_expert",
+        "mtp_moe_block.shared_expert": "mtp_moe_shared_expert",
+    }
+    for target, child_view in expected_drills.items():
+        view_id, node_id = target.split(".", 1)
+        node = next(
+            node for node in model["views"][view_id]["nodes"] if node["id"] == node_id
+        )
+        assert node["drill"] == child_view
+
+    expected_detail_nodes = {
+        "moe_router_selection": {
+            "router_input",
+            "router_projection",
+            "softmax",
+            "topk_indices",
+            "gather_weights",
+            "selected_routes",
+        },
+        "moe_routed_expert": {
+            "hidden_input",
+            "route_assignments",
+            "dispatch",
+            "gate_projection",
+            "up_projection",
+            "silu",
+            "gated_product",
+            "down_projection",
+            "restore",
+            "routed_output",
+        },
+        "moe_shared_expert": {
+            "shared_input",
+            "gate_projection",
+            "up_projection",
+            "silu",
+            "gated_product",
+            "down_projection",
+            "scalar_gate_projection",
+            "scalar_sigmoid",
+            "gated_shared_output",
+            "shared_output",
+        },
+    }
+    for view_id, expected_nodes in expected_detail_nodes.items():
+        assert {node["id"] for node in model["views"][view_id]["nodes"]} == expected_nodes
+        mtp_view_id = f"mtp_{view_id}"
+        assert {
+            node["id"] for node in model["views"][mtp_view_id]["nodes"]
+        } == expected_nodes
+
+
+def test_qwen35_shared_expert_includes_source_backed_scalar_gate() -> None:
+    model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    operations = model["semantic_contract"]["operations"]
+    for prefix, view_id in (
+        ("qwen3_5.moe.shared", "moe_shared_expert"),
+        ("generation.mtp.moe.shared", "mtp_moe_shared_expert"),
+    ):
+        nodes = {node["id"]: node for node in model["views"][view_id]["nodes"]}
+        assert nodes["scalar_gate_projection"]["operator_signature"] == {
+            "symbolic": "H → 1",
+            "concrete": "4096 → 1",
+        }
+        assert "sigmoid" in operations[f"{prefix}.scalar_sigmoid"]["equation"]
+        assert "broadcast over H" in operations[f"{prefix}.gated_output"]["equation"]
+        assert nodes["scalar_gate_projection"]["semantic_details"]["runtime_mapping"][
+            "owner"
+        ].endswith("weighted_combine")
+
+        edges = {
+            (edge["from"], edge["to"]): edge
+            for edge in model["views"][view_id]["edges"]
+        }
+        assert edges[("shared_input", "scalar_gate_projection")]["shape"] == "[N,H]"
+        assert edges[("scalar_gate_projection", "scalar_sigmoid")]["shape"] == "[N,1]"
+        assert edges[("scalar_sigmoid", "gated_shared_output")]["shape"] == "[N,1]"
+        assert edges[("gated_shared_output", "shared_output")]["shape"] == "[N,H]"
+
+
+def test_qwen35_moe_detail_leaves_name_one_owner_without_copied_timing() -> None:
+    bundle = compile_catalog(MODEL_ROOT)
+    expected_owners = {
+        "moe_router_selection.router_projection": "moe_block.router",
+        "moe_router_selection.softmax": "moe_block.router",
+        "moe_router_selection.topk_indices": "moe_block.router",
+        "moe_router_selection.gather_weights": "moe_block.router",
+        "moe_routed_expert.dispatch": "moe_block.routed_experts",
+        "moe_routed_expert.gate_projection": "moe_block.routed_experts",
+        "moe_routed_expert.up_projection": "moe_block.routed_experts",
+        "moe_routed_expert.silu": "moe_block.routed_experts",
+        "moe_routed_expert.gated_product": "moe_block.routed_experts",
+        "moe_routed_expert.down_projection": "moe_block.routed_experts",
+        "moe_routed_expert.restore": "moe_block.routed_experts",
+        "moe_shared_expert.gate_projection": "moe_block.shared_expert",
+        "moe_shared_expert.up_projection": "moe_block.shared_expert",
+        "moe_shared_expert.silu": "moe_block.shared_expert",
+        "moe_shared_expert.gated_product": "moe_block.shared_expert",
+        "moe_shared_expert.down_projection": "moe_block.shared_expert",
+        "moe_shared_expert.scalar_gate_projection": "moe_block.weighted_combine",
+        "moe_shared_expert.scalar_sigmoid": "moe_block.weighted_combine",
+        "moe_shared_expert.gated_shared_output": "moe_block.weighted_combine",
+    }
+    timing_fields = {
+        "active_gpu_ms",
+        "ms_per_iter",
+        "gpu_elapsed_ms",
+        "gpu_residency_ms",
+    }
+    for profile in bundle["profiles"].values():
+        for target, owner in expected_owners.items():
+            cells = profile["data"][target]
+            assert len(cells) == 1
+            cell = next(iter(cells.values()))
+            assert cell["status"] == "fused"
+            assert cell["included_in"] == owner
+            assert cell["timing_role"] == "fused_member"
+            assert not (timing_fields & cell.keys())
+
+        for owner in set(expected_owners.values()):
+            owner_cell = next(iter(profile["data"][owner].values()))
+            assert owner_cell["active_gpu_ms"] > 0
+            assert owner_cell["timing_role"] == "fusion_owner"
+
+
 def test_qwen35_compiled_semantics_are_edge_derived_and_equation_complete() -> None:
     raw = load_yaml(MODEL_ROOT / "model_ir.yaml")
     compiled_views = compile_catalog(MODEL_ROOT)["model_ir"]["views"]
@@ -647,14 +782,14 @@ def test_qwen35_bindings_are_commit_specific_validated_and_complete() -> None:
     assert len(bundle["profiles"]) == 10
     variant = next(iter(bundle["execution_variants"].values()))
     target_count = sum(len(view["nodes"]) for view in variant["views"].values())
-    assert target_count == 203
+    assert target_count == 255
     assert len(bundle["implementations"]) == 2
     for implementation in bundle["implementations"].values():
         assert implementation["binding_status"] == "validated"
         assert implementation["source_lock_status"] == "runtime_verified"
         assert implementation["execution_validation"]["status"] == "pass"
         assert implementation["execution_validation"]["cuda_graph_enabled"] is False
-        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_2ca0442bb646b1ff"
+        assert implementation["execution_validation"]["execution_fingerprint"] == "exec_d324d6ce3cf03ea1"
         assert len(implementation["node_bindings"]) == target_count
 
 

@@ -40,10 +40,16 @@ audit_views:
 - generation_loop
 - layer_schedule
 - moe_block
+- moe_router_selection
+- moe_routed_expert
+- moe_shared_expert
 - mtp_draft_head
 - mtp_full_attention
 - mtp_full_attention_moe_block
 - mtp_moe_block
+- mtp_moe_router_selection
+- mtp_moe_routed_expert
+- mtp_moe_shared_expert
 - stack
 - state_tensors
 - top
@@ -299,16 +305,35 @@ entrypoints:
     disposition: reviewed
   expected_ir_views:
   - moe_block
+  - moe_router_selection
+  - moe_routed_expert
+  - moe_shared_expert
   obligations:
   - id: model_ir_primitive
     kind: model_ir_primitive
     source_anchor: class Qwen2MoeSparseMoeBlock
     disposition: mapped
     ir_targets:
-    - moe_block.routed_experts
-    - moe_block.router
-    - moe_block.shared_expert
     - moe_block.weighted_combine
+    - moe_router_selection.gather_weights
+    - moe_router_selection.router_projection
+    - moe_router_selection.softmax
+    - moe_router_selection.topk_indices
+    - moe_routed_expert.dispatch
+    - moe_routed_expert.down_projection
+    - moe_routed_expert.gate_projection
+    - moe_routed_expert.gated_product
+    - moe_routed_expert.restore
+    - moe_routed_expert.silu
+    - moe_routed_expert.up_projection
+    - moe_shared_expert.down_projection
+    - moe_shared_expert.gate_projection
+    - moe_shared_expert.gated_product
+    - moe_shared_expert.gated_shared_output
+    - moe_shared_expert.scalar_gate_projection
+    - moe_shared_expert.scalar_sigmoid
+    - moe_shared_expert.silu
+    - moe_shared_expert.up_projection
   - id: tensor_boundary
     kind: tensor_boundary
     source_anchor: class Qwen2MoeSparseMoeBlock
@@ -316,6 +341,13 @@ entrypoints:
     ir_targets:
     - moe_block.input_hidden
     - moe_block.output_hidden
+    - moe_router_selection.router_input
+    - moe_router_selection.selected_routes
+    - moe_routed_expert.hidden_input
+    - moe_routed_expert.route_assignments
+    - moe_routed_expert.routed_output
+    - moe_shared_expert.shared_input
+    - moe_shared_expert.shared_output
 - id: optional_mtp_layer
   component: optional shared-embedding one-layer MTP draft model
   source_file: python/sglang/srt/models/qwen3_5.py
@@ -330,6 +362,9 @@ entrypoints:
   - mtp_full_attention
   - mtp_full_attention_moe_block
   - mtp_moe_block
+  - mtp_moe_router_selection
+  - mtp_moe_routed_expert
+  - mtp_moe_shared_expert
   obligations:
   - id: model_ir_primitive
     kind: model_ir_primitive
@@ -353,10 +388,26 @@ entrypoints:
     - mtp_full_attention_moe_block.input_norm
     - mtp_full_attention_moe_block.layer_residual
     - mtp_full_attention_moe_block.post_attention_norm
-    - mtp_moe_block.routed_experts
-    - mtp_moe_block.router
-    - mtp_moe_block.shared_expert
     - mtp_moe_block.weighted_combine
+    - mtp_moe_router_selection.gather_weights
+    - mtp_moe_router_selection.router_projection
+    - mtp_moe_router_selection.softmax
+    - mtp_moe_router_selection.topk_indices
+    - mtp_moe_routed_expert.dispatch
+    - mtp_moe_routed_expert.down_projection
+    - mtp_moe_routed_expert.gate_projection
+    - mtp_moe_routed_expert.gated_product
+    - mtp_moe_routed_expert.restore
+    - mtp_moe_routed_expert.silu
+    - mtp_moe_routed_expert.up_projection
+    - mtp_moe_shared_expert.down_projection
+    - mtp_moe_shared_expert.gate_projection
+    - mtp_moe_shared_expert.gated_product
+    - mtp_moe_shared_expert.gated_shared_output
+    - mtp_moe_shared_expert.scalar_gate_projection
+    - mtp_moe_shared_expert.scalar_sigmoid
+    - mtp_moe_shared_expert.silu
+    - mtp_moe_shared_expert.up_projection
   - id: state_read
     kind: state_read
     source_anchor: class Qwen3_5ForCausalLM
@@ -383,6 +434,13 @@ entrypoints:
     - mtp_full_attention_moe_block.output_hidden
     - mtp_moe_block.input_hidden
     - mtp_moe_block.output_hidden
+    - mtp_moe_router_selection.router_input
+    - mtp_moe_router_selection.selected_routes
+    - mtp_moe_routed_expert.hidden_input
+    - mtp_moe_routed_expert.route_assignments
+    - mtp_moe_routed_expert.routed_output
+    - mtp_moe_shared_expert.shared_input
+    - mtp_moe_shared_expert.shared_output
 - id: persistent_state
   component: KV GDN recurrent and tentative state boundaries
   source_file: python/sglang/srt/models/qwen3_5.py

@@ -102,8 +102,11 @@ entry paths must be marked explicitly rather than bypassing this check.
   linear-attention layers are not expanded individually.
 - A representative layer view expands the major stable semantic modules and
   their data flow, such as Attention, MoE/MLP, and residual/HyperConnection.
-  A module may drill down further when its internal data flow is
-  architecturally meaningful.
+  Every node whose semantic contract is classified as a compound `module`
+  must drill into a typed child data-flow view; one broad equation or one broad
+  operator alias is not a substitute for the internal projection, activation,
+  routing, reduction, and state transitions. Semantic revision 7 makes this a
+  compiler error and requires `semantic_coverage.detail_view_closure`.
 - A one-off or layer-specific side path, such as PLE injection, appears
   separately in the stack view. It does not require a duplicated special-layer
   diagram.
@@ -318,7 +321,10 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
    composite transformation instead of relying on a generated fallback.
 6. Declare each drill boundary as an exact node, an exact multi-node lifecycle,
    or an explicit external entry; define input, handoff, and output shapes.
-7. Run semantic closure tests before attaching runtime data.
+7. Mark compound operations as semantic-contract `module` operations and give
+   each one a child view whose primitive nodes, equations, dimensions, dtypes,
+   state lifetimes, and source-ledger obligations are complete.
+8. Run semantic closure tests before attaching runtime data.
 
 Changing Model IR requires a semantic architecture change or correction. A
 framework refactor or kernel fusion is not sufficient.
@@ -1029,6 +1035,9 @@ test that declares itself correct.
 
 - All documents pass their JSON schema and cross-document reference checks.
 - Model IR IDs are stable and every drill target resolves.
+- For semantic revision 7 and newer, every semantic-contract `module` node has
+  a drill view and the catalog declares `detail_view_closure`; an opaque module
+  leaf fails compilation even if it carries an equation or a single alias.
 - A selected drillable compute/module node or runtime-bearing primitive leaf is
   never presented as a `structural` boundary. It must carry positive
   measured/inclusive-union timing, be an explicit fused member with one timing
@@ -1185,6 +1194,12 @@ test that declares itself correct.
   verifies the expected `semantic_revision`, semantic-ledger audit fingerprint,
   and required primitive drill/view IDs; a branch that contains the refinement
   but is not an ancestor of the release commit cannot silently satisfy the gate.
+- Repository `semantic-policy.yaml` sets the minimum revision for every new or
+  modified Model IR. A pre-minimum catalog is grandfathered only by the exact
+  digest of its already-audited Model IR; changing one byte invalidates the
+  exception and requires migration, so a new catalog cannot opt back into a
+  weaker revision. The release identity records the policy digest alongside
+  the compiler and Viewer digests.
 - The published bundle must report the same semantic revision and primitive
   view inventory as the source catalog. Release validation opens the published
   artifact and checks representative primitive paths rather than trusting only

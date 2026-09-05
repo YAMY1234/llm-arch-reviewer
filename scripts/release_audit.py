@@ -208,6 +208,11 @@ def build_acceptance_summary(
             "compiler_sha256": sha256_file(
                 repo_root / "src" / "llm_arch_v2" / "compiler.py"
             ),
+            "semantic_policy_sha256": (
+                sha256_file(catalog_root / "semantic-policy.yaml")
+                if (catalog_root / "semantic-policy.yaml").is_file()
+                else None
+            ),
             "viewer_sha256": sha256_file(repo_root / "docs" / "viewer.html"),
             "model_set_sha256": object_sha256(
                 [
