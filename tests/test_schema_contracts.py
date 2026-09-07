@@ -81,6 +81,23 @@ def test_every_v2_json_schema_is_well_formed(schema_path: Path) -> None:
     Draft202012Validator.check_schema(json.loads(schema_path.read_text()))
 
 
+def test_quantization_is_a_first_class_semantic_operation_kind() -> None:
+    schema = json.loads(MODEL_IR_SCHEMA.read_text())
+    operation_kinds = schema["$defs"]["operationContract"]["properties"]["kind"][
+        "enum"
+    ]
+    assert "quantization" in operation_kinds
+    deepseek = yaml.safe_load(
+        (CATALOG_ROOT / "deepseek_v4_pro" / "model_ir.yaml").read_text()
+    )
+    assert (
+        deepseek["semantic_contract"]["operations"][
+            "index_compressor.fp4_quantize"
+        ]["kind"]
+        == "quantization"
+    )
+
+
 def test_every_catalog_has_a_validation_evidence_contract() -> None:
     catalogs = {
         path.parent for path in CATALOG_ROOT.glob("*/model_ir.yaml")
@@ -129,7 +146,11 @@ def test_dimension_symbol_schema_rejects_unscoped_or_unknown_stage_resolution(
     model_root = tmp_path / "qwen38_flash_next"
     model_root.mkdir()
     (model_root / "model_ir.yaml").write_text(yaml.safe_dump(source, sort_keys=False))
-    # Copying a complete catalog is unnecessary: dimension validation happens
-    # before execution/binding/profile discovery.
+    # Revision-7 catalogs require their exhaustive semantic release contract
+    # before dimension validation; execution/binding/profile artifacts remain
+    # unnecessary for this fail-closed path.
+    (model_root / "pipeline.yaml").write_text(
+        (CATALOG_ROOT / "qwen38_flash_next" / "pipeline.yaml").read_text()
+    )
     with pytest.raises(CatalogError, match="unknown targets"):
         compile_catalog(model_root)

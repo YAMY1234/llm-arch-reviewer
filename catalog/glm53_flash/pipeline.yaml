@@ -81,6 +81,167 @@ capture_policy:
     require_graph_state_match: true
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views:
+    - vision_frontend
+    - vision_merger
+    - vision_block
+    - decoder_stack
+    - mhc_transform
+    - linear_attention
+    - dsa_attention
+    - dense_mlp
+    - moe
+    - mtp_extension
+    required_drills:
+      top.vision_frontend: vision_frontend
+      top.decoder_stack: decoder_stack
+      top.mtp_extension: mtp_extension
+      vision_frontend.vision_blocks: vision_block
+      vision_frontend.merger: vision_merger
+      decoder_stack.attn_mhc_pre: mhc_transform
+      decoder_stack.linear_attention: linear_attention
+      decoder_stack.dsa_attention: dsa_attention
+      decoder_stack.ffn_mhc_pre: mhc_transform
+      decoder_stack.dense_mlp: dense_mlp
+      decoder_stack.moe: moe
+      mtp_extension.nextn_dsa: dsa_attention
+      mtp_extension.nextn_moe: moe
+    required_nodes:
+      vision_frontend:
+      - vision_in
+      - patch_projection
+      - position_encoding
+      - vision_blocks
+      - post_norm
+      - spatial_group
+      - spatial_downsample
+      - merger
+      - vision_out
+      vision_merger:
+      - merger_in
+      - projection
+      - post_norm
+      - gelu
+      - gate_up
+      - clamp
+      - silu
+      - product
+      - down
+      - merger_out
+      vision_block:
+      - block_in
+      - norm1
+      - qkv_projection
+      - qk_norm_rotary
+      - attention
+      - attention_output
+      - attention_residual
+      - norm2
+      - gate_up_projection
+      - clamped_swiglu
+      - down_projection
+      - block_out
+      decoder_stack:
+      - stack_in
+      - schedule
+      - attn_mhc_pre
+      - input_norm
+      - attention_schedule
+      - linear_attention
+      - dsa_attention
+      - attn_mhc_combine
+      - ffn_mhc_pre
+      - post_attention_norm
+      - feed_forward_schedule
+      - dense_mlp
+      - moe
+      - ffn_mhc_combine
+      - stack_out
+      mhc_transform:
+      - mhc_in
+      - flatten_norm
+      - coefficient_map
+      - pre_weights
+      - post_weights
+      - combine_weights
+      - stream_collapse
+      - sublayer_delta
+      - post_place
+      - residual_mix
+      - mhc_out
+      linear_attention:
+      - attn_in
+      - qkv_projection
+      - qkv_short_conv
+      - qk_l2_norm
+      - forget_projection
+      - forget_decay
+      - beta_projection
+      - conv_state
+      - recurrent_state
+      - recurrent_update
+      - query_readout
+      - output_gate
+      - gated_norm
+      - output_projection
+      - attn_out
+      dsa_attention:
+      - attn_in
+      - q_a_projection
+      - q_a_norm
+      - q_b_projection
+      - kv_a_projection
+      - kv_a_norm
+      - latent_kv_cache
+      - latent_kv_reconstruction
+      - index_q_projection
+      - index_k_projection
+      - index_weight_projection
+      - key_pool_compression
+      - index_k_cache
+      - index_logits
+      - top_pool_selection
+      - token_expansion
+      - selected_indices
+      - sparse_mla_core
+      - output_projection
+      - attn_out
+      dense_mlp:
+      - mlp_in
+      - gate_up_projection
+      - clamped_swiglu
+      - down_projection
+      - mlp_out
+      moe:
+      - moe_in
+      - router
+      - correction_bias
+      - topk
+      - dispatch
+      - routed_gate_up
+      - routed_activation
+      - routed_down
+      - routed_weighted_combine
+      - shared_gate_up
+      - shared_activation
+      - shared_down
+      - combine
+      - moe_out
+      mtp_extension:
+      - candidate_token_ids
+      - candidate_embedding
+      - target_hidden_state
+      - embedding_norm
+      - hidden_norm
+      - concatenate
+      - eh_projection
+      - nextn_dsa
+      - nextn_moe
+      - shared_head_norm
+      - nextn_lm_head
+      - draft_logits
   expected_profile_points: 10
   unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported
   cross_framework_performance_policy: same_gpu_sku_only

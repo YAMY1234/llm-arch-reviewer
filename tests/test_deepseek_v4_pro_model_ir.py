@@ -100,7 +100,7 @@ def test_semantic_source_ledger_has_no_pending_dispositions() -> None:
     assert ledger["source_snapshot"]["revision"] == (
         "72e1d3230f6c080a530b0a1d46f8eb4602340597"
     )
-    assert len(ledger["audit_views"]) == 14
+    assert len(ledger["audit_views"]) == 15
     for entrypoint in ledger["entrypoints"]:
         assert entrypoint["review_status"] == "verified"
         assert all(
@@ -111,6 +111,44 @@ def test_semantic_source_ledger_has_no_pending_dispositions() -> None:
             item["disposition"] != "pending"
             for item in entrypoint["obligations"]
         )
+
+
+def test_csa_index_compressor_has_source_backed_primitive_closure() -> None:
+    model = _load("model_ir.yaml")
+    view = model["views"]["csa_index_compressor"]
+    assert [node["id"] for node in view["nodes"]] == [
+        "hidden_input",
+        "kv_gate_projection",
+        "overlap_layout",
+        "softmax_pool",
+        "rms_norm",
+        "rope",
+        "hadamard",
+        "fp4_quantize",
+        "partial_state",
+        "compressed_cache",
+        "compressed_key",
+    ]
+    operations = model["semantic_contract"]["operations"]
+    for node in view["nodes"]:
+        assert operations[node["semantic_op"]]["equation"]
+        if node["id"] not in {"hidden_input", "compressed_key"}:
+            mapping = node["semantic_details"]["runtime_mapping"]
+            assert mapping["expectation"] == "fused"
+            assert mapping["owner"] == "csa_indexer.k_compress"
+
+    ledger = _load("semantic_source_ledger.yaml")
+    compressor = next(
+        entry for entry in ledger["entrypoints"] if entry["id"] == "compressor"
+    )
+    mapped = {
+        target
+        for obligation in compressor["obligations"]
+        for target in obligation.get("ir_targets", [])
+    }
+    assert {
+        f"csa_index_compressor.{node['id']}" for node in view["nodes"]
+    } <= mapped
 
 
 def test_upstream_sglang_recipe_claim_matches_pinned_source_ledger() -> None:
@@ -221,14 +259,14 @@ def test_stage1_sol_gap_input_covers_execution_ir_without_framework_costs() -> N
     assert gap["status"] == "partial_calibration"
     assert sol["critical_path"]["complete_step"] is True
     assert sol["coverage"] == {
-        "declared_node_count": 153,
+        "declared_node_count": 164,
         "ideal_estimated_node_count": 68,
         "calibrated_node_count": 0,
         "plan_identified_node_count": 0,
         "transition_simulated_node_count": 68,
         "legacy_sensitivity_node_count": 0,
         "observed_comparison_node_count": 54,
-        "structural_node_count": 85,
+        "structural_node_count": 96,
         "unsupported_targets": [],
         "coverage_semantics": "declared adapter nodes; not additive timing coverage",
     }

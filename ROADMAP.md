@@ -110,34 +110,40 @@ M0 exit criteria:
   production transfer, compiled Model IR identity and target existence, explicit fusion ownership,
   controlled typed support work, selected-window hashing, complete event/duration
   accounting, and content-addressed final input-document closure.
-- [x] Require an authoritative production capture timestamp, carry it through
+- [x] Require an authoritative production capture timestamp derived from a
+  hash-sealed capture record, carry both value and authority digest through
   acceptance, and render trace time/provenance in the bounded comparison picker.
-- [x] Provide `scripts/run_pipeline_v2.py plan|accept` as the working interface.
+- [x] Provide `scripts/run_pipeline_v2.py plan|accept` as the low-level producer interface.
   Require `materialize_binding_revision.py` to verify the exact accepted
   revision before emitting a schema-valid catalog Binding, without stale
   template inheritance and with source links rebuilt from accepted rules.
-  M1 extends it with resumable capture/parse/map/materialize producers; it does
-  not replace or weaken these gates.
+  The M1 `run` DAG consumes these artifacts; it does not replace or weaken the gates.
 
 ## M1 — One-command model and framework onboarding
 
 **Goal:** a new model/framework is produced by adapters and manifests, not by
 editing generated JSON or viewer code.
 
-- Implement `run_pipeline_v2.py` as a resumable stage DAG with immutable inputs,
+- [x] Implement `run_pipeline_v2.py` as a resumable stage DAG with immutable inputs,
   content hashes, cached outputs, and per-stage acceptance reports.
-- Define model, framework, backend, hardware, and workload adapter interfaces.
-- Automate source/config extraction, semantic-ledger creation, candidate
+- [ ] Define model, framework, backend, hardware, and workload adapter interfaces.
+- [ ] Automate source/config extraction, semantic-ledger creation, candidate
   Execution Plan generation, eager reconciliation, production trace capture,
   bundle compilation, and browser QA.
-- Replace every eligible `immutable_external_attestation` with an
+- [ ] Replace every eligible `immutable_external_attestation` with an
   adapter-produced, content-addressed evidence extract whose source locator and
   value are machine compared with the assertion. Retain manual attestation only
   for an upstream source that cannot be ingested in CI, and keep that weaker
   assurance visible rather than presenting it as machine verification.
-- Generate a review packet that isolates semantic changes, execution-contract
-  changes, unresolved evidence, and rendering screenshots.
-- Prove the generic path with at least two model families and two frameworks.
+- [x] Generate a deterministic JSON/Markdown review packet that isolates stable
+  Model/Execution/Binding identities, config disposition, eager-to-production
+  closure, materialization authority, unresolved evidence, and release-gate
+  status. Real-browser screenshots remain owned by the unified release audit.
+- [x] Prove the release path with two independent regression pilots: a
+  content-addressed Qwen3.8 existing-Execution add-trace refresh and four
+  matched GLM-5.3-Flash SGLang/vLLM CUDA Graph decode comparisons. The next
+  expansion target is a second adapter-produced add-trace family; the DAG
+  remains fail-closed until that adapter exists.
 
 Exit: onboarding a supported model requires a manifest plus narrowly scoped
 adapter data, and the pipeline refuses to publish any unresolved stage.
@@ -216,7 +222,9 @@ The roadmap is measured by evidence quality, not the number of diagrams:
 
 1. Keep the M0 release gate mandatory and regenerate the published acceptance
    ledger whenever catalog, compiler, Viewer, or evidence changes.
-2. Begin M1 with the resumable, manifest-driven stage DAG while preserving the
-   same fail-closed compiler, attribution, and real-browser release contracts.
-3. Prove M1 using one existing catalog refresh and one net-new model without
-   adding a second Viewer or a model-specific publishing path.
+2. Extend the completed orchestration core with framework/model adapters for
+   capture and evidence production; authored evidence remains a fail-closed
+   pause point until the relevant adapter exists.
+3. Keep the Qwen3.8 existing-Execution refresh and GLM5.3 cross-framework Viewer
+   scenario as regression pilots, then add the first fully adapter-produced
+   net-new model without a second Viewer or publishing path.

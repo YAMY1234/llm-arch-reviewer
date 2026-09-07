@@ -2,6 +2,7 @@ schema_version: model-ir.v2
 model_id: glm53_flash
 model_label: GLM-5.3-Flash mixed FP8/BF16 multimodal
 ir_version: 2
+semantic_revision: 7
 default_view: top
 default_execution_path: tp8
 
@@ -30,6 +31,7 @@ dimensions:
   K: 8 selected experts per token
   Hv: 1024 vision hidden width
   M: merged vision-token count
+  Fvm: 10240 vision-merger SwiGLU intermediate width
 
 facts:
   checkpoint: zai-org/GLM-5.3-Flash
@@ -101,6 +103,17 @@ semantic_contract:
     vision.spatial_downsample: {kind: projection, equation: 'Y = X_grouped * W_down^T'}
     vision.merger: {kind: module, equation: 'Y = W_down * ClampedSwiGLU(W_gate_up * RMSNorm(X))'}
     vision.output: {kind: boundary, equation: 'media_features := encoded and merged vision tokens with shape [M,H]'}
+
+    vision_merger.input: {kind: boundary, equation: 'X := downsampled media features [M,H]'}
+    vision_merger.projection: {kind: projection, equation: 'X_proj = X W_proj^T in R^(M x H)'}
+    vision_merger.post_norm: {kind: normalization, equation: 'X_norm = LayerNorm(X_proj; gamma, beta, epsilon)'}
+    vision_merger.gelu: {kind: activation, equation: 'X_pre = GELU(X_norm)'}
+    vision_merger.gate_up: {kind: projection, equation: '[G_raw,U_raw] = X_pre W_gate_up^T with G_raw,U_raw in R^(M x Fvm)'}
+    vision_merger.clamp: {kind: activation, equation: 'G = min(G_raw,10); U = clamp(U_raw,-10,10)'}
+    vision_merger.silu: {kind: activation, equation: 'A = SiLU(G) = G elementwise_mul sigmoid(G)'}
+    vision_merger.product: {kind: composition, equation: 'M_hidden = A elementwise_mul U'}
+    vision_merger.down: {kind: projection, equation: 'Y = M_hidden W_down^T in R^(M x H)'}
+    vision_merger.output: {kind: boundary, equation: 'Y := merged media features [M,H]'}
 
     vision_block.input: {kind: boundary, equation: 'X := input patch states with shape [Patches,Hv]'}
     vision_block.norm1: {kind: normalization, equation: 'Xn = RMSNorm(X; gamma_1, epsilon)'}
@@ -217,11 +230,24 @@ semantic_contract:
     mtp.lm_head: {kind: projection, equation: 'draft_logits = Y_nextn * W_vocab^T'}
     mtp.draft_logits: {kind: boundary, equation: 'draft_logits := NextN vocabulary logits [B,T,V]'}
 
+semantic_coverage:
+  operator_dataflow_closure: complete_for_checkpoint_declared_text_vision_and_optional_nextn_paths
+  parameter_closure: all_embedding_vision_attention_linear_attention_sparse_attention_moe_norm_and_head_parameters_declared
+  state_closure: mhc_kda_convolution_recurrence_dsa_cache_index_and_optional_nextn_state_boundaries_declared
+  layer_variant_closure: all_45_decoder_34_kda_11_dsa_dense_moe_and_24_vision_block_variants_declared
+  detail_view_closure: every compound semantic module drills to a primitive equation shape dtype and state graph
+  config_field_disposition:
+    model_ir: [architecture_dimensions, layer_schedule, expert_routing, vision_topology, nextn_layers]
+    execution_ir: [parallelism_topology, collectives, rank_local_layouts, generation_mode]
+    binding_profile: [framework_backend, kernel_fusion, runtime_dtypes, timing_ownership]
+    excluded: [training_only_initialization, serialization_hints]
+
 boundary_contracts:
   - {parent_node: top.vision_frontend, boundary_mode: exact_node, child_view: vision_frontend, input_shape: "[Patches,3,2,14,14] + grid", output_shape: "[M,H]"}
   - {parent_node: top.decoder_stack, boundary_mode: exact_node, child_view: decoder_stack, input_shape: "[B,T,R,H]", output_shape: "[B,T,R,H]"}
   - {parent_node: top.mtp_extension, boundary_mode: external_entry, child_view: mtp_extension, input_shape: "candidate ids [B,T] + target hidden [B,T,H]", output_shape: "[B,T,V]"}
   - {parent_node: vision_frontend.vision_blocks, boundary_mode: exact_node, child_view: vision_block, input_shape: "[Patches,Hv]", output_shape: "[Patches,Hv]"}
+  - {parent_node: vision_frontend.merger, boundary_mode: exact_node, child_view: vision_merger, input_shape: "[M,H]", output_shape: "[M,H]"}
   - {parent_node: decoder_stack.attn_mhc_pre, scope_nodes: [decoder_stack.attn_mhc_pre, decoder_stack.attn_mhc_combine], boundary_mode: exact_lifecycle, child_view: mhc_transform, input_shape: "residual streams [B,T,R,H] + attention delta [B,T,H]", handoff_shape: "collapsed attention input [B,T,H] -> attention delta [B,T,H]", output_shape: "[B,T,R,H]"}
   - {parent_node: decoder_stack.linear_attention, boundary_mode: exact_node, child_view: linear_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
   - {parent_node: decoder_stack.dsa_attention, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
@@ -336,9 +362,10 @@ views:
         semantic_op: vision.input
         boundary_direction: input
       - id: patch_projection
-        label: "3D patch projection\n3×2×14×14 → Hv"
+        label: 3D patch projection
         shape: gemm
         semantic_op: vision.patch_projection
+        operator_signature: {symbolic: '3 × 2 × 14 × 14 → Hv', concrete: '1176 → 1024'}
       - id: position_encoding
         label: "2D rotary position assignment from grid"
         shape: elem
@@ -357,13 +384,16 @@ views:
         shape: elem
         semantic_op: vision.spatial_group
       - id: spatial_downsample
-        label: "learned 2×2 spatial downsample\n4Hv → H"
+        label: learned 2×2 spatial downsample
         shape: gemm
         semantic_op: vision.spatial_downsample
+        operator_signature: {symbolic: '4 × Hv → H', concrete: '4096 → 4096'}
       - id: merger
-        label: "projection norm + clamped SwiGLU merger\nH → 10240 → H"
+        label: projection norm + clamped SwiGLU merger
         shape: block
         semantic_op: vision.merger
+        operator_signature: {symbolic: 'H → Fvm → H', concrete: '4096 → 10240 → 4096'}
+        drill: vision_merger
       - id: vision_out
         label: "media features\n[M,H]"
         shape: io
@@ -379,6 +409,66 @@ views:
       - {from: spatial_downsample, to: merger, identity: downsampled_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
       - {from: merger, to: vision_out, identity: media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: model_activation_dtype, state: ephemeral_output}
 
+  vision_merger:
+    title: GLM-5.3-Flash projection norm and clamped SwiGLU vision merger
+    nodes:
+      - id: merger_in
+        label: "downsampled media features\n[M,H]"
+        shape: io
+        semantic_op: vision_merger.input
+        boundary_direction: input
+      - id: projection
+        label: replicated input projection
+        shape: gemm
+        semantic_op: vision_merger.projection
+        operator_signature: {symbolic: 'H → H', concrete: '4096 → 4096'}
+      - id: post_norm
+        label: post-projection LayerNorm
+        shape: norm
+        semantic_op: vision_merger.post_norm
+      - id: gelu
+        label: GELU pre-activation
+        shape: elem
+        semantic_op: vision_merger.gelu
+      - id: gate_up
+        label: gate/up projection
+        shape: gemm
+        semantic_op: vision_merger.gate_up
+        operator_signature: {symbolic: 'H → 2 × Fvm', concrete: '4096 → 20480'}
+      - id: clamp
+        label: "split and clamp\ngate ≤ 10; up ∈ [-10,10]"
+        shape: elem
+        semantic_op: vision_merger.clamp
+      - id: silu
+        label: SiLU clamped gate
+        shape: elem
+        semantic_op: vision_merger.silu
+      - id: product
+        label: clamped SwiGLU product
+        shape: elem
+        semantic_op: vision_merger.product
+      - id: down
+        label: row-parallel down projection
+        shape: gemm
+        semantic_op: vision_merger.down
+        operator_signature: {symbolic: 'Fvm → H', concrete: '10240 → 4096'}
+      - id: merger_out
+        label: "merged media features\n[M,H]"
+        shape: io
+        semantic_op: vision_merger.output
+        boundary_direction: output
+    edges:
+      - {from: merger_in, to: projection, identity: downsampled_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: projection, to: post_norm, identity: projected_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: post_norm, to: gelu, identity: normalized_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: gelu, to: gate_up, identity: preactivated_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: gate_up, to: clamp, identity: raw_gate_and_up, shape: "[M,2*Fvm]", layout: packed_media_tokens_gate_up, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: clamp, to: silu, identity: clamped_gate, shape: "[M,Fvm]", layout: packed_media_tokens_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: silu, to: product, identity: activated_gate, shape: "[M,Fvm]", layout: packed_media_tokens_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: clamp, to: product, identity: clamped_up, shape: "[M,Fvm]", layout: packed_media_tokens_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: product, to: down, identity: gated_vision_intermediate, shape: "[M,Fvm]", layout: packed_media_tokens_intermediate, dtype: vision_activation_dtype, state: ephemeral_activation}
+      - {from: down, to: merger_out, identity: merged_media_features, shape: "[M,H]", layout: packed_media_tokens_hidden, dtype: model_activation_dtype, state: ephemeral_output}
+
   vision_block:
     title: One semantic vision transformer block
     nodes:
@@ -392,9 +482,10 @@ views:
         shape: norm
         semantic_op: vision_block.norm1
       - id: qkv_projection
-        label: "Q/K/V projection\nHv → 3Hv"
+        label: Q/K/V projection
         shape: gemm
         semantic_op: vision_block.qkv_projection
+        operator_signature: {symbolic: 'Hv → 3 × Hv', concrete: '1024 → 3072'}
       - id: qk_norm_rotary
         label: "per-head Q/K norm + 2D rotary"
         shape: norm
@@ -416,17 +507,19 @@ views:
         shape: norm
         semantic_op: vision_block.norm2
       - id: gate_up_projection
-        label: "gate/up projection\nHv → 2×4096"
+        label: gate/up projection
         shape: gemm
         semantic_op: vision_block.gate_up_projection
+        operator_signature: {symbolic: 'Hv → 2 × 4096', concrete: '1024 → 8192'}
       - id: clamped_swiglu
         label: "clamped SwiGLU\nlimit=10"
         shape: elem
         semantic_op: vision_block.clamped_swiglu
       - id: down_projection
-        label: "down projection\n4096 → Hv"
+        label: down projection
         shape: gemm
         semantic_op: vision_block.down_projection
+        operator_signature: {symbolic: '4096 → Hv', concrete: '4096 → 1024'}
       - id: block_out
         label: "updated patch states\n[Patches,Hv]"
         shape: io
@@ -551,9 +644,10 @@ views:
         shape: norm
         semantic_op: mhc.flatten_norm
       - id: coefficient_map
-        label: "learned map\nR·H → (2+R)R = 24"
+        label: learned mHC coefficient map
         shape: gemm
         semantic_op: mhc.coefficient_map
+        operator_signature: {symbolic: 'R × H → (2 + R) × R', concrete: '16384 → 24'}
       - id: pre_weights
         label: "sigmoid pre-collapse weights + ε\n[B,T,R]"
         shape: elem
@@ -633,9 +727,10 @@ views:
         shape: elem
         semantic_op: linear_attention.forget_decay
       - id: beta_projection
-        label: "sigmoid beta projection\nH → N=64"
+        label: sigmoid beta projection
         shape: gemm
         semantic_op: linear_attention.beta_projection
+        operator_signature: {symbolic: 'H → N', concrete: '4096 → 64'}
       - id: conv_state
         label: "Q/K/V convolution histories\nread/write"
         shape: cache
@@ -661,9 +756,10 @@ views:
         shape: norm
         semantic_op: linear_attention.gated_norm
       - id: output_projection
-        label: "attention output projection\n64×128 → H"
+        label: attention output projection
         shape: gemm
         semantic_op: linear_attention.output_projection
+        operator_signature: {symbolic: 'N × Dkda → H', concrete: '8192 → 4096'}
       - id: attn_out
         label: "KDA output\n[B,T,H]"
         shape: io
@@ -699,9 +795,10 @@ views:
         semantic_op: dsa_attention.input
         boundary_direction: input
       - id: q_a_projection
-        label: "query latent projection\nH → Cq=1536"
+        label: query latent projection
         shape: gemm
         semantic_op: dsa_attention.q_a_projection
+        operator_signature: {symbolic: 'H → Cq', concrete: '4096 → 1536'}
       - id: q_a_norm
         label: "query-latent RMSNorm"
         shape: norm
@@ -711,9 +808,10 @@ views:
         shape: gemm
         semantic_op: dsa_attention.q_b_projection
       - id: kv_a_projection
-        label: "KV latent projection\nH → Ckv=512"
+        label: KV latent projection
         shape: gemm
         semantic_op: dsa_attention.kv_a_projection
+        operator_signature: {symbolic: 'H → Ckv', concrete: '4096 → 512'}
       - id: kv_a_norm
         label: "KV-latent RMSNorm"
         shape: norm
@@ -731,13 +829,15 @@ views:
         shape: gemm
         semantic_op: dsa_attention.index_q_projection
       - id: index_k_projection
-        label: "index key projection + LayerNorm\nH → 128"
+        label: index key projection + LayerNorm
         shape: gemm
         semantic_op: dsa_attention.index_k_projection
+        operator_signature: {symbolic: 'H → Di', concrete: '4096 → 128'}
       - id: index_weight_projection
-        label: "per-index-head score weights\nH → 32"
+        label: per-index-head score weights
         shape: gemm
         semantic_op: dsa_attention.index_weight_projection
+        operator_signature: {symbolic: 'H → Qi', concrete: '4096 → 32'}
       - id: key_pool_compression
         label: "learned four-token key pooling + positional embedding"
         shape: elem
@@ -767,9 +867,10 @@ views:
         shape: attn
         semantic_op: dsa_attention.sparse_mla_core
       - id: output_projection
-        label: "attention output projection\n64×256 → H"
+        label: attention output projection
         shape: gemm
         semantic_op: dsa_attention.output_projection
+        operator_signature: {symbolic: 'N × Dv → H', concrete: '16384 → 4096'}
       - id: attn_out
         label: "DSA output\n[B,T,H]"
         shape: io
@@ -810,17 +911,19 @@ views:
         semantic_op: dense_mlp.input
         boundary_direction: input
       - id: gate_up_projection
-        label: "gate/up projection\nH → 2×12288"
+        label: gate/up projection
         shape: gemm
         semantic_op: dense_mlp.gate_up_projection
+        operator_signature: {symbolic: 'H → 2 × 12288', concrete: '4096 → 24576'}
       - id: clamped_swiglu
         label: "SiLU(min(gate,10)) × clamp(up,-10,10)"
         shape: elem
         semantic_op: dense_mlp.clamped_swiglu
       - id: down_projection
-        label: "down projection\n12288 → H"
+        label: down projection
         shape: gemm
         semantic_op: dense_mlp.down_projection
+        operator_signature: {symbolic: '12288 → H', concrete: '12288 → 4096'}
       - id: mlp_out
         label: "dense MLP output\n[B,T,H]"
         shape: io
@@ -841,9 +944,10 @@ views:
         semantic_op: moe.input
         boundary_direction: input
       - id: router
-        label: "FP32 sigmoid router\nH → E=288"
+        label: FP32 sigmoid router
         shape: gemm
         semantic_op: moe.router
+        operator_signature: {symbolic: 'H → E', concrete: '4096 → 288'}
       - id: correction_bias
         label: "selection-only expert correction bias"
         shape: elem
@@ -857,33 +961,37 @@ views:
         shape: elem
         semantic_op: moe.dispatch
       - id: routed_gate_up
-        label: "288 routed expert gate/up projections\nH → 2×2048"
+        label: 288 routed expert gate/up projections
         shape: moe
         semantic_op: moe.routed_gate_up
+        operator_signature: {symbolic: 'H → 2 × 2048', concrete: '4096 → 4096'}
       - id: routed_activation
         label: "routed clamped SwiGLU"
         shape: elem
         semantic_op: moe.routed_activation
       - id: routed_down
-        label: "routed expert down projections\n2048 → H"
+        label: routed expert down projections
         shape: moe
         semantic_op: moe.routed_down
+        operator_signature: {symbolic: '2048 → H', concrete: '2048 → 4096'}
       - id: routed_weighted_combine
         label: "weighted routed-expert combine"
         shape: elem
         semantic_op: moe.routed_weighted_combine
       - id: shared_gate_up
-        label: "shared expert gate/up projection\nH → 2×2048"
+        label: shared expert gate/up projection
         shape: gemm
         semantic_op: moe.shared_gate_up
+        operator_signature: {symbolic: 'H → 2 × 2048', concrete: '4096 → 4096'}
       - id: shared_activation
         label: "shared clamped SwiGLU"
         shape: elem
         semantic_op: moe.shared_activation
       - id: shared_down
-        label: "shared expert down projection\n2048 → H"
+        label: shared expert down projection
         shape: gemm
         semantic_op: moe.shared_down
+        operator_signature: {symbolic: '2048 → H', concrete: '2048 → 4096'}
       - id: combine
         label: "routed + shared output sum"
         shape: elem
@@ -942,9 +1050,10 @@ views:
         shape: elem
         semantic_op: mtp.concatenate
       - id: eh_projection
-        label: "embedding-hidden projection\n2H → H"
+        label: embedding-hidden projection
         shape: gemm
         semantic_op: mtp.eh_projection
+        operator_signature: {symbolic: '2 × H → H', concrete: '8192 → 4096'}
       - id: nextn_dsa
         label: "one non-mHC DSA block"
         shape: attn

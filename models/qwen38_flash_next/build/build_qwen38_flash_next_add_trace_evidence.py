@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -102,6 +105,96 @@ def _artifact_record(path: Path, *, evidence_root: Path) -> dict[str, str]:
             f"evidence artifact must be contained by the run root {root}: {resolved}"
         ) from exc
     return {"path": stable_path.as_posix(), "sha256": sha256_file(resolved)}
+
+
+def _production_capture_time(
+    rounds_path: Path,
+    *,
+    expected_tp_size: int,
+    expected_formal_rounds: int,
+) -> str:
+    """Return the authoritative profiled formal-round start time.
+
+    The capture harness writes wall-clock timestamps and the exact per-rank trace
+    set into ``rounds.jsonl``.  We deliberately do not use filesystem mtimes or
+    Kineto ``baseTimeNanoseconds`` because neither is the capture-protocol
+    authority.  Exactly one formal round must own the trace set used here.
+    """
+
+    if not rounds_path.is_file():
+        raise ValueError(f"missing production capture-round artifact: {rounds_path}")
+    records: list[dict[str, Any]] = []
+    for line_number, raw_line in enumerate(rounds_path.read_text().splitlines(), 1):
+        if not raw_line.strip():
+            continue
+        try:
+            record = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"invalid production capture-round JSON at line {line_number}"
+            ) from exc
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"production capture-round line {line_number} is not an object"
+            )
+        records.append(record)
+
+    formal_records = [
+        record
+        for record in records
+        if re.fullmatch(r"formal-[1-9][0-9]*", str(record.get("round") or ""))
+    ]
+    if len(formal_records) != expected_formal_rounds:
+        raise ValueError(
+            "production capture-round count differs from the run contract: "
+            f"expected {expected_formal_rounds}, got {len(formal_records)}"
+        )
+    profiled = [record for record in formal_records if record.get("trace_files")]
+    if len(profiled) != 1:
+        raise ValueError(
+            "production capture time requires exactly one profiled formal round; "
+            f"got {len(profiled)}"
+        )
+    record = profiled[0]
+    trace_files = record.get("trace_files")
+    if not isinstance(trace_files, list) or len(trace_files) != expected_tp_size:
+        raise ValueError(
+            "profiled formal round must name exactly one trace for every TP rank"
+        )
+    basenames = [Path(str(path)).name for path in trace_files]
+    if len(basenames) != len(set(basenames)):
+        raise ValueError("profiled formal-round trace paths must be unique")
+    ranks = []
+    for basename in basenames:
+        match = re.search(r"-TP-([0-9]+)\.trace\.json\.gz$", basename)
+        if match is None:
+            raise ValueError(
+                f"profiled formal-round trace lacks a TP-rank suffix: {basename}"
+            )
+        ranks.append(int(match.group(1)))
+    if sorted(ranks) != list(range(expected_tp_size)):
+        raise ValueError(
+            "profiled formal-round trace set does not cover the exact TP ranks: "
+            f"{sorted(ranks)}"
+        )
+
+    try:
+        started_at = float(record["started_at_unix"])
+        finished_at = float(record["finished_at_unix"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "profiled formal round lacks numeric started_at_unix/finished_at_unix"
+        ) from exc
+    if (
+        not math.isfinite(started_at)
+        or not math.isfinite(finished_at)
+        or started_at <= 0
+        or finished_at < started_at
+    ):
+        raise ValueError("profiled formal-round timestamps are invalid")
+    return datetime.fromtimestamp(started_at, tz=timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
 
 
 def _rank_paths(root: Path, rank: int) -> dict[str, Path]:
@@ -620,7 +713,15 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
     evidence_root = args.run.resolve().parent
     eager_protocol = _load(args.eager_protocol)
     production_protocol = _load(args.production_protocol)
+    production_rounds = args.production_protocol.parent / "rounds.jsonl"
     _validate_protocols(eager_protocol, production_protocol, run)
+    captured_at = _production_capture_time(
+        production_rounds,
+        expected_tp_size=TP_SIZE,
+        expected_formal_rounds=int(
+            run["normalized_config"]["capture_procedure"]["formal_rounds"]
+        ),
+    )
     runtime_evidence_artifacts = _runtime_evidence_artifacts(
         run=run,
         eager_protocol=args.eager_protocol,
@@ -770,6 +871,7 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "plan_sha256": plan["plan_sha256"],
         "status": "pass",
         "phase": "decode",
+        "captured_at": captured_at,
         "cuda_graph_enabled": True,
         "protocol_artifact": {
             **_artifact_record(args.production_protocol, evidence_root=evidence_root),
@@ -777,6 +879,9 @@ def build(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any], dic
         "rank_artifacts": production_artifacts,
         "window_selection_artifact": {
             **_artifact_record(args.window_selection, evidence_root=evidence_root),
+        },
+        "capture_time_artifact": {
+            **_artifact_record(production_rounds, evidence_root=evidence_root),
         },
         "event_mappings": mappings,
         "support_events": production_support_records,

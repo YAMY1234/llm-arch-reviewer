@@ -21,6 +21,8 @@ def load_yaml(path: Path) -> dict:
 
 def test_glm53_stable_ir_has_exact_architecture_facts() -> None:
     model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    assert model["semantic_revision"] == 7
+    assert model["semantic_coverage"]["detail_view_closure"].startswith("every")
     facts = model["facts"]
     assert facts["checkpoint_revision"] == "3f1971b7b5f7a528c9c4ef6212c8785298a8c24a"
     assert facts["target_layers"] == 45
@@ -31,6 +33,35 @@ def test_glm53_stable_ir_has_exact_architecture_facts() -> None:
     assert facts["routed_experts"] == 288
     assert facts["vision_depth"] == 24
     assert facts["nextn_layers"] == 1
+
+
+def test_glm53_vision_merger_has_primitive_source_bound_closure() -> None:
+    model = load_yaml(MODEL_ROOT / "model_ir.yaml")
+    view = model["views"]["vision_merger"]
+    assert [node["id"] for node in view["nodes"]] == [
+        "merger_in",
+        "projection",
+        "post_norm",
+        "gelu",
+        "gate_up",
+        "clamp",
+        "silu",
+        "product",
+        "down",
+        "merger_out",
+    ]
+    assert next(
+        node for node in model["views"]["vision_frontend"]["nodes"]
+        if node["id"] == "merger"
+    )["drill"] == "vision_merger"
+
+    operations = model["semantic_contract"]["operations"]
+    assert all(operations[node["semantic_op"]]["equation"] for node in view["nodes"])
+    bundle = compile_catalog(MODEL_ROOT)
+    for implementation in bundle["implementations"].values():
+        for node in view["nodes"]:
+            target = f"vision_merger.{node['id']}"
+            assert implementation["node_bindings"][target]["links"], target
 
 
 def test_glm53_all_edges_are_tensor_and_state_explicit() -> None:
@@ -390,7 +421,7 @@ def test_glm53_validated_catalog_compile_is_deterministic() -> None:
     first = compile_catalog(MODEL_ROOT)
     second = compile_catalog(MODEL_ROOT)
     assert first == second
-    assert first["meta"]["view_count"] == 10
+    assert first["meta"]["view_count"] == 11
     assert first["meta"]["execution_variant_count"] == 1
     assert first["meta"]["implementation_count"] == 2
     assert first["meta"]["profile_count"] == 10

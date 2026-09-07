@@ -81,27 +81,111 @@ capture_policy:
 acceptance:
   semantic_release_contract:
     expected_revision: 7
-    required_views:
-    - moe_router_selection
-    - moe_routed_expert
-    - moe_shared_expert
-    - mtp_moe_router_selection
-    - mtp_moe_routed_expert
-    - mtp_moe_shared_expert
+    required_views: [vision_frontend, stack, state_tensors, generation_loop, gdn_moe_block, full_attention_moe_block, gdn_attention, moe_block, full_attention, moe_router_selection, moe_routed_expert, moe_shared_expert, mtp_full_attention, mtp_moe_block, mtp_moe_router_selection, mtp_moe_routed_expert, mtp_moe_shared_expert, mtp_full_attention_moe_block, mtp_draft_head, vision_block]
     required_drills:
+      top.vision_frontend: vision_frontend
+      top.decoder_stack: stack
+      top.state_store: state_tensors
+      top.generation_controller: generation_loop
+      stack.gdn_layer: gdn_moe_block
+      stack.full_attention_layer: full_attention_moe_block
+      layer_schedule.layer_00: gdn_moe_block
+      layer_schedule.layer_01: gdn_moe_block
+      layer_schedule.layer_02: gdn_moe_block
+      layer_schedule.layer_03: full_attention_moe_block
+      layer_schedule.layer_04: gdn_moe_block
+      layer_schedule.layer_05: gdn_moe_block
+      layer_schedule.layer_06: gdn_moe_block
+      layer_schedule.layer_07: full_attention_moe_block
+      layer_schedule.layer_08: gdn_moe_block
+      layer_schedule.layer_09: gdn_moe_block
+      layer_schedule.layer_10: gdn_moe_block
+      layer_schedule.layer_11: full_attention_moe_block
+      layer_schedule.layer_12: gdn_moe_block
+      layer_schedule.layer_13: gdn_moe_block
+      layer_schedule.layer_14: gdn_moe_block
+      layer_schedule.layer_15: full_attention_moe_block
+      layer_schedule.layer_16: gdn_moe_block
+      layer_schedule.layer_17: gdn_moe_block
+      layer_schedule.layer_18: gdn_moe_block
+      layer_schedule.layer_19: full_attention_moe_block
+      layer_schedule.layer_20: gdn_moe_block
+      layer_schedule.layer_21: gdn_moe_block
+      layer_schedule.layer_22: gdn_moe_block
+      layer_schedule.layer_23: full_attention_moe_block
+      layer_schedule.layer_24: gdn_moe_block
+      layer_schedule.layer_25: gdn_moe_block
+      layer_schedule.layer_26: gdn_moe_block
+      layer_schedule.layer_27: full_attention_moe_block
+      layer_schedule.layer_28: gdn_moe_block
+      layer_schedule.layer_29: gdn_moe_block
+      layer_schedule.layer_30: gdn_moe_block
+      layer_schedule.layer_31: full_attention_moe_block
+      layer_schedule.layer_32: gdn_moe_block
+      layer_schedule.layer_33: gdn_moe_block
+      layer_schedule.layer_34: gdn_moe_block
+      layer_schedule.layer_35: full_attention_moe_block
+      layer_schedule.layer_36: gdn_moe_block
+      layer_schedule.layer_37: gdn_moe_block
+      layer_schedule.layer_38: gdn_moe_block
+      layer_schedule.layer_39: full_attention_moe_block
+      layer_schedule.layer_40: gdn_moe_block
+      layer_schedule.layer_41: gdn_moe_block
+      layer_schedule.layer_42: gdn_moe_block
+      layer_schedule.layer_43: full_attention_moe_block
+      layer_schedule.layer_44: gdn_moe_block
+      layer_schedule.layer_45: gdn_moe_block
+      layer_schedule.layer_46: gdn_moe_block
+      layer_schedule.layer_47: full_attention_moe_block
+      layer_schedule.layer_48: gdn_moe_block
+      layer_schedule.layer_49: gdn_moe_block
+      layer_schedule.layer_50: gdn_moe_block
+      layer_schedule.layer_51: full_attention_moe_block
+      layer_schedule.layer_52: gdn_moe_block
+      layer_schedule.layer_53: gdn_moe_block
+      layer_schedule.layer_54: gdn_moe_block
+      layer_schedule.layer_55: full_attention_moe_block
+      layer_schedule.layer_56: gdn_moe_block
+      layer_schedule.layer_57: gdn_moe_block
+      layer_schedule.layer_58: gdn_moe_block
+      layer_schedule.layer_59: full_attention_moe_block
+      gdn_moe_block.attention: gdn_attention
+      gdn_moe_block.moe: moe_block
+      full_attention_moe_block.attention: full_attention
+      full_attention_moe_block.moe: moe_block
       moe_block.router: moe_router_selection
       moe_block.routed_experts: moe_routed_expert
       moe_block.shared_expert: moe_shared_expert
+      mtp_full_attention_moe_block.attention: mtp_full_attention
+      mtp_full_attention_moe_block.moe: mtp_moe_block
       mtp_moe_block.router: mtp_moe_router_selection
       mtp_moe_block.routed_experts: mtp_moe_routed_expert
       mtp_moe_block.shared_expert: mtp_moe_shared_expert
+      mtp_draft_head.draft_decoder_layer: mtp_full_attention_moe_block
+      generation_loop.draft_propose: mtp_draft_head
+      generation_loop.target_verify: stack
+      vision_frontend.vision_blocks: vision_block
     required_nodes:
+      vision_frontend: [vision_input, patch_projection, position_embedding, rotary_coordinates, vision_blocks, spatial_group, merger_norm, merger_fc1, merger_gelu, merger_fc2, vision_output]
+      stack: [stack_input, schedule, gdn_layer, full_attention_layer, stack_output]
+      state_tensors: [attention_keys, attention_values, mtp_draft_keys, mtp_draft_values, gdn_conv_windows, gdn_recurrent_states, verify_journal, committed_lengths]
+      generation_loop: [committed_context, draft_propose, candidate_tokens, target_verify, tentative_state, accept_prefix, replay_gdn, commit_kv, commit_gdn, commit_tokens, next_iteration]
+      gdn_moe_block: [input_hidden, input_norm, attention, attention_residual, post_attention_norm, moe, layer_residual, output_hidden]
+      full_attention_moe_block: [input_hidden, input_norm, attention, attention_residual, post_attention_norm, moe, layer_residual, output_hidden]
+      gdn_attention: [module_input, qkvz_projection, ba_projection, conv_state_read, causal_conv, recurrent_state_read, gated_delta_recurrence, state_write, output_gate_norm, output_projection, module_output]
+      moe_block: [input_hidden, router, routed_experts, shared_expert, weighted_combine, output_hidden]
+      full_attention: [module_input, qkv_projection, qk_norm, partial_rope, kv_state_read, causal_gqa, kv_state_write, attention_output_gate, output_projection, module_output]
       moe_router_selection: [router_input, router_projection, softmax, topk_indices, gather_weights, selected_routes]
       moe_routed_expert: [hidden_input, route_assignments, dispatch, gate_projection, up_projection, silu, gated_product, down_projection, restore, routed_output]
       moe_shared_expert: [shared_input, gate_projection, up_projection, silu, gated_product, down_projection, scalar_gate_projection, scalar_sigmoid, gated_shared_output, shared_output]
+      mtp_full_attention: [module_input, qkv_projection, qk_norm, partial_rope, kv_state_read, causal_gqa, kv_state_write, attention_output_gate, output_projection, module_output]
+      mtp_moe_block: [input_hidden, router, routed_experts, shared_expert, weighted_combine, output_hidden]
       mtp_moe_router_selection: [router_input, router_projection, softmax, topk_indices, gather_weights, selected_routes]
       mtp_moe_routed_expert: [hidden_input, route_assignments, dispatch, gate_projection, up_projection, silu, gated_product, down_projection, restore, routed_output]
       mtp_moe_shared_expert: [shared_input, gate_projection, up_projection, silu, gated_product, down_projection, scalar_gate_projection, scalar_sigmoid, gated_shared_output, shared_output]
+      mtp_full_attention_moe_block: [input_hidden, input_norm, attention, attention_residual, post_attention_norm, moe, layer_residual, output_hidden]
+      mtp_draft_head: [draft_input_token, target_hidden, shared_embedding, embedding_norm, hidden_norm, concat, fc_projection, draft_decoder_layer, draft_final_norm, shared_lm_head, draft_logits]
+      vision_block: [block_input, norm1, qkv_projection, rotary, attention, attention_output, attention_residual, norm2, fc1, gelu, fc2, block_output]
   expected_profile_points: 10
   unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported
   accepted_profile_requirements:

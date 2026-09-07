@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "default_view": "top",
-  "default_execution_variant": "exec_000d495647549c0c",
+  "default_execution_variant": "exec_4d478cb4c0a5e236",
   "default_implementation": "sglang_f609d677b_mixed_glm53_tp8",
   "default_profile": "glm53_flash_tp8_sglang_cg_decode_bs1_8k1k",
   "meta": {
@@ -9,19 +9,52 @@
     "model_label": "GLM-5.3-Flash mixed FP8/BF16 multimodal",
     "subtitle": "IR-first \u00b7 execution-path variants \u00b7 versioned profile overlays",
     "model_ir_version": 2,
-    "model_semantic_revision": null,
+    "model_semantic_revision": 7,
     "catalog": "catalog/glm53_flash",
     "execution_variant_count": 1,
     "implementation_count": 2,
     "profile_count": 10,
     "sol_profile_count": 0,
     "gap_report_count": 0,
-    "view_count": 10
+    "view_count": 11
   },
   "model_ir": {
     "model_id": "glm53_flash",
     "model_label": "GLM-5.3-Flash mixed FP8/BF16 multimodal",
     "ir_version": 2,
+    "semantic_revision": 7,
+    "semantic_coverage": {
+      "operator_dataflow_closure": "complete_for_checkpoint_declared_text_vision_and_optional_nextn_paths",
+      "parameter_closure": "all_embedding_vision_attention_linear_attention_sparse_attention_moe_norm_and_head_parameters_declared",
+      "state_closure": "mhc_kda_convolution_recurrence_dsa_cache_index_and_optional_nextn_state_boundaries_declared",
+      "layer_variant_closure": "all_45_decoder_34_kda_11_dsa_dense_moe_and_24_vision_block_variants_declared",
+      "detail_view_closure": "every compound semantic module drills to a primitive equation shape dtype and state graph",
+      "config_field_disposition": {
+        "model_ir": [
+          "architecture_dimensions",
+          "layer_schedule",
+          "expert_routing",
+          "vision_topology",
+          "nextn_layers"
+        ],
+        "execution_ir": [
+          "parallelism_topology",
+          "collectives",
+          "rank_local_layouts",
+          "generation_mode"
+        ],
+        "binding_profile": [
+          "framework_backend",
+          "kernel_fusion",
+          "runtime_dtypes",
+          "timing_ownership"
+        ],
+        "excluded": [
+          "training_only_initialization",
+          "serialization_hints"
+        ]
+      }
+    },
     "dimensions": {
       "B": "request batch",
       "T": "text token count",
@@ -46,7 +79,8 @@
       "E": "288 routed experts",
       "K": "8 selected experts per token",
       "Hv": "1024 vision hidden width",
-      "M": "merged vision-token count"
+      "M": "merged vision-token count",
+      "Fvm": "10240 vision-merger SwiGLU intermediate width"
     },
     "facts": {
       "checkpoint": "zai-org/GLM-5.3-Flash",
@@ -226,6 +260,46 @@
         "vision.output": {
           "kind": "boundary",
           "equation": "media_features := encoded and merged vision tokens with shape [M,H]"
+        },
+        "vision_merger.input": {
+          "kind": "boundary",
+          "equation": "X := downsampled media features [M,H]"
+        },
+        "vision_merger.projection": {
+          "kind": "projection",
+          "equation": "X_proj = X W_proj^T in R^(M x H)"
+        },
+        "vision_merger.post_norm": {
+          "kind": "normalization",
+          "equation": "X_norm = LayerNorm(X_proj; gamma, beta, epsilon)"
+        },
+        "vision_merger.gelu": {
+          "kind": "activation",
+          "equation": "X_pre = GELU(X_norm)"
+        },
+        "vision_merger.gate_up": {
+          "kind": "projection",
+          "equation": "[G_raw,U_raw] = X_pre W_gate_up^T with G_raw,U_raw in R^(M x Fvm)"
+        },
+        "vision_merger.clamp": {
+          "kind": "activation",
+          "equation": "G = min(G_raw,10); U = clamp(U_raw,-10,10)"
+        },
+        "vision_merger.silu": {
+          "kind": "activation",
+          "equation": "A = SiLU(G) = G elementwise_mul sigmoid(G)"
+        },
+        "vision_merger.product": {
+          "kind": "composition",
+          "equation": "M_hidden = A elementwise_mul U"
+        },
+        "vision_merger.down": {
+          "kind": "projection",
+          "equation": "Y = M_hidden W_down^T in R^(M x H)"
+        },
+        "vision_merger.output": {
+          "kind": "boundary",
+          "equation": "Y := merged media features [M,H]"
         },
         "vision_block.input": {
           "kind": "boundary",
@@ -677,6 +751,13 @@
         "child_view": "vision_block",
         "input_shape": "[Patches,Hv]",
         "output_shape": "[Patches,Hv]"
+      },
+      {
+        "parent_node": "vision_frontend.merger",
+        "boundary_mode": "exact_node",
+        "child_view": "vision_merger",
+        "input_shape": "[M,H]",
+        "output_shape": "[M,H]"
       },
       {
         "parent_node": "decoder_stack.attn_mhc_pre",
@@ -1381,9 +1462,13 @@
           },
           {
             "id": "patch_projection",
-            "label": "3D patch projection\n3\u00d72\u00d714\u00d714 \u2192 Hv",
+            "label": "3D patch projection",
             "shape": "gemm",
             "semantic_op": "vision.patch_projection",
+            "operator_signature": {
+              "symbolic": "3 \u00d7 2 \u00d7 14 \u00d7 14 \u2192 Hv",
+              "concrete": "1176 \u2192 1024"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -1569,9 +1654,13 @@
           },
           {
             "id": "spatial_downsample",
-            "label": "learned 2\u00d72 spatial downsample\n4Hv \u2192 H",
+            "label": "learned 2\u00d72 spatial downsample",
             "shape": "gemm",
             "semantic_op": "vision.spatial_downsample",
+            "operator_signature": {
+              "symbolic": "4 \u00d7 Hv \u2192 H",
+              "concrete": "4096 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -1605,9 +1694,14 @@
           },
           {
             "id": "merger",
-            "label": "projection norm + clamped SwiGLU merger\nH \u2192 10240 \u2192 H",
+            "label": "projection norm + clamped SwiGLU merger",
             "shape": "block",
             "semantic_op": "vision.merger",
+            "operator_signature": {
+              "symbolic": "H \u2192 Fvm \u2192 H",
+              "concrete": "4096 \u2192 10240 \u2192 4096"
+            },
+            "drill": "vision_merger",
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -1636,7 +1730,14 @@
                 }
               ],
               "invariants": [],
-              "contract_source": "model_ir.semantic_contract+edges"
+              "contract_source": "model_ir.semantic_contract+edges",
+              "drill_boundary": {
+                "parent_node": "vision_frontend.merger",
+                "boundary_mode": "exact_node",
+                "child_view": "vision_merger",
+                "input_shape": "[M,H]",
+                "output_shape": "[M,H]"
+              }
             }
           },
           {
@@ -1743,6 +1844,475 @@
           }
         ]
       },
+      "vision_merger": {
+        "title": "GLM-5.3-Flash projection norm and clamped SwiGLU vision merger",
+        "nodes": [
+          {
+            "id": "merger_in",
+            "label": "downsampled media features\n[M,H]",
+            "shape": "io",
+            "semantic_op": "vision_merger.input",
+            "boundary_direction": "input",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.input",
+              "kind": "boundary",
+              "summary": "downsampled media features",
+              "equation": "X := downsampled media features [M,H]",
+              "inputs": [],
+              "outputs": [
+                {
+                  "name": "downsampled_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "projection"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "projection",
+            "label": "replicated input projection",
+            "shape": "gemm",
+            "semantic_op": "vision_merger.projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 H",
+              "concrete": "4096 \u2192 4096"
+            },
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.projection",
+              "kind": "projection",
+              "summary": "replicated input projection",
+              "equation": "X_proj = X W_proj^T in R^(M x H)",
+              "inputs": [
+                {
+                  "name": "downsampled_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "merger_in"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "projected_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "post_norm"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "post_norm",
+            "label": "post-projection LayerNorm",
+            "shape": "norm",
+            "semantic_op": "vision_merger.post_norm",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.post_norm",
+              "kind": "normalization",
+              "summary": "post-projection LayerNorm",
+              "equation": "X_norm = LayerNorm(X_proj; gamma, beta, epsilon)",
+              "inputs": [
+                {
+                  "name": "projected_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "projection"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "normalized_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "gelu"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "gelu",
+            "label": "GELU pre-activation",
+            "shape": "elem",
+            "semantic_op": "vision_merger.gelu",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.gelu",
+              "kind": "activation",
+              "summary": "GELU pre-activation",
+              "equation": "X_pre = GELU(X_norm)",
+              "inputs": [
+                {
+                  "name": "normalized_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "post_norm"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "preactivated_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "gate_up"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "gate_up",
+            "label": "gate/up projection",
+            "shape": "gemm",
+            "semantic_op": "vision_merger.gate_up",
+            "operator_signature": {
+              "symbolic": "H \u2192 2 \u00d7 Fvm",
+              "concrete": "4096 \u2192 20480"
+            },
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.gate_up",
+              "kind": "projection",
+              "summary": "gate/up projection",
+              "equation": "[G_raw,U_raw] = X_pre W_gate_up^T with G_raw,U_raw in R^(M x Fvm)",
+              "inputs": [
+                {
+                  "name": "preactivated_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "gelu"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "raw_gate_and_up",
+                  "shape": "[M,2*Fvm]",
+                  "layout": "packed_media_tokens_gate_up",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "clamp"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "clamp",
+            "label": "split and clamp\ngate \u2264 10; up \u2208 [-10,10]",
+            "shape": "elem",
+            "semantic_op": "vision_merger.clamp",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.clamp",
+              "kind": "activation",
+              "summary": "split and clamp",
+              "equation": "G = min(G_raw,10); U = clamp(U_raw,-10,10)",
+              "inputs": [
+                {
+                  "name": "raw_gate_and_up",
+                  "shape": "[M,2*Fvm]",
+                  "layout": "packed_media_tokens_gate_up",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "gate_up"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "clamped_gate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "silu"
+                },
+                {
+                  "name": "clamped_up",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "product"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "silu",
+            "label": "SiLU clamped gate",
+            "shape": "elem",
+            "semantic_op": "vision_merger.silu",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.silu",
+              "kind": "activation",
+              "summary": "SiLU clamped gate",
+              "equation": "A = SiLU(G) = G elementwise_mul sigmoid(G)",
+              "inputs": [
+                {
+                  "name": "clamped_gate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "clamp"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "activated_gate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "product"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "product",
+            "label": "clamped SwiGLU product",
+            "shape": "elem",
+            "semantic_op": "vision_merger.product",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.product",
+              "kind": "composition",
+              "summary": "clamped SwiGLU product",
+              "equation": "M_hidden = A elementwise_mul U",
+              "inputs": [
+                {
+                  "name": "activated_gate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "silu"
+                },
+                {
+                  "name": "clamped_up",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "clamp"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "gated_vision_intermediate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "target": "down"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "down",
+            "label": "row-parallel down projection",
+            "shape": "gemm",
+            "semantic_op": "vision_merger.down",
+            "operator_signature": {
+              "symbolic": "Fvm \u2192 H",
+              "concrete": "10240 \u2192 4096"
+            },
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.down",
+              "kind": "projection",
+              "summary": "row-parallel down projection",
+              "equation": "Y = M_hidden W_down^T in R^(M x H)",
+              "inputs": [
+                {
+                  "name": "gated_vision_intermediate",
+                  "shape": "[M,Fvm]",
+                  "layout": "packed_media_tokens_intermediate",
+                  "dtype": "vision_activation_dtype",
+                  "state": "ephemeral_activation",
+                  "source": "product"
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "merged_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "model_activation_dtype",
+                  "state": "ephemeral_output",
+                  "target": "merger_out"
+                }
+              ],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          },
+          {
+            "id": "merger_out",
+            "label": "merged media features\n[M,H]",
+            "shape": "io",
+            "semantic_op": "vision_merger.output",
+            "boundary_direction": "output",
+            "ir_origin": "model_ir",
+            "node_kind": "semantic",
+            "semantics": {
+              "semantic_op": "vision_merger.output",
+              "kind": "boundary",
+              "summary": "merged media features",
+              "equation": "Y := merged media features [M,H]",
+              "inputs": [
+                {
+                  "name": "merged_media_features",
+                  "shape": "[M,H]",
+                  "layout": "packed_media_tokens_hidden",
+                  "dtype": "model_activation_dtype",
+                  "state": "ephemeral_output",
+                  "source": "down"
+                }
+              ],
+              "outputs": [],
+              "invariants": [],
+              "contract_source": "model_ir.semantic_contract+edges"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "merger_in",
+            "to": "projection",
+            "identity": "downsampled_media_features",
+            "shape": "[M,H]",
+            "layout": "packed_media_tokens_hidden",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "projection",
+            "to": "post_norm",
+            "identity": "projected_media_features",
+            "shape": "[M,H]",
+            "layout": "packed_media_tokens_hidden",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "post_norm",
+            "to": "gelu",
+            "identity": "normalized_media_features",
+            "shape": "[M,H]",
+            "layout": "packed_media_tokens_hidden",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "gelu",
+            "to": "gate_up",
+            "identity": "preactivated_media_features",
+            "shape": "[M,H]",
+            "layout": "packed_media_tokens_hidden",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "gate_up",
+            "to": "clamp",
+            "identity": "raw_gate_and_up",
+            "shape": "[M,2*Fvm]",
+            "layout": "packed_media_tokens_gate_up",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "clamp",
+            "to": "silu",
+            "identity": "clamped_gate",
+            "shape": "[M,Fvm]",
+            "layout": "packed_media_tokens_intermediate",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "silu",
+            "to": "product",
+            "identity": "activated_gate",
+            "shape": "[M,Fvm]",
+            "layout": "packed_media_tokens_intermediate",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "clamp",
+            "to": "product",
+            "identity": "clamped_up",
+            "shape": "[M,Fvm]",
+            "layout": "packed_media_tokens_intermediate",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "product",
+            "to": "down",
+            "identity": "gated_vision_intermediate",
+            "shape": "[M,Fvm]",
+            "layout": "packed_media_tokens_intermediate",
+            "dtype": "vision_activation_dtype",
+            "state": "ephemeral_activation"
+          },
+          {
+            "from": "down",
+            "to": "merger_out",
+            "identity": "merged_media_features",
+            "shape": "[M,H]",
+            "layout": "packed_media_tokens_hidden",
+            "dtype": "model_activation_dtype",
+            "state": "ephemeral_output"
+          }
+        ]
+      },
       "vision_block": {
         "title": "One semantic vision transformer block",
         "nodes": [
@@ -1821,9 +2391,13 @@
           },
           {
             "id": "qkv_projection",
-            "label": "Q/K/V projection\nHv \u2192 3Hv",
+            "label": "Q/K/V projection",
             "shape": "gemm",
             "semantic_op": "vision_block.qkv_projection",
+            "operator_signature": {
+              "symbolic": "Hv \u2192 3 \u00d7 Hv",
+              "concrete": "1024 \u2192 3072"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -2055,9 +2629,13 @@
           },
           {
             "id": "gate_up_projection",
-            "label": "gate/up projection\nHv \u2192 2\u00d74096",
+            "label": "gate/up projection",
             "shape": "gemm",
             "semantic_op": "vision_block.gate_up_projection",
+            "operator_signature": {
+              "symbolic": "Hv \u2192 2 \u00d7 4096",
+              "concrete": "1024 \u2192 8192"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -2127,9 +2705,13 @@
           },
           {
             "id": "down_projection",
-            "label": "down projection\n4096 \u2192 Hv",
+            "label": "down projection",
             "shape": "gemm",
             "semantic_op": "vision_block.down_projection",
+            "operator_signature": {
+              "symbolic": "4096 \u2192 Hv",
+              "concrete": "4096 \u2192 1024"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -3245,15 +3827,19 @@
           },
           {
             "id": "coefficient_map",
-            "label": "learned map\nR\u00b7H \u2192 (2+R)R = 24",
+            "label": "learned mHC coefficient map",
             "shape": "gemm",
             "semantic_op": "mhc.coefficient_map",
+            "operator_signature": {
+              "symbolic": "R \u00d7 H \u2192 (2 + R) \u00d7 R",
+              "concrete": "16384 \u2192 24"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
               "semantic_op": "mhc.coefficient_map",
               "kind": "projection",
-              "summary": "learned map",
+              "summary": "learned mHC coefficient map",
               "equation": "[pre_logits, post_logits, combine_logits] = Xn * W_mhc^T + b_mhc",
               "inputs": [
                 {
@@ -3997,9 +4583,13 @@
           },
           {
             "id": "beta_projection",
-            "label": "sigmoid beta projection\nH \u2192 N=64",
+            "label": "sigmoid beta projection",
             "shape": "gemm",
             "semantic_op": "linear_attention.beta_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 N",
+              "concrete": "4096 \u2192 64"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -4298,9 +4888,13 @@
           },
           {
             "id": "output_projection",
-            "label": "attention output projection\n64\u00d7128 \u2192 H",
+            "label": "attention output projection",
             "shape": "gemm",
             "semantic_op": "linear_attention.output_projection",
+            "operator_signature": {
+              "symbolic": "N \u00d7 Dkda \u2192 H",
+              "concrete": "8192 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -4596,9 +5190,13 @@
           },
           {
             "id": "q_a_projection",
-            "label": "query latent projection\nH \u2192 Cq=1536",
+            "label": "query latent projection",
             "shape": "gemm",
             "semantic_op": "dsa_attention.q_a_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 Cq",
+              "concrete": "4096 \u2192 1536"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -4712,9 +5310,13 @@
           },
           {
             "id": "kv_a_projection",
-            "label": "KV latent projection\nH \u2192 Ckv=512",
+            "label": "KV latent projection",
             "shape": "gemm",
             "semantic_op": "dsa_attention.kv_a_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 Ckv",
+              "concrete": "4096 \u2192 512"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -4896,9 +5498,13 @@
           },
           {
             "id": "index_k_projection",
-            "label": "index key projection + LayerNorm\nH \u2192 128",
+            "label": "index key projection + LayerNorm",
             "shape": "gemm",
             "semantic_op": "dsa_attention.index_k_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 Di",
+              "concrete": "4096 \u2192 128"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -4932,9 +5538,13 @@
           },
           {
             "id": "index_weight_projection",
-            "label": "per-index-head score weights\nH \u2192 32",
+            "label": "per-index-head score weights",
             "shape": "gemm",
             "semantic_op": "dsa_attention.index_weight_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 Qi",
+              "concrete": "4096 \u2192 32"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -5274,9 +5884,13 @@
           },
           {
             "id": "output_projection",
-            "label": "attention output projection\n64\u00d7256 \u2192 H",
+            "label": "attention output projection",
             "shape": "gemm",
             "semantic_op": "dsa_attention.output_projection",
+            "operator_signature": {
+              "symbolic": "N \u00d7 Dv \u2192 H",
+              "concrete": "16384 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -5594,9 +6208,13 @@
           },
           {
             "id": "gate_up_projection",
-            "label": "gate/up projection\nH \u2192 2\u00d712288",
+            "label": "gate/up projection",
             "shape": "gemm",
             "semantic_op": "dense_mlp.gate_up_projection",
+            "operator_signature": {
+              "symbolic": "H \u2192 2 \u00d7 12288",
+              "concrete": "4096 \u2192 24576"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -5666,9 +6284,13 @@
           },
           {
             "id": "down_projection",
-            "label": "down projection\n12288 \u2192 H",
+            "label": "down projection",
             "shape": "gemm",
             "semantic_op": "dense_mlp.down_projection",
+            "operator_signature": {
+              "symbolic": "12288 \u2192 H",
+              "concrete": "12288 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -5817,9 +6439,13 @@
           },
           {
             "id": "router",
-            "label": "FP32 sigmoid router\nH \u2192 E=288",
+            "label": "FP32 sigmoid router",
             "shape": "gemm",
             "semantic_op": "moe.router",
+            "operator_signature": {
+              "symbolic": "H \u2192 E",
+              "concrete": "4096 \u2192 288"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -5996,9 +6622,13 @@
           },
           {
             "id": "routed_gate_up",
-            "label": "288 routed expert gate/up projections\nH \u2192 2\u00d72048",
+            "label": "288 routed expert gate/up projections",
             "shape": "moe",
             "semantic_op": "moe.routed_gate_up",
+            "operator_signature": {
+              "symbolic": "H \u2192 2 \u00d7 2048",
+              "concrete": "4096 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -6068,9 +6698,13 @@
           },
           {
             "id": "routed_down",
-            "label": "routed expert down projections\n2048 \u2192 H",
+            "label": "routed expert down projections",
             "shape": "moe",
             "semantic_op": "moe.routed_down",
+            "operator_signature": {
+              "symbolic": "2048 \u2192 H",
+              "concrete": "2048 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -6149,9 +6783,13 @@
           },
           {
             "id": "shared_gate_up",
-            "label": "shared expert gate/up projection\nH \u2192 2\u00d72048",
+            "label": "shared expert gate/up projection",
             "shape": "gemm",
             "semantic_op": "moe.shared_gate_up",
+            "operator_signature": {
+              "symbolic": "H \u2192 2 \u00d7 2048",
+              "concrete": "4096 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -6221,9 +6859,13 @@
           },
           {
             "id": "shared_down",
-            "label": "shared expert down projection\n2048 \u2192 H",
+            "label": "shared expert down projection",
             "shape": "gemm",
             "semantic_op": "moe.shared_down",
+            "operator_signature": {
+              "symbolic": "2048 \u2192 H",
+              "concrete": "2048 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -6701,9 +7343,13 @@
           },
           {
             "id": "eh_projection",
-            "label": "embedding-hidden projection\n2H \u2192 H",
+            "label": "embedding-hidden projection",
             "shape": "gemm",
             "semantic_op": "mtp.eh_projection",
+            "operator_signature": {
+              "symbolic": "2 \u00d7 H \u2192 H",
+              "concrete": "8192 \u2192 4096"
+            },
             "ir_origin": "model_ir",
             "node_kind": "semantic",
             "semantics": {
@@ -7032,6 +7678,7 @@
       "decoder_stack": "top",
       "mtp_extension": "top",
       "vision_block": "vision_frontend",
+      "vision_merger": "vision_frontend",
       "mhc_transform": "decoder_stack",
       "linear_attention": "decoder_stack",
       "dsa_attention": "decoder_stack",
@@ -7040,10 +7687,10 @@
     }
   },
   "execution_variants": {
-    "exec_000d495647549c0c": {
+    "exec_4d478cb4c0a5e236": {
       "execution_path_id": "tp8",
       "label": "Pure tensor parallel TP8 validated contract",
-      "fingerprint": "exec_000d495647549c0c",
+      "fingerprint": "exec_4d478cb4c0a5e236",
       "model_ir_version": 2,
       "execution_plan_version": 1,
       "selector": {
@@ -7819,9 +8466,13 @@
             },
             {
               "id": "patch_projection",
-              "label": "3D patch projection\n3\u00d72\u00d714\u00d714 \u2192 Hv",
+              "label": "3D patch projection",
               "shape": "gemm",
               "semantic_op": "vision.patch_projection",
+              "operator_signature": {
+                "symbolic": "3 \u00d7 2 \u00d7 14 \u00d7 14 \u2192 Hv",
+                "concrete": "1176 \u2192 1024"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -8007,9 +8658,13 @@
             },
             {
               "id": "spatial_downsample",
-              "label": "learned 2\u00d72 spatial downsample\n4Hv \u2192 H",
+              "label": "learned 2\u00d72 spatial downsample",
               "shape": "gemm",
               "semantic_op": "vision.spatial_downsample",
+              "operator_signature": {
+                "symbolic": "4 \u00d7 Hv \u2192 H",
+                "concrete": "4096 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -8043,9 +8698,14 @@
             },
             {
               "id": "merger",
-              "label": "projection norm + clamped SwiGLU merger\nH \u2192 10240 \u2192 H",
+              "label": "projection norm + clamped SwiGLU merger",
               "shape": "block",
               "semantic_op": "vision.merger",
+              "operator_signature": {
+                "symbolic": "H \u2192 Fvm \u2192 H",
+                "concrete": "4096 \u2192 10240 \u2192 4096"
+              },
+              "drill": "vision_merger",
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -8074,7 +8734,14 @@
                   }
                 ],
                 "invariants": [],
-                "contract_source": "model_ir.semantic_contract+edges"
+                "contract_source": "model_ir.semantic_contract+edges",
+                "drill_boundary": {
+                  "parent_node": "vision_frontend.merger",
+                  "boundary_mode": "exact_node",
+                  "child_view": "vision_merger",
+                  "input_shape": "[M,H]",
+                  "output_shape": "[M,H]"
+                }
               }
             },
             {
@@ -8181,6 +8848,475 @@
             }
           ]
         },
+        "vision_merger": {
+          "title": "GLM-5.3-Flash projection norm and clamped SwiGLU vision merger",
+          "nodes": [
+            {
+              "id": "merger_in",
+              "label": "downsampled media features\n[M,H]",
+              "shape": "io",
+              "semantic_op": "vision_merger.input",
+              "boundary_direction": "input",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.input",
+                "kind": "boundary",
+                "summary": "downsampled media features",
+                "equation": "X := downsampled media features [M,H]",
+                "inputs": [],
+                "outputs": [
+                  {
+                    "name": "downsampled_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "projection"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "projection",
+              "label": "replicated input projection",
+              "shape": "gemm",
+              "semantic_op": "vision_merger.projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 H",
+                "concrete": "4096 \u2192 4096"
+              },
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.projection",
+                "kind": "projection",
+                "summary": "replicated input projection",
+                "equation": "X_proj = X W_proj^T in R^(M x H)",
+                "inputs": [
+                  {
+                    "name": "downsampled_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "merger_in"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "projected_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "post_norm"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "post_norm",
+              "label": "post-projection LayerNorm",
+              "shape": "norm",
+              "semantic_op": "vision_merger.post_norm",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.post_norm",
+                "kind": "normalization",
+                "summary": "post-projection LayerNorm",
+                "equation": "X_norm = LayerNorm(X_proj; gamma, beta, epsilon)",
+                "inputs": [
+                  {
+                    "name": "projected_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "projection"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "normalized_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "gelu"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "gelu",
+              "label": "GELU pre-activation",
+              "shape": "elem",
+              "semantic_op": "vision_merger.gelu",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.gelu",
+                "kind": "activation",
+                "summary": "GELU pre-activation",
+                "equation": "X_pre = GELU(X_norm)",
+                "inputs": [
+                  {
+                    "name": "normalized_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "post_norm"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "preactivated_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "gate_up"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "gate_up",
+              "label": "gate/up projection",
+              "shape": "gemm",
+              "semantic_op": "vision_merger.gate_up",
+              "operator_signature": {
+                "symbolic": "H \u2192 2 \u00d7 Fvm",
+                "concrete": "4096 \u2192 20480"
+              },
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.gate_up",
+                "kind": "projection",
+                "summary": "gate/up projection",
+                "equation": "[G_raw,U_raw] = X_pre W_gate_up^T with G_raw,U_raw in R^(M x Fvm)",
+                "inputs": [
+                  {
+                    "name": "preactivated_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "gelu"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "raw_gate_and_up",
+                    "shape": "[M,2*Fvm]",
+                    "layout": "packed_media_tokens_gate_up",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "clamp"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "clamp",
+              "label": "split and clamp\ngate \u2264 10; up \u2208 [-10,10]",
+              "shape": "elem",
+              "semantic_op": "vision_merger.clamp",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.clamp",
+                "kind": "activation",
+                "summary": "split and clamp",
+                "equation": "G = min(G_raw,10); U = clamp(U_raw,-10,10)",
+                "inputs": [
+                  {
+                    "name": "raw_gate_and_up",
+                    "shape": "[M,2*Fvm]",
+                    "layout": "packed_media_tokens_gate_up",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "gate_up"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "clamped_gate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "silu"
+                  },
+                  {
+                    "name": "clamped_up",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "product"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "silu",
+              "label": "SiLU clamped gate",
+              "shape": "elem",
+              "semantic_op": "vision_merger.silu",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.silu",
+                "kind": "activation",
+                "summary": "SiLU clamped gate",
+                "equation": "A = SiLU(G) = G elementwise_mul sigmoid(G)",
+                "inputs": [
+                  {
+                    "name": "clamped_gate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "clamp"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "activated_gate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "product"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "product",
+              "label": "clamped SwiGLU product",
+              "shape": "elem",
+              "semantic_op": "vision_merger.product",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.product",
+                "kind": "composition",
+                "summary": "clamped SwiGLU product",
+                "equation": "M_hidden = A elementwise_mul U",
+                "inputs": [
+                  {
+                    "name": "activated_gate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "silu"
+                  },
+                  {
+                    "name": "clamped_up",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "clamp"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "gated_vision_intermediate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "target": "down"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "down",
+              "label": "row-parallel down projection",
+              "shape": "gemm",
+              "semantic_op": "vision_merger.down",
+              "operator_signature": {
+                "symbolic": "Fvm \u2192 H",
+                "concrete": "10240 \u2192 4096"
+              },
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.down",
+                "kind": "projection",
+                "summary": "row-parallel down projection",
+                "equation": "Y = M_hidden W_down^T in R^(M x H)",
+                "inputs": [
+                  {
+                    "name": "gated_vision_intermediate",
+                    "shape": "[M,Fvm]",
+                    "layout": "packed_media_tokens_intermediate",
+                    "dtype": "vision_activation_dtype",
+                    "state": "ephemeral_activation",
+                    "source": "product"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "merged_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "model_activation_dtype",
+                    "state": "ephemeral_output",
+                    "target": "merger_out"
+                  }
+                ],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            },
+            {
+              "id": "merger_out",
+              "label": "merged media features\n[M,H]",
+              "shape": "io",
+              "semantic_op": "vision_merger.output",
+              "boundary_direction": "output",
+              "ir_origin": "model_ir",
+              "node_kind": "semantic",
+              "semantics": {
+                "semantic_op": "vision_merger.output",
+                "kind": "boundary",
+                "summary": "merged media features",
+                "equation": "Y := merged media features [M,H]",
+                "inputs": [
+                  {
+                    "name": "merged_media_features",
+                    "shape": "[M,H]",
+                    "layout": "packed_media_tokens_hidden",
+                    "dtype": "model_activation_dtype",
+                    "state": "ephemeral_output",
+                    "source": "down"
+                  }
+                ],
+                "outputs": [],
+                "invariants": [],
+                "contract_source": "model_ir.semantic_contract+edges"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "from": "merger_in",
+              "to": "projection",
+              "identity": "downsampled_media_features",
+              "shape": "[M,H]",
+              "layout": "packed_media_tokens_hidden",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "projection",
+              "to": "post_norm",
+              "identity": "projected_media_features",
+              "shape": "[M,H]",
+              "layout": "packed_media_tokens_hidden",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "post_norm",
+              "to": "gelu",
+              "identity": "normalized_media_features",
+              "shape": "[M,H]",
+              "layout": "packed_media_tokens_hidden",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "gelu",
+              "to": "gate_up",
+              "identity": "preactivated_media_features",
+              "shape": "[M,H]",
+              "layout": "packed_media_tokens_hidden",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "gate_up",
+              "to": "clamp",
+              "identity": "raw_gate_and_up",
+              "shape": "[M,2*Fvm]",
+              "layout": "packed_media_tokens_gate_up",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "clamp",
+              "to": "silu",
+              "identity": "clamped_gate",
+              "shape": "[M,Fvm]",
+              "layout": "packed_media_tokens_intermediate",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "silu",
+              "to": "product",
+              "identity": "activated_gate",
+              "shape": "[M,Fvm]",
+              "layout": "packed_media_tokens_intermediate",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "clamp",
+              "to": "product",
+              "identity": "clamped_up",
+              "shape": "[M,Fvm]",
+              "layout": "packed_media_tokens_intermediate",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "product",
+              "to": "down",
+              "identity": "gated_vision_intermediate",
+              "shape": "[M,Fvm]",
+              "layout": "packed_media_tokens_intermediate",
+              "dtype": "vision_activation_dtype",
+              "state": "ephemeral_activation"
+            },
+            {
+              "from": "down",
+              "to": "merger_out",
+              "identity": "merged_media_features",
+              "shape": "[M,H]",
+              "layout": "packed_media_tokens_hidden",
+              "dtype": "model_activation_dtype",
+              "state": "ephemeral_output"
+            }
+          ]
+        },
         "vision_block": {
           "title": "One semantic vision transformer block",
           "nodes": [
@@ -8259,9 +9395,13 @@
             },
             {
               "id": "qkv_projection",
-              "label": "Q/K/V projection\nHv \u2192 3Hv",
+              "label": "Q/K/V projection",
               "shape": "gemm",
               "semantic_op": "vision_block.qkv_projection",
+              "operator_signature": {
+                "symbolic": "Hv \u2192 3 \u00d7 Hv",
+                "concrete": "1024 \u2192 3072"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -8493,9 +9633,13 @@
             },
             {
               "id": "gate_up_projection",
-              "label": "gate/up projection\nHv \u2192 2\u00d74096",
+              "label": "gate/up projection",
               "shape": "gemm",
               "semantic_op": "vision_block.gate_up_projection",
+              "operator_signature": {
+                "symbolic": "Hv \u2192 2 \u00d7 4096",
+                "concrete": "1024 \u2192 8192"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -8565,9 +9709,13 @@
             },
             {
               "id": "down_projection",
-              "label": "down projection\n4096 \u2192 Hv",
+              "label": "down projection",
               "shape": "gemm",
               "semantic_op": "vision_block.down_projection",
+              "operator_signature": {
+                "symbolic": "4096 \u2192 Hv",
+                "concrete": "4096 \u2192 1024"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -9688,9 +10836,13 @@
             },
             {
               "id": "coefficient_map",
-              "label": "learned map\nR\u00b7H \u2192 (2+R)R = 24",
+              "label": "learned mHC coefficient map",
               "shape": "gemm",
               "semantic_op": "mhc.coefficient_map",
+              "operator_signature": {
+                "symbolic": "R \u00d7 H \u2192 (2 + R) \u00d7 R",
+                "concrete": "16384 \u2192 24"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -9701,7 +10853,7 @@
               "semantics": {
                 "semantic_op": "mhc.coefficient_map",
                 "kind": "projection",
-                "summary": "learned map",
+                "summary": "learned mHC coefficient map",
                 "equation": "[pre_logits, post_logits, combine_logits] = Xn * W_mhc^T + b_mhc",
                 "inputs": [
                   {
@@ -10470,9 +11622,13 @@
             },
             {
               "id": "beta_projection",
-              "label": "sigmoid beta projection\nH \u2192 N=64",
+              "label": "sigmoid beta projection",
               "shape": "gemm",
               "semantic_op": "linear_attention.beta_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 N",
+                "concrete": "4096 \u2192 64"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -10791,9 +11947,13 @@
             },
             {
               "id": "output_projection",
-              "label": "attention output projection\n64\u00d7128 \u2192 H",
+              "label": "attention output projection",
               "shape": "gemm",
               "semantic_op": "linear_attention.output_projection",
+              "operator_signature": {
+                "symbolic": "N \u00d7 Dkda \u2192 H",
+                "concrete": "8192 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -11148,9 +12308,13 @@
             },
             {
               "id": "q_a_projection",
-              "label": "query latent projection\nH \u2192 Cq=1536",
+              "label": "query latent projection",
               "shape": "gemm",
               "semantic_op": "dsa_attention.q_a_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 Cq",
+                "concrete": "4096 \u2192 1536"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -11274,9 +12438,13 @@
             },
             {
               "id": "kv_a_projection",
-              "label": "KV latent projection\nH \u2192 Ckv=512",
+              "label": "KV latent projection",
               "shape": "gemm",
               "semantic_op": "dsa_attention.kv_a_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 Ckv",
+                "concrete": "4096 \u2192 512"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -11478,9 +12646,13 @@
             },
             {
               "id": "index_k_projection",
-              "label": "index key projection + LayerNorm\nH \u2192 128",
+              "label": "index key projection + LayerNorm",
               "shape": "gemm",
               "semantic_op": "dsa_attention.index_k_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 Di",
+                "concrete": "4096 \u2192 128"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -11519,9 +12691,13 @@
             },
             {
               "id": "index_weight_projection",
-              "label": "per-index-head score weights\nH \u2192 32",
+              "label": "per-index-head score weights",
               "shape": "gemm",
               "semantic_op": "dsa_attention.index_weight_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 Qi",
+                "concrete": "4096 \u2192 32"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -11886,9 +13062,13 @@
             },
             {
               "id": "output_projection",
-              "label": "attention output projection\n64\u00d7256 \u2192 H",
+              "label": "attention output projection",
               "shape": "gemm",
               "semantic_op": "dsa_attention.output_projection",
+              "operator_signature": {
+                "symbolic": "N \u00d7 Dv \u2192 H",
+                "concrete": "16384 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12265,9 +13445,13 @@
             },
             {
               "id": "gate_up_projection",
-              "label": "gate/up projection\nH \u2192 2\u00d712288",
+              "label": "gate/up projection",
               "shape": "gemm",
               "semantic_op": "dense_mlp.gate_up_projection",
+              "operator_signature": {
+                "symbolic": "H \u2192 2 \u00d7 12288",
+                "concrete": "4096 \u2192 24576"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12342,9 +13526,13 @@
             },
             {
               "id": "down_projection",
-              "label": "down projection\n12288 \u2192 H",
+              "label": "down projection",
               "shape": "gemm",
               "semantic_op": "dense_mlp.down_projection",
+              "operator_signature": {
+                "symbolic": "12288 \u2192 H",
+                "concrete": "12288 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12552,9 +13740,13 @@
             },
             {
               "id": "router",
-              "label": "FP32 sigmoid router\nH \u2192 E=288",
+              "label": "FP32 sigmoid router",
               "shape": "gemm",
               "semantic_op": "moe.router",
+              "operator_signature": {
+                "symbolic": "H \u2192 E",
+                "concrete": "4096 \u2192 288"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12741,9 +13933,13 @@
             },
             {
               "id": "routed_gate_up",
-              "label": "288 routed expert gate/up projections\nH \u2192 2\u00d72048",
+              "label": "288 routed expert gate/up projections",
               "shape": "moe",
               "semantic_op": "moe.routed_gate_up",
+              "operator_signature": {
+                "symbolic": "H \u2192 2 \u00d7 2048",
+                "concrete": "4096 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12818,9 +14014,13 @@
             },
             {
               "id": "routed_down",
-              "label": "routed expert down projections\n2048 \u2192 H",
+              "label": "routed expert down projections",
               "shape": "moe",
               "semantic_op": "moe.routed_down",
+              "operator_signature": {
+                "symbolic": "2048 \u2192 H",
+                "concrete": "2048 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12904,9 +14104,13 @@
             },
             {
               "id": "shared_gate_up",
-              "label": "shared expert gate/up projection\nH \u2192 2\u00d72048",
+              "label": "shared expert gate/up projection",
               "shape": "gemm",
               "semantic_op": "moe.shared_gate_up",
+              "operator_signature": {
+                "symbolic": "H \u2192 2 \u00d7 2048",
+                "concrete": "4096 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -12981,9 +14185,13 @@
             },
             {
               "id": "shared_down",
-              "label": "shared expert down projection\n2048 \u2192 H",
+              "label": "shared expert down projection",
               "shape": "gemm",
               "semantic_op": "moe.shared_down",
+              "operator_signature": {
+                "symbolic": "2048 \u2192 H",
+                "concrete": "2048 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "execution": {
@@ -13525,9 +14733,13 @@
             },
             {
               "id": "eh_projection",
-              "label": "embedding-hidden projection\n2H \u2192 H",
+              "label": "embedding-hidden projection",
               "shape": "gemm",
               "semantic_op": "mtp.eh_projection",
+              "operator_signature": {
+                "symbolic": "2 \u00d7 H \u2192 H",
+                "concrete": "8192 \u2192 4096"
+              },
               "ir_origin": "model_ir",
               "node_kind": "semantic",
               "semantics": {
@@ -13856,6 +15068,7 @@
         "decoder_stack": "top",
         "mtp_extension": "top",
         "vision_block": "vision_frontend",
+        "vision_merger": "vision_frontend",
         "mhc_transform": "decoder_stack",
         "linear_attention": "decoder_stack",
         "dsa_attention": "decoder_stack",
@@ -16668,6 +17881,10 @@
               }
             }
           }
+        },
+        "vision_merger": {
+          "title": "GLM-5.3-Flash projection norm and clamped SwiGLU vision merger",
+          "nodes_profile": {}
         },
         "vision_block": {
           "title": "One semantic vision transformer block",
@@ -34851,7 +36068,7 @@
       "source_lock_status": "runtime_verified",
       "execution_validation": {
         "status": "pass",
-        "execution_fingerprint": "exec_000d495647549c0c",
+        "execution_fingerprint": "exec_4d478cb4c0a5e236",
         "required_phases": [
           "prefill",
           "decode"
@@ -35342,6 +36559,256 @@
           ]
         },
         "vision_frontend.merger": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.merger_in": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.projection": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.post_norm": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.gelu": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.gate_up": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.clamp": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.silu": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.product": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.down": {
+          "symbols": [
+            "Glm5NextVisionModel",
+            "Glm5NextVisionPatchMerger"
+          ],
+          "links": [
+            {
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "symbol": "Glm5NextVisionModel",
+              "line": 246,
+              "display": "glm5_next.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ]
+        },
+        "vision_merger.merger_out": {
           "symbols": [
             "Glm5NextVisionModel",
             "Glm5NextVisionPatchMerger"
@@ -38099,7 +39566,7 @@
           ]
         }
       },
-      "execution_variant": "exec_000d495647549c0c"
+      "execution_variant": "exec_4d478cb4c0a5e236"
     },
     "vllm_487ecf187_native_tp8": {
       "implementation_id": "vllm_487ecf187_native_tp8",
@@ -38114,7 +39581,7 @@
       "source_lock_status": "runtime_verified",
       "execution_validation": {
         "status": "pass",
-        "execution_fingerprint": "exec_000d495647549c0c",
+        "execution_fingerprint": "exec_4d478cb4c0a5e236",
         "required_phases": [
           "prefill",
           "decode"
@@ -38604,6 +40071,246 @@
           ]
         },
         "vision_frontend.merger": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.merger_in": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.projection": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.post_norm": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.gelu": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.gate_up": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.clamp": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.silu": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.product": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.down": {
+          "symbols": [
+            "Glm5NextVisionTransformer"
+          ],
+          "links": [
+            {
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "symbol": "Glm5NextVisionTransformer",
+              "line": 352,
+              "display": "multimodal.py - optional native vision frontend"
+            }
+          ],
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionTransformer",
+              "file": "vllm/models/glm5next/nvidia/multimodal.py",
+              "line": 352,
+              "line_end": null,
+              "url": "https://github.com/vllm-project/vllm/blob/487ecf187d3dfe74d2cf6119a92881dba403c219/vllm/models/glm5next/nvidia/multimodal.py#L352",
+              "display": "multimodal.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionTransformer"
+            }
+          ]
+        },
+        "vision_merger.merger_out": {
           "symbols": [
             "Glm5NextVisionTransformer"
           ],
@@ -41416,7 +43123,7 @@
           ]
         }
       },
-      "execution_variant": "exec_000d495647549c0c"
+      "execution_variant": "exec_4d478cb4c0a5e236"
     }
   },
   "profiles": {
@@ -41637,7 +43344,7 @@
           "url": "timelines/glm53_flash_tp8_sglang_cg_decode_bs1_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
       "fusion_groups": {
@@ -44009,7 +45716,7 @@
           "url": "timelines/glm53_flash_tp8_sglang_cg_decode_bs16_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
       "fusion_groups": {
@@ -46381,7 +48088,7 @@
           "url": "timelines/glm53_flash_tp8_sglang_cg_decode_bs256_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
       "fusion_groups": {
@@ -48760,7 +50467,7 @@
           "url": "timelines/glm53_flash_tp8_sglang_cg_decode_bs64_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
       "fusion_groups": {
@@ -51123,7 +52830,7 @@
           "url": "timelines/glm53_flash_tp8_sglang_eager_prefill_bs1_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
       "fusion_groups": {
@@ -53584,7 +55291,7 @@
           "url": "timelines/glm53_flash_tp8_vllm_cg_decode_bs1_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "vllm_487ecf187_native_tp8",
       "fusion_groups": {
@@ -56458,7 +58165,7 @@
           "url": "timelines/glm53_flash_tp8_vllm_cg_decode_bs16_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "vllm_487ecf187_native_tp8",
       "fusion_groups": {
@@ -59325,7 +61032,7 @@
           "url": "timelines/glm53_flash_tp8_vllm_cg_decode_bs256_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "vllm_487ecf187_native_tp8",
       "fusion_groups": {
@@ -62203,7 +63910,7 @@
           "url": "timelines/glm53_flash_tp8_vllm_cg_decode_bs64_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "vllm_487ecf187_native_tp8",
       "fusion_groups": {
@@ -65057,7 +66764,7 @@
           "url": "timelines/glm53_flash_tp8_vllm_cg_prefill_bs1_8k1k.timeline.json.gz"
         }
       },
-      "execution_variant": "exec_000d495647549c0c",
+      "execution_variant": "exec_4d478cb4c0a5e236",
       "execution_path_id": "tp8",
       "implementation_id": "vllm_487ecf187_native_tp8",
       "fusion_groups": {
@@ -68215,8 +69922,8 @@
         "vllm_487ecf187_native_tp8": "glm53_flash_tp8_vllm_cg_decode_bs16_8k1k"
       },
       "execution_variants_by_implementation": {
-        "sglang_f609d677b_mixed_glm53_tp8": "exec_000d495647549c0c",
-        "vllm_487ecf187_native_tp8": "exec_000d495647549c0c"
+        "sglang_f609d677b_mixed_glm53_tp8": "exec_4d478cb4c0a5e236",
+        "vllm_487ecf187_native_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     },
@@ -68268,8 +69975,8 @@
         "vllm_487ecf187_native_tp8": "glm53_flash_tp8_vllm_cg_decode_bs1_8k1k"
       },
       "execution_variants_by_implementation": {
-        "sglang_f609d677b_mixed_glm53_tp8": "exec_000d495647549c0c",
-        "vllm_487ecf187_native_tp8": "exec_000d495647549c0c"
+        "sglang_f609d677b_mixed_glm53_tp8": "exec_4d478cb4c0a5e236",
+        "vllm_487ecf187_native_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     },
@@ -68321,8 +70028,8 @@
         "vllm_487ecf187_native_tp8": "glm53_flash_tp8_vllm_cg_decode_bs256_8k1k"
       },
       "execution_variants_by_implementation": {
-        "sglang_f609d677b_mixed_glm53_tp8": "exec_000d495647549c0c",
-        "vllm_487ecf187_native_tp8": "exec_000d495647549c0c"
+        "sglang_f609d677b_mixed_glm53_tp8": "exec_4d478cb4c0a5e236",
+        "vllm_487ecf187_native_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     },
@@ -68374,8 +70081,8 @@
         "vllm_487ecf187_native_tp8": "glm53_flash_tp8_vllm_cg_decode_bs64_8k1k"
       },
       "execution_variants_by_implementation": {
-        "sglang_f609d677b_mixed_glm53_tp8": "exec_000d495647549c0c",
-        "vllm_487ecf187_native_tp8": "exec_000d495647549c0c"
+        "sglang_f609d677b_mixed_glm53_tp8": "exec_4d478cb4c0a5e236",
+        "vllm_487ecf187_native_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     },
@@ -68426,7 +70133,7 @@
         "sglang_f609d677b_mixed_glm53_tp8": "glm53_flash_tp8_sglang_eager_prefill_bs1_8k1k"
       },
       "execution_variants_by_implementation": {
-        "sglang_f609d677b_mixed_glm53_tp8": "exec_000d495647549c0c"
+        "sglang_f609d677b_mixed_glm53_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     },
@@ -68477,7 +70184,7 @@
         "vllm_487ecf187_native_tp8": "glm53_flash_tp8_vllm_cg_prefill_bs1_8k1k"
       },
       "execution_variants_by_implementation": {
-        "vllm_487ecf187_native_tp8": "exec_000d495647549c0c"
+        "vllm_487ecf187_native_tp8": "exec_4d478cb4c0a5e236"
       },
       "execution_ir_compatible": true
     }
@@ -69498,9 +71205,13 @@
         },
         {
           "id": "patch_projection",
-          "label": "3D patch projection\n3\u00d72\u00d714\u00d714 \u2192 Hv",
+          "label": "3D patch projection",
           "shape": "gemm",
           "semantic_op": "vision.patch_projection",
+          "operator_signature": {
+            "symbolic": "3 \u00d7 2 \u00d7 14 \u00d7 14 \u2192 Hv",
+            "concrete": "1176 \u2192 1024"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -69781,9 +71492,13 @@
         },
         {
           "id": "spatial_downsample",
-          "label": "learned 2\u00d72 spatial downsample\n4Hv \u2192 H",
+          "label": "learned 2\u00d72 spatial downsample",
           "shape": "gemm",
           "semantic_op": "vision.spatial_downsample",
+          "operator_signature": {
+            "symbolic": "4 \u00d7 Hv \u2192 H",
+            "concrete": "4096 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -69836,9 +71551,14 @@
         },
         {
           "id": "merger",
-          "label": "projection norm + clamped SwiGLU merger\nH \u2192 10240 \u2192 H",
+          "label": "projection norm + clamped SwiGLU merger",
           "shape": "block",
           "semantic_op": "vision.merger",
+          "operator_signature": {
+            "symbolic": "H \u2192 Fvm \u2192 H",
+            "concrete": "4096 \u2192 10240 \u2192 4096"
+          },
+          "drill": "vision_merger",
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -69867,7 +71587,14 @@
               }
             ],
             "invariants": [],
-            "contract_source": "model_ir.semantic_contract+edges"
+            "contract_source": "model_ir.semantic_contract+edges",
+            "drill_boundary": {
+              "parent_node": "vision_frontend.merger",
+              "boundary_mode": "exact_node",
+              "child_view": "vision_merger",
+              "input_shape": "[M,H]",
+              "output_shape": "[M,H]"
+            }
           },
           "code_links": [
             {
@@ -70012,6 +71739,665 @@
         }
       ]
     },
+    "vision_merger": {
+      "title": "GLM-5.3-Flash projection norm and clamped SwiGLU vision merger",
+      "nodes": [
+        {
+          "id": "merger_in",
+          "label": "downsampled media features\n[M,H]",
+          "shape": "io",
+          "semantic_op": "vision_merger.input",
+          "boundary_direction": "input",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.input",
+            "kind": "boundary",
+            "summary": "downsampled media features",
+            "equation": "X := downsampled media features [M,H]",
+            "inputs": [],
+            "outputs": [
+              {
+                "name": "downsampled_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "projection"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "projection",
+          "label": "replicated input projection",
+          "shape": "gemm",
+          "semantic_op": "vision_merger.projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 H",
+            "concrete": "4096 \u2192 4096"
+          },
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.projection",
+            "kind": "projection",
+            "summary": "replicated input projection",
+            "equation": "X_proj = X W_proj^T in R^(M x H)",
+            "inputs": [
+              {
+                "name": "downsampled_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "merger_in"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "projected_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "post_norm"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "post_norm",
+          "label": "post-projection LayerNorm",
+          "shape": "norm",
+          "semantic_op": "vision_merger.post_norm",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.post_norm",
+            "kind": "normalization",
+            "summary": "post-projection LayerNorm",
+            "equation": "X_norm = LayerNorm(X_proj; gamma, beta, epsilon)",
+            "inputs": [
+              {
+                "name": "projected_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "projection"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "normalized_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "gelu"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "gelu",
+          "label": "GELU pre-activation",
+          "shape": "elem",
+          "semantic_op": "vision_merger.gelu",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.gelu",
+            "kind": "activation",
+            "summary": "GELU pre-activation",
+            "equation": "X_pre = GELU(X_norm)",
+            "inputs": [
+              {
+                "name": "normalized_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "post_norm"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "preactivated_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "gate_up"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "gate_up",
+          "label": "gate/up projection",
+          "shape": "gemm",
+          "semantic_op": "vision_merger.gate_up",
+          "operator_signature": {
+            "symbolic": "H \u2192 2 \u00d7 Fvm",
+            "concrete": "4096 \u2192 20480"
+          },
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.gate_up",
+            "kind": "projection",
+            "summary": "gate/up projection",
+            "equation": "[G_raw,U_raw] = X_pre W_gate_up^T with G_raw,U_raw in R^(M x Fvm)",
+            "inputs": [
+              {
+                "name": "preactivated_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "gelu"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "raw_gate_and_up",
+                "shape": "[M,2*Fvm]",
+                "layout": "packed_media_tokens_gate_up",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "clamp"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "clamp",
+          "label": "split and clamp\ngate \u2264 10; up \u2208 [-10,10]",
+          "shape": "elem",
+          "semantic_op": "vision_merger.clamp",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.clamp",
+            "kind": "activation",
+            "summary": "split and clamp",
+            "equation": "G = min(G_raw,10); U = clamp(U_raw,-10,10)",
+            "inputs": [
+              {
+                "name": "raw_gate_and_up",
+                "shape": "[M,2*Fvm]",
+                "layout": "packed_media_tokens_gate_up",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "gate_up"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "clamped_gate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "silu"
+              },
+              {
+                "name": "clamped_up",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "product"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "silu",
+          "label": "SiLU clamped gate",
+          "shape": "elem",
+          "semantic_op": "vision_merger.silu",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.silu",
+            "kind": "activation",
+            "summary": "SiLU clamped gate",
+            "equation": "A = SiLU(G) = G elementwise_mul sigmoid(G)",
+            "inputs": [
+              {
+                "name": "clamped_gate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "clamp"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "activated_gate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "product"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "product",
+          "label": "clamped SwiGLU product",
+          "shape": "elem",
+          "semantic_op": "vision_merger.product",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.product",
+            "kind": "composition",
+            "summary": "clamped SwiGLU product",
+            "equation": "M_hidden = A elementwise_mul U",
+            "inputs": [
+              {
+                "name": "activated_gate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "silu"
+              },
+              {
+                "name": "clamped_up",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "clamp"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "gated_vision_intermediate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "target": "down"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "down",
+          "label": "row-parallel down projection",
+          "shape": "gemm",
+          "semantic_op": "vision_merger.down",
+          "operator_signature": {
+            "symbolic": "Fvm \u2192 H",
+            "concrete": "10240 \u2192 4096"
+          },
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.down",
+            "kind": "projection",
+            "summary": "row-parallel down projection",
+            "equation": "Y = M_hidden W_down^T in R^(M x H)",
+            "inputs": [
+              {
+                "name": "gated_vision_intermediate",
+                "shape": "[M,Fvm]",
+                "layout": "packed_media_tokens_intermediate",
+                "dtype": "vision_activation_dtype",
+                "state": "ephemeral_activation",
+                "source": "product"
+              }
+            ],
+            "outputs": [
+              {
+                "name": "merged_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "model_activation_dtype",
+                "state": "ephemeral_output",
+                "target": "merger_out"
+              }
+            ],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        },
+        {
+          "id": "merger_out",
+          "label": "merged media features\n[M,H]",
+          "shape": "io",
+          "semantic_op": "vision_merger.output",
+          "boundary_direction": "output",
+          "ir_origin": "model_ir",
+          "node_kind": "semantic",
+          "semantics": {
+            "semantic_op": "vision_merger.output",
+            "kind": "boundary",
+            "summary": "merged media features",
+            "equation": "Y := merged media features [M,H]",
+            "inputs": [
+              {
+                "name": "merged_media_features",
+                "shape": "[M,H]",
+                "layout": "packed_media_tokens_hidden",
+                "dtype": "model_activation_dtype",
+                "state": "ephemeral_output",
+                "source": "down"
+              }
+            ],
+            "outputs": [],
+            "invariants": [],
+            "contract_source": "model_ir.semantic_contract+edges"
+          },
+          "code_links": [
+            {
+              "raw": "Glm5NextVisionModel",
+              "file": "python/sglang/srt/models/glm5_next.py",
+              "line": 246,
+              "line_end": null,
+              "url": "https://github.com/sgl-project/sglang/blob/f609d677b909ca46c64bb6803b69a85fedbf86bc/python/sglang/srt/models/glm5_next.py#L246",
+              "display": "glm5_next.py - optional native vision frontend",
+              "symbol": "Glm5NextVisionModel"
+            }
+          ],
+          "implementation_binding": {
+            "implementation_id": "sglang_f609d677b_mixed_glm53_tp8",
+            "symbols": [
+              "Glm5NextVisionModel",
+              "Glm5NextVisionPatchMerger"
+            ],
+            "kernel_signatures": []
+          }
+        }
+      ],
+      "edges": [
+        {
+          "from": "merger_in",
+          "to": "projection",
+          "identity": "downsampled_media_features",
+          "shape": "[M,H]",
+          "layout": "packed_media_tokens_hidden",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "projection",
+          "to": "post_norm",
+          "identity": "projected_media_features",
+          "shape": "[M,H]",
+          "layout": "packed_media_tokens_hidden",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "post_norm",
+          "to": "gelu",
+          "identity": "normalized_media_features",
+          "shape": "[M,H]",
+          "layout": "packed_media_tokens_hidden",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "gelu",
+          "to": "gate_up",
+          "identity": "preactivated_media_features",
+          "shape": "[M,H]",
+          "layout": "packed_media_tokens_hidden",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "gate_up",
+          "to": "clamp",
+          "identity": "raw_gate_and_up",
+          "shape": "[M,2*Fvm]",
+          "layout": "packed_media_tokens_gate_up",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "clamp",
+          "to": "silu",
+          "identity": "clamped_gate",
+          "shape": "[M,Fvm]",
+          "layout": "packed_media_tokens_intermediate",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "silu",
+          "to": "product",
+          "identity": "activated_gate",
+          "shape": "[M,Fvm]",
+          "layout": "packed_media_tokens_intermediate",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "clamp",
+          "to": "product",
+          "identity": "clamped_up",
+          "shape": "[M,Fvm]",
+          "layout": "packed_media_tokens_intermediate",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "product",
+          "to": "down",
+          "identity": "gated_vision_intermediate",
+          "shape": "[M,Fvm]",
+          "layout": "packed_media_tokens_intermediate",
+          "dtype": "vision_activation_dtype",
+          "state": "ephemeral_activation"
+        },
+        {
+          "from": "down",
+          "to": "merger_out",
+          "identity": "merged_media_features",
+          "shape": "[M,H]",
+          "layout": "packed_media_tokens_hidden",
+          "dtype": "model_activation_dtype",
+          "state": "ephemeral_output"
+        }
+      ]
+    },
     "vision_block": {
       "title": "One semantic vision transformer block",
       "nodes": [
@@ -70128,9 +72514,13 @@
         },
         {
           "id": "qkv_projection",
-          "label": "Q/K/V projection\nHv \u2192 3Hv",
+          "label": "Q/K/V projection",
           "shape": "gemm",
           "semantic_op": "vision_block.qkv_projection",
+          "operator_signature": {
+            "symbolic": "Hv \u2192 3 \u00d7 Hv",
+            "concrete": "1024 \u2192 3072"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -70476,9 +72866,13 @@
         },
         {
           "id": "gate_up_projection",
-          "label": "gate/up projection\nHv \u2192 2\u00d74096",
+          "label": "gate/up projection",
           "shape": "gemm",
           "semantic_op": "vision_block.gate_up_projection",
+          "operator_signature": {
+            "symbolic": "Hv \u2192 2 \u00d7 4096",
+            "concrete": "1024 \u2192 8192"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -70586,9 +72980,13 @@
         },
         {
           "id": "down_projection",
-          "label": "down projection\n4096 \u2192 Hv",
+          "label": "down projection",
           "shape": "gemm",
           "semantic_op": "vision_block.down_projection",
+          "operator_signature": {
+            "symbolic": "4096 \u2192 Hv",
+            "concrete": "4096 \u2192 1024"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -72059,9 +74457,13 @@
         },
         {
           "id": "coefficient_map",
-          "label": "learned map\nR\u00b7H \u2192 (2+R)R = 24",
+          "label": "learned mHC coefficient map",
           "shape": "gemm",
           "semantic_op": "mhc.coefficient_map",
+          "operator_signature": {
+            "symbolic": "R \u00d7 H \u2192 (2 + R) \u00d7 R",
+            "concrete": "16384 \u2192 24"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -72072,7 +74474,7 @@
           "semantics": {
             "semantic_op": "mhc.coefficient_map",
             "kind": "projection",
-            "summary": "learned map",
+            "summary": "learned mHC coefficient map",
             "equation": "[pre_logits, post_logits, combine_logits] = Xn * W_mhc^T + b_mhc",
             "inputs": [
               {
@@ -73120,9 +75522,13 @@
         },
         {
           "id": "beta_projection",
-          "label": "sigmoid beta projection\nH \u2192 N=64",
+          "label": "sigmoid beta projection",
           "shape": "gemm",
           "semantic_op": "linear_attention.beta_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 N",
+            "concrete": "4096 \u2192 64"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -73570,9 +75976,13 @@
         },
         {
           "id": "output_projection",
-          "label": "attention output projection\n64\u00d7128 \u2192 H",
+          "label": "attention output projection",
           "shape": "gemm",
           "semantic_op": "linear_attention.output_projection",
+          "operator_signature": {
+            "symbolic": "N \u00d7 Dkda \u2192 H",
+            "concrete": "8192 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -74000,9 +76410,13 @@
         },
         {
           "id": "q_a_projection",
-          "label": "query latent projection\nH \u2192 Cq=1536",
+          "label": "query latent projection",
           "shape": "gemm",
           "semantic_op": "dsa_attention.q_a_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 Cq",
+            "concrete": "4096 \u2192 1536"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -74180,9 +76594,13 @@
         },
         {
           "id": "kv_a_projection",
-          "label": "KV latent projection\nH \u2192 Ckv=512",
+          "label": "KV latent projection",
           "shape": "gemm",
           "semantic_op": "dsa_attention.kv_a_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 Ckv",
+            "concrete": "4096 \u2192 512"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -74474,9 +76892,13 @@
         },
         {
           "id": "index_k_projection",
-          "label": "index key projection + LayerNorm\nH \u2192 128",
+          "label": "index key projection + LayerNorm",
           "shape": "gemm",
           "semantic_op": "dsa_attention.index_k_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 Di",
+            "concrete": "4096 \u2192 128"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -74533,9 +76955,13 @@
         },
         {
           "id": "index_weight_projection",
-          "label": "per-index-head score weights\nH \u2192 32",
+          "label": "per-index-head score weights",
           "shape": "gemm",
           "semantic_op": "dsa_attention.index_weight_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 Qi",
+            "concrete": "4096 \u2192 32"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -75051,9 +77477,13 @@
         },
         {
           "id": "output_projection",
-          "label": "attention output projection\n64\u00d7256 \u2192 H",
+          "label": "attention output projection",
           "shape": "gemm",
           "semantic_op": "dsa_attention.output_projection",
+          "operator_signature": {
+            "symbolic": "N \u00d7 Dv \u2192 H",
+            "concrete": "16384 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -75503,9 +77933,13 @@
         },
         {
           "id": "gate_up_projection",
-          "label": "gate/up projection\nH \u2192 2\u00d712288",
+          "label": "gate/up projection",
           "shape": "gemm",
           "semantic_op": "dense_mlp.gate_up_projection",
+          "operator_signature": {
+            "symbolic": "H \u2192 2 \u00d7 12288",
+            "concrete": "4096 \u2192 24576"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -75616,9 +78050,13 @@
         },
         {
           "id": "down_projection",
-          "label": "down projection\n12288 \u2192 H",
+          "label": "down projection",
           "shape": "gemm",
           "semantic_op": "dense_mlp.down_projection",
+          "operator_signature": {
+            "symbolic": "12288 \u2192 H",
+            "concrete": "12288 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -75899,9 +78337,13 @@
         },
         {
           "id": "router",
-          "label": "FP32 sigmoid router\nH \u2192 E=288",
+          "label": "FP32 sigmoid router",
           "shape": "gemm",
           "semantic_op": "moe.router",
+          "operator_signature": {
+            "symbolic": "H \u2192 E",
+            "concrete": "4096 \u2192 288"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -76160,9 +78602,13 @@
         },
         {
           "id": "routed_gate_up",
-          "label": "288 routed expert gate/up projections\nH \u2192 2\u00d72048",
+          "label": "288 routed expert gate/up projections",
           "shape": "moe",
           "semantic_op": "moe.routed_gate_up",
+          "operator_signature": {
+            "symbolic": "H \u2192 2 \u00d7 2048",
+            "concrete": "4096 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -76275,9 +78721,13 @@
         },
         {
           "id": "routed_down",
-          "label": "routed expert down projections\n2048 \u2192 H",
+          "label": "routed expert down projections",
           "shape": "moe",
           "semantic_op": "moe.routed_down",
+          "operator_signature": {
+            "symbolic": "2048 \u2192 H",
+            "concrete": "2048 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -76399,9 +78849,13 @@
         },
         {
           "id": "shared_gate_up",
-          "label": "shared expert gate/up projection\nH \u2192 2\u00d72048",
+          "label": "shared expert gate/up projection",
           "shape": "gemm",
           "semantic_op": "moe.shared_gate_up",
+          "operator_signature": {
+            "symbolic": "H \u2192 2 \u00d7 2048",
+            "concrete": "4096 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -76512,9 +78966,13 @@
         },
         {
           "id": "shared_down",
-          "label": "shared expert down projection\n2048 \u2192 H",
+          "label": "shared expert down projection",
           "shape": "gemm",
           "semantic_op": "moe.shared_down",
+          "operator_signature": {
+            "symbolic": "2048 \u2192 H",
+            "concrete": "2048 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "execution": {
@@ -77243,9 +79701,13 @@
         },
         {
           "id": "eh_projection",
-          "label": "embedding-hidden projection\n2H \u2192 H",
+          "label": "embedding-hidden projection",
           "shape": "gemm",
           "semantic_op": "mtp.eh_projection",
+          "operator_signature": {
+            "symbolic": "2 \u00d7 H \u2192 H",
+            "concrete": "8192 \u2192 4096"
+          },
           "ir_origin": "model_ir",
           "node_kind": "semantic",
           "semantics": {
@@ -77688,6 +80150,7 @@
     "decoder_stack": "top",
     "mtp_extension": "top",
     "vision_block": "vision_frontend",
+    "vision_merger": "vision_frontend",
     "mhc_transform": "decoder_stack",
     "linear_attention": "decoder_stack",
     "dsa_attention": "decoder_stack",
@@ -80500,6 +82963,10 @@
           }
         }
       }
+    },
+    "vision_merger": {
+      "title": "GLM-5.3-Flash projection norm and clamped SwiGLU vision merger",
+      "nodes_profile": {}
     },
     "vision_block": {
       "title": "One semantic vision transformer block",

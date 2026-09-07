@@ -220,6 +220,10 @@ def _validate_semantic_release_contract(
         raise CatalogError(
             f"{source}: semantic_release_contract.required_views must be non-empty"
         )
+    if len(required_views) != len(set(required_views)):
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_views contains duplicates"
+        )
     missing_views = sorted(set(required_views) - set(views))
     if missing_views:
         raise CatalogError(
@@ -232,6 +236,36 @@ def _validate_semantic_release_contract(
             f"{source}: semantic_release_contract.required_drills must be non-empty"
         )
     node_index = _node_index(views, source=source)
+    actual_drills = {
+        target: str(node["drill"])
+        for target, node in node_index.items()
+        if node.get("drill")
+    }
+    expected_detail_views = set(actual_drills.values())
+    if set(required_views) != expected_detail_views:
+        missing = sorted(expected_detail_views - set(required_views))
+        extra = sorted(set(required_views) - expected_detail_views)
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_views must exactly pin "
+            f"every drill target; missing={missing}, extra={extra}"
+        )
+    normalized_required_drills = {
+        str(target): str(expected_view)
+        for target, expected_view in required_drills.items()
+    }
+    if normalized_required_drills != actual_drills:
+        missing = sorted(set(actual_drills) - set(normalized_required_drills))
+        extra = sorted(set(normalized_required_drills) - set(actual_drills))
+        mismatched = sorted(
+            target
+            for target in set(actual_drills) & set(normalized_required_drills)
+            if actual_drills[target] != normalized_required_drills[target]
+        )
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_drills must exactly pin "
+            f"every drill route; missing={missing}, extra={extra}, "
+            f"mismatched={mismatched}"
+        )
     for target, expected_view in required_drills.items():
         node = node_index.get(str(target))
         if node is None or node.get("drill") != expected_view:
@@ -244,6 +278,13 @@ def _validate_semantic_release_contract(
         raise CatalogError(
             f"{source}: semantic_release_contract.required_nodes must be non-empty"
         )
+    if set(required_nodes) != expected_detail_views:
+        missing = sorted(expected_detail_views - set(required_nodes))
+        extra = sorted(set(required_nodes) - expected_detail_views)
+        raise CatalogError(
+            f"{source}: semantic_release_contract.required_nodes must exactly pin "
+            f"every detail view; missing={missing}, extra={extra}"
+        )
     for view_id, node_ids in required_nodes.items():
         if view_id not in views:
             raise CatalogError(
@@ -255,12 +296,23 @@ def _validate_semantic_release_contract(
                 f"{source}: semantic_release_contract nodes for {view_id!r} "
                 "must be a non-empty list"
             )
+        if len(node_ids) != len(set(node_ids)):
+            raise CatalogError(
+                f"{source}: semantic_release_contract nodes for {view_id!r} "
+                "contain duplicates"
+            )
         actual = {str(node.get("id")) for node in views[view_id].get("nodes", [])}
         missing_nodes = sorted(set(node_ids) - actual)
         if missing_nodes:
             raise CatalogError(
                 f"{source}: semantic_release_contract view {view_id!r} is missing "
                 f"required nodes {missing_nodes}"
+            )
+        unpinned_nodes = sorted(actual - set(node_ids))
+        if unpinned_nodes:
+            raise CatalogError(
+                f"{source}: semantic_release_contract view {view_id!r} has "
+                f"unpinned nodes {unpinned_nodes}"
             )
 
 

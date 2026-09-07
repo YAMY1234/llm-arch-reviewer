@@ -2,7 +2,7 @@ schema_version: model-ir.v2
 model_id: glm52
 model_label: GLM-5.2 NVFP4
 ir_version: 1
-semantic_revision: 6
+semantic_revision: 7
 default_view: top
 default_execution_path: tp8
 
@@ -25,6 +25,8 @@ dimensions:
   K: 8 selected experts per token
   Q_latent: 2048 query latent width
   F_dense: 12288 dense MLP intermediate width
+  F_expert: 2048 routed-expert intermediate width
+  Nr: dispatched token-expert pair count
 
 facts:
   checkpoint: nvidia/GLM-5.2-NVFP4
@@ -112,6 +114,16 @@ semantic_contract:
     moe.topk: {kind: routing, equation: 'expert_ids = TopK(sigmoid(router_logits), K=8); weights = 2.5 * Renormalize(selected_scores)'}
     moe.dispatch: {kind: routing, equation: 'X_e = Dispatch(X, expert_ids) grouped by routed expert'}
     moe.routed_experts: {kind: module, equation: 'Y_e = W_down_e(SiLU(W_gate_e X_e) elementwise_mul (W_up_e X_e)) for e in 0..255'}
+    routed_expert.hidden_input: {kind: boundary, equation: 'X := normalized MoE activations [B,T,H]'}
+    routed_expert.route_assignments: {kind: boundary, equation: 'routes := expert_ids [B,T,K] and weights [B,T,K]'}
+    routed_expert.dispatch: {kind: routing, equation: 'X_routed = GatherByExpert(X, expert_ids) in R^(Nr x H)'}
+    routed_expert.gate_projection: {kind: projection, equation: 'G = X_routed W_gate^T in R^(Nr x F_expert)'}
+    routed_expert.up_projection: {kind: projection, equation: 'U = X_routed W_up^T in R^(Nr x F_expert)'}
+    routed_expert.silu: {kind: activation, equation: 'A = SiLU(G) = G elementwise_mul sigmoid(G)'}
+    routed_expert.gated_product: {kind: composition, equation: 'M = A elementwise_mul U'}
+    routed_expert.down_projection: {kind: projection, equation: 'Y_packed = M W_down^T in R^(Nr x H)'}
+    routed_expert.restore: {kind: routing, equation: 'Y_selected = RestoreByToken(Y_packed, expert_ids) in R^(B x T x K x H)'}
+    routed_expert.output: {kind: boundary, equation: 'Y_selected := selected routed-expert outputs [B,T,K,H]'}
     moe.routed_weighted_combine: {kind: reduction, equation: 'Y_routed = sum_(j=1..8)(weights_j * Gather(Y_expert_j))'}
     moe.shared_expert_up: {kind: projection, equation: '[G_s,U_s] = X W_shared_gate_up^T'}
     moe.shared_expert_activation: {kind: activation, equation: 'M_s = SiLU(G_s) elementwise_mul U_s'}
@@ -127,6 +139,14 @@ semantic_contract:
     mtp.concatenate: {kind: composition, equation: 'EH = Concat(En,Hn,axis=hidden)'}
     mtp.eh_projection: {kind: projection, equation: 'X_draft = EH W_eh^T, mapping 2H to H'}
     mtp.nextn_decoder: {kind: module, equation: 'Y_draft = OneLayerDSAMoEDecoder(X_draft, target_topk_state)'}
+    mtp_decoder.input: {kind: boundary, equation: 'X_0 := projected candidate and target hidden state [B,T,H]'}
+    mtp_decoder.attention_norm: {kind: normalization, equation: 'X_attn = RMSNorm(X_0; gamma_attn, epsilon)'}
+    mtp_decoder.dsa_attention: {kind: module, equation: 'Delta_attn = DSA_MLA(X_attn, target_topk_state)'}
+    mtp_decoder.attention_residual: {kind: composition, equation: 'A = X_0 + Delta_attn'}
+    mtp_decoder.ffn_norm: {kind: normalization, equation: 'X_ffn = RMSNorm(A; gamma_ffn, epsilon)'}
+    mtp_decoder.moe: {kind: module, equation: 'Delta_ffn = RoutedSharedMoE(X_ffn; E=256, K=8, shared=1)'}
+    mtp_decoder.ffn_residual: {kind: composition, equation: 'Y_draft = A + Delta_ffn'}
+    mtp_decoder.output: {kind: boundary, equation: 'Y_draft := one-layer NextN decoder output [B,T,H]'}
     mtp.shared_head_norm: {kind: normalization, equation: 'Yn = RMSNorm(Y_draft; gamma_final, epsilon)'}
     mtp.lm_head: {kind: projection, equation: 'draft_logits = Yn W_vocab^T'}
     mtp.draft_logits: {kind: boundary, equation: 'draft_logits := speculative logits [B,T,V]'}
@@ -136,6 +156,7 @@ semantic_coverage:
   parameter_closure: all_parameterized_embedding_attention_dense_moe_norm_and_head_operations_declared
   state_closure: latent_kv_index_k_topk_and_optional_nextn_state_boundaries_declared
   layer_variant_closure: all_78_decoder_21_index_owner_57_index_reuse_dense_and_moe_variants_declared
+  detail_view_closure: every compound semantic module drills to a primitive equation shape dtype and state graph
   config_field_disposition:
     model_ir:
       - architectures
@@ -163,6 +184,10 @@ boundary_contracts:
   - {parent_node: stack.dsa_attention, boundary_mode: exact_node, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
   - {parent_node: stack.dense_mlp, boundary_mode: exact_node, child_view: dense_mlp, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
   - {parent_node: stack.moe, boundary_mode: exact_node, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: moe.routed_experts, boundary_mode: exact_node, child_view: routed_expert, input_shape: "parent packed [tokens_per_expert,H] represented as hidden [B,T,H] + ids:[B,T,K]+weights:[B,T,K]", output_shape: "parent packed [tokens_per_expert,H] represented as selected expert outputs [B,T,K,H]"}
+  - {parent_node: mtp_extension.nextn_decoder, boundary_mode: exact_node, child_view: mtp_decoder, input_shape: "[B,T,H] + target top-k state", output_shape: "[B,T,H]"}
+  - {parent_node: mtp_decoder.dsa_attention, boundary_mode: external_entry, child_view: dsa_attention, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
+  - {parent_node: mtp_decoder.moe, boundary_mode: external_entry, child_view: moe, input_shape: "[B,T,H]", output_shape: "[B,T,H]"}
 
 views:
   top:
@@ -450,6 +475,7 @@ views:
         label: "256 routed SwiGLU experts\nintermediate=2048"
         shape: moe
         semantic_op: moe.routed_experts
+        drill: routed_expert
       - id: routed_weighted_combine
         label: weighted routed-expert combine
         shape: elem
@@ -490,6 +516,131 @@ views:
       - {<<: *ephemeral_edge, from: shared_expert_down, to: combine, identity: shared_expert_output, shape: "[B,T,H]", dtype: bf16}
       - {<<: *ephemeral_edge, from: combine, to: moe_out, identity: moe_delta, shape: "[B,T,H]", dtype: bf16}
 
+  routed_expert:
+    title: One selected GLM-5.2 routed SwiGLU expert
+    nodes:
+      - id: hidden_input
+        label: "normalized MoE activations\n[B,T,H]"
+        shape: io
+        semantic_op: routed_expert.hidden_input
+        boundary_direction: input
+      - id: route_assignments
+        label: "top-8 expert IDs and weights\n[B,T,K]"
+        shape: io
+        semantic_op: routed_expert.route_assignments
+        boundary_direction: input
+      - id: dispatch
+        label: dispatch selected token-expert pairs
+        shape: elem
+        semantic_op: routed_expert.dispatch
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns dispatch and packed expert computation}
+      - id: gate_projection
+        label: routed gate projection
+        shape: gemm
+        semantic_op: routed_expert.gate_projection
+        operator_signature: {symbolic: 'H → F_expert', concrete: '6144 → 2048'}
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns fused expert projections}
+      - id: up_projection
+        label: routed up projection
+        shape: gemm
+        semantic_op: routed_expert.up_projection
+        operator_signature: {symbolic: 'H → F_expert', concrete: '6144 → 2048'}
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns fused expert projections}
+      - id: silu
+        label: SiLU gate activation
+        shape: elem
+        semantic_op: routed_expert.silu
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns fused SwiGLU activation}
+      - id: gated_product
+        label: gated intermediate product
+        shape: elem
+        semantic_op: routed_expert.gated_product
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns fused SwiGLU product}
+      - id: down_projection
+        label: routed down projection
+        shape: gemm
+        semantic_op: routed_expert.down_projection
+        operator_signature: {symbolic: 'F_expert → H', concrete: '2048 → 6144'}
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns fused expert projections}
+      - id: restore
+        label: restore token and route axes
+        shape: elem
+        semantic_op: routed_expert.restore
+        semantic_details:
+          runtime_mapping: {expectation: fused, owner: moe.routed_experts, reason: routed-expert aggregate owns finalize and restore work}
+      - id: routed_output
+        label: "selected expert outputs\n[B,T,K,H]"
+        shape: io
+        semantic_op: routed_expert.output
+        boundary_direction: output
+    edges:
+      - {<<: *ephemeral_edge, from: hidden_input, to: dispatch, identity: normalized_hidden_to_dispatch, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: route_assignments, to: dispatch, identity: route_ids_and_weights, shape: "ids:[B,T,K]+weights:[B,T,K]", dtype: "int32+fp32"}
+      - {<<: *ephemeral_edge, from: dispatch, to: gate_projection, identity: expert_major_gate_input, shape: "[Nr,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: dispatch, to: up_projection, identity: expert_major_up_input, shape: "[Nr,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: gate_projection, to: silu, identity: expert_gate_values, shape: "[Nr,F_expert]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: silu, to: gated_product, identity: activated_gate_values, shape: "[Nr,F_expert]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: up_projection, to: gated_product, identity: expert_up_values, shape: "[Nr,F_expert]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: gated_product, to: down_projection, identity: gated_intermediate, shape: "[Nr,F_expert]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: down_projection, to: restore, identity: packed_expert_outputs, shape: "[Nr,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: restore, to: routed_output, identity: selected_expert_outputs, shape: "[B,T,K,H]", dtype: bf16}
+
+  mtp_decoder:
+    title: One GLM-5.2 NextN DSA plus MoE decoder layer
+    nodes:
+      - id: draft_in
+        label: "projected draft hidden state\n[B,T,H]"
+        shape: io
+        semantic_op: mtp_decoder.input
+        boundary_direction: input
+      - id: attention_norm
+        label: NextN pre-attention RMSNorm
+        shape: norm
+        semantic_op: mtp_decoder.attention_norm
+      - id: dsa_attention
+        label: "NextN DSA sparse attention\nreuses target top-k state"
+        shape: attn
+        semantic_op: mtp_decoder.dsa_attention
+        drill: dsa_attention
+      - id: attention_residual
+        label: NextN attention residual add
+        shape: elem
+        semantic_op: mtp_decoder.attention_residual
+      - id: ffn_norm
+        label: NextN pre-MoE RMSNorm
+        shape: norm
+        semantic_op: mtp_decoder.ffn_norm
+      - id: moe
+        label: NextN routed plus shared MoE
+        shape: moe
+        semantic_op: mtp_decoder.moe
+        drill: moe
+      - id: ffn_residual
+        label: NextN feed-forward residual add
+        shape: elem
+        semantic_op: mtp_decoder.ffn_residual
+      - id: draft_out
+        label: "NextN decoder output\n[B,T,H]"
+        shape: io
+        semantic_op: mtp_decoder.output
+        boundary_direction: output
+    edges:
+      - {<<: *ephemeral_edge, from: draft_in, to: attention_norm, identity: draft_hidden_state, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attention_norm, to: dsa_attention, identity: normalized_draft_attention_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: dsa_attention, to: attention_residual, identity: draft_attention_delta, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: draft_in, to: attention_residual, kind: residual, identity: draft_attention_residual, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attention_residual, to: ffn_norm, identity: post_attention_draft_hidden, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: ffn_norm, to: moe, identity: normalized_draft_ffn_input, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: moe, to: ffn_residual, identity: draft_moe_delta, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: attention_residual, to: ffn_residual, kind: residual, identity: draft_ffn_residual, shape: "[B,T,H]", dtype: bf16}
+      - {<<: *ephemeral_edge, from: ffn_residual, to: draft_out, identity: draft_decoder_output, shape: "[B,T,H]", dtype: bf16}
+
   mtp_extension:
     title: Optional checkpoint NextN extension
     nodes:
@@ -528,6 +679,7 @@ views:
         label: "one NextN DSA + MoE decoder\nreuses target index top-k state"
         shape: block
         semantic_op: mtp.nextn_decoder
+        drill: mtp_decoder
       - id: shared_head_norm
         label: shared-head RMSNorm
         shape: norm

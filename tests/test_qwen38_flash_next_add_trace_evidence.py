@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 
@@ -8,10 +9,68 @@ from models.common.trace_mapping import ForwardWindow, normalize_kernel_events
 from models.qwen38_flash_next.build.build_qwen38_flash_next_add_trace_evidence import (
     TOPOLOGY_ID,
     _artifact_record,
+    _production_capture_time,
     _production_signature,
     _source_anchor,
     _validate_protocols,
 )
+
+
+def _round_record(*, round_id: str, traces: bool) -> dict[str, object]:
+    record: dict[str, object] = {
+        "round": round_id,
+        "started_at_unix": 1788617746.1125839,
+        "finished_at_unix": 1788617750.0726397,
+    }
+    if traces:
+        record["trace_files"] = [
+            f"/run/results/profile/model-TP-{rank}.trace.json.gz"
+            for rank in range(4)
+        ]
+    return record
+
+
+def test_production_capture_time_is_derived_from_unique_profiled_formal_round(
+    tmp_path,
+) -> None:
+    rounds = tmp_path / "rounds.jsonl"
+    records = [
+        _round_record(round_id="warmup-1", traces=False),
+        _round_record(round_id="formal-1", traces=True),
+    ]
+    rounds.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    assert _production_capture_time(
+        rounds,
+        expected_tp_size=4,
+        expected_formal_rounds=1,
+    ) == "2026-09-05T14:15:46.112584Z"
+
+
+def test_production_capture_time_fails_closed_on_ambiguous_or_partial_evidence(
+    tmp_path,
+) -> None:
+    rounds = tmp_path / "rounds.jsonl"
+    records = [
+        _round_record(round_id="formal-1", traces=True),
+        _round_record(round_id="formal-2", traces=True),
+    ]
+    rounds.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    with pytest.raises(ValueError, match="exactly one profiled formal round"):
+        _production_capture_time(
+            rounds,
+            expected_tp_size=4,
+            expected_formal_rounds=2,
+        )
+
+    records = [_round_record(round_id="formal-1", traces=True)]
+    records[0]["trace_files"] = records[0]["trace_files"][:-1]
+    rounds.write_text(json.dumps(records[0]) + "\n")
+    with pytest.raises(ValueError, match="exactly one trace for every TP rank"):
+        _production_capture_time(
+            rounds,
+            expected_tp_size=4,
+            expected_formal_rounds=1,
+        )
 
 
 def test_artifact_records_are_run_root_relative_and_location_independent(

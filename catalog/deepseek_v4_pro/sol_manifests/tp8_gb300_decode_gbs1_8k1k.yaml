@@ -172,6 +172,17 @@ nodes:
   csa_indexer.q_projection: {model: roofline, operator_family: qsa_indexer, ops: 2*B*T*C_Q*INDEX_HEADS*INDEX_DIM, bytes: 2*C_Q*INDEX_HEADS*INDEX_DIM+4*B*T*(C_Q+INDEX_HEADS*INDEX_DIM), dtype: bf16, repetitions: L_CSA, assumptions: [includes fused RoPE Hadamard and FP4 quantization owner]}
   csa_indexer.q_rope_rotate: {model: structural, reason: fused into csa_indexer.q_projection, included_in_target: csa_indexer.q_projection}
   csa_indexer.k_compress: {model: roofline, operator_family: qsa_indexer, ops: 4*B*T*H*INDEX_DIM, bytes: 4*H*INDEX_DIM+8*B*T*(H+INDEX_DIM), dtype: bf16, repetitions: L_CSA, assumptions: [includes ratio-4 pooling norm RoPE Hadamard quantization and cache append]}
+  csa_index_compressor.hidden_input: {model: structural, reason: index-key compressor input boundary}
+  csa_index_compressor.kv_gate_projection: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.overlap_layout: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.softmax_pool: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.rms_norm: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.rope: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.hadamard: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.fp4_quantize: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.partial_state: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.compressed_cache: {model: structural, reason: fused into csa_indexer.k_compress, included_in_target: csa_indexer.k_compress}
+  csa_index_compressor.compressed_key: {model: structural, reason: index-key compressor output boundary}
   csa_indexer.weight_projection: {model: gemm, m: B*T, n: INDEX_HEADS, k: H, dtype: bf16, dtype_bytes: 2, output_dtype_bytes: 4, repetitions: L_CSA}
   csa_indexer.score: {model: attention, operator_family: qsa_indexer, batch: B, query_tokens: T, kv_tokens: INDEX_KV, heads: INDEX_HEADS, head_dim: INDEX_DIM, dtype: bf16, dtype_bytes: 2, repetitions: L_CSA}
   csa_indexer.causal_topk: {model: elementwise, operator_family: qsa_indexer, bytes: 8*B*INDEX_KV, ops: B*INDEX_KV, repetitions: L_CSA}

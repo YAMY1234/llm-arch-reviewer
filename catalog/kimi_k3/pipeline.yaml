@@ -114,6 +114,37 @@ capture_policy:
     reject_phase_shape_rank_source_mismatch: true
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views:
+      - vision_frontend
+      - decoder_stack
+      - attn_res
+      - vision_block
+      - kda
+      - gated_mla
+      - dense_mlp
+      - stable_latent_moe
+    required_drills:
+      top.vision_frontend: vision_frontend
+      top.decoder_stack: decoder_stack
+      top.output_attn_res: attn_res
+      vision_frontend.vision_blocks: vision_block
+      decoder_stack.attn_res_read: attn_res
+      decoder_stack.kda: kda
+      decoder_stack.gated_mla: gated_mla
+      decoder_stack.ffn_attn_res_read: attn_res
+      decoder_stack.dense_mlp: dense_mlp
+      decoder_stack.stable_latent_moe: stable_latent_moe
+    required_nodes:
+      vision_frontend: [vision_in, patch_projection, position_encoding, vision_blocks, temporal_pool, spatial_group, projector_hidden_activation, projector_down, projector_norm, vision_out]
+      decoder_stack: [stack_in, schedule, attn_res_read, block_write, input_norm, attention_schedule, kda, gated_mla, prefix_after_attention, ffn_attn_res_read, post_attention_norm, feed_forward_schedule, dense_mlp, stable_latent_moe, prefix_after_ffn, stack_out]
+      attn_res: [bank_in, prefix_in, source_concat, rms_normalize, score_projection, source_softmax, weighted_merge, attn_res_out]
+      vision_block: [block_in, norm1, qkv_projection, joint_spatiotemporal_attention, output_projection, attention_residual, norm2, mlp_up, gelu, mlp_down, block_out]
+      kda: [kda_in, qkv_projection, q_short_conv, k_short_conv, v_short_conv, qk_l2_norm, decay_projection, lower_bounded_decay, beta_projection, recurrent_update, query_readout, output_gate, gated_rmsnorm, output_projection, kda_out]
+      gated_mla: [mla_in, q_down, q_norm, q_up, kv_down, kv_norm, kv_up, key_compose, cache_update, attention, output_gate, gated_context, output_projection, mla_out]
+      dense_mlp: [dense_in, gate_up, situ, down, dense_out]
+      stable_latent_moe: [moe_in, router_logits, router_sigmoid, corrected_selection, weight_normalize, routed_down, dispatch, expert_gate_up, expert_situ, expert_down, weighted_reduce, latent_norm, routed_up, shared_gate_up, shared_situ, shared_down, combine, moe_out]
   expected_profile_points: 10
   require_executable_drill_rollups: true
   unsupported_profile_policy: retain_reproducible_evidence_and_mark_unsupported

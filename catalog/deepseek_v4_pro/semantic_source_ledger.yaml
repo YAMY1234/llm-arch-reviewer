@@ -39,6 +39,7 @@ audit_views:
   - csa_compressor
   - hca_compressor
   - csa_indexer
+  - csa_index_compressor
   - hca_history
   - moe
   - dspark_generation
@@ -216,33 +217,33 @@ entrypoints:
       - {name: __init__, disposition: reviewed}
       - {name: overlap_transform, disposition: reviewed}
       - {name: forward, disposition: reviewed}
-    expected_ir_views: [csa_compressor, hca_compressor]
+    expected_ir_views: [csa_compressor, hca_compressor, csa_index_compressor]
     obligations:
       - id: compressor_boundaries
         kind: tensor_boundary
         source_anchor: "assert self.kv_cache is not None"
         disposition: mapped
-        ir_targets: [csa_compressor.hidden_block, csa_compressor.compressed_kv, hca_compressor.hidden_block, hca_compressor.compressed_kv]
+        ir_targets: [csa_compressor.hidden_block, csa_compressor.compressed_kv, hca_compressor.hidden_block, hca_compressor.compressed_kv, csa_index_compressor.hidden_input, csa_index_compressor.compressed_key]
       - id: projection_and_layout
         kind: model_ir_primitive
         source_anchor: "score = self.wgate(x)"
         disposition: mapped
-        ir_targets: [csa_compressor.kv_gate_projection, csa_compressor.overlap_layout, hca_compressor.kv_gate_projection, hca_compressor.overlap_layout]
+        ir_targets: [csa_compressor.kv_gate_projection, csa_compressor.overlap_layout, hca_compressor.kv_gate_projection, hca_compressor.overlap_layout, csa_index_compressor.kv_gate_projection, csa_index_compressor.overlap_layout]
       - id: gated_pool_and_encoding
         kind: model_ir_primitive
         source_anchor: "kv = (self.kv_state[:bsz] * self.score_state[:bsz].softmax(dim=1)).sum(dim=1, keepdim=True)"
         disposition: mapped
-        ir_targets: [csa_compressor.softmax_pool, csa_compressor.norm_rope, hca_compressor.softmax_pool, hca_compressor.norm_rope]
+        ir_targets: [csa_compressor.softmax_pool, csa_compressor.norm_rope, hca_compressor.softmax_pool, hca_compressor.norm_rope, csa_index_compressor.softmax_pool, csa_index_compressor.rms_norm, csa_index_compressor.rope, csa_index_compressor.hadamard, csa_index_compressor.fp4_quantize]
       - id: partial_state
         kind: state_update
         source_anchor: "self.kv_state[:bsz, start_pos % ratio] = kv.squeeze(1)"
         disposition: mapped
-        ir_targets: [csa_compressor.partial_state, hca_compressor.partial_state]
+        ir_targets: [csa_compressor.partial_state, hca_compressor.partial_state, csa_index_compressor.partial_state]
       - id: compressed_cache
         kind: state_update
         source_anchor: "self.kv_cache[:bsz, start_pos // ratio] = kv.squeeze(1)"
         disposition: mapped
-        ir_targets: [csa_compressor.compressed_cache, hca_compressor.compressed_cache]
+        ir_targets: [csa_compressor.compressed_cache, hca_compressor.compressed_cache, csa_index_compressor.compressed_cache]
 
   - id: csa_indexer
     component: learned compressed-block scoring and selection
@@ -264,7 +265,7 @@ entrypoints:
         kind: model_ir_primitive
         source_anchor: "q = self.wq_b(qr)"
         disposition: mapped
-        ir_targets: [csa_indexer.q_projection, csa_indexer.q_rope_rotate, csa_indexer.k_compress]
+        ir_targets: [csa_indexer.q_projection, csa_indexer.q_rope_rotate]
       - id: score_and_selection
         kind: model_ir_primitive
         source_anchor: "index_score = (index_score.relu_() * weights.unsqueeze(-1)).sum(dim=2)"

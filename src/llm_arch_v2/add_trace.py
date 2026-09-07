@@ -10,6 +10,7 @@ identity and rank boundary.
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 import hashlib
 import json
 from pathlib import Path
@@ -29,23 +30,32 @@ class AddTraceError(ValueError):
 SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schema" / "v2"
 
 
+@lru_cache(maxsize=1)
+def _schema_registry() -> tuple[dict[str, dict[str, Any]], Registry]:
+    """Load immutable schemas once per process instead of once per stage."""
+
+    schemas: dict[str, dict[str, Any]] = {}
+    resources: dict[str, Resource] = {}
+    for path in sorted(SCHEMA_ROOT.glob("*.schema.json")):
+        contents = json.loads(path.read_text())
+        schemas[path.name] = contents
+        resource = Resource.from_contents(contents)
+        resources[path.name] = resource
+        if contents.get("$id"):
+            resources[str(contents["$id"])] = resource
+    return schemas, Registry().with_resources(resources.items())
+
+
 def validate_schema(
     document: dict[str, Any], schema_name: str, *, source: Path
 ) -> None:
     """Validate one persisted stage artifact against the complete V2 registry."""
 
-    resources: dict[str, Resource] = {}
-    for path in sorted(SCHEMA_ROOT.glob("*.schema.json")):
-        contents = json.loads(path.read_text())
-        resource = Resource.from_contents(contents)
-        resources[path.name] = resource
-        if contents.get("$id"):
-            resources[str(contents["$id"])] = resource
     schema_path = SCHEMA_ROOT / schema_name
     if not schema_path.is_file():
         raise AddTraceError(f"missing schema: {schema_path}")
-    schema = json.loads(schema_path.read_text())
-    registry = Registry().with_resources(resources.items())
+    schemas, registry = _schema_registry()
+    schema = schemas[schema_name]
     errors = sorted(
         Draft202012Validator(
             schema, registry=registry, format_checker=FormatChecker()
@@ -863,6 +873,11 @@ def accept_evidence(
         source=source,
         verify_files=verify_files,
     )
+    capture_time_artifact_sha = _validate_artifact(
+        attribution.get("capture_time_artifact"),
+        source=source,
+        verify_files=verify_files,
+    )
 
     results = reconciliation.get("rule_results") or []
     observed_rule_ids = {item.get("rule_id") for item in results}
@@ -1117,6 +1132,7 @@ def accept_evidence(
         "eager_protocol_sha256": eager_protocol_sha,
         "production_protocol_sha256": production_protocol_sha,
         "window_selection_sha256": window_sha,
+        "capture_time_artifact_sha256": capture_time_artifact_sha,
         "production_captured_at": captured_at,
         "rank_count": tp_size,
         "eager_rule_count": len(rule_ids),

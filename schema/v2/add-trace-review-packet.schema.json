@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "add-trace-review-packet.schema.json",
+  "title": "llm-arch-reviewer add-trace review packet",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "model_id", "status", "decision",
+    "identity", "configuration_closure", "stage_ledger", "evidence_closure",
+    "materialization", "release_gate", "risks", "next_actions",
+    "review_packet_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "add-trace-review-packet.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["pass", "needs_input"]},
+    "decision": {"enum": ["accepted_for_release", "static_pass_browser_required", "hold_for_evidence"]},
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model_artifact_id", "model_revision", "semantic_revision", "model_ir_sha256", "execution_path_id", "execution_fingerprint", "binding_state", "binding_revision_id", "runtime_identity_sha256"],
+      "properties": {
+        "model_artifact_id": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "semantic_revision": {"type": ["integer", "string"]},
+        "model_ir_sha256": {"$ref": "#/$defs/sha256"},
+        "execution_path_id": {"type": "string", "minLength": 1},
+        "execution_fingerprint": {"type": "string", "pattern": "^exec_[0-9a-f]{16}$"},
+        "binding_state": {"enum": ["reuse_existing_binding", "new_binding_revision_required"]},
+        "binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+        "runtime_identity_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "configuration_closure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["raw_field_count", "raw_leaf_count", "disposition_count", "normalized_leaf_count", "ignored_fields"],
+      "properties": {
+        "raw_field_count": {"type": "integer", "minimum": 1},
+        "raw_leaf_count": {"type": "integer", "minimum": 1},
+        "disposition_count": {"type": "integer", "minimum": 1},
+        "normalized_leaf_count": {"type": "integer", "minimum": 1},
+        "ignored_fields": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "stage_ledger": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/stage"}},
+    "evidence_closure": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/evidence_closure"}]},
+    "materialization": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/materialization"}]},
+    "release_gate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/release_gate"}]},
+    "risks": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "next_actions": {"type": "array", "items": {"$ref": "#/$defs/next_action"}},
+    "review_packet_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "pass"}}},
+      "then": {"properties": {
+        "next_actions": {"maxItems": 0},
+        "evidence_closure": {"$ref": "#/$defs/evidence_closure"},
+        "materialization": {"$ref": "#/$defs/materialization"},
+        "release_gate": {"$ref": "#/$defs/release_gate"}
+      }}
+    },
+    {
+      "if": {"properties": {"decision": {"const": "accepted_for_release"}}},
+      "then": {"properties": {"release_gate": {"allOf": [
+        {"$ref": "#/$defs/release_gate"},
+        {"properties": {
+          "acceptance_level": {"const": "release"},
+          "static_gate": {"const": "pass"},
+          "browser_gate": {"const": "pass"},
+          "release_ready": {"const": true}
+        }}
+      ]}}}
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["locator", "sha256"],
+      "properties": {
+        "locator": {"type": "string", "pattern": "^(run|repo|file)://.+"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "stage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "kind", "status", "dependencies"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["computed", "evidence", "gate", "packet"]},
+        "status": {"enum": ["complete", "needs_input", "blocked"]},
+        "dependencies": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "content_id": {"$ref": "#/$defs/sha256"},
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "source": {"$ref": "#/$defs/source"},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "complete"}}}, "then": {"required": ["content_id", "artifact"]}},
+        {"if": {"properties": {"status": {"enum": ["needs_input", "blocked"]}}}, "then": {"required": ["reason"]}}
+      ]
+    },
+    "evidence_closure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["acceptance_sha256", "rank_count", "eager_rule_count", "eager_event_count", "eager_duration_us", "production_event_count", "production_duration_us", "production_captured_at", "mapping_rules_sha256", "eager_protocol_sha256", "production_protocol_sha256", "window_selection_sha256", "capture_time_artifact_sha256"],
+      "properties": {
+        "acceptance_sha256": {"$ref": "#/$defs/sha256"},
+        "rank_count": {"type": "integer", "minimum": 1},
+        "eager_rule_count": {"type": "integer", "minimum": 1},
+        "eager_event_count": {"type": "integer", "minimum": 1},
+        "eager_duration_us": {"type": "number", "exclusiveMinimum": 0},
+        "production_event_count": {"type": "integer", "minimum": 1},
+        "production_duration_us": {"type": "number", "exclusiveMinimum": 0},
+        "production_captured_at": {"type": "string", "format": "date-time"},
+        "mapping_rules_sha256": {"$ref": "#/$defs/sha256"},
+        "eager_protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "production_protocol_sha256": {"$ref": "#/$defs/sha256"},
+        "window_selection_sha256": {"$ref": "#/$defs/sha256"},
+        "capture_time_artifact_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "materialization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile_id", "implementation_id", "execution_fingerprint", "binding_revision_id", "add_trace_acceptance_sha256", "timeline_sha256", "timeline_event_count", "timeline_step_count"],
+      "properties": {
+        "profile_id": {"type": "string", "minLength": 1},
+        "implementation_id": {"type": "string", "minLength": 1},
+        "execution_fingerprint": {"type": "string", "pattern": "^exec_[0-9a-f]{16}$"},
+        "binding_revision_id": {"type": "string", "pattern": "^bind_[0-9a-f]{16}$"},
+        "add_trace_acceptance_sha256": {"$ref": "#/$defs/sha256"},
+        "timeline_sha256": {"$ref": "#/$defs/sha256"},
+        "timeline_event_count": {"type": "integer", "minimum": 1},
+        "timeline_step_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "release_gate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["acceptance_level", "static_gate", "browser_gate", "release_ready", "bundle_sha256"],
+      "properties": {
+        "acceptance_level": {"enum": ["static", "release"]},
+        "static_gate": {"const": "pass"},
+        "browser_gate": {"enum": ["pass", "not_evaluated"]},
+        "release_ready": {"type": "boolean"},
+        "bundle_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "next_action": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stage", "required_option", "expected_contract", "reason"],
+      "properties": {
+        "stage": {"type": "string", "minLength": 1},
+        "required_option": {"type": "string", "pattern": "^--[a-z0-9-]+$"},
+        "expected_contract": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

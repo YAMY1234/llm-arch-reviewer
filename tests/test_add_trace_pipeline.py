@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
 import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from llm_arch_v2.add_trace import (
     AddTraceError,
@@ -16,7 +18,14 @@ from llm_arch_v2.add_trace import (
     sha256_file,
     sha256_json,
 )
+from llm_arch_v2.add_trace_dag import (
+    run_add_trace_dag,
+    validate_profile_materialization,
+    validate_release_materialization,
+    validate_review_packet,
+)
 from llm_arch_v2.compiler import CatalogError
+from llm_arch_v2.compiler import compile_catalog
 from scripts.materialize_binding_revision import (
     _node_bindings_from_rules,
     materialize_binding,
@@ -162,7 +171,7 @@ def test_config_resolves_exactly_one_existing_execution() -> None:
     assert plan["execution_resolution"]["state"] == "matched_existing_execution"
     assert plan["execution_resolution"]["execution_path_id"] == "tp_only_eagle_mtp"
     assert plan["model_resolution"]["state"] == "matched_existing_model_ir"
-    assert plan["model_resolution"]["semantic_revision"] == 6
+    assert plan["model_resolution"]["semantic_revision"] == 7
     assert plan["binding_resolution"]["state"] == "new_binding_revision_required"
     assert plan["binding_resolution"]["implementation_id"] is None
     assert plan["required_stages"] == [
@@ -516,6 +525,10 @@ def _accepted_fixture() -> tuple[dict, dict, dict, dict, dict]:
             "path": "window-selection.json",
             "sha256": HEX,
         },
+        "capture_time_artifact": {
+            "path": "capture-rounds.jsonl",
+            "sha256": "e" * 64,
+        },
         "event_mappings": [
             {
                 "event_id": f"production-r{rank}",
@@ -563,6 +576,7 @@ def test_eager_and_production_evidence_accept_only_with_full_closure() -> None:
         fixture[2]["runtime_evidence_artifacts"]
     )
     assert accepted["window_selection_sha256"] == HEX
+    assert accepted["capture_time_artifact_sha256"] == "e" * 64
     assert accepted["production_captured_at"] == "2026-09-05T14:00:01Z"
     assert accepted["manifest_sha256"] == fixture[1]["manifest_sha256"]
     assert accepted["plan_sha256"] == fixture[1]["plan_sha256"]
@@ -715,6 +729,7 @@ def test_acceptance_verifies_all_referenced_artifacts(tmp_path: Path) -> None:
         "production-protocol.json": "production-protocol",
         "runtime-evidence.json": "runtime-evidence",
         "window-selection.json": "window",
+        "capture-rounds.jsonl": "capture-rounds",
     }
     for name, payload in payloads.items():
         (tmp_path / name).write_text(payload)
@@ -723,6 +738,9 @@ def test_acceptance_verifies_all_referenced_artifacts(tmp_path: Path) -> None:
             item["sha256"] = sha256_file(tmp_path / item["path"])
     values[4]["window_selection_artifact"]["sha256"] = sha256_file(
         tmp_path / "window-selection.json"
+    )
+    values[4]["capture_time_artifact"]["sha256"] = sha256_file(
+        tmp_path / "capture-rounds.jsonl"
     )
     values[3]["protocol_artifact"]["sha256"] = sha256_file(
         tmp_path / "eager-protocol.json"
@@ -768,6 +786,9 @@ def test_acceptance_reopens_and_distinguishes_capture_protocols(
     values[4]["window_selection_artifact"]["sha256"] = sha256_file(
         window_selection
     )
+    capture_rounds = tmp_path / "capture-rounds.jsonl"
+    capture_rounds.write_text("capture-rounds")
+    values[4]["capture_time_artifact"]["sha256"] = sha256_file(capture_rounds)
     runtime_evidence = tmp_path / "runtime-evidence.json"
     runtime_evidence.write_text("runtime")
     values[2]["runtime_evidence_artifacts"][0]["sha256"] = sha256_file(
@@ -825,6 +846,12 @@ def test_acceptance_reopens_runtime_identity_evidence(tmp_path: Path) -> None:
             "window_selection_artifact",
             "window-selection.json",
             "window",
+        ),
+        (
+            values[4],
+            "capture_time_artifact",
+            "capture-rounds.jsonl",
+            "capture-rounds",
         ),
     ):
         artifact = tmp_path / filename
@@ -1047,4 +1074,258 @@ def test_acceptance_fails_closed(mutate, message: str) -> None:
             model_root=MODEL_ROOT,
             source=Path("fixture.yaml"),
             verify_files=False,
+        )
+
+
+def _write_manifest(path: Path, manifest: dict) -> None:
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+
+
+def test_resumable_dag_reports_authored_evidence_without_guessing(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "run.yaml"
+    workspace = tmp_path / "workspace"
+    _write_manifest(manifest_path, _manifest())
+
+    first = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        verify_files=False,
+    )
+    state = first["state"]
+    assert state["status"] == "needs_input"
+    assert [item["stage"] for item in state["next_actions"]] == [
+        "binding_revision",
+        "graph_off_eager_reconciliation",
+        "graph_on_production_attribution",
+    ]
+    assert state["stages"][0]["name"] == "plan"
+    assert state["stages"][0]["status"] == "complete"
+    assert (workspace / "run-state.json").is_file()
+    assert (workspace / "review-packet.json").is_file()
+    assert "hold_for_evidence" in (workspace / "REVIEW.md").read_text()
+    assert state["manifest_file_sha256"] == sha256_file(manifest_path)
+    assert first["review_packet"]["configuration_closure"]["raw_field_count"] == first[
+        "review_packet"
+    ]["configuration_closure"]["disposition_count"]
+    assert first["review_packet"]["stage_ledger"][0]["dependencies"] == []
+    assert "## Configuration closure" in (workspace / "REVIEW.md").read_text()
+
+    second = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        verify_files=False,
+    )
+    assert second["state"] == first["state"]
+    assert {"plan", "review_packet"}.issubset(second["cache_hits"])
+
+
+def test_resumable_dag_accepts_complete_evidence_and_stops_at_profile(
+    tmp_path: Path,
+) -> None:
+    manifest, _plan, binding, eager, production = _accepted_fixture()
+    manifest_path = tmp_path / "run.yaml"
+    evidence_dir = tmp_path / "evidence"
+    workspace = tmp_path / "workspace"
+    evidence_dir.mkdir()
+    _write_manifest(manifest_path, manifest)
+    evidence_paths = {}
+    for name, value in (
+        ("binding-revision", binding),
+        ("eager-reconciliation", eager),
+        ("trace-attribution", production),
+    ):
+        path = evidence_dir / f"{name}.json"
+        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        evidence_paths[name] = path
+
+    result = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        binding_revision_path=evidence_paths["binding-revision"],
+        eager_reconciliation_path=evidence_paths["eager-reconciliation"],
+        trace_attribution_path=evidence_paths["trace-attribution"],
+        verify_files=False,
+    )
+    assert [item["stage"] for item in result["state"]["next_actions"]] == [
+        "profile_materialization"
+    ]
+    acceptance_stage = next(
+        item for item in result["state"]["stages"] if item["name"] == "acceptance"
+    )
+    assert acceptance_stage["status"] == "complete"
+    acceptance = json.loads(
+        (workspace / acceptance_stage["artifact"]["path"]).read_text()
+    )
+    assert acceptance["status"] == "pass"
+    assert acceptance["semantic_revision"] == 7
+
+
+def test_resumable_dag_detects_cached_artifact_tampering(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "run.yaml"
+    workspace = tmp_path / "workspace"
+    _write_manifest(manifest_path, _manifest())
+    result = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        verify_files=False,
+    )
+    plan_stage = result["state"]["stages"][0]
+    (workspace / plan_stage["artifact"]["path"]).write_text("tampered\n")
+    with pytest.raises(AddTraceError, match="collision or tampering"):
+        run_add_trace_dag(
+            manifest_path=manifest_path,
+            workspace=workspace,
+            catalog_root=REPO_ROOT / "catalog",
+            repo_root=REPO_ROOT,
+            verify_files=False,
+        )
+
+
+def test_review_packet_schema_and_digest_fail_closed_on_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "run.yaml"
+    workspace = tmp_path / "workspace"
+    _write_manifest(manifest_path, _manifest())
+    result = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        verify_files=False,
+    )
+    packet = result["review_packet"]
+    validate_review_packet(packet, source=workspace / "review-packet.json")
+    packet["identity"]["execution_path_id"] = "tampered"
+    with pytest.raises(AddTraceError, match="review packet SHA256"):
+        validate_review_packet(packet, source=workspace / "review-packet.json")
+
+
+def test_review_packet_rejects_configuration_or_stage_dependency_gaps(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "run.yaml"
+    workspace = tmp_path / "workspace"
+    _write_manifest(manifest_path, _manifest())
+    packet = run_add_trace_dag(
+        manifest_path=manifest_path,
+        workspace=workspace,
+        catalog_root=REPO_ROOT / "catalog",
+        repo_root=REPO_ROOT,
+        verify_files=False,
+    )["review_packet"]
+
+    incomplete_config = json.loads(json.dumps(packet))
+    incomplete_config["configuration_closure"]["disposition_count"] -= 1
+    incomplete_config["review_packet_sha256"] = sha256_json(
+        {
+            key: value
+            for key, value in incomplete_config.items()
+            if key != "review_packet_sha256"
+        }
+    )
+    with pytest.raises(AddTraceError, match="every raw configuration field"):
+        validate_review_packet(incomplete_config, source=manifest_path)
+
+    invalid_dependency = json.loads(json.dumps(packet))
+    invalid_dependency["stage_ledger"][0]["dependencies"] = ["future_stage"]
+    invalid_dependency["review_packet_sha256"] = sha256_json(
+        {
+            key: value
+            for key, value in invalid_dependency.items()
+            if key != "review_packet_sha256"
+        }
+    )
+    with pytest.raises(AddTraceError, match="unresolved dependencies"):
+        validate_review_packet(invalid_dependency, source=manifest_path)
+
+
+def test_profile_materialization_requires_exact_acceptance_authority() -> None:
+    profile_path = (
+        MODEL_ROOT
+        / "profiles/tp_only_eagle_mtp/sglang_25ee2b56_pr37500_tp4_eagle_mtp"
+        / "cg_mtp_decode_gbs001_8k1k_bind_ba79b6e52262fede.yaml"
+    )
+    profile = yaml.safe_load(profile_path.read_text())
+    catalog = compile_catalog(MODEL_ROOT)
+    implementation = catalog["implementations"][profile["implementation_id"]]
+    acceptance = {
+        "execution_path_id": profile["execution_path_id"],
+        "execution_fingerprint": implementation["execution_variant"],
+        "binding_revision_id": implementation["binding_revision_id"],
+        "acceptance_sha256": implementation["add_trace_acceptance_sha256"],
+        "runtime_identity_sha256": implementation["runtime_identity_sha256"],
+        "mapping_rules_sha256": implementation["mapping_rules_sha256"],
+    }
+    materialization = validate_profile_materialization(
+        profile,
+        profile_path=profile_path,
+        acceptance=acceptance,
+        manifest=_manifest(),
+        model_root=MODEL_ROOT,
+    )
+    assert materialization["profile_id"] == profile["profile_id"]
+
+    acceptance["acceptance_sha256"] = "f" * 64
+    with pytest.raises(AddTraceError, match="acceptance authority"):
+        validate_profile_materialization(
+            profile,
+            profile_path=profile_path,
+            acceptance=acceptance,
+            manifest=_manifest(),
+            model_root=MODEL_ROOT,
+        )
+
+
+def test_release_materialization_requires_the_exact_compiled_bundle(
+    tmp_path: Path,
+) -> None:
+    bundle = {"schema_version": "2.0", "model_ir": {"model_id": "toy"}}
+    bundle_sha256 = sha256_json(bundle)
+    report = {
+        "schema_version": "release-audit.v1",
+        "acceptance_level": "release",
+        "static_gate": "pass",
+        "browser_gate": "pass",
+        "release_ready": True,
+        "models": [
+            {
+                "model": "toy",
+                "status": "pass",
+                "bundle": {
+                    "matches_compiler": True,
+                    "compiled_sha256": bundle_sha256,
+                    "published_sha256": bundle_sha256,
+                },
+            }
+        ],
+    }
+    validated = validate_release_materialization(
+        report,
+        model_id="toy",
+        compiled_bundle=bundle,
+        release_level="release",
+        source=tmp_path / "report.json",
+    )
+    assert validated["bundle_sha256"] == bundle_sha256
+
+    stale = copy.deepcopy(report)
+    stale["models"][0]["bundle"]["compiled_sha256"] = "f" * 64
+    with pytest.raises(AddTraceError, match="exact current bundle"):
+        validate_release_materialization(
+            stale,
+            model_id="toy",
+            compiled_bundle=bundle,
+            release_level="release",
+            source=tmp_path / "report.json",
         )

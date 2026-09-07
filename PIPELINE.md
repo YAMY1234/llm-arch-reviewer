@@ -441,11 +441,14 @@ Use the actual intended serving mode:
 - record ISL/OSL explicitly, such as 8K/1K;
 - MTP profiles must capture both target verification and auxiliary/draft work
   using their real CUDA Graph path.
-- record the capture start as a timezone-qualified RFC3339 timestamp from the
-  capture authority. `trace-attribution.v1.captured_at` is required and the
+- record the capture start as a timezone-qualified RFC3339 timestamp derived
+  from a hash-sealed capture-authority artifact. Both
+  `trace-attribution.v1.captured_at` and `capture_time_artifact` are required; the
   accepted value is copied to `add-trace-acceptance.v1.production_captured_at`;
-  a profile may display only a `trace_time` derived from that evidence (or an
-  explicitly labeled upload/catalog timestamp with provenance).
+  acceptance also seals `capture_time_artifact_sha256`. A profile may display
+  only a `trace_time` derived from that evidence (or an explicitly labeled
+  upload/catalog timestamp with provenance). Filesystem mtime and profiler-base
+  timestamps are not capture authorities.
 
 `random_range_ratio` is not a portable native-CLI contract. The canonical
 manifest value above is exact for our common sa-bench workflow; adapters must
@@ -841,8 +844,28 @@ Raw traces and intermediate task material do not belong in the repository.
 Catalog documents contain content hashes and resolvable local/artifact
 references.
 
-M0.5 provides two fail-closed, executable entry points for adding evidence to
-an existing catalog:
+The primary add-trace entry point is one resumable, fail-closed stage DAG:
+
+```bash
+python3 scripts/run_pipeline_v2.py run \
+  --manifest current/<run>/run.yaml \
+  --evidence-dir current/<run>/evidence \
+  --workspace current/<run>/pipeline \
+  --release-level release \
+  --base-url http://127.0.0.1:8765
+```
+
+The same command is safe to run repeatedly. It content-addresses every completed
+stage under `pipeline/artifacts/`, rejects a changed artifact at an existing
+content ID, writes the deterministic `run-state.json`, and generates both
+`review-packet.json` and `REVIEW.md`. If independently authored Binding, eager,
+production, or Profile evidence is absent, it stops at a typed `needs_input`
+stage and lists the exact input contract. It never fills that gap by guessing
+from a kernel name. Once the Profile is materialized, the CLI runs the unified
+static or real-browser release audit automatically and resumes the same DAG.
+
+The lower-level M0.5 `plan` and `accept` commands remain available for producer
+development and debugging:
 
 ```bash
 python3 scripts/run_pipeline_v2.py \
@@ -900,10 +923,12 @@ Binding. The emitted Binding persists `add_trace_acceptance_sha256`, so its
 publishing authority remains explicit. Catalog publication therefore cannot
 bypass acceptance or accidentally inherit an older Binding's rules.
 
-Capture and attribution remain explicit producer stages in M0.5; the planned M1
-stage DAG will invoke those producers automatically. `scripts/build_v2.py`
-remains the compiler for accepted catalog data, so this does not create a
-second publishing pipeline.
+Capture and attribution remain explicit producer stages: a model/framework
+adapter may produce them, but the DAG never authors semantic ownership from the
+same trace that it is validating. The DAG now orchestrates their immutable
+artifacts, acceptance, Profile/Binding authority, bundle compilation, release
+audit, and review packet. `scripts/build_v2.py` remains the only compiler for
+accepted catalog data, so this does not create a second publishing pipeline.
 
 ## 7. Profile matrix and growth policy
 
@@ -1242,10 +1267,12 @@ records compiler/Viewer/catalog/bundle/evidence identities, source revisions,
 Execution fingerprints, exact profile contracts, mapping coverage, and browser
 acceptance. It also validates and publishes the four-gate independent-evidence
 report for every discovered catalog; adding a model without that contract, or
-using a downstream artifact as its own authority, blocks release. M0.5 adds the
-working `run_pipeline_v2.py plan|accept` contract for deterministic trace
-addition. The capture/parse/map/materialize stage-DAG orchestration remains M1;
-it must consume these same artifacts and gates rather than invent another path.
+using a downstream artifact as its own authority, blocks release. M0.5 added
+the low-level `run_pipeline_v2.py plan|accept` contract. M1 now provides
+`run_pipeline_v2.py run` as the resumable, content-addressed stage DAG: it
+consumes the same authored evidence, materializes the public bundle, invokes
+the unified release audit, and emits strict JSON/Markdown review packets. It
+does not infer a Binding or semantic graph from kernel names.
 
 The removed Qwen3.5 trace-first/manual pipeline is not a second supported path.
 Its useful ideas survive here as frozen inputs, reusable trace parsing,

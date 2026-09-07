@@ -35,9 +35,18 @@ def test_qwen38_current_and_previous_traces_are_exact_same_execution_candidates(
     profiles = [bundle["profiles"][profile_id] for profile_id in profile_ids]
     assert len({profile["execution_variant"] for profile in profiles}) == 1
     assert len({profile["meta"]["comparison_contract_id"] for profile in profiles}) == 1
-    assert {profile["meta"]["trace_time"]["basis"] for profile in profiles} == {
-        "cataloged"
+    current, previous = profiles
+    assert current["meta"]["trace_time"] == {
+        "timestamp": "2026-09-05T14:15:46.112584Z",
+        "basis": "captured",
+        "provenance": "production formal-1 started_at_unix in hash-sealed rounds.jsonl",
     }
+    assert previous["meta"]["trace_time"]["basis"] == "cataloged"
+    current_binding = bundle["implementations"][current["implementation_id"]]
+    assert current_binding["add_trace_acceptance_sha256"] == (
+        "8480d68c54ee8a5f4f12bdb8b71ceacf75818deaf0f41d3f2e371c4aa699d47b"
+    )
+    assert current_binding["binding_revision_id"] == "bind_ba79b6e52262fede"
     assert all(profile["meta"]["timeline"] for profile in profiles)
 
 

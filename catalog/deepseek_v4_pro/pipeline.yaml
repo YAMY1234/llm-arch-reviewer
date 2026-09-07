@@ -127,6 +127,211 @@ capture_policy:
     reject_partial_rank_windows: true
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views:
+    - decoder_stack
+    - mhc_transform
+    - final_hc_read
+    - csa_attention
+    - hca_attention
+    - csa_compressor
+    - hca_compressor
+    - csa_indexer
+    - csa_index_compressor
+    - hca_history
+    - moe
+    - dspark_generation
+    - dspark_stage
+    - dspark_attention
+    required_drills:
+      top.decoder_stack: decoder_stack
+      top.final_hc_read: final_hc_read
+      top.dspark_extension: dspark_generation
+      decoder_stack.attention_mhc_pre: mhc_transform
+      decoder_stack.csa_attention: csa_attention
+      decoder_stack.hca_attention: hca_attention
+      decoder_stack.attention_mhc_post: mhc_transform
+      decoder_stack.ffn_mhc_pre: mhc_transform
+      decoder_stack.moe: moe
+      decoder_stack.ffn_mhc_post: mhc_transform
+      csa_attention.csa_compressor: csa_compressor
+      csa_attention.indexer: csa_indexer
+      hca_attention.hca_compressor: hca_compressor
+      hca_attention.history_indices: hca_history
+      csa_indexer.k_compress: csa_index_compressor
+      dspark_generation.stage_stack: dspark_stage
+      dspark_generation.final_hc: final_hc_read
+      dspark_stage.attention_mhc_pre: mhc_transform
+      dspark_stage.attention: dspark_attention
+      dspark_stage.attention_mhc_post: mhc_transform
+      dspark_stage.ffn_mhc_pre: mhc_transform
+      dspark_stage.moe: moe
+      dspark_stage.ffn_mhc_post: mhc_transform
+    required_nodes:
+      decoder_stack:
+      - stack_in
+      - schedule
+      - attention_mhc_pre
+      - attention_norm
+      - attention_choice
+      - csa_attention
+      - hca_attention
+      - attention_mhc_post
+      - ffn_mhc_pre
+      - ffn_norm
+      - moe
+      - ffn_mhc_post
+      - stack_out
+      mhc_transform:
+      - streams
+      - flatten_rms
+      - affine
+      - pre_gate
+      - post_gate
+      - combine_sinkhorn
+      - read
+      - delta
+      - place
+      - mix
+      - updated_streams
+      final_hc_read:
+      - streams
+      - flatten_rms
+      - pre_gate
+      - read
+      - hidden
+      csa_attention:
+      - attn_in
+      - q_a
+      - q_norm
+      - q_b
+      - q_head_norm
+      - q_rope
+      - window_kv
+      - window_cache
+      - window_indices
+      - csa_compressor
+      - indexer
+      - index_union
+      - sparse_mqa
+      - inverse_rope
+      - grouped_o_a
+      - o_b
+      - attn_out
+      hca_attention:
+      - attn_in
+      - q_a
+      - q_norm
+      - q_b
+      - q_head_norm
+      - q_rope
+      - window_kv
+      - window_cache
+      - window_indices
+      - hca_compressor
+      - history_indices
+      - index_union
+      - sparse_mqa
+      - inverse_rope
+      - grouped_o_a
+      - o_b
+      - attn_out
+      csa_compressor:
+      - hidden_block
+      - kv_gate_projection
+      - overlap_layout
+      - softmax_pool
+      - norm_rope
+      - partial_state
+      - compressed_cache
+      - compressed_kv
+      hca_compressor:
+      - hidden_block
+      - kv_gate_projection
+      - overlap_layout
+      - softmax_pool
+      - norm_rope
+      - partial_state
+      - compressed_cache
+      - compressed_kv
+      csa_indexer:
+      - indexer_in
+      - q_projection
+      - q_rope_rotate
+      - k_compress
+      - weight_projection
+      - score
+      - causal_topk
+      - expand
+      - selected_ids
+      csa_index_compressor:
+      - hidden_input
+      - kv_gate_projection
+      - overlap_layout
+      - softmax_pool
+      - rms_norm
+      - rope
+      - hadamard
+      - fp4_quantize
+      - partial_state
+      - compressed_cache
+      - compressed_key
+      hca_history:
+      - position
+      - all_completed
+      - selected_ids
+      moe:
+      - moe_in
+      - score_projection
+      - sqrt_softplus
+      - hash_select
+      - learned_select
+      - weights
+      - dispatch
+      - routed_gate_up
+      - routed_activation
+      - routed_down
+      - routed_combine
+      - shared_gate_up
+      - shared_activation
+      - shared_down
+      - combine
+      - moe_out
+      dspark_generation:
+      - dspark_in
+      - target_concat
+      - target_projection
+      - noise_block
+      - embedding
+      - stage_schedule
+      - stage_stack
+      - final_hc
+      - norm_lm
+      - markov
+      - logit_add
+      - autoregressive_sample
+      - confidence
+      - dspark_out
+      dspark_stage:
+      - stage_in
+      - attention_mhc_pre
+      - attention
+      - attention_mhc_post
+      - ffn_mhc_pre
+      - ffn_norm
+      - moe
+      - ffn_mhc_post
+      - stage_out
+      dspark_attention:
+      - attn_in
+      - target_kv
+      - ring_update
+      - draft_qkv
+      - fixed_indices
+      - sparse_mqa
+      - output_projection
+      - attn_out
   expected_profile_points: 10
   unsupported_profile_policy: retain_reproducible_exact_evidence_and_mark_unsupported
   cross_framework_performance_policy: same_gpu_sku_only
@@ -143,9 +348,9 @@ acceptance:
 
 stage1_result:
   status: complete
-  execution_fingerprint: exec_9208b2a45f2a90e7
-  model_ir_nodes: 148
-  execution_ir_nodes: 153
+  execution_fingerprint: exec_0b058c739e2d480a
+  model_ir_nodes: 159
+  execution_ir_nodes: 164
   measured_profile_count: 9
   unsupported_profile_count: 1
   unsupported_profiles:
@@ -157,8 +362,8 @@ stage1_result:
   accepted_frameworks: [sglang, vllm]
   pending_frameworks: []
   binding_coverage:
-    sglang: 153/153
-    vllm: 153/153
+    sglang: 164/164
+    vllm: 164/164
   eager_rank_windows:
     sglang: 40/40
     vllm: 40/40

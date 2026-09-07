@@ -277,10 +277,12 @@ Stage 4 会生成三个可以直接 review 的 artifact：
 - 默认 decode sweep：global BS 1、16、64、256；
 - 显式记录 ISL/OSL，例如 8K/1K；
 - MTP profile 必须使用真实 CUDA Graph path，同时捕获 target verification 和 auxiliary/draft work。
-- 必须从 capture authority 记录带时区的 RFC3339 capture start。
-  `trace-attribution.v1.captured_at` 为必填字段，并原样进入
-  `add-trace-acceptance.v1.production_captured_at`；profile 只能展示由该证据导出的
-  `trace_time`，或者带明确 basis 与 provenance 的 upload/catalog 时间。
+- 必须从 hash-sealed capture-authority artifact 推导带时区的 RFC3339 capture
+  start。`trace-attribution.v1.captured_at` 与 `capture_time_artifact` 都是必填字段；
+  时间原样进入 `add-trace-acceptance.v1.production_captured_at`，authority digest
+  进入 `capture_time_artifact_sha256`。Profile 只能展示由该证据导出的 `trace_time`，
+  或者带明确 basis 与 provenance 的 upload/catalog 时间；filesystem mtime 与
+  profiler base timestamp 都不能作为 capture authority。
 
 `random_range_ratio` 不是可以跨 framework native CLI 直接照搬的 contract。上面的 canonical manifest value 对我们共同使用的 sa-bench workflow 是确定的；adapter 不能把它不加验证地转发给 framework-native benchmark client。例如当前 vLLM native benchmark code 使用 `0.0` 表示精确 target length。应优先使用共同 workload generator；如果必须使用 native client，adapter 需要翻译规范化后的 `fixed_lengths: true` 意图，保留 manifest 中用户指定的值，并通过每个 request 实际生成的 ISL/OSL 证明二者相等。
 
@@ -554,7 +556,26 @@ docs/<model>_v2/                        # 只存放生成后的 static bundle
 
 Raw trace 和 intermediate task material 不放进 repository。Catalog document 记录它们的 content hash 和可解析的 local/artifact reference。
 
-M0.5 已提供两个 fail-closed、可执行的已有 catalog 加 trace 入口：
+新增 trace 的主入口现在是一条可恢复、fail-closed 的 stage DAG：
+
+```bash
+python3 scripts/run_pipeline_v2.py run \
+  --manifest current/<run>/run.yaml \
+  --evidence-dir current/<run>/evidence \
+  --workspace current/<run>/pipeline \
+  --release-level release \
+  --base-url http://127.0.0.1:8765
+```
+
+同一命令可以安全重复执行。每个完成的 stage 都按输入、依赖和输出做 content
+addressing，保存在 `pipeline/artifacts/`；已有 content ID 的内容一旦被修改就会
+fail closed。命令会确定性生成 `run-state.json`、`review-packet.json` 和
+`REVIEW.md`。缺少独立编写的 Binding、graph-off eager、graph-on production 或
+Profile 证据时，DAG 会停在类型明确的 `needs_input`，列出精确输入 contract，绝不
+根据 kernel name 猜一个 mapping。Profile 落入 catalog 后，CLI 会自动执行统一的
+static 或真实浏览器 release audit，再继续同一 DAG。
+
+底层 M0.5 `plan` 与 `accept` 命令仍保留给 producer 开发和调试：
 
 ```bash
 python3 scripts/run_pipeline_v2.py \
@@ -604,9 +625,11 @@ Binding revision；它会删除模板继承身份，并用已验收 eager rule �
 校验，并在 Binding 中保存 `add_trace_acceptance_sha256`。因此发布阶段不能绕过
 验收，也不会误继承旧 Binding 的规则。
 
-M0.5 中 capture 与 attribution 仍是显式 producer；M1 才会将这些 producer
-组织成可恢复 stage DAG。`scripts/build_v2.py` 继续作为 accepted catalog data
-的唯一 compiler，因此不会形成第二套发布 pipeline。
+Capture 与 attribution 仍是显式 producer：model/framework adapter 可以生成
+这些证据，但 DAG 不会用正在被验证的同一份 trace 反向编造 semantic ownership。
+DAG 现在统一编排不可变证据、acceptance、Profile/Binding authority、bundle
+编译、release audit 与 review packet。`scripts/build_v2.py` 继续作为 accepted
+catalog data 的唯一 compiler，因此不会形成第二套发布 pipeline。
 
 ## 7. Profile Matrix 与扩展策略
 
@@ -832,6 +855,6 @@ Repository 目前已经通过同一个 V2 compiler 和同一个 Viewer 发布六
 
 M0 新增 `scripts/release_audit.py` 作为 model-neutral 的 release 入口。Static level 会重新编译 catalog、比较 published bundle 的精确内容、验证公开 model inventory 和 content-addressed Timeline artifact，并对无法解释的 production kernel fail closed。Release level 会进一步执行真实 browser audit。仅通过 static gate 不会被标记为 release-ready。
 
-M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。它还会验证并发布每个自动发现 catalog 的四层独立证据报告；缺少 contract，或把下游 artifact 当成自己的 authority，都会阻止发布。M0.5 已提供可用的 `run_pipeline_v2.py plan|accept`；自动 capture/parse/map/materialize 的可恢复 stage DAG 仍属于 M1，并且必须复用这些 artifact 与 gate。
+M0 现在由 CI 中唯一的 mandatory release command 闭环。六个公开模型都已通过 fail-closed Timeline attribution 和完整 real-browser gate。同一条命令会确定性地产生 `docs/release-acceptance.json`，记录 compiler、Viewer、catalog、bundle 与 evidence identity，source revision、Execution fingerprint、精确 Profile contract、mapping coverage 和 browser acceptance。它还会验证并发布每个自动发现 catalog 的四层独立证据报告；缺少 contract，或把下游 artifact 当成自己的 authority，都会阻止发布。M0.5 提供了底层 `run_pipeline_v2.py plan|accept` contract；M1 现在由 `run_pipeline_v2.py run` 提供可恢复、content-addressed 的 stage DAG。它复用同一组 authored evidence，物化公开 bundle，调用统一 release audit，并生成严格的 JSON/Markdown review packet；它不会根据 kernel name 猜 Binding 或 semantic graph。
 
 已经移除的 Qwen3.5 trace-first/manual pipeline 不再是第二条受支持路径。旧实现中有价值的部分已经保留在本规范中，包括：冻结输入、可复用 trace parsing、source/callsite validation、artifact provenance、config-driven validation 和单一 orchestration command。旧流程中“由 runtime skeleton 定义 architecture”的行为不再保留。

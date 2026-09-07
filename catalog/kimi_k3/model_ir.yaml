@@ -2,6 +2,7 @@ schema_version: model-ir.v2
 model_id: kimi_k3
 model_label: Kimi K3 MXFP4 multimodal
 ir_version: 2
+semantic_revision: 7
 default_view: top
 default_execution_path: tp8
 
@@ -207,6 +208,24 @@ semantic_contract:
     moe.shared_down: {kind: projection, equation: 'S = sum_(e=1..Es) A_s,e W_shared_down,e^T'}
     moe.combine: {kind: composition, equation: 'Delta_ffn = R + S'}
     moe.output: {kind: boundary, equation: 'Delta_ffn := Stable LatentMoE output [B,T,H]'}
+
+semantic_coverage:
+  parameter_closure: all parameterized vision, attention, AttnRes, dense, routed-expert, shared-expert, norm, and head operations declared
+  state_closure: all KDA recurrent, MLA latent-KV, cache-update, AttnRes-bank, and multimodal state boundaries declared
+  layer_variant_closure: all 93 decoder, 69 KDA, 24 gated-MLA, dense-first-layer, routed-MoE, and vision variants declared
+  operator_dataflow_closure: complete against the pinned checkpoint, technical report, and 20-entrypoint semantic source ledger
+  detail_view_closure: every compound semantic module drills into a source-reviewed typed child data-flow view
+  config_field_disposition:
+    model_ir:
+      - hidden, vocabulary, layer, attention, latent, expert, AttnRes, and vision dimensions
+      - KDA and gated-MLA layer schedule, dense/MoE schedule, routing, and persistent-state semantics
+      - vision patching, encoder, pooling, projector, and text-token injection semantics
+    execution_ir:
+      - TP placement, sharding, collectives, payload layouts, and state ownership
+    binding_profile:
+      - source symbols, implementation selection, fusion ownership, stream scheduling, graph-capture mode, and timing
+    excluded:
+      - training loss, optimizer state, evaluation sampling policy, tokenizer rendering, and deployment routing
 
 boundary_contracts:
   - {parent_node: top.vision_frontend, boundary_mode: exact_node, child_view: vision_frontend, input_shape: "[P,3,14,14] + grid_thws", output_shape: "[M,H]"}

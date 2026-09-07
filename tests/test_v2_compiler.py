@@ -356,7 +356,7 @@ def test_qwen38_flash_next_model_ir_has_semantic_closure_ledgers() -> None:
     bundle = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
     model_ir = bundle["model_ir"]
 
-    assert model_ir["semantic_revision"] == 6
+    assert model_ir["semantic_revision"] == 7
     assert model_ir["semantic_coverage"]["operator_dataflow_closure"] == (
         "complete_against_pinned_source_089f8ac"
     )
@@ -429,7 +429,7 @@ def test_checked_in_qwen38_flash_next_bundle_matches_canonical_catalog() -> None
     compiled = compile_catalog(QWEN38_FLASH_NEXT_ROOT)
 
     assert generated == compiled
-    assert generated["meta"]["model_semantic_revision"] == 6
+    assert generated["meta"]["model_semantic_revision"] == 7
     assert "/Users/" not in json.dumps(generated["model_ir"]["semantic_evidence"])
     for required_view in (
         "hyperconnection_read",
@@ -653,6 +653,29 @@ def test_semantic_revision_7_pins_required_drills_and_primitive_nodes() -> None:
     with pytest.raises(CatalogError, match="missing required nodes"):
         _validate_semantic_release_contract(
             model_ir, broken, source=Path("catalog/example/model_ir.yaml")
+        )
+
+    unpinned = copy.deepcopy(model_ir)
+    unpinned["views"]["detail"]["nodes"].append(
+        {
+            "id": "activation",
+            "label": "activation",
+                "shape": "gemm",
+            "semantic_op": "example.activation",
+        }
+    )
+    with pytest.raises(CatalogError, match="unpinned nodes"):
+        _validate_semantic_release_contract(
+            unpinned, pipeline, source=Path("catalog/example/model_ir.yaml")
+        )
+
+    missing_route = copy.deepcopy(pipeline)
+    missing_route["acceptance"]["semantic_release_contract"][
+        "required_drills"
+    ] = {"detail.projection": "detail"}
+    with pytest.raises(CatalogError, match="exactly pin every drill route"):
+        _validate_semantic_release_contract(
+            model_ir, missing_route, source=Path("catalog/example/model_ir.yaml")
         )
 
 

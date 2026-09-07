@@ -52,6 +52,106 @@ capture_policy:
     forbid_copied_fused_timing: true
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views: [stack, final_hyperconnection_read, top, mtp_head, mtp_embedding_projection, mtp_hidden_projection, mtp_layer, hyperconnection_mix, mtp_qsa_attention, hyperconnection_combine, mtp_moe, qsa_qk_norm_rope, qsa_indexer, qsa_output_gate, moe_router_selection, moe_routed_expert, moe_shared_expert, moe_combine, ple, linear_layer, full_layer, linear_attention, moe, qsa_attention, ple_key_value_projection, ple_grouped_norm_gate, ple_short_conv, ple_residual_flow, hyperconnection_read, hyperconnection_update, linear_causal_conv, linear_beta_decay_gate, linear_output_gate_norm, qsa_index_query_transform, qsa_index_compress, qsa_index_score, qsa_index_expand]
+    required_drills:
+      top.decoder_stack: stack
+      top.final_hc_mix: final_hyperconnection_read
+      mtp_generation.target_prefill: top
+      mtp_generation.mtp_prefill: mtp_head
+      mtp_generation.target_verify: top
+      mtp_generation.mtp_draft_extend: mtp_head
+      mtp_head.embedding_projection: mtp_embedding_projection
+      mtp_head.hidden_projection: mtp_hidden_projection
+      mtp_head.decoder_layer: mtp_layer
+      mtp_head.final_hc_mix: final_hyperconnection_read
+      mtp_layer.attn_hc_mix: hyperconnection_mix
+      mtp_layer.qsa_attention: mtp_qsa_attention
+      mtp_layer.attn_hc_combine: hyperconnection_combine
+      mtp_layer.mlp_hc_mix: hyperconnection_mix
+      mtp_layer.moe: mtp_moe
+      mtp_layer.mlp_hc_combine: hyperconnection_combine
+      mtp_qsa_attention.qk_norm_rope: qsa_qk_norm_rope
+      mtp_qsa_attention.indexer: qsa_indexer
+      mtp_qsa_attention.output_gate: qsa_output_gate
+      mtp_moe.topk: moe_router_selection
+      mtp_moe.routed_experts: moe_routed_expert
+      mtp_moe.shared_expert: moe_shared_expert
+      mtp_moe.combine: moe_combine
+      stack.ple_injection: ple
+      stack.linear_layer: linear_layer
+      stack.full_layer: full_layer
+      linear_layer.attn_hc_mix: hyperconnection_mix
+      linear_layer.linear_attention: linear_attention
+      linear_layer.attn_hc_combine: hyperconnection_combine
+      linear_layer.mlp_hc_mix: hyperconnection_mix
+      linear_layer.moe: moe
+      linear_layer.mlp_hc_combine: hyperconnection_combine
+      full_layer.attn_hc_mix: hyperconnection_mix
+      full_layer.qsa_attention: qsa_attention
+      full_layer.attn_hc_combine: hyperconnection_combine
+      full_layer.mlp_hc_mix: hyperconnection_mix
+      full_layer.moe: moe
+      full_layer.mlp_hc_combine: hyperconnection_combine
+      ple.key_value_projection: ple_key_value_projection
+      ple.grouped_norm_gate: ple_grouped_norm_gate
+      ple.short_conv: ple_short_conv
+      ple.injection: ple_residual_flow
+      hyperconnection_mix.low_rank_gate: hyperconnection_read
+      hyperconnection_combine.combine: hyperconnection_update
+      linear_attention.causal_conv: linear_causal_conv
+      linear_attention.gating: linear_beta_decay_gate
+      linear_attention.gated_norm: linear_output_gate_norm
+      qsa_attention.qk_norm_rope: qsa_qk_norm_rope
+      qsa_attention.indexer: qsa_indexer
+      qsa_attention.output_gate: qsa_output_gate
+      qsa_indexer.q_norm_rope: qsa_index_query_transform
+      qsa_indexer.compress: qsa_index_compress
+      qsa_indexer.compressed_score: qsa_index_score
+      qsa_indexer.expand_tail: qsa_index_expand
+      moe.topk: moe_router_selection
+      moe.routed_experts: moe_routed_expert
+      moe.shared_expert: moe_shared_expert
+      moe.combine: moe_combine
+    required_nodes:
+      stack: [stack_in, hc_expand, schedule, ple_injection, linear_layer, full_layer, stack_out]
+      final_hyperconnection_read: [branch_states, branch_norm, down_projection, scaled_silu, up_projection, sigmoid_view, weighted_apply, branch_mean, hidden_states]
+      top: [token_ids, runtime_support, embedding, decoder_stack, final_hc_mix, lm_head, logits]
+      mtp_head: [candidate_ids, embedding, target_hc_states, embedding_projection, hidden_projection, residual_fusion, decoder_layer, final_hc_mix, lm_head, draft_logits]
+      mtp_embedding_projection: [embedding, rms_norm, projection, output]
+      mtp_hidden_projection: [branch_states, grouped_norm, shared_projection, output]
+      mtp_layer: [layer_in, attn_hc_mix, qsa_attention, attn_hc_combine, mlp_hc_mix, moe, mlp_hc_combine, layer_out]
+      hyperconnection_mix: [branch_states, branch_norm, low_rank_gate, mix, module_input]
+      mtp_qsa_attention: [attn_in, qkv_gate_projection, qk_norm_rope, indexer, metadata, kv_cache, attention_core, output_gate, output_projection, attn_out]
+      hyperconnection_combine: [branch_states, module_output, combine, updated_branch_states]
+      mtp_moe: [moe_in, router, topk, routed_experts, shared_expert, combine, moe_out]
+      qsa_qk_norm_rope: [projected_qk, q_norm, k_norm, mrope, positioned_qk]
+      qsa_indexer: [index_in, qk_projection, q_norm_rope, raw_k_cache, compress, compressed_k_cache, compressed_score, block_topk, expand_tail, selected_indices]
+      qsa_output_gate: [attention_output, projected_gate, gate_sigmoid, gated_multiply, gated_output]
+      moe_router_selection: [router_logits, topk, selected_softmax, renormalize, selected_routes]
+      moe_routed_expert: [expert_input, gate_projection, up_projection, silu, gated_product, down_projection, expert_output]
+      moe_shared_expert: [shared_input, gate_projection, up_projection, silu, gated_product, down_projection, scalar_gate_projection, scalar_sigmoid, gated_shared_output, shared_output]
+      moe_combine: [routed_outputs, route_weights, shared_output, weighted_sum, shared_add, moe_output]
+      ple: [hc_state, token_history, ngram_hash, ngram_embedding, key_value_projection, grouped_norm_gate, short_conv, conv_state, injection, context_commit]
+      linear_layer: [layer_in, attn_hc_mix, linear_attention, attn_hc_combine, mlp_hc_mix, moe, mlp_hc_combine, layer_out]
+      full_layer: [layer_in, attn_hc_mix, qsa_attention, attn_hc_combine, mlp_hc_mix, moe, mlp_hc_combine, layer_out]
+      linear_attention: [attn_in, qkvz_projection, ba_projection, split_pack, causal_conv, recurrent_state, gating, delta_rule, gated_norm, output_projection, attn_out]
+      moe: [moe_in, router, topk, routed_experts, shared_expert, combine, moe_out]
+      qsa_attention: [attn_in, qkv_gate_projection, qk_norm_rope, indexer, metadata, kv_cache, attention_core, output_gate, output_projection, attn_out]
+      ple_key_value_projection: [ngram_embedding, key_projection, value_projection, projected_key, projected_value]
+      ple_grouped_norm_gate: [query, key, value, query_norm, key_norm, dot_reduce, dimension_scale, signed_sqrt, sigmoid, value_multiply, conv_input_norm, gated_value]
+      ple_short_conv: [normalized_input, depthwise_conv, silu, conv_output]
+      ple_residual_flow: [gated_value, short_conv_output, hc_state, inner_add, outer_add, updated_hc_state]
+      hyperconnection_read: [normalized_branches, down_projection, scaled_silu, up_projection, sigmoid_view, weighted_apply, branch_mean, module_input]
+      hyperconnection_update: [normalized_branches, module_output, branch_states, inject_projection, inject_gate, broadcast_injection, residual_add, updated_branches]
+      linear_causal_conv: [packed_qkv, depthwise_conv, silu, activated_qkv]
+      linear_beta_decay_gate: [projected_beta_alpha, decay_parameters, beta_sigmoid, decay_softplus, dt_softplus, negative_decay, beta_decay]
+      linear_output_gate_norm: [recurrence_output, z, core_rms_norm, z_silu, gated_multiply, normalized_output]
+      qsa_index_query_transform: [projected_query, q_norm, mrope, positioned_query]
+      qsa_index_compress: [raw_keys, average_pool, key_norm, key_mrope, compressed_key]
+      qsa_index_score: [index_query, compressed_keys, mqa_dot, relu, head_reduce, block_scores]
+      qsa_index_expand: [selected_blocks, block_expand, causal_tail, selected_tokens]
   expected_execution_paths: 5
   expected_binding_documents: 8
   expected_profile_points: 34

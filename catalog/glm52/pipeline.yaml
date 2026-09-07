@@ -70,6 +70,111 @@ capture_policy:
     require_graph_state_match: true
 
 acceptance:
+  semantic_release_contract:
+    expected_revision: 7
+    required_views:
+    - stack
+    - dsa_attention
+    - dense_mlp
+    - moe
+    - routed_expert
+    - mtp_decoder
+    - mtp_extension
+    required_drills:
+      top.decoder_stack: stack
+      top.mtp_extension: mtp_extension
+      stack.dsa_attention: dsa_attention
+      stack.dense_mlp: dense_mlp
+      stack.moe: moe
+      moe.routed_experts: routed_expert
+      mtp_decoder.dsa_attention: dsa_attention
+      mtp_decoder.moe: moe
+      mtp_extension.nextn_decoder: mtp_decoder
+    required_nodes:
+      stack:
+      - stack_in
+      - schedule
+      - input_norm
+      - dsa_attention
+      - attention_residual
+      - post_attention_norm
+      - feed_forward_schedule
+      - dense_mlp
+      - moe
+      - feed_forward_residual
+      - stack_out
+      dsa_attention:
+      - attn_in
+      - q_a_projection
+      - kv_a_projection
+      - q_a_norm
+      - q_b_projection
+      - q_split_rope
+      - kv_latent_split
+      - kv_a_norm
+      - latent_kv_cache
+      - latent_kv_reconstruction
+      - indexer_mode
+      - index_q_projection
+      - index_k_gate_projection
+      - index_k_norm_rope
+      - index_k_cache
+      - index_logits
+      - index_topk
+      - index_topk_state
+      - sparse_mla_core
+      - output_projection
+      - attn_out
+      dense_mlp:
+      - mlp_in
+      - gate_up_projection
+      - swiglu
+      - down_projection
+      - mlp_out
+      moe:
+      - moe_in
+      - router
+      - topk
+      - dispatch
+      - routed_experts
+      - routed_weighted_combine
+      - shared_expert_up
+      - shared_expert_activation
+      - shared_expert_down
+      - combine
+      - moe_out
+      routed_expert:
+      - hidden_input
+      - route_assignments
+      - dispatch
+      - gate_projection
+      - up_projection
+      - silu
+      - gated_product
+      - down_projection
+      - restore
+      - routed_output
+      mtp_decoder:
+      - draft_in
+      - attention_norm
+      - dsa_attention
+      - attention_residual
+      - ffn_norm
+      - moe
+      - ffn_residual
+      - draft_out
+      mtp_extension:
+      - candidate_token_ids
+      - candidate_embedding
+      - target_hidden_state
+      - embedding_norm
+      - hidden_norm
+      - concatenate
+      - eh_projection
+      - nextn_decoder
+      - shared_head_norm
+      - nextn_lm_head
+      - draft_logits
   unsupported_profile_policy: retain_evidence_and_mark_unsupported
   cross_framework_performance_policy: same_gpu_sku_only
   raw_artifact_policy: task_evidence_only

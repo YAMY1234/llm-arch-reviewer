@@ -237,7 +237,21 @@ The full comparison selection is URL-persistent (`comparison`,
 `implementations`, and `profiles`) while existing single-profile links remain
 backward compatible.
 
-To add trace evidence, first run the deterministic M0.5 gates:
+To add trace evidence, run or resume the content-addressed pipeline:
+
+```bash
+python3 scripts/run_pipeline_v2.py run \
+  --manifest current/<run>/run.yaml \
+  --evidence-dir current/<run>/evidence \
+  --workspace current/<run>/pipeline \
+  --release-level release \
+  --base-url http://127.0.0.1:8765
+```
+
+The command writes a machine-readable stage ledger and an automatic JSON/
+Markdown review packet. Missing independently authored evidence is reported as
+`needs_input`; completed stages are reused only after their content hashes are
+revalidated. The lower-level deterministic M0.5 gates are also available:
 
 ```bash
 python3 scripts/run_pipeline_v2.py plan \

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "add-trace-dag-state.schema.json",
+  "title": "llm-arch-reviewer resumable add-trace DAG state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "model_id",
+    "manifest_file_sha256",
+    "status",
+    "release_level",
+    "stages",
+    "next_actions",
+    "state_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "add-trace-dag-state.v1"},
+    "run_id": {"type": "string", "minLength": 1},
+    "model_id": {"type": "string", "minLength": 1},
+    "manifest_file_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["pass", "needs_input"]},
+    "release_level": {"enum": ["static", "release"]},
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "status", "dependencies"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["computed", "evidence", "gate", "packet"]},
+          "status": {"enum": ["complete", "needs_input", "blocked"]},
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string"}
+          },
+          "content_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "artifact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["locator", "sha256"],
+            "properties": {
+              "locator": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          },
+          "reason": {"type": "string", "minLength": 1}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "complete"}}},
+            "then": {"required": ["content_id", "artifact"]}
+          },
+          {
+            "if": {"properties": {"status": {"const": "needs_input"}}},
+            "then": {"required": ["reason"]}
+          },
+          {
+            "if": {"properties": {"status": {"const": "blocked"}}},
+            "then": {"required": ["reason"]}
+          }
+        ]
+      }
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "required_option", "expected_contract", "reason"],
+        "properties": {
+          "stage": {"type": "string", "minLength": 1},
+          "required_option": {"type": "string", "pattern": "^--[a-z0-9-]+$"},
+          "expected_contract": {"type": "string", "minLength": 1},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "state_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
