@@ -317,3 +317,5 @@ public site.
 ## License
 
 MIT
+
+Model-only catalog: [DeepSeek-V4.1-Flash](https://yamy1234.github.io/llm-arch-reviewer/viewer.html?model=deepseek_v41_flash_v2) — semantic architecture; no runtime profile attached.

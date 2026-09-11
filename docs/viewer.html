@@ -315,9 +315,12 @@
   }
   table.kernels th { color: var(--muted); font-weight: 500; text-align: right; }
   table.kernels td.name { text-align: left; max-width: 220px; word-break: break-all; }
-  table.semantic-contract { table-layout: fixed; }
-  table.semantic-contract th, table.semantic-contract td {
-    min-width: 0; overflow-wrap: anywhere; word-break: break-word;
+  .semantic-contract-scroll { max-width: 100%; overflow-x: auto; margin: 5px 0 10px; }
+  table.semantic-contract { table-layout: auto; min-width: 820px; }
+  table.semantic-contract th, table.semantic-contract td,
+  table.semantic-contract td.name {
+    min-width: 85px; max-width: 240px; overflow-wrap: normal; word-break: normal;
+    text-align: left; vertical-align: top;
   }
   .tensor-symbol-glossary { margin-top: 10px; }
   .tensor-symbol-glossary summary { cursor: pointer; color: var(--link); font-size: 11px; }
@@ -764,6 +767,8 @@ function derivePARENT(views) {
   return p;
 }
 
+function isModelOnly() { return RAW_DATA?.meta?.lifecycle === "model_only"; }
+
 function isV2Bundle() {
   return !!(RAW_DATA?.execution_variants && RAW_DATA?.implementations);
 }
@@ -1110,6 +1115,14 @@ function applyImplementationBinding(views, implementation) {
 
 function activateV2Selection(executionId, implementationId = "") {
   if (!isV2Bundle()) return;
+  if (isModelOnly()) {
+    CURRENT_IR_LAYER = "model";
+    CURRENT_EXECUTION = CURRENT_IMPLEMENTATION = CURRENT_PROFILE = "";
+    DATA = {...RAW_DATA, views: cloneJson(RAW_DATA.model_ir.views),
+      parent: cloneJson(RAW_DATA.model_ir.parent)};
+    PARENT = DATA.parent;
+    return;
+  }
   const executionIds = profiledExecutionIds();
   if (!executionIds.includes(executionId)) {
     executionId = RAW_DATA.default_execution_variant || executionIds[0];
@@ -1902,6 +1915,39 @@ function resetNavigationForExecution() {
 }
 
 function initUI() {
+  if (isModelOnly()) {
+    const reason = "Model IR · no profile attached. Execution, timing and comparison are outside this catalog's scope.";
+    const subtitle = document.getElementById("model-subtitle");
+    subtitle.textContent = "Model IR · no profile attached";
+    subtitle.style.display = "block";
+    subtitle.style.fontSize = "11px";
+    subtitle.title = reason;
+    // Runtime controls remain explicit and unavailable; semantic navigation stays active.
+    for (const id of ["ir-layer-select", "execution-select", "implementation-select", "generation-select",
+      "phase-select", "profile-select", "sol-select", "variant-select", "metric-select", "compare-metric-select"]) {
+      const control = document.getElementById(id);
+      if (control) {
+        control.disabled = true;
+        control.title = reason;
+        control.closest("label").style.display = id === "ir-layer-select" ? "" : "none";
+      }
+    }
+    document.getElementById("ir-layer-select").value = "model";
+    document.getElementById("btn-symbols").title = "Open semantic tensor-symbol definitions";
+    document.getElementById("profile-select").innerHTML = '<option>No profile attached</option>';
+    document.querySelectorAll('[data-view-mode]').forEach(button => {
+      button.disabled = button.dataset.viewMode !== "architecture";
+      button.title = button.disabled ? reason : "Model architecture";
+    });
+    document.getElementById("btn-fit").onclick = () => fitToSvg();
+    document.getElementById("btn-symbols").onclick = () => showTensorSymbolGlossary();
+    document.getElementById("btn-up").onclick = () => goUp();
+    window.addEventListener("hashchange", parseHash);
+    window.addEventListener("popstate", parseHash);
+    setViewMode("architecture", false);
+    enablePanZoom();
+    return;
+  }
   if (isV2Bundle()) {
     const irLayerControl = document.getElementById("ir-layer-control");
     const irLayerSelect = document.getElementById("ir-layer-select");
@@ -2270,7 +2316,7 @@ async function renderView() {
       })),
       edges: (view.edges || []).map((e, i) => ({
         id: `e${i}`, sources: [e.from], targets: [e.to],
-        labels: edgeLabels(e),
+        labels: edgeLabels(e, vName),
       })),
     };
     const lay = await elk.layout(elkGraph);
@@ -2368,11 +2414,30 @@ function nodeHeight(n, viewName) {
   return h;
 }
 
-function edgeLabels(e) {
-  const out = [];
-  if (e.label) out.push({text: e.label});
-  // shape / dtype 在画的时候单独画, 不让 ELK 摆 (会挤)
-  return out;
+function edgeLabelParts(e, viewName = "") {
+  const parts = [];
+  if (e.label) parts.push({text: e.label, cls: ""});
+  if (e.shape) {
+    const target = viewName && e.to ? `${viewName}.${e.to}` : "";
+    const shape = resolveSymbolicShape(e.shape, target);
+    parts.push({text: shape.symbolic, cls: "shape-symbolic"});
+    if (shape.resolved != null && shape.resolved !== shape.symbolic) {
+      parts.push({text: `resolved ${shape.resolved}`, cls: "shape-resolved"});
+    }
+  }
+  if (e.dtype) parts.push({text: e.dtype, cls: "dtype"});
+  return parts.flatMap(part => String(part.text).split("\n").map(text => ({...part, text})));
+}
+
+function edgeLabels(e, viewName = "") {
+  const parts = edgeLabelParts(e, viewName);
+  if (!parts.length) return [];
+  // Reserve the entire visible tensor label with ELK, including shape/dtype.
+  // Parallel typed edges need separate label boxes, not coincident midpoints.
+  return [{text: parts.map(part => part.text).join("\n"),
+    width: Math.max(...parts.map(part => part.text.length)) * 6.2 + 12,
+    height: parts.length * 13 + 6,
+    layoutOptions: {"elk.edgeLabels.placement": "CENTER"}}];
 }
 
 // ============================================================
@@ -2423,11 +2488,11 @@ function drawAllViews(layouts, totalW, totalH, drillFrom) {
     const childById = new Map((layout.children || []).map(c => [c.id, c]));
 
     // edges first
-    for (const e of (view.edges || [])) {
+    for (const [edgeIndex, e] of (view.edges || []).entries()) {
       const src = childById.get(e.from);
       const dst = childById.get(e.to);
       if (!src || !dst) continue;
-      const layoutedEdge = (layout.edges || []).find(x => x.sources?.[0] === e.from && x.targets?.[0] === e.to);
+      const layoutedEdge = (layout.edges || []).find(x => x.id === `e${edgeIndex}`);
       drawEdge(inner, e, layoutedEdge, viewName);
     }
 
@@ -2509,7 +2574,10 @@ function drawEdge(root, e, layoutedEdge, viewName = "") {
     const sec = layoutedEdge.sections[0];
     const pts = [sec.startPoint, ...(sec.bendPoints || []), sec.endPoint];
     pathD = "M " + pts.map(p => `${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" L ");
-    labelPos = midPoint(pts);
+    const label = layoutedEdge.labels?.[0];
+    labelPos = label && Number.isFinite(label.x) && Number.isFinite(label.y)
+      ? {x: label.x + label.width / 2, y: label.y + 10}
+      : midPoint(pts);
   }
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", pathD);
@@ -2520,20 +2588,7 @@ function drawEdge(root, e, layoutedEdge, viewName = "") {
 
   // edge label: dtype / shape / label
   if (labelPos) {
-    const parts = [];
-    if (e.label) parts.push({text: e.label, cls: ""});
-    if (e.shape) {
-      const target = viewName && e.to ? `${viewName}.${e.to}` : "";
-      const shape = resolveSymbolicShape(e.shape, target);
-      parts.push({text: shape.symbolic, cls: "shape-symbolic"});
-      // Symbolic axes are authoritative.  Only add a concrete row when every
-      // runtime/stage symbol is validated for the selected profile and the
-      // result is genuinely different from the authored shape.
-      if (shape.resolved != null && shape.resolved !== shape.symbolic) {
-        parts.push({text: `resolved ${shape.resolved}`, cls: "shape-resolved"});
-      }
-    }
-    if (e.dtype) parts.push({text: e.dtype, cls: "dtype"});
+    const parts = edgeLabelParts(e, viewName);
     if (parts.length) {
       // bg rect + text
       let yy = labelPos.y;
@@ -5182,6 +5237,7 @@ function viewDisplayTitle(viewName) {
 }
 
 function nodeCell(n, viewName) {
+  if (isModelOnly()) return null;
   const context = drillContext(viewName);
   if (context && Object.prototype.hasOwnProperty.call(context.scoped, n.id)) {
     return context.scoped[n.id];
@@ -5478,7 +5534,7 @@ function tensorSymbolGlossaryHtml(target = "", open = false) {
     return `<tr><td class="name"><b>${escapeHtml(symbol)}</b></td><td class="name">${escapeHtml(contract.meaning || "")}</td><td>${escapeHtml(contract.value_class || "")}</td><td class="name">${value}</td><td class="name">${escapeHtml(result.provenance || contract.provenance || "")}</td></tr>`;
   }).join("");
   return `<details class="tensor-symbol-glossary"${open ? " open" : ""}>
-    <summary>Tensor symbols and profile-resolved dimensions</summary>
+    <summary>${isModelOnly() ? "Tensor symbols and semantic dimensions" : "Tensor symbols and profile-resolved dimensions"}</summary>
     <div style="color:var(--muted); font-size:11px; margin:6px 0">Symbolic shapes are the source of truth. A concrete shape is shown only when every dynamic symbol is validated for this profile and drill stage.</div>
     <table class="kernels"><thead><tr><th class="name">symbol</th><th class="name">meaning</th><th>value class</th><th class="name">current value</th><th class="name">provenance</th></tr></thead><tbody>${rows}</tbody></table>
   </details>`;
@@ -5543,10 +5599,15 @@ function showDetail(n, viewName) {
       <td>${escapeHtml(item[endpoint] || "")}</td>
     </tr>`;
     }).join("");
-    return `<table class="kernels semantic-contract"><thead><tr>
+    return `<div style="font-size:10px;color:var(--muted)">Scroll horizontally for all tensor fields →</div><div class="semantic-contract-scroll" tabindex="0" aria-label="Tensor contracts; scroll horizontally for all fields"><table class="kernels semantic-contract"><thead><tr>
       <th class="name">tensor/state</th><th>symbolic shape</th><th>resolved shape</th><th>dtype</th><th class="name">layout</th><th class="name">lifetime</th><th>${endpoint}</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
   };
+  const portBindings = semantics?.drill_boundary?.port_bindings || {};
+  const portBindingRows = Object.entries(portBindings).flatMap(([direction, bindings]) =>
+    Object.entries(bindings).map(([child, parent]) =>
+      `<div><b>${escapeHtml(direction)}</b>: child <code>${escapeHtml(child)}</code> → parent <code>${escapeHtml(parent)}</code></div>`)
+  ).join("");
   const semanticsHtml = semantics ? `<h3>Semantics</h3>
     <div class="kv">
       <div class="k">semantic op</div><div>${escapeHtml(semantics.semantic_op || n.semantic_op || "")}</div>
@@ -5562,7 +5623,8 @@ function showDetail(n, viewName) {
       ${(semantics.invariants || []).length ? `<div style="color:var(--muted); margin-top:7px"><b>invariants:</b> ${escapeHtml(semantics.invariants.join("; "))}</div>` : ""}
     </div>
     <h3>Outputs</h3>
-    ${tensorContractTable(semantics.outputs || [], "target")}` : "";
+    ${tensorContractTable(semantics.outputs || [], "target")}
+    ${portBindingRows ? `<h3>Drill tensor identity bindings</h3><div style="overflow-wrap:anywhere">${portBindingRows}</div><div style="color:var(--muted);font-size:11px">Only names are bound; shape, dtype, layout and lifetime match exactly.</div>` : ""}` : "";
 
   const comparisonRows = comparisonModeActive() ? comparisonContextList().map(comparisonContext => {
     const comparisonCell = comparisonCellForTarget(comparisonContext, target);
@@ -5870,10 +5932,12 @@ function showDetail(n, viewName) {
       <div class="k">node kind</div><div>${escapeHtml(n.node_kind || "semantic")}</div>
       ${n.boundary_role ? `<div class="k">boundary role</div><div>${escapeHtml(n.boundary_role)}</div>` : ""}
       ${n.drill ? `<div class="k">drill →</div><div><a href="#" onclick="drillFrom('${viewName}', '${n.id}', '${n.drill}'); return false;">${n.drill}</a></div>` : ""}
-      <div class="k">profile</div><div>${escapeHtml(CURRENT_PROFILE)}</div>
+      ${isModelOnly()
+        ? '<div class="k">scope</div><div>Model IR · no profile attached. Execution, Binding and performance are outside this semantic review.</div>'
+        : `<div class="k">profile</div><div>${escapeHtml(CURRENT_PROFILE)}</div>`}
       ${CURRENT_EXECUTION ? `<div class="k">execution</div><div>${escapeHtml(DATA.execution_variants?.[CURRENT_EXECUTION]?.execution_path_id || CURRENT_EXECUTION)}</div>` : ""}
       ${CURRENT_IMPLEMENTATION ? `<div class="k">implementation</div><div>${escapeHtml(CURRENT_IMPLEMENTATION)}</div>` : ""}
-      <div class="k">ms (cur)</div><div>${msBadge}</div>
+      ${isModelOnly() ? "" : `<div class="k">ms (cur)</div><div>${msBadge}</div>`}
     </div>
     ${semanticsHtml}
     ${tensorSymbolGlossaryHtml(target)}

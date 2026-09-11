@@ -14,10 +14,11 @@
   "properties": {
     "schema_version": {"const": "validation-evidence.v1"},
     "model_id": {"type": "string", "pattern": "^[a-z0-9_-]+$"},
+    "lifecycle": {"enum": ["profiled", "model_only"]},
     "contract_revision": {"type": "integer", "minimum": 1},
     "authorities": {
       "type": "array",
-      "minItems": 4,
+      "minItems": 1,
       "items": {"$ref": "#/$defs/authority"}
     },
     "gates": {
@@ -31,13 +32,81 @@
       ],
       "properties": {
         "semantic_ir": {"$ref": "#/$defs/gate"},
-        "execution_contract": {"$ref": "#/$defs/gate"},
-        "binding_reconciliation": {"$ref": "#/$defs/gate"},
-        "production_evidence": {"$ref": "#/$defs/gate"}
+        "execution_contract": {"oneOf": [{"$ref": "#/$defs/gate"}, {"$ref": "#/$defs/outOfScope"}]},
+        "binding_reconciliation": {"oneOf": [{"$ref": "#/$defs/gate"}, {"$ref": "#/$defs/outOfScope"}]},
+        "production_evidence": {"oneOf": [{"$ref": "#/$defs/gate"}, {"$ref": "#/$defs/outOfScope"}]}
       }
     }
   },
+  "allOf": [
+  {
+    "if": {
+      "required": [
+        "lifecycle"
+      ],
+      "properties": {
+        "lifecycle": {
+          "const": "model_only"
+        }
+      }
+    },
+    "then": {
+      "properties": {
+        "gates": {
+          "properties": {
+            "execution_contract": {
+              "$ref": "#/$defs/outOfScope"
+            },
+            "binding_reconciliation": {
+              "$ref": "#/$defs/outOfScope"
+            },
+            "production_evidence": {
+              "$ref": "#/$defs/outOfScope"
+            }
+          }
+        }
+      }
+    },
+    "else": {
+      "properties": {
+        "authorities": {
+          "minItems": 4
+        },
+        "gates": {
+          "properties": {
+            "execution_contract": {
+              "$ref": "#/$defs/gate"
+            },
+            "binding_reconciliation": {
+              "$ref": "#/$defs/gate"
+            },
+            "production_evidence": {
+              "$ref": "#/$defs/gate"
+            }
+          }
+        }
+      }
+    }
+  }
+],
   "$defs": {
+    "outOfScope": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "reason"
+  ],
+  "properties": {
+    "status": {
+      "const": "out_of_scope"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+},
     "digest": {
       "type": "object",
       "additionalProperties": false,
