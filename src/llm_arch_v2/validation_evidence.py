@@ -10,11 +10,13 @@ reviewed against an immutable external revision and digest.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+from jsonschema import Draft202012Validator
 
 
 GATE_NAMES = (
@@ -336,6 +338,12 @@ def validate_validation_evidence(model_root: Path) -> dict[str, Any]:
         }
 
     contract = yaml.safe_load(contract_path.read_text()) or {}
+    schema_path = Path(__file__).resolve().parents[2] / "schema/v2/validation-evidence.schema.json"
+    schema = json.loads(schema_path.read_text())
+    errors.extend(
+        f"validation evidence schema at {'.'.join(map(str, error.absolute_path))}: {error.message}"
+        for error in Draft202012Validator(schema).iter_errors(contract)
+    )
     if contract.get("schema_version") != "validation-evidence.v1":
         errors.append("unsupported validation evidence schema_version")
     if contract.get("model_id") != model_root.name:
@@ -343,7 +351,21 @@ def validate_validation_evidence(model_root: Path) -> dict[str, Any]:
             f"model_id {contract.get('model_id')!r} does not match catalog {model_root.name!r}"
         )
 
+    pipeline_path = model_root / "pipeline.yaml"
+    pipeline = yaml.safe_load(pipeline_path.read_text()) if pipeline_path.is_file() else {}
+    lifecycle = (pipeline or {}).get("lifecycle", "profiled")
+    if lifecycle not in {"model_only", "profiled"}:
+        errors.append(f"unknown pipeline lifecycle {lifecycle!r}")
+    if contract.get("lifecycle", "profiled") != lifecycle:
+        errors.append("validation evidence lifecycle must match pipeline lifecycle")
+    if lifecycle == "model_only":
+        for directory in ("execution_paths", "bindings", "profiles", "timelines", "sol_manifests"):
+            if any(p.is_file() for p in (model_root / directory).rglob("*")):
+                errors.append(f"model_only cannot contain {directory} artifacts")
+
     authorities = contract.get("authorities") or []
+    if len(authorities) < (1 if lifecycle == "model_only" else 4):
+        errors.append(f"{lifecycle} requires at least {1 if lifecycle == 'model_only' else 4} authorities")
     authority_by_id = {
         str(authority.get("id")): authority
         for authority in authorities
@@ -372,6 +394,12 @@ def validate_validation_evidence(model_root: Path) -> dict[str, Any]:
     for gate_name in GATE_NAMES:
         gate = gates.get(gate_name) or {}
         gate_errors_before = len(errors)
+        if lifecycle == "model_only" and gate_name != "semantic_ir":
+            if (set(gate) != {"status", "reason"} or gate.get("status") != "out_of_scope"
+                    or not isinstance(gate.get("reason"), str) or not gate["reason"].strip()):
+                errors.append(f"gate {gate_name}: model_only requires out_of_scope and reason only")
+            gate_reports[gate_name] = {"status": "out_of_scope", "reason": gate.get("reason")}
+            continue
         if gate.get("status") != "verified":
             errors.append(f"gate {gate_name}: status must be verified")
         expected_mode = EXPECTED_VERIFICATION_MODES[gate_name]
@@ -520,6 +548,8 @@ def validate_validation_evidence(model_root: Path) -> dict[str, Any]:
         "schema_version": "validation-evidence-report.v1",
         "model_id": model_root.name,
         "status": "pass" if not errors else "fail",
+        "lifecycle": lifecycle,
+        "production_release_ready": False if lifecycle == "model_only" else None,
         "contract_revision": contract.get("contract_revision"),
         "contract_sha256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
         "anti_self_validation": "pass" if not errors else "fail",

@@ -2410,6 +2410,161 @@ def _catalog_files(root: Path, pattern: str) -> list[Path]:
     return sorted(path for path in root.glob(pattern) if path.is_file())
 
 
+def _validate_model_only_boundaries(model_ir: dict[str, Any], *, source: Path) -> None:
+    """Compare real tensor ports; a descriptive shape union is not evidence.
+
+    Identical fanout edges are one logical tensor port. An identity reused with
+    a different shape, dtype, layout or lifetime at the same boundary is invalid.
+    Lifecycle scopes compare the graph cut around their explicitly named nodes.
+    """
+    views = model_ir["views"]
+
+    def signatures(edges: list[dict[str, Any]], context: str) -> set[tuple[str, ...]]:
+        by_identity: dict[str, tuple[str, ...]] = {}
+        for edge in edges:
+            if any(not edge.get(field) for field in _EDGE_CONTRACT_FIELDS):
+                raise CatalogError(f"{source}: {context} requires complete tensor contracts")
+            signature = tuple(str(edge[field]) for field in _EDGE_CONTRACT_FIELDS)
+            identity = signature[0]
+            if identity in by_identity and by_identity[identity] != signature:
+                raise CatalogError(f"{source}: {context} conflicting tensor identity {identity!r}")
+            by_identity[identity] = signature
+        return set(by_identity.values())
+
+    for contract in model_ir.get("boundary_contracts", []):
+        target = str(contract["parent_node"])
+        parent_view, parent_node = _split_target(target, source=source)
+        mode = contract.get("boundary_mode")
+        if mode == "exact_node":
+            scope = {parent_node}
+        elif mode == "exact_lifecycle":
+            scopes = [_split_target(t, source=source) for t in contract.get("scope_nodes", [])]
+            if any(view != parent_view for view, _ in scopes):
+                raise CatalogError(f"{source}: {target} lifecycle must name one graph scope")
+            scope = {node for _, node in scopes}
+        else:
+            raise CatalogError(f"{source}: {target} model_only requires an exact parent boundary")
+        parent_edges = views[parent_view].get("edges", [])
+        child = views[contract["child_view"]]
+        child_edges = child.get("edges", [])
+        directions = {node["id"]: node.get("boundary_direction") for node in child["nodes"]
+                      if node.get("boundary_direction")}
+        if set(directions.values()) - {"input", "output", "handoff"}:
+            raise CatalogError(f"{source}: {target} invalid child boundary direction")
+        if mode == "exact_node" and "handoff" in directions.values():
+            raise CatalogError(f"{source}: {target} handoff requires exact_lifecycle")
+        for direction in ("input", "output"):
+            parent_ports = [edge for edge in parent_edges if
+                            (edge["to"] in scope and edge["from"] not in scope
+                             if direction == "input" else
+                             edge["from"] in scope and edge["to"] not in scope)]
+            endpoint = "from" if direction == "input" else "to"
+            child_ports = [edge for edge in child_edges
+                           if directions.get(edge[endpoint]) == direction]
+            parent_signatures = signatures(parent_ports, f"{target} parent {direction}")
+            child_signatures = signatures(child_ports, f"{target} child {direction}")
+            port_bindings = contract.get("port_bindings") or {}
+            if not isinstance(port_bindings, dict) or set(port_bindings) - {"inputs", "outputs"}:
+                raise CatalogError(f"{source}: {target} invalid port_bindings directions")
+            bindings = port_bindings.get(direction + "s", {})
+            if not isinstance(bindings, dict) or any(
+                not isinstance(k, str) or not isinstance(v, str) for k, v in bindings.items()
+            ):
+                raise CatalogError(f"{source}: {target} port_bindings must map child to parent identities")
+            child_ids = {s[0] for s in child_signatures}
+            parent_ids = {s[0] for s in parent_signatures}
+            if set(bindings) - child_ids or set(bindings.values()) - parent_ids:
+                raise CatalogError(f"{source}: {target} port binding references absent {direction} tensor")
+            mapped_ids = [bindings.get(identity, identity) for identity in child_ids]
+            if len(mapped_ids) != len(set(mapped_ids)):
+                raise CatalogError(f"{source}: {target} port binding cannot merge distinct tensor identities")
+            child_signatures = {(bindings.get(s[0], s[0]), *s[1:]) for s in child_signatures}
+            if parent_signatures != child_signatures:
+                raise CatalogError(
+                    f"{source}: {target} exact {direction} tensor boundary mismatch; "
+                    f"missing_child={sorted(parent_signatures - child_signatures)}, "
+                    f"extra_child={sorted(child_signatures - parent_signatures)}"
+                )
+        if mode == "exact_lifecycle":
+            internal = signatures([e for e in parent_edges if e["from"] in scope and e["to"] in scope],
+                                  f"{target} lifecycle handoff")
+            handoffs = signatures([e for e in child_edges if directions.get(e["from"]) == "handoff"],
+                                  f"{target} child handoff")
+            if not handoffs or not handoffs <= internal:
+                raise CatalogError(f"{source}: {target} handoffs must match actual scoped internal edges")
+
+
+def _compile_model_only(model_ir: dict[str, Any], model_root: Path) -> dict[str, Any]:
+    """Project the validated semantic graph without inventing a runtime layer."""
+    reached: set[str] = set()
+    pending = [model_ir["default_view"]]
+    while pending:
+        view_id = pending.pop()
+        if view_id in reached:
+            continue
+        reached.add(view_id)
+        pending.extend(node["drill"] for node in model_ir["views"][view_id].get("nodes", [])
+                       if node.get("drill"))
+    unreachable = set(model_ir["views"]) - reached
+    if unreachable:
+        raise CatalogError(f"{model_root}: unreachable model_only views: {sorted(unreachable)}")
+    contract = model_ir.get("semantic_contract") or {}
+    if (int(model_ir.get("semantic_revision") or 0) < 7
+            or int(contract.get("version") or 0) < 1
+            or contract.get("require_explicit_equations", True) is not True):
+        raise CatalogError("model_only requires revision-7 explicit semantic contracts")
+    forbidden = {"ms_per_iter", "total_ms", "duration_ms", "duration_us", "node_metrics",
+                 "included_in", "fusion_group", "fusion_owner", "execution_variant",
+                 "implementation_binding", "runtime_mapping", "runtime_scope", "active_gpu_ms",
+                 "gpu_elapsed_ms", "device_idle_ms", "gpu_residency_ms_per_iter",
+                 "attribution_status", "timing_owner", "timing_role", "fusion_groups",
+                 "fused_into", "included_in_target", "ideal_ms", "attainable_ms", "elapsed_ms",
+                 "start_us", "avg_us", "total_us", "total_us_per_iter", "residency_ms"}
+    def check(value: Any, path: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in forbidden or (key == "status" and child in (
+                        "measured", "fused", "fused_by_occurrence", "structural", "not_selected",
+                        "mapping_incomplete")):
+                    raise CatalogError(f"{path}.{key}: runtime evidence is forbidden in model_only IR")
+                check(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                check(child, f"{path}[{index}]")
+    check(model_ir, "model_ir")
+    _validate_model_only_boundaries(model_ir, source=model_root / "model_ir.yaml")
+    for directory in ("execution_paths", "bindings", "profiles", "timelines", "sol_manifests"):
+        if any(path.is_file() for path in (model_root / directory).rglob("*")):
+            raise CatalogError(f"{model_root}: model_only cannot contain {directory} artifacts")
+    views = _model_views_with_provenance(model_ir["views"], model_ir=model_ir,
+                                        source=model_root / "model_ir.yaml")
+    for view in views.values():
+        for node in view.get("nodes", []):
+            links = node.setdefault("code_links", [])
+            for reference in (node.get("semantic_details") or {}).get("provenance", []):
+                url = str(reference.get("source") or "")
+                if urlsplit(url).scheme in {"https", "http"}:
+                    links.append({"url": url, "display": reference.get("locator") or url,
+                                  "raw": f"{reference.get('revision', '')} {reference.get('locator', '')}".strip()})
+    parent = derive_parent_map(views)
+    return {
+        "schema_version": "2.0", "default_view": model_ir["default_view"],
+        "default_execution_variant": "", "default_implementation": "", "default_profile": "",
+        "meta": {"model_id": model_ir["model_id"], "model_label": model_ir["model_label"],
+                 "subtitle": "Model IR · no profile attached", "lifecycle": "model_only",
+                 "model_ir_version": model_ir["ir_version"],
+                 "model_semantic_revision": model_ir.get("semantic_revision"),
+                 "catalog": f"catalog/{model_root.name}", "execution_variant_count": 0,
+                 "implementation_count": 0, "profile_count": 0, "view_count": len(views),
+                 "sol_profile_count": 0, "gap_report_count": 0},
+        "model_ir": {**copy.deepcopy(model_ir), "views": views, "parent": parent},
+        "views": copy.deepcopy(views), "parent": copy.deepcopy(parent),
+        "enriched": build_enriched(views, {}), "execution_variants": {},
+        "implementations": {}, "profiles": {}, "comparison_contracts": {},
+        "sol_profiles": {}, "gap_reports": {}, "sol_diagnostics": [], "stages": {}, "configs": {},
+    }
+
+
 def compile_catalog(model_root: Path) -> dict[str, Any]:
     model_root = model_root.resolve()
     model_path = model_root / "model_ir.yaml"
@@ -2440,6 +2595,12 @@ def compile_catalog(model_root: Path) -> dict[str, Any]:
         raise CatalogError(
             f"{model_path}: default_view {model_ir['default_view']!r} does not exist"
         )
+
+    lifecycle = pipeline.get("lifecycle", "profiled")
+    if lifecycle not in {"model_only", "profiled"}:
+        raise CatalogError(f"{pipeline_path}: unknown lifecycle {lifecycle!r}")
+    if lifecycle == "model_only":
+        return _compile_model_only(model_ir, model_root)
 
     plan_paths = _catalog_files(model_root, "execution_paths/*.yaml")
     if not plan_paths:

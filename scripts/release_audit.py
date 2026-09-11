@@ -272,6 +272,21 @@ def discover_models(catalog_root: Path) -> list[str]:
     )
 
 
+def discover_profiled_models(catalog_root: Path) -> list[str]:
+    """Production release scope excludes only explicitly model-only catalogs.
+
+    Unknown lifecycle values remain in scope so normal validation rejects them.
+    Direct --model requests still reject model-only artifacts as non-production.
+    """
+    result = []
+    for model in discover_models(catalog_root):
+        path = catalog_root / model / "pipeline.yaml"
+        pipeline = (yaml.safe_load(path.read_text()) or {}) if path.is_file() else {}
+        if pipeline.get("lifecycle") != "model_only":
+            result.append(model)
+    return result
+
+
 def audit_published_bundle(
     *,
     model_name: str,
@@ -357,6 +372,9 @@ def audit_model(
             ],
         }
 
+    if compiled.get("meta", {}).get("lifecycle") == "model_only":
+        failures.append({"kind": "model_only_not_production", "error":
+                         "Model-only acceptance is separate; use scripts/audit_model_only.py"})
     bundle_path = docs_root / f"{model_name}_v2" / "arch_data.json"
     bundle_report, bundle_failures = audit_published_bundle(
         model_name=model_name,
@@ -596,7 +614,7 @@ def main() -> int:
     catalog_root = args.catalog_root.resolve()
     docs_root = args.docs_root.resolve()
     models = (
-        discover_models(catalog_root)
+        discover_profiled_models(catalog_root)
         if args.all
         else list(dict.fromkeys(args.model or []))
     )

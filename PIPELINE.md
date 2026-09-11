@@ -329,6 +329,39 @@ substitute a different batch size, backend, CUDA Graph mode, or topology.
 Changing Model IR requires a semantic architecture change or correction. A
 framework refactor or kernel fusion is not sufficient.
 
+### Explicit model-only lifecycle
+
+A catalog may declare `lifecycle: model_only` in `pipeline.yaml` and
+`validation_evidence.yaml` before execution evidence exists. This uses the same
+revision-7 compiler, semantic transitions, boundaries, source ledger and Viewer.
+Execution Plans, Bindings, Profiles, timelines and SoL manifests must be absent;
+semantic nodes cannot carry timing or fusion ownership. Omitted lifecycle means
+`profiled`, preserving all existing runtime gates.
+
+Model-only drill acceptance compares actual parent and child tensor port sets:
+identity, symbolic shape, dtype, layout and lifetime must all match. Duplicate
+fanout edges denote one tensor port. A shape union in descriptive boundary prose
+cannot satisfy this check. Reused views may declare explicit
+`port_bindings.inputs` / `port_bindings.outputs` maps from child identity to
+parent identity; every endpoint must exist and distinct identities cannot merge.
+These maps never substitute shape, dtype, layout or lifetime. Lifecycle scopes
+compare their actual graph cut and validate intermediate handoff signatures.
+
+The semantic evidence gate remains `verified` with independent authorities and
+assertions. Each of the other three evidence gates must contain exactly
+`status: out_of_scope` and a nonempty `reason`. This is a scope declaration,
+never verification of runtime behavior. The evidence schema requires at least
+one authority for model-only semantics and at least four for profiled catalogs.
+
+Build with `python3 scripts/build_v2.py --model MODEL`. Validate the canonical
+bundle, evidence and pinned source closure with
+`python3 scripts/audit_model_only.py --model MODEL --source-repo PINNED_SOURCE`.
+The report explicitly sets `production_release_ready: false`; actual Viewer
+click acceptance is separate. `release_audit.py --model MODEL` rejects a
+model-only catalog as production acceptance. The Viewer shows
+**Model IR · no profile attached**, disables runtime controls with a reason,
+and preserves semantic selection, source links, drills, breadcrumbs and URLs.
+
 ### Stage 2 — Author Execution Plans
 
 Create the default pure-TP plan first, then add plans only for meaningful,

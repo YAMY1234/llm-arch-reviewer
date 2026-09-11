@@ -16,6 +16,8 @@ jobs:
           cache: pip
       - name: Install
         run: python -m pip install -e '.[dev]'
+      - name: Install CPU semantic math oracle
+        run: python -m pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
       - name: Rebuild every audited catalog
         run: python scripts/build_v2.py --all
       - name: Unit and contract tests
@@ -54,3 +56,50 @@ jobs:
             --output /tmp/llm-arch-reviewer-release-audit \
             --publish-summary docs/release-acceptance.json
           git diff --exit-code -- docs
+
+  model-only-semantics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Verify source locks, semantic closure, deterministic bundle, and every drill
+        run: |
+          python scripts/serve_viewer.py --host 127.0.0.1 --port 8765 > /tmp/model-only-viewer.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          python - <<'PY'
+          import pathlib, subprocess, sys, yaml
+          from scripts.materialize_model_authority import materialize
+          from scripts.release_audit import discover_models
+          root = pathlib.Path.cwd()
+          for name in discover_models(root / 'catalog'):
+              catalog = root / 'catalog' / name
+              path = catalog / 'pipeline.yaml'
+              pipeline = yaml.safe_load(path.read_text()) if path.is_file() else {}
+              if (pipeline or {}).get('lifecycle') != 'model_only':
+                  continue
+              output = pathlib.Path('/tmp/model-only-acceptance') / name
+              source = materialize(catalog, output / 'source')
+              def run(*args):
+                  subprocess.run([sys.executable, *args], check=True)
+              run('scripts/build_v2.py', '--model', name)
+              run('scripts/audit_model_only.py', '--model', name, '--source-repo', str(source),
+                  '--json-out', str(output / 'semantic.json'))
+              run('scripts/audit_model_only_viewer.py', f'docs/{name}_v2/arch_data.json',
+                  '--output', str(output / 'browser'))
+          PY
+          git diff --exit-code -- docs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-only-semantic-and-browser-evidence
+          path: |
+            /tmp/model-only-acceptance/*/semantic.json
+            /tmp/model-only-acceptance/*/browser/

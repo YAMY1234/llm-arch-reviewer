@@ -203,9 +203,14 @@ def test_all_catalogs_pass_the_independent_evidence_contract() -> None:
             "production_evidence",
         }
         assert len(report["contract_sha256"]) == 64
-        assert report["authorities"]["official_model"]["source_revision"]
-        assert report["authorities"]["official_model"]["source_digest"]
-        assert all(gate["status"] == "pass" for gate in report["gates"].values())
+        publishers = [authority for authority in report["authorities"].values()
+                      if authority["kind"] == "publisher_checkpoint"]
+        assert publishers and all(a["source_revision"] and a["source_digest"] for a in publishers)
+        pipeline = yaml.safe_load((model_root / "pipeline.yaml").read_text())
+        assert report["gates"]["semantic_ir"]["status"] == "pass"
+        expected_runtime = "out_of_scope" if pipeline.get("lifecycle") == "model_only" else "pass"
+        assert all(gate["status"] == expected_runtime for name, gate in report["gates"].items()
+                   if name != "semantic_ir")
 
 
 def test_validator_rejects_a_trace_as_semantic_authority(tmp_path: Path) -> None:
