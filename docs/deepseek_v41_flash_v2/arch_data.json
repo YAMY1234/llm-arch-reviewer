@@ -2913,16 +2913,19 @@
         },
         "rope.frequencies": {
           "kind": "transform",
-          "equation": "f_j=theta^(-2j/Dr); low=floor(Dr*log(65536/(32*2\u03c0))/(2log(theta))); high=ceil(Dr*log(65536/(1*2\u03c0))/(2log(theta))); a_j=1-clamp((j-low)/max(high-low,0.001),0,1); f_yarn=f_j*(a_j+(1-a_j)/16)",
+          "equation": "f_base=theta**(-2*j/Dr); low=max(floor(Dr*log(original_context/(beta_fast*2*pi))/(2*log(theta))),0); high=min(ceil(Dr*log(original_context/(beta_slow*2*pi))/(2*log(theta))),Dr-1); a=1-clamp((j-low)/max(high-low,0.001),0,1); f_eff=f_base*(a+(1-a)/factor) if yarn_enabled else f_base",
           "invariants": [
             "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
           ]
         },
         "rope.rotate": {
           "kind": "transform",
-          "equation": "(x_2j,x_2j+1)\u2190(x_2j*cos(pf_j)-x_2j+1*sin(pf_j), x_2j*sin(pf_j)+x_2j+1*cos(pf_j)); nonrotary448 unchanged",
+          "equation": "angle=direction*p*f_eff; y_even=x_even*cos(angle)-x_odd*sin(angle); y_odd=x_even*sin(angle)+x_odd*cos(angle)",
           "invariants": [
-            "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
+            "Inputs and outputs follow incident edge identities; weights are immutable learned parameters.",
+            "Consume f_eff from the frequency policy; never bypass YaRN with f_base on compressed layers.",
+            "j indexes adjacent pairs in the last64 channels; nonrotary448 channels are unchanged.",
+            "p is the token position; direction=1 for forward rotation and direction=-1 for inverse rotation."
           ]
         },
         "rope.output": {
@@ -17626,7 +17629,8 @@
                 "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
               ],
               "notes": [
-                "Compressed layers: theta160000, YaRN enabled; SWA-only and DSpark: theta10000, no YaRN. low\u22650, high\u2264Dr\u22121."
+                "Compressed layers: theta=160000, yarn_enabled=True; SWA-only and DSpark: theta=10000, yarn_enabled=False (source original_seq_len=0).",
+                "Configured policy parameters: original_context=65536, beta_fast=32, beta_slow=1, factor=16, Dr=64; pi is the circle constant. Both paths output f_eff."
               ]
             },
             "ir_origin": "model_ir",
@@ -17635,7 +17639,7 @@
               "semantic_op": "rope.frequencies",
               "kind": "transform",
               "summary": "Frequency and YaRN ramp",
-              "equation": "f_j=theta^(-2j/Dr); low=floor(Dr*log(65536/(32*2\u03c0))/(2log(theta))); high=ceil(Dr*log(65536/(1*2\u03c0))/(2log(theta))); a_j=1-clamp((j-low)/max(high-low,0.001),0,1); f_yarn=f_j*(a_j+(1-a_j)/16)",
+              "equation": "f_base=theta**(-2*j/Dr); low=max(floor(Dr*log(original_context/(beta_fast*2*pi))/(2*log(theta))),0); high=min(ceil(Dr*log(original_context/(beta_slow*2*pi))/(2*log(theta))),Dr-1); a=1-clamp((j-low)/max(high-low,0.001),0,1); f_eff=f_base*(a+(1-a)/factor) if yarn_enabled else f_base",
               "inputs": [],
               "outputs": [
                 {
@@ -17651,7 +17655,7 @@
                 "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
               ],
               "contract_source": "model_ir.semantic_contract+edges",
-              "notes": "Compressed layers: theta160000, YaRN enabled; SWA-only and DSpark: theta10000, no YaRN. low\u22650, high\u2264Dr\u22121."
+              "notes": "Compressed layers: theta=160000, yarn_enabled=True; SWA-only and DSpark: theta=10000, yarn_enabled=False (source original_seq_len=0).\nConfigured policy parameters: original_context=65536, beta_fast=32, beta_slow=1, factor=16, Dr=64; pi is the circle constant. Both paths output f_eff."
             },
             "code_links": [
               {
@@ -17676,7 +17680,10 @@
                 }
               ],
               "invariants": [
-                "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
+                "Inputs and outputs follow incident edge identities; weights are immutable learned parameters.",
+                "Consume f_eff from the frequency policy; never bypass YaRN with f_base on compressed layers.",
+                "j indexes adjacent pairs in the last64 channels; nonrotary448 channels are unchanged.",
+                "p is the token position; direction=1 for forward rotation and direction=-1 for inverse rotation."
               ]
             },
             "ir_origin": "model_ir",
@@ -17685,7 +17692,7 @@
               "semantic_op": "rope.rotate",
               "kind": "transform",
               "summary": "Rotate last64 adjacent-pair channels",
-              "equation": "(x_2j,x_2j+1)\u2190(x_2j*cos(pf_j)-x_2j+1*sin(pf_j), x_2j*sin(pf_j)+x_2j+1*cos(pf_j)); nonrotary448 unchanged",
+              "equation": "angle=direction*p*f_eff; y_even=x_even*cos(angle)-x_odd*sin(angle); y_odd=x_even*sin(angle)+x_odd*cos(angle)",
               "inputs": [
                 {
                   "name": "head_vector",
@@ -17715,7 +17722,10 @@
                 }
               ],
               "invariants": [
-                "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
+                "Inputs and outputs follow incident edge identities; weights are immutable learned parameters.",
+                "Consume f_eff from the frequency policy; never bypass YaRN with f_base on compressed layers.",
+                "j indexes adjacent pairs in the last64 channels; nonrotary448 channels are unchanged.",
+                "p is the token position; direction=1 for forward rotation and direction=-1 for inverse rotation."
               ],
               "contract_source": "model_ir.semantic_contract+edges"
             },
@@ -56016,7 +56026,8 @@
               "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
             ],
             "notes": [
-              "Compressed layers: theta160000, YaRN enabled; SWA-only and DSpark: theta10000, no YaRN. low\u22650, high\u2264Dr\u22121."
+              "Compressed layers: theta=160000, yarn_enabled=True; SWA-only and DSpark: theta=10000, yarn_enabled=False (source original_seq_len=0).",
+              "Configured policy parameters: original_context=65536, beta_fast=32, beta_slow=1, factor=16, Dr=64; pi is the circle constant. Both paths output f_eff."
             ]
           },
           "ir_origin": "model_ir",
@@ -56025,7 +56036,7 @@
             "semantic_op": "rope.frequencies",
             "kind": "transform",
             "summary": "Frequency and YaRN ramp",
-            "equation": "f_j=theta^(-2j/Dr); low=floor(Dr*log(65536/(32*2\u03c0))/(2log(theta))); high=ceil(Dr*log(65536/(1*2\u03c0))/(2log(theta))); a_j=1-clamp((j-low)/max(high-low,0.001),0,1); f_yarn=f_j*(a_j+(1-a_j)/16)",
+            "equation": "f_base=theta**(-2*j/Dr); low=max(floor(Dr*log(original_context/(beta_fast*2*pi))/(2*log(theta))),0); high=min(ceil(Dr*log(original_context/(beta_slow*2*pi))/(2*log(theta))),Dr-1); a=1-clamp((j-low)/max(high-low,0.001),0,1); f_eff=f_base*(a+(1-a)/factor) if yarn_enabled else f_base",
             "inputs": [],
             "outputs": [
               {
@@ -56041,7 +56052,7 @@
               "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
             ],
             "contract_source": "model_ir.semantic_contract+edges",
-            "notes": "Compressed layers: theta160000, YaRN enabled; SWA-only and DSpark: theta10000, no YaRN. low\u22650, high\u2264Dr\u22121."
+            "notes": "Compressed layers: theta=160000, yarn_enabled=True; SWA-only and DSpark: theta=10000, yarn_enabled=False (source original_seq_len=0).\nConfigured policy parameters: original_context=65536, beta_fast=32, beta_slow=1, factor=16, Dr=64; pi is the circle constant. Both paths output f_eff."
           },
           "code_links": [
             {
@@ -56066,7 +56077,10 @@
               }
             ],
             "invariants": [
-              "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
+              "Inputs and outputs follow incident edge identities; weights are immutable learned parameters.",
+              "Consume f_eff from the frequency policy; never bypass YaRN with f_base on compressed layers.",
+              "j indexes adjacent pairs in the last64 channels; nonrotary448 channels are unchanged.",
+              "p is the token position; direction=1 for forward rotation and direction=-1 for inverse rotation."
             ]
           },
           "ir_origin": "model_ir",
@@ -56075,7 +56089,7 @@
             "semantic_op": "rope.rotate",
             "kind": "transform",
             "summary": "Rotate last64 adjacent-pair channels",
-            "equation": "(x_2j,x_2j+1)\u2190(x_2j*cos(pf_j)-x_2j+1*sin(pf_j), x_2j*sin(pf_j)+x_2j+1*cos(pf_j)); nonrotary448 unchanged",
+            "equation": "angle=direction*p*f_eff; y_even=x_even*cos(angle)-x_odd*sin(angle); y_odd=x_even*sin(angle)+x_odd*cos(angle)",
             "inputs": [
               {
                 "name": "head_vector",
@@ -56105,7 +56119,10 @@
               }
             ],
             "invariants": [
-              "Inputs and outputs follow incident edge identities; weights are immutable learned parameters."
+              "Inputs and outputs follow incident edge identities; weights are immutable learned parameters.",
+              "Consume f_eff from the frequency policy; never bypass YaRN with f_base on compressed layers.",
+              "j indexes adjacent pairs in the last64 channels; nonrotary448 channels are unchanged.",
+              "p is the token position; direction=1 for forward rotation and direction=-1 for inverse rotation."
             ],
             "contract_source": "model_ir.semantic_contract+edges"
           },

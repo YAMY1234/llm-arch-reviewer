@@ -565,6 +565,7 @@ def eval_scalar_ir_assignment(equation, variables):
     lhs,rhs = assignment.split("=",1)
     tree = ast.parse(rhs.strip(),mode="eval")
     functions = {"sqrt":math.sqrt,"log":math.log,"exp":math.exp,
+                 "floor":math.floor,"ceil":math.ceil,"cos":math.cos,"sin":math.sin,
                  "sigmoid":lambda x:1/(1+math.exp(-x)),"min":min,"max":max,
                  "clamp":lambda x,lo,hi:max(lo,min(x,hi))}
     def visit(node):
@@ -578,11 +579,71 @@ def eval_scalar_ir_assignment(equation, variables):
             if isinstance(node.op,ast.Sub):return a-b
             if isinstance(node.op,ast.Mult):return a*b
             if isinstance(node.op,ast.Div):return a/b
+            if isinstance(node.op,ast.Pow):return a**b
+        if isinstance(node,ast.IfExp):
+            return visit(node.body if visit(node.test) else node.orelse)
         if isinstance(node,ast.Call) and isinstance(node.func,ast.Name) and not node.keywords:
             return functions[node.func.id](*(visit(a) for a in node.args))
         raise AssertionError(f"Unvalidated scalar expression: {ast.dump(node)}")
     variables[lhs.strip()] = visit(tree)
     return variables[lhs.strip()]
+
+
+def assert_authored_rope_chain(document, torch, yarn_enabled, inverse=False):
+    """Execute the delivered equations, then compare with independent publisher AST.
+
+    This is a targeted RoPE composition regression, not a whole-IR math gate.
+    Configuration and expected rotations come from the locked source fixture.
+    """
+    config = json.loads((FIXTURE / "inference/config.json").read_text())
+    dim = config["rope_head_dim"]
+    theta = config["compress_rope_theta"] if yarn_enabled else config["rope_theta"]
+    positions = (0, 257, 4096, config["original_seq_len"])
+    frequencies = upstream("precompute_freqs_cis", torch, math=math)(
+        dim, max(positions)+1, config["original_seq_len"] if yarn_enabled else 0,
+        theta, config["rope_factor"], config["beta_fast"], config["beta_slow"])
+    rotate = upstream("apply_rotary_emb", torch)
+    # Includes unchanged, interpolation and fully scaled frequency bands.
+    pairs = (0, 16, 20, 31)
+    ops = document["semantic_contract"]["operations"]
+    for position in positions:
+        x = torch.linspace(-0.75, 1.25, dim).reshape(1, 1, dim)
+        expected = rotate(x.clone(), frequencies[position:position+1], inverse=inverse)
+        for pair in pairs:
+            values = dict(theta=theta, Dr=dim, j=pair, pi=math.pi,
+                          original_context=config["original_seq_len"],
+                          beta_fast=config["beta_fast"], beta_slow=config["beta_slow"],
+                          factor=config["rope_factor"], yarn_enabled=yarn_enabled,
+                          direction=-1 if inverse else 1, p=position,
+                          x_even=x[0,0,2*pair].item(), x_odd=x[0,0,2*pair+1].item())
+            for primitive in ("rope.frequencies", "rope.rotate"):
+                for statement in ops[primitive]["equation"].split(";"):
+                    eval_scalar_ir_assignment(statement, values)
+            # Reference uses float32 frequencies; authored scalar math uses double.
+            assert [values["y_even"], values["y_odd"]] == pytest.approx(
+                expected[0,0,2*pair:2*pair+2].tolist(), rel=2e-5, abs=2e-4)
+
+
+@pytest.mark.parametrize("yarn_enabled", [False, True])
+@pytest.mark.parametrize("inverse", [False, True])
+def test_authored_rope_frequency_rotation_chain_matches_publisher(torch, yarn_enabled, inverse):
+    assert_authored_rope_chain(model(), torch, yarn_enabled, inverse)
+
+
+def test_rope_chain_rejects_base_frequency_bypass_and_wrong_policy(torch):
+    actual = model()
+    mutant = deepcopy(actual)
+    op = mutant["semantic_contract"]["operations"]["rope.rotate"]
+    assert "direction*p*f_eff" in op["equation"]
+    op["equation"] = op["equation"].replace("direction*p*f_eff", "direction*p*f_base")
+    with pytest.raises(AssertionError):
+        assert_authored_rope_chain(mutant, torch, True)
+    mutant = deepcopy(actual)
+    op = mutant["semantic_contract"]["operations"]["rope.frequencies"]
+    assert "if yarn_enabled else f_base" in op["equation"]
+    op["equation"] = op["equation"].replace("if yarn_enabled else f_base", "if True else f_base")
+    with pytest.raises(AssertionError):
+        assert_authored_rope_chain(mutant, torch, False)
 
 
 def assert_authored_router_expert_math(document):
