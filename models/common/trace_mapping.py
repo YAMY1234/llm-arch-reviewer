@@ -209,9 +209,10 @@ def find_step_annotation_windows(
 
     kernels = [event for event in trace_events if event.get("cat") == "kernel"]
 
-    # SGLang can launch the model on more than one CUDA stream.  In that
-    # case the outer step's GPU annotation covers only setup on the launch
-    # stream, while the nested ``sglang.vlm.language_model_prefill`` record
+    # SGLang can materialize one CPU step on several CUDA streams. Join them
+    # by its External id instead of counting each stream as another forward.
+    # In some versions the outer GPU annotation covers only setup, while a
+    # nested ``sglang.vlm.language_model_prefill`` record
     # function (the name is retained for decode too) is materialized on every
     # model-compute stream.  Join the nested GPU spans to their enclosing CPU
     # step by External id and take their union.  Selecting only the short
@@ -249,8 +250,6 @@ def find_step_annotation_windows(
             if cpu_start <= float(event.get("ts", 0.0))
             and _event_end_us(event) <= cpu_end
         ]
-        if not nested:
-            continue
         external_ids = {
             external
             for event in [step, *nested]
@@ -793,8 +792,10 @@ def _filter_python_spans(
 def assign_deepest_python_spans(
     python_spans: list[dict[str, Any]],
     targets_us: dict[str, float],
+    *,
+    target_threads: dict[str, tuple[Any, Any]] | None = None,
 ) -> dict[str, dict[str, Any] | None]:
-    """Assign each target timestamp to the smallest active Python span."""
+    """Assign launch timestamps to active Python spans on the launching thread."""
 
     actions: list[tuple[float, int, str, int | None]] = []
     span_by_id: dict[int, dict[str, Any]] = {}
@@ -835,8 +836,13 @@ def assign_deepest_python_spans(
         elif kind == "end" and py_id is not None:
             active.discard(py_id)
         else:
+            thread = (target_threads or {}).get(kind)
             best_id = min(
-                active,
+                (
+                    item for item in active
+                    if thread is None
+                    or (span_by_id[item].get("pid"), span_by_id[item].get("tid")) == thread
+                ),
                 key=lambda item: (
                     float(span_by_id[item].get("dur", 0.0)),
                     -span_depth(item),
@@ -910,7 +916,7 @@ def _build_cpu_maps(
             external = _as_int(args.get("External id"))
             if external is not None:
                 cpu_by_external[external] = event
-        elif event.get("cat") == "cuda_runtime":
+        elif event.get("cat") in {"cuda_runtime", "cuda_driver"}:
             corr = _as_int(args.get("correlation"))
             external = _as_int(args.get("External id"))
             if corr is not None:
@@ -938,6 +944,8 @@ def normalize_kernel_events(
     ]
 
     target_ts: dict[str, float] = {}
+    target_threads: dict[str, tuple[Any, Any]] = {}
+    uncorrelated: set[str] = set()
     kernel_meta: dict[str, tuple[dict[str, Any], int | None, dict[str, Any] | None]] = {}
     for index, kernel in enumerate(raw_kernels):
         event_id = f"k_{index:06d}"
@@ -950,7 +958,12 @@ def normalize_kernel_events(
         # Attribute kernels at CPU launch time rather than GPU execution time.
         # Async kernels can execute after Python has moved to a later module.
         runtime_event = runtime_by_corr.get(corr) if corr is not None else None
-        target_ts[event_id] = float((cpu_op or runtime_event or kernel).get("ts", 0.0))
+        launch = runtime_event or cpu_op
+        target_ts[event_id] = float((launch or kernel).get("ts", 0.0))
+        if launch is None:
+            uncorrelated.add(event_id)
+        elif "pid" in launch and "tid" in launch:
+            target_threads[event_id] = (launch["pid"], launch["tid"])
         kernel_meta[event_id] = (kernel, external, cpu_op)
 
     span_start = min([window.start_us, *target_ts.values()]) if target_ts else window.start_us
@@ -962,7 +975,11 @@ def normalize_kernel_events(
         if (py_id := _python_id(event)) is not None
     }
 
-    assigned = assign_deepest_python_spans(python_spans, target_ts)
+    assigned = assign_deepest_python_spans(
+        python_spans,
+        {key: value for key, value in target_ts.items() if key not in uncorrelated},
+        target_threads=target_threads,
+    )
     out: list[KernelEvent] = []
     for event_id, (kernel, external, cpu_op) in kernel_meta.items():
         args = _args(kernel)
@@ -991,7 +1008,7 @@ def normalize_kernel_events(
                     if args.get("graph id") is not None
                     else args.get("graph_id")
                 ),
-                launch_ts_us=target_ts[event_id],
+                launch_ts_us=None if event_id in uncorrelated else target_ts[event_id],
             )
         )
     return out
