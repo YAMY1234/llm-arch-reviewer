@@ -23,6 +23,7 @@ from models.common.trace_mapping import (  # noqa: E402
     find_eagle_mtp_prefill_windows,
     find_step_annotation_windows,
     find_vllm_execute_context_windows,
+    normalize_kernel_events,
 )
 
 
@@ -52,6 +53,14 @@ def _classify_toy_node(
     return None, "unmapped"
 
 
+def _launch_event(ts: float, correlation: int):
+    return {
+        "ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel",
+        "pid": 1, "tid": 1, "ts": ts, "dur": .1,
+        "args": {"correlation": correlation},
+    }
+
+
 TOY_RULES = TraceMappingRules(
     model_id="toy",
     signature_kernel="toy_anchor",
@@ -67,6 +76,52 @@ TOY_RULES = TraceMappingRules(
 
 
 class CommonTraceMappingTest(unittest.TestCase):
+    def test_async_kernel_uses_correlated_cpu_thread_not_shorter_scheduler_span(self):
+        model = _python_event("model.py(20): attention", 1, None, 10, 40)
+        scheduler = _python_event("scheduler.py(30): prepare_next_batch", 2, None, 19, 2)
+        scheduler["tid"] = 2
+        events = [model, scheduler, {
+            "ph": "X", "cat": "cpu_op", "name": "aten::mm",
+            "pid": 1, "tid": 1, "ts": 20, "dur": 2,
+            "args": {"External id": 8},
+        }, {
+            "ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel",
+            "pid": 1, "tid": 1, "ts": 21, "dur": 1,
+            "args": {"External id": 8, "correlation": 9},
+        }, {
+            "ph": "X", "cat": "kernel", "name": "gemm",
+            "pid": 0, "tid": 7, "ts": 100, "dur": 5,
+            "args": {"correlation": 9},
+        }]
+        window = ForwardWindow(90, 110, [(90, 110)], 0)
+        result = normalize_kernel_events(events, window=window)
+        self.assertEqual(result[0].launch_ts_us, 21)
+        self.assertEqual([frame.raw for frame in result[0].python_stack], [model["name"]])
+
+    def test_uncorrelated_gpu_event_does_not_borrow_python_at_execution_time(self):
+        events = [_python_event("model.py(20): unrelated_next_layer", 1, None, 90, 30), {
+            "ph": "X", "cat": "kernel", "name": "gemm",
+            "ts": 100, "dur": 5, "args": {},
+        }]
+        result = normalize_kernel_events(events, window=ForwardWindow(90, 110, [(90, 110)], 0))
+        self.assertEqual(result[0].python_stack, [])
+        self.assertIsNone(result[0].launch_ts_us)
+
+    def test_driver_launch_without_external_id_preserves_python_source(self):
+        model = _python_event("triton_kernel.py(73): run", 1, None, 10, 20)
+        events = [model, {
+            "ph": "X", "cat": "cuda_driver", "name": "cuLaunchKernelEx",
+            "pid": 1, "tid": 1, "ts": 15, "dur": 2,
+            "args": {"correlation": 116},
+        }, {
+            "ph": "X", "cat": "kernel", "name": "compute_position_kernel",
+            "pid": 0, "tid": 23, "ts": 50, "dur": 2.5,
+            "args": {"correlation": 116, "stream": 23},
+        }]
+        result = normalize_kernel_events(events, window=ForwardWindow(40, 60, [(40, 60)], 0))
+        self.assertEqual(result[0].launch_ts_us, 15)
+        self.assertEqual([frame.raw for frame in result[0].python_stack], [model["name"]])
+
     def test_sglang_async_model_spans_extend_outer_step_across_streams(self):
         def annotation(cat, name, ts, dur, external, tid=19):
             return {
@@ -114,6 +169,23 @@ class CommonTraceMappingTest(unittest.TestCase):
             [(window.start_us, window.end_us) for window in windows],
             [(10, 50)],
         )
+
+    def test_sglang_one_cpu_step_on_three_streams_is_one_forward(self):
+        events = []
+        for external, base in ((7, 0), (8, 100)):
+            events.append({
+                "ph": "X", "cat": "user_annotation", "name": "step[DECODE bs=1]",
+                "pid": 1, "tid": 1, "ts": base + 10, "dur": 40,
+                "args": {"External id": external},
+            })
+            for tid, start, end in ((23, 12, 45), (63, 18, 52), (67, 15, 48)):
+                events.append({
+                    "ph": "X", "cat": "gpu_user_annotation", "name": "step[DECODE bs=1]",
+                    "pid": 0, "tid": tid, "ts": base + start, "dur": end - start,
+                    "args": {"External id": external},
+                })
+        windows = find_step_annotation_windows(events, phase="decode")
+        self.assertEqual([(w.start_us, w.end_us) for w in windows], [(12, 52), (112, 152)])
 
     def test_phase_tail_closure_admits_only_smallest_enclosing_python_tail(self):
         window = ForwardWindow(
@@ -403,8 +475,9 @@ class CommonTraceMappingTest(unittest.TestCase):
                                 "tid": 0,
                                 "ts": 12,
                                 "dur": 2,
-                                "args": {"stream": 1, "device": 0},
+                                "args": {"stream": 1, "device": 0, "correlation": 3},
                             },
+                            _launch_event(11, 3),
                         ],
                     }
                 )
@@ -475,8 +548,9 @@ class CommonTraceMappingTest(unittest.TestCase):
                                 "tid": 0,
                                 "ts": 10,
                                 "dur": 1,
-                                "args": {"stream": 1, "device": 0},
+                                "args": {"stream": 1, "device": 0, "correlation": 1},
                             },
+                            _launch_event(9, 1),
                             {
                                 "ph": "X",
                                 "cat": "kernel",
@@ -485,8 +559,9 @@ class CommonTraceMappingTest(unittest.TestCase):
                                 "tid": 0,
                                 "ts": 11,
                                 "dur": 2,
-                                "args": {"stream": 1, "device": 0},
+                                "args": {"stream": 1, "device": 0, "correlation": 2},
                             },
+                            _launch_event(10, 2),
                         ],
                     }
                 )
